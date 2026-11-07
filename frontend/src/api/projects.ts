@@ -272,7 +272,7 @@ export const projectsApi = {
     }),
 
   knowledge: (id: number) => api.get<KnowledgeView>(`/api/projects/${id}/knowledge`),
-  addFact: (id: number, text: string, chat?: { source_id?: number | null; origin_ref?: string }) =>
+  addFact: (id: number, text: string, chat?: { source_id?: number | null; clip_plan_id?: number | null; origin_ref?: string }) =>
     api.post<{ created: boolean; view: KnowledgeView }>(`/api/projects/${id}/knowledge`, {
       text,
       ...(chat ? { from_chat: true, ...chat } : {}),

@@ -11,7 +11,9 @@ from app import autopilot as A
 from app import project_knowledge as K
 from app import projects as P
 from app.settings import settings
-from app.project_chat_threads import get_thread, _video_title, default_thread, update_thread, thread_messages
+from app.project_chat_threads import (
+    default_thread, get_thread, legacy_clip_messages, thread_messages, update_thread, _video_title,
+)
 
 _log = logging.getLogger("app.project_chat")
 
@@ -122,11 +124,13 @@ def summarize_thread(store: Any, thread_id: int, client: Any = None) -> bool:
     if len(fresh) <= SUMMARIZE_AFTER:
         return False
     old = fresh[:-HISTORY_KEEP]
+    # Старая переписка клипа в резюме идёт один раз, вместе с первым сжатием. Её строки остаются на месте.
+    earlier = legacy_clip_messages(store, thread["clip_plan_id"]) if thread.get("clip_plan_id") and not upto else []
     summary = ""
     if client is not None:
         prompt = ("Сожми переписку владельца с агентом в 5–12 пунктов: решения, договорённости, "
                   "просьбы владельца, открытые вопросы, id клипов и источников. По-русски, без воды.\n\n"
-                  f"Прежнее резюме:\n{thread.get('summary') or '—'}\n\nНовые реплики:\n" + _heuristic_summary("", old))
+                  f"Прежнее резюме:\n{thread.get('summary') or '—'}\n\nНовые реплики:\n" + _heuristic_summary("", earlier + old))
         try:
             from app.ai.publish_meta import _extract_response_text
 
@@ -135,11 +139,23 @@ def summarize_thread(store: Any, thread_id: int, client: Any = None) -> bool:
             summary = _extract_response_text(response).strip()[:SUMMARY_CHARS]
         except Exception as exc:  # noqa: BLE001 - не сжалось моделью — сожмём строками
             _log.info("chat summary via model failed: %s", exc)
-    summary = summary or _heuristic_summary(thread.get("summary") or "", old)
+    summary = summary or _heuristic_summary(thread.get("summary") or "", earlier + old)
     update_thread(store, thread_id, summary=summary, summary_upto=int(old[-1]["id"]))
     if thread["is_default"] and thread["project_id"]:
         A.set_state(store, thread["project_id"], chat_summary=summary, chat_summary_upto=int(old[-1]["id"]))
     return True
+
+
+def model_history(store: Any, thread: dict) -> list[dict]:
+    """Что модель получает из прошлой переписки: несжатые реплики; у чата клипа до первого сжатия — и старые из
+    clip_agent_messages (монтажёр всегда видел последние реплики клипа, сколько бы их ни было в новой таблице)."""
+    upto = int(thread.get("summary_upto") or 0)
+    fresh = [m for m in thread_messages(store, thread["id"], after=upto) if m["status"] != "running"]
+    if not thread.get("clip_plan_id"):
+        return fresh[-HISTORY_KEEP:]
+    if upto:
+        return fresh
+    return [*legacy_clip_messages(store, thread["clip_plan_id"]), *fresh]
 
 
 def maybe_summarize(store: Any, project_id: int, client: Any = None) -> bool:

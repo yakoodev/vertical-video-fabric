@@ -220,12 +220,19 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
 
     older_chat: list[dict] = []
     for plan in plans[:-1]:
+        # Старая переписка клипа и новая (app/clip_chat.py); id разные таблицы делят, поэтому у старых реплик он отрицательный.
         for row in store.db.query_all(
             "SELECT id, role, text, created_at FROM clip_agent_messages WHERE clip_plan_id = ? ORDER BY id DESC LIMIT 30",
             (int(plan["id"]),),
         ):
+            older_chat.append({**dict(row), "id": -int(row["id"]), "plan_id": int(plan["id"])})
+        for row in store.db.query_all(
+            "SELECT m.id, m.role, m.text, m.created_at FROM project_chat_messages m JOIN chat_threads t ON t.id = m.thread_id "
+            "WHERE t.clip_plan_id = ? ORDER BY m.id DESC LIMIT 30",
+            (int(plan["id"]),),
+        ):
             older_chat.append({**dict(row), "plan_id": int(plan["id"])})
-    older_chat.sort(key=lambda m: int(m["id"]))
+    older_chat.sort(key=lambda m: (str(m["created_at"] or ""), abs(int(m["id"]))))
 
     numbers = _version_labels(plans)
     has_file = source_file_present(source.get("local_path"))

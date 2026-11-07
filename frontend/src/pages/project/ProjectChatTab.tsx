@@ -31,10 +31,10 @@ export function ProjectChatTab({ projectId }: { projectId: number }) {
     onError: (e) => toast.error(errText(e, "Не получилось")),
   });
   const tg = chat.data?.telegram;
-  // Переписки проекта: основная (её же видит Telegram), свои новые и чаты его видео.
+  // Переписки проекта: основная (её же видит Telegram), свои новые и чаты его видео. Чаты клипов — в «Все переписки».
   const list = useQuery({ queryKey: chatKeys.threads, queryFn: chatApi.threads, refetchInterval: 30000 });
   const [picked, setPicked] = useState<number | null>(null);
-  const threads = list.data?.projects.find((p) => p.id === projectId)?.threads ?? [];
+  const threads = (list.data?.projects.find((p) => p.id === projectId)?.threads ?? []).filter((t) => !t.clip_plan_id);
   const threadId = picked ?? chat.data?.thread_id ?? 0;
   const create = useMutation({
     mutationFn: () => chatApi.create({ project_id: projectId }),

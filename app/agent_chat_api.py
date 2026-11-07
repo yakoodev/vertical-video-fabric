@@ -3,6 +3,7 @@
 * ``GET  /api/chat/threads`` — переписки: по проектам и общие
 * ``POST /api/chat/threads`` {project_id?, title?, model?} — новая переписка
 * ``POST /api/chat/video-thread`` {source_id} — чат видео (один на видео)
+* ``POST /api/chat/clip-thread`` {clip_plan_id} — чат клипа (один на клип)
 * ``GET/PATCH/DELETE /api/chat/threads/{id}`` — переписка (реплики, шаги, живой ход) / имя, модель / удалить
 * ``POST /api/chat/threads/{id}/messages`` {text, attachments?} — написать (ответ — в фоне)
 * ``GET  /api/chat/threads/{id}/stream`` — SSE живого хода: text, steps, phase, done
@@ -21,9 +22,11 @@ from typing import Any, Callable
 from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app import chat_tools
+from app import agent_settings, chat_tools, modules
 from app import project_chat as C
 from app.agent_settings_api import owner_only
+from app.auth import is_agent_request, token_is_valid
+from app.settings import settings
 
 _MEDIA_RE = re.compile(r"^[0-9a-f]{32}\.(jpg|png)$")
 POLL_SEC = 0.08
@@ -63,6 +66,26 @@ def build_agent_chat_router(auth_dep: Any, get_store: Callable[[], Any],
     def api_video_thread(_auth: auth_dep, payload: dict = Body(...)) -> dict:
         return call(C.video_thread, int(payload.get("source_id") or 0))
 
+    @router.post("/api/chat/clip-thread", summary="Чат клипа: один на клип, заводится при первом открытии")
+    def api_clip_thread(_auth: auth_dep, payload: dict = Body(...)) -> dict:
+        modules.require("editor_agent", get_store())
+        return call(C.clip_thread, int(payload.get("clip_plan_id") or 0))
+
+    def clip_message_gate(thread_id: int, request: Request) -> None:
+        """Сообщение в чат клипа — как правка клипа (``AgentStopGate``): владелец этим выбирает черновик, агента по токену
+        настройка «Останавливаться на списке клипов» не пустит. Монтажёр выключен — писать в чат клипа некому."""
+        store = get_store()
+        clip_id = call(C.get_thread, thread_id).get("clip_plan_id")
+        if not clip_id:
+            return
+        modules.require("editor_agent", store)
+        if is_agent_request(request):
+            refusal = agent_settings.clip_list_refusal(store, int(clip_id))
+            if refusal:
+                raise HTTPException(status_code=409, detail=refusal["error"])
+        elif token_is_valid(request.cookies.get(settings.auth_cookie_name)):
+            agent_settings.set_picked(store, int(clip_id))
+
     @router.get("/api/chat/threads/{thread_id}", summary="Переписка: реплики, шаги, живой ход")
     def api_thread(thread_id: int, _auth: auth_dep) -> dict:
         return call(C.thread_view, thread_id)
@@ -76,7 +99,8 @@ def build_agent_chat_router(auth_dep: Any, get_store: Callable[[], Any],
         return call(C.delete_thread, thread_id)
 
     @router.post("/api/chat/threads/{thread_id}/messages", summary="Написать агенту (ответ — в фоне, поток — /stream)")
-    def api_thread_send(thread_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_thread_send(thread_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        clip_message_gate(thread_id, request)
         attachments = payload.get("attachments") if isinstance(payload.get("attachments"), list) else []
         return call(C.send_to_thread, thread_id, str(payload.get("text") or ""), origin="ui", actor="chat:ui",
                     attachments=attachments)

@@ -8,8 +8,8 @@ import { Loading } from "@/components/ui";
 import { ChatConversation } from "@/pages/chat/ChatConversation";
 
 /**
- * 💬 Страница «Чат»: переписки с агентом «как с Claude». Слева — переписки по проектам
- * (серии и каналы) и общие, справа — переписка. Бэкенд — app/project_chat.py.
+ * 💬 Страница «Чат»: все переписки с агентом «как с Claude». Слева — по проектам (основная, новые, чаты видео и клипов)
+ * и общие, справа — переписка. Бэкенд — app/project_chat.py.
  */
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -92,6 +92,11 @@ function Header({ view }: { view: ChatThreadView | undefined }) {
             {t.title || "Новый чат"}
           </button>
         )}
+        {view.clip ? (
+          <Link to={`/clips/${view.clip.id}`} className="chat-project-chip" title={`Открыть клип ${view.clip.title}`}>
+            Клип {view.clip.title}
+          </Link>
+        ) : null}
         {view.video ? (
           <Link to={`/v/${view.video.id}`} className="chat-project-chip" title={`Чат видео ${view.video.title}`}>
             Чат видео {view.video.title}
@@ -99,9 +104,9 @@ function Header({ view }: { view: ChatThreadView | undefined }) {
         ) : null}
         {view.project ? (
           <Link to={`/p/${view.project.id}`} className="chat-project-chip" title={`Проект ${view.project.name}`}>
-            {view.video ? `Проект ${view.project.name}` : `Чат проекта ${view.project.name}`}
+            {view.video || view.clip ? `Проект ${view.project.name}` : `Чат проекта ${view.project.name}`}
           </Link>
-        ) : view.video ? null : (
+        ) : view.video || view.clip ? null : (
           <span className="chat-project-chip muted">Общий чат</span>
         )}
       </div>
@@ -173,7 +178,7 @@ export function ChatPage() {
   // Без выбранной переписки на широком экране — открыть последнюю.
   useEffect(() => {
     if (id || !list.data || window.innerWidth < 860) return;
-    const all = [...list.data.general, ...list.data.videos, ...list.data.projects.flatMap((p) => p.threads)];
+    const all = [...list.data.general, ...list.data.videos, ...list.data.clips, ...list.data.projects.flatMap((p) => p.threads)];
     const latest = all.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
     if (latest) navigate(`/chat/${latest.id}`, { replace: true });
   }, [id, list.data, navigate]);
@@ -184,6 +189,7 @@ export function ChatPage() {
   );
   const general = (list.data?.general ?? []).filter((t) => !q || t.title.toLowerCase().includes(q));
   const looseVideos = (list.data?.videos ?? []).filter((t) => !q || t.title.toLowerCase().includes(q));
+  const looseClips = (list.data?.clips ?? []).filter((t) => !q || t.title.toLowerCase().includes(q));
 
   return (
     <div className={`chat-page${id ? " has-thread" : ""}`}>
@@ -205,6 +211,12 @@ export function ChatPage() {
             <div className="chat-nav-group">
               <div className="chat-nav-cap">Видео вне проектов</div>
               {looseVideos.map((t) => <ThreadItem key={t.id} t={t} active={t.id === id} />)}
+            </div>
+          ) : null}
+          {looseClips.length ? (
+            <div className="chat-nav-group">
+              <div className="chat-nav-cap">Клипы вне проектов</div>
+              {looseClips.map((t) => <ThreadItem key={t.id} t={t} active={t.id === id} />)}
             </div>
           ) : null}
           {projects.map((p) => (
@@ -235,7 +247,7 @@ export function ChatPage() {
           <div className="chat-empty chat-empty-page">
             <div className="chat-empty-mark">✦</div>
             <div className="chat-empty-title">Выбери переписку или начни новую</div>
-            <p className="muted">Общий чат — про весь сервис. Чат проекта и его видео знают лор и правила этого проекта, очередь одобрения и расписание.</p>
+            <p className="muted">Общий чат — про весь сервис. Чат проекта и его видео знают лор и правила этого проекта, очередь одобрения и расписание. Чат клипа сам правит монтаж этого клипа.</p>
             <button className="btn primary" onClick={() => create.mutate(null)}>
               + Новый чат
             </button>

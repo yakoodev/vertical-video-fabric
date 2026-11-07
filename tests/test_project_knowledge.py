@@ -391,7 +391,7 @@ def test_remember_in_clip_chat_goes_to_its_project(env):
     assert editor_agent.wait_run(plan["id"], 10)
     fact = K.list_facts(store, mura)[0]
     assert "Онигуру" in fact["text"] and fact["clip_plan_id"] == plan["id"] and K.list_facts(store, apex) == []
-    reply = store.list_clip_agent_messages(plan["id"])[-1]
+    reply = editor_agent.chat_view(store, plan["id"])["messages"][-1]
     assert reply["text"].startswith("Запомнил:")
     view = K.knowledge_view(store, mura)
     assert view["groups"][0]["items"][0]["origin"] == f"из чата клипа #{plan['id']}"

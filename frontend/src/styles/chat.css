@@ -296,3 +296,26 @@ a.chat-project-chip:hover { color: var(--text); border-color: var(--accent); }
 @media (max-width: 900px) {
   .series-grid:has(> .project-chat) { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Чат клипа: тот же чат внутри панели редактора, карточки экрана клипа и панели поверх экрана. Клип здесь один и известен,
+   поэтому без подписей о нём; колонка узкая, поэтому всё по ширине и подсказки — одной строкой с прокруткой. */
+.agent > .chat-conv.compact { flex: 1; height: auto; min-height: 0; }
+.agent .chat-thread { padding: 10px 0 8px; gap: 12px; }
+.agent .chat-bottom { padding: 8px 0 0; }
+.agent .chat-empty { padding: 14px 6px 6px; }
+.agent .chat-empty-mark { display: none; }
+.agent .chat-empty-title { font-size: 15px; }
+.agent .chat-empty p { font-size: 12.5px; }
+.agent .chat-foot { display: none; }
+.agent .chat-avatar { display: none; }
+.agent .chat-msg.assistant { grid-template-columns: minmax(0, 1fr); }
+.agent .chat-step-tool { display: none; }
+.agent .chat-step-head { grid-template-columns: 18px minmax(0, 1fr) 12px; }
+.agent .chat-change .chat-ellipsis { display: none; }
+.agent .chat-change .btn { margin-left: auto; }
+.agent .chat-confirm-head { flex-wrap: wrap; }
+.agent .agent-head { flex-wrap: wrap; row-gap: 4px; }
+.agent .agent-head .agent-model { flex: 1 1 60px; min-width: 0; margin-left: 0; }
+.agent .agent-head .btn { flex: none; }
+.chat-chips { margin-bottom: 8px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+.chat-chips .agent-chip { flex: none; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

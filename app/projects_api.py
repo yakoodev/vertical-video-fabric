@@ -102,7 +102,8 @@ def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
                      origin=K.ORIGIN_CHAT if from_chat else K.ORIGIN_OWNER,
                      quote=str(payload.get("text") or "") if from_chat else "",
                      origin_ref=str(payload.get("origin_ref") or ""),
-                     source_id=_int_or_none(payload.get("source_id")))
+                     source_id=_int_or_none(payload.get("source_id")),
+                     clip_plan_id=_int_or_none(payload.get("clip_plan_id")))
         return {"created": added["created"], "fact": added["fact"], "view": call(K.knowledge_view, project_id)}
 
     @router.post("/api/projects/{project_id}/knowledge/confirm", summary="Подтвердить то, что агент заметил сам")

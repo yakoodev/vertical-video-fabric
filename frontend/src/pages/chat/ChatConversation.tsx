@@ -26,7 +26,8 @@ import "@/styles/chat.css";
 /**
  * Переписка с агентом: реплики, живой ответ (SSE), шаги-карточки инструментов с превью,
  * подтверждение опасного, «Откатить» правки клипа, поле ввода с файлами.
- * Используется страницей «Чат», вкладкой «Чат» проекта, чатом видео и общим чатом.
+ * Один компонент на все уровни: страница «Чат», вкладка «Чат» проекта, чат видео, общий чат и чат клипа
+ * (@/pages/workspace/motion/AgentPanel: редактор, экран клипа, панель поверх экрана).
  */
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
@@ -68,9 +69,16 @@ const VIDEO_SUGGESTIONS = [
   "Какие черновики этого видео ещё не смонтированы?",
 ];
 
+const CLIP_SUGGESTIONS = [
+  "Сделай динамичнее: титры на панчлайны, наезды на реакции, звуки на акценты",
+  "Поставь крупный хук-титр в первые 2 секунды",
+  "Добавь мем или эмодзи на самый смешной момент",
+];
+
 const MAX_FACT_LEN = 600;
 
 function suggestionsFor(view: ChatThreadView): string[] {
+  if (view.clip) return CLIP_SUGGESTIONS;
   if (view.video) return VIDEO_SUGGESTIONS;
   return view.project ? PROJECT_SUGGESTIONS : SUGGESTIONS;
 }
@@ -332,15 +340,19 @@ function ConfirmCard({
   step,
   conf,
   threadId,
+  clipEdit,
 }: {
   step: ChatStep;
   conf?: ChatConfirmation;
   threadId: number;
+  clipEdit?: ClipEdit;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
   const decide = useMutation({
     mutationFn: (approve: boolean) => chatApi.confirm(step.confirmation_id!, approve),
+    onMutate: () => clipEdit?.before(),
+    onSettled: () => clipEdit?.after(),
     onSuccess: (r) => {
       if (r.status === "failed") toast.error("Не вышло — подробности в чате");
       qc.invalidateQueries({ queryKey: chatKeys.thread(threadId) });
@@ -381,11 +393,13 @@ function ConfirmCard({
   );
 }
 
-function Changes({ changes, threadId, onRef }: { changes: ChatChange[]; threadId: number; onRef: (r: MediaRef) => void }) {
+function Changes({ changes, threadId, onRef, clipEdit }: { changes: ChatChange[]; threadId: number; onRef: (r: MediaRef) => void; clipEdit?: ClipEdit }) {
   const qc = useQueryClient();
   const toast = useToast();
   const revert = useMutation({
     mutationFn: (cp: number) => chatApi.revert(cp),
+    onMutate: () => clipEdit?.before(),
+    onSettled: () => clipEdit?.after(),
     onSuccess: () => {
       toast.success("Откатил");
       qc.invalidateQueries({ queryKey: chatKeys.thread(threadId) });
@@ -419,11 +433,13 @@ function AssistantMessage({
   live,
   threadId,
   onRef,
+  clipEdit,
 }: {
   m: ChatMsg;
   live: LiveRun | null;
   threadId: number;
   onRef: (r: MediaRef) => void;
+  clipEdit?: ClipEdit;
 }) {
   const running = m.status === "running";
   const steps = running && live && live.reply_id === m.id ? live.steps : m.steps;
@@ -442,7 +458,7 @@ function AssistantMessage({
           <div className="chat-steps">
             {steps.map((s, i) =>
               s.kind === "confirm" ? (
-                <ConfirmCard key={i} step={s} conf={s.confirmation_id ? confs.get(s.confirmation_id) : undefined} threadId={threadId} />
+                <ConfirmCard key={i} step={s} conf={s.confirmation_id ? confs.get(s.confirmation_id) : undefined} threadId={threadId} clipEdit={clipEdit} />
               ) : (
                 <StepCard key={i} step={s} onRef={onRef} />
               ),
@@ -469,7 +485,7 @@ function AssistantMessage({
             Запомнил: «{m.meta.remembered.text}» · <Link to={projectPath(m.meta.remembered.project_id, "know")}>что агент знает</Link>
           </div>
         ) : null}
-        {m.changes?.length ? <Changes changes={m.changes} threadId={threadId} onRef={onRef} /> : null}
+        {m.changes?.length ? <Changes changes={m.changes} threadId={threadId} onRef={onRef} clipEdit={clipEdit} /> : null}
         {m.status === "error" || m.status === "interrupted" || m.status === "cancelled" ? (
           <div className={`chat-small chat-status-${m.status}`}>
             {m.status === "error" ? "Ошибка ответа" : m.status === "cancelled" ? "Остановлено" : "Прервано"}
@@ -501,9 +517,11 @@ function Composer({
   onSend,
   onStop,
   projectId,
+  placeholder,
 }: {
   disabled: boolean;
   running: boolean;
+  placeholder?: string;
   /** Чат проекта: приложенный файл становится файлом этого проекта. */
   projectId?: number | null;
   onSend: (text: string, attachments: ChatAttachment[]) => Promise<unknown>;
@@ -520,7 +538,7 @@ function Composer({
     if (!el) return;
     el.style.height = "auto";
     el.style.height = `${Math.min(220, el.scrollHeight)}px`;
-  }, [text]);
+  }, [text, running]); // «Стоп» шире кнопки отправки: подпись в узкой колонке переносится
 
   const upload = useCallback((p: Pending) => {
     const run = p.target === "source" ? chatApi.uploadSource(p.file) : chatApi.uploadAsset(p.file, projectId);
@@ -559,10 +577,12 @@ function Composer({
   const submit = () => {
     if (!canSend) return;
     const body = text.trim();
-    onSend(body, ready).then(() => {
-      setText("");
-      setFiles([]);
-    });
+    onSend(body, ready)
+      .then(() => {
+        setText("");
+        setFiles([]);
+      })
+      .catch(() => undefined); // сбой уже показан, текст остаётся в поле
   };
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (e.clipboardData.files.length) {
@@ -629,7 +649,7 @@ function Composer({
           className="chat-textarea"
           rows={1}
           value={text}
-          placeholder="Напиши агенту…"
+          placeholder={placeholder ?? "Напиши агенту…"}
           title="Enter — отправить, Shift+Enter — перенос строки"
           onChange={(e) => setText(e.target.value)}
           onPaste={onPaste}
@@ -668,7 +688,14 @@ function RememberButton({ m, view }: { m: ChatMsg; view: ChatThreadView }) {
   const projectId = view.project?.id;
   const [done, setDone] = useState(false);
   const remember = useMutation({
-    mutationFn: () => projectsApi.addFact(projectId!, m.text, { source_id: view.video?.id, origin_ref: `chat#${m.id}` }),
+    mutationFn: () =>
+      projectsApi.addFact(
+        projectId!,
+        m.text,
+        view.clip
+          ? { source_id: view.clip.source_id, clip_plan_id: view.clip.id, origin_ref: `clip#${view.clip.id}` }
+          : { source_id: view.video?.id, origin_ref: `chat#${m.id}` },
+      ),
     onSuccess: () => {
       setDone(true);
       qc.invalidateQueries({ queryKey: qk.channelKnowledge(projectId!) });
@@ -684,14 +711,38 @@ function RememberButton({ m, view }: { m: ChatMsg; view: ChatThreadView }) {
   );
 }
 
+/**
+ * Чат клипа в редакторе: что сказать экрану, у которого клип открыт. Пока агент правит клип, автосохранение экрана ждёт:
+ * иначе оно затрёт правки агента. Когда кончил (или откатили, или подтвердили карточку), экран перечитывает клип.
+ */
+export interface ClipChatBridge {
+  onRunningChange?: (running: boolean) => void;
+  onChanged: () => void;
+}
+
+/** До правки клипа кнопкой в чате и после неё. */
+type ClipEdit = { before: () => void; after: () => void };
+
 export function ChatConversation({
   threadId,
   compact,
   header,
+  bridge,
+  suggestions,
+  chips,
+  placeholder,
+  emptyHint,
 }: {
   threadId: number;
   compact?: boolean;
   header?: (view: ChatThreadView | undefined) => ReactNode;
+  bridge?: ClipChatBridge;
+  /** Подсказки в пустой переписке вместо обычных для этого уровня. */
+  suggestions?: string[];
+  /** Подсказки над полем ввода: видны всегда, не только в пустой переписке. */
+  chips?: string[];
+  placeholder?: string;
+  emptyHint?: string;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -711,13 +762,54 @@ export function ChatConversation({
   const liveSse = useLiveRun(threadId, running, refresh);
   const live = liveSse ?? view.data?.live ?? null;
 
+  const bridgeRef = useRef(bridge);
+  bridgeRef.current = bridge;
+  // Ход закончился — экран перечитывает клип; ушли с чата — флаг «агент работает» не должен навсегда выключить автосохранение.
+  const wasRunning = useRef(false);
+  useEffect(() => {
+    bridgeRef.current?.onRunningChange?.(running);
+    if (wasRunning.current && !running) bridgeRef.current?.onChanged();
+    wasRunning.current = running;
+  }, [running]);
+  useEffect(
+    () => () => {
+      bridgeRef.current?.onRunningChange?.(false);
+      if (wasRunning.current) bridgeRef.current?.onChanged();
+    },
+    [threadId],
+  );
+  const clipEdit = useMemo<ClipEdit>(
+    () => ({
+      before: () => bridgeRef.current?.onRunningChange?.(true),
+      after: () => {
+        bridgeRef.current?.onChanged();
+        bridgeRef.current?.onRunningChange?.(wasRunning.current);
+      },
+    }),
+    [],
+  );
+
   const send = useMutation({
-    mutationFn: ({ text, attachments }: { text: string; attachments: ChatAttachment[] }) => chatApi.send(threadId, text, attachments),
-    onSuccess: () => {
+    mutationFn: ({ text, attachments }: { text: string; attachments: ChatAttachment[] }) => {
+      // Сначала несохранённые правки экрана уезжают на сервер: агент должен видеть их.
+      bridgeRef.current?.onRunningChange?.(true);
+      return chatApi.send(threadId, text, attachments);
+    },
+    onSuccess: async () => {
       stick.current = true;
       refresh();
+      if (!bridgeRef.current) return;
+      const fresh = await view.refetch();
+      // Ход кончился сразу (нет ключа, ошибка модели): «работает» так и не появилось.
+      if (!fresh.data?.running) {
+        bridgeRef.current?.onRunningChange?.(false);
+        bridgeRef.current?.onChanged();
+      }
     },
-    onError: (e) => toast.error(errText(e, "Не отправилось")),
+    onError: (e) => {
+      bridgeRef.current?.onRunningChange?.(false);
+      toast.error(errText(e, "Не отправилось"));
+    },
   });
   const stop = useMutation({ mutationFn: () => chatApi.cancel(threadId), onSuccess: refresh });
 
@@ -771,14 +863,22 @@ export function ChatConversation({
             <div className="chat-empty">
               <div className="chat-empty-mark">✦</div>
               <div className="chat-empty-title">
-                {view.data!.video ? `Агент видео «${view.data!.video.title}»` : view.data!.project ? `Агент проекта «${view.data!.project.name}»` : "Агент сервиса"}
+                {view.data!.clip
+                  ? `Агент клипа «${view.data!.clip.title}»`
+                  : view.data!.video
+                    ? `Агент видео «${view.data!.video.title}»`
+                    : view.data!.project
+                      ? `Агент проекта «${view.data!.project.name}»`
+                      : "Агент сервиса"}
               </div>
               <p className="muted">
-                Пиши как обычному ассистенту: агент читает проекты и клипы, правит монтаж, субтитры и звук, запускает нарезку. Опасное — публикацию и
-                удаление — сделает только после твоей кнопки. Правки клипа откатываются.
+                {emptyHint ??
+                  (view.data!.clip
+                    ? "Опишите, что сделать с клипом: агент сам расставит титры, мемы, звуки и наезды, посмотрит кадры и отчитается. Не понравится — «Откатить» в чате или Ctrl+Z в редакторе."
+                    : "Пиши как обычному ассистенту: агент читает проекты и клипы, правит монтаж, субтитры и звук, запускает нарезку. Опасное — публикацию и удаление — сделает только после твоей кнопки. Правки клипа откатываются.")}
               </p>
               <div className="chat-suggest">
-                {suggestionsFor(view.data!).map((s) => (
+                {(suggestions ?? suggestionsFor(view.data!)).map((s) => (
                   <button key={s} className="agent-chip" disabled={!ai.available || send.isPending} onClick={() => send.mutate({ text: s, attachments: [] })}>
                     {s}
                   </button>
@@ -807,24 +907,34 @@ export function ChatConversation({
                 </div>
               </div>
             ) : (
-              <AssistantMessage key={m.id} m={m} live={live} threadId={threadId} onRef={onRef} />
+              <AssistantMessage key={m.id} m={m} live={live} threadId={threadId} onRef={onRef} clipEdit={bridge ? clipEdit : undefined} />
             ),
           )}
         </div>
       </div>
       {media ? <MediaPanel target={media} onClose={() => setMedia(null)} /> : null}
       <div className="chat-bottom">
+        {chips?.length ? (
+          <div className="agent-chips chat-chips">
+            {chips.map((s) => (
+              <button key={s} type="button" className="agent-chip" disabled={running || send.isPending || !ai.available} title={s} onClick={() => send.mutate({ text: s, attachments: [] })}>
+                {s}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <Composer
           projectId={view.data?.project?.id}
           disabled={false}
           running={running || send.isPending}
+          placeholder={placeholder}
           onSend={(text, attachments) => send.mutateAsync({ text, attachments })}
           onStop={() => stop.mutate()}
         />
         <div className="chat-foot muted">
           Enter — отправить · Shift+Enter — перенос · {view.data!.model}
           {groups.length ? ` · подгружено: ${groups.join(", ")}` : ""}
-          {view.data!.project?.auto_rules ? ` · правила из разговора: ${view.data!.project.auto_rules === "auto" ? "сразу" : "с вопросом"}` : ""}
+          {view.data!.project?.auto_rules && !view.data!.clip ? ` · правила из разговора: ${view.data!.project.auto_rules === "auto" ? "сразу" : "с вопросом"}` : ""}
         </div>
       </div>
     </div>

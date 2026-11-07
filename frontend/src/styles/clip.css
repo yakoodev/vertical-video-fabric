@@ -412,9 +412,7 @@ button.cseg-row:hover { background: var(--surface-2); }
 .cchat .agent { min-height: 0; gap: 6px; }
 .cchat .agent-head:empty { display: none; }
 .cchat .agent--compact .agent-head { min-height: 0; }
-.cchat .agent-list { min-height: 52px; max-height: 150px; }
-.cchat .agent-chips { display: none; }
-.cchat .agent-input textarea { min-height: 38px; }
+.cchat .agent > .chat-conv.compact { flex: none; height: 460px; min-height: 0; }
 .cchat-old > summary { cursor: pointer; font-size: 13px; color: var(--text-dim); }
 .cchat-old-list { display: grid; gap: 6px; max-height: 160px; overflow: auto; padding-top: 6px; font-size: 12.5px; }
 .cchat-old-m.user { color: var(--text-dim); }

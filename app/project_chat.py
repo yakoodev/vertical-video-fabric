@@ -3,15 +3,16 @@
 Владелец: «было бы круто еще общаться с тем агентом как с тобой. типа на каждый проект
 свои чаты» и «общаться как с тобой в плане текстом в сервисе».
 
-Строится на встроенном ИИ-монтажёре (``app/ai/editor_agent.py``): тот же клиент Gemini
-(``editor_agent.client_factory`` — тесты подставляют фейк), та же сборка истории и ответов
-инструментов, тот же реестр инструментов, что у MCP (``app/agent_tools.py``). Устройство:
+Цикл «модель ↔ инструменты» общий с ИИ-монтажёром (``app/ai/agent_loop.py``), клиент Gemini тоже
+(``editor_agent.client_factory`` — тесты подставляют фейк), реестр инструментов общий с MCP
+(``app/agent_tools.py``). Устройство:
 
 * **Переписки** (``chat_threads``): у переписки может быть проект-серия/канал или нет
   (общий чат). У проекта — своя «основная» переписка (``is_default``): её же показывает
   вкладка «Чат» серии и в неё пишет Telegram-тема проекта. Реплики — ``project_chat_messages``.
   Чат видео — переписка с ``source_id``: одна на видео, проект берётся у видео в момент чтения
   (перенесли видео — чат работает уже в новом проекте, лор старого к нему не идёт), удаляется вместе с видео.
+  Чат клипа — переписка с ``clip_plan_id``: так же, а ход в ней делает ИИ-монтажёр (``app/clip_chat.py``).
 * **Инструменты группами** (``app/chat_tools.py``): база (проект + посмотреть клип) в каждом
   ходе, остальное — ``load_tools`` по запросу модели или по словам владельца.
 * **Ответ печатается по ходу**: ход идёт в фоновом потоке, текст Gemini приходит потоком
@@ -39,8 +40,6 @@
 
 from __future__ import annotations
 
-import base64
-import copy
 import json
 import re
 import threading
@@ -51,32 +50,35 @@ from app import autopilot as A
 from app import chat_tools as CT
 from app import project_knowledge as K
 from app import projects as P
-from app.agent_tools import ImageResult, ToolContext
+from app.agent_tools import ToolContext
+from app.ai.agent_loop import (  # noqa: F401
+    _merge_part, _pure_text, brief_args, call_model, clean_reply, history_contents, MAX_OUTPUT_TOKENS, parts_text,
+    run_loop, SAY, step_from_result, TurnPolicy, TurnState,
+)
 from app.settings import settings
 
 from app.project_chat_threads import (  # noqa: F401
-    VIDEO_THREAD_TITLE, HIDDEN_SOURCE_TYPES, _MESSAGES_SQL, CHAT_SCHEMA_SQL, ensure_chat_schema, _migrate_messages,
-    ChatBusy, ChatCancelled, _loads, _dumps, _thread, get_thread, video_thread, _video_title, create_thread,
+    VIDEO_THREAD_TITLE, CLIP_THREAD_TITLE, HIDDEN_SOURCE_TYPES, _MESSAGES_SQL, CHAT_SCHEMA_SQL, ensure_chat_schema,
+    _migrate_messages, ChatBusy, ChatCancelled, _loads, _dumps, _thread, get_thread, video_thread, _video_title,
+    clip_thread, find_clip_thread, legacy_clip_messages, active_clip_run, wait_clip_run, create_thread,
     default_thread, update_thread, _touch, delete_thread, list_threads, _msg, add_thread_message, add_message,
     update_message, get_message, thread_messages, list_messages, clear_thread, clear_chat, ai_status, models, _Run,
-    _RUNS, _LOCK, active_run, cancel, wait_thread, wait, _active,
+    _RUNS, _LOCK, _live, active_run, cancel, wait_thread, wait, _active,
 )
 from app.project_chat_context import (  # noqa: F401
     _log, HISTORY_KEEP, SUMMARIZE_AFTER, SUMMARY_CHARS, CONTEXT_CHARS, CONTEXT_SOURCES, error_hint, video_context,
-    project_context, general_context, _heuristic_summary, summarize_thread, maybe_summarize,
+    project_context, general_context, _heuristic_summary, summarize_thread, maybe_summarize, model_history,
 )
 from app.project_chat_view import (  # noqa: F401
     _confirmation, get_confirmation, _patch_step, revert_checkpoint, _decorate, thread_view, chat_view,
 )
 
 MAX_ROUNDS = 24
-MAX_OUTPUT_TOKENS = 8192
-SAY = "_say"
 # Клиповые инструменты, полезные в разговоре о проекте (совместимость: прежний список чата проекта).
 CLIP_TOOLS = ("get_clip", "get_transcript", "get_performance", "get_playbook", "list_clips", "list_projects")
 
 
-def _gemini(client: Any = None) -> Any:
+def _gemini(client: Any = None, timeout: int = 300) -> Any:
     from app.ai import editor_agent
 
     if client is not None:
@@ -87,7 +89,7 @@ def _gemini(client: Any = None) -> Any:
         return None
     from app.ai.gemini import GeminiClient
 
-    return GeminiClient(timeout=300)
+    return GeminiClient(timeout=timeout)
 
 
 # --------------------------------------------------------------------------- #
@@ -177,66 +179,6 @@ def _declarations(json_schema: bool = True, groups: list[str] | None = None) -> 
 
 
 # --------------------------------------------------------------------------- #
-# Модель: поток или целиком
-# --------------------------------------------------------------------------- #
-
-
-def _pure_text(part: dict) -> bool:
-    return "text" in part and not part.get("thought") and set(part) <= {"text", "thoughtSignature"}
-
-
-def _merge_part(parts: list[dict], part: dict) -> None:
-    if _pure_text(part) and parts and _pure_text(parts[-1]) and "thoughtSignature" not in parts[-1]:
-        parts[-1]["text"] += part.get("text") or ""
-        if part.get("thoughtSignature"):
-            parts[-1]["thoughtSignature"] = part["thoughtSignature"]
-        return
-    parts.append(dict(part))
-
-
-def call_model(gemini: Any, model: str, payload: dict, run: _Run | None = None) -> dict:
-    """Ответ модели; если клиент умеет поток — текст по кусочкам в ``run``. Сбой потока до
-    первого куска — повтор обычным запросом (у него ретраи и прокси)."""
-    stream = getattr(gemini, "stream_generate_content", None)
-    if stream is None:
-        if run:
-            run.set_phase("thinking")
-        return gemini.generate_content(model, payload)
-    parts: list[dict] = []
-    feedback = None
-    finish = None
-    got = False
-    try:
-        for chunk in stream(model, payload):
-            got = True
-            if run and run.cancel.is_set():
-                raise ChatCancelled()
-            if not isinstance(chunk, dict):
-                continue
-            feedback = chunk.get("promptFeedback") or feedback
-            candidates = chunk.get("candidates") or []
-            if not candidates:
-                continue
-            finish = candidates[0].get("finishReason") or finish
-            for part in (candidates[0].get("content") or {}).get("parts") or []:
-                if not isinstance(part, dict):
-                    continue
-                _merge_part(parts, part)
-                if run and _pure_text(part) and part.get("text"):
-                    run.add_text(part["text"])
-    except ChatCancelled:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        if got:
-            raise
-        _log.info("chat: stream failed before first chunk (%s) — plain request", exc)
-        return gemini.generate_content(model, payload)
-    if not parts:
-        return {"candidates": [], "promptFeedback": feedback} if feedback else {"candidates": []}
-    return {"candidates": [{"content": {"role": "model", "parts": parts}, "finishReason": finish}]}
-
-
-# --------------------------------------------------------------------------- #
 # Ход агента
 # --------------------------------------------------------------------------- #
 
@@ -306,7 +248,7 @@ def _system(thread: dict, groups: list[str]) -> str:
     if groups:
         text += "\nПодгружены группы: " + ", ".join(groups) + ".\n"
     if any(g in groups for g in ("montage", "subtitles", "screens")):
-        from app.ai.editor_agent import CRAFT
+        from app.ai.editor_agent_prompts import CRAFT
 
         text += "\nРЕМЕСЛО МОНТАЖА (для правок клипа; справка по слоям — get_motion_reference)\n" + CRAFT
     if thread.get("summary"):
@@ -335,24 +277,111 @@ def _checkpoint(store: Any, thread_id: int, message_id: int, clip_plan_id: int, 
 
 
 def _step_from_result(step: dict, result: Any, ok: bool) -> dict:
-    from app.ai.editor_agent import _step_from_result as base
-
-    base(step, result, ok)
+    step_from_result(step, result, ok)
     step["result"] = CT.result_preview(result)
     return step
+
+
+class ThreadPolicy(TurnPolicy):
+    """Ход чата с агентом: инструменты группами, карточки опасного, точки отката и превью в шагах."""
+
+    def __init__(self, store: Any, thread: dict, groups: list[str], message: str, reply_id: int | None, note: str) -> None:
+        self.store = store
+        self.thread = thread
+        self.groups = groups
+        self.message = message
+        self.reply_id = reply_id
+        self.note = note
+        self.project_id = thread.get("project_id")
+        self.changes: list[dict] = []
+        self.ctxs: dict[int, ToolContext] = {}
+
+    def prompt(self, state: TurnState) -> str:
+        return _system(self.thread, self.groups)
+
+    def declarations(self, json_schema: bool) -> list[dict]:
+        return CT.declarations(self.groups, json_schema)
+
+    def clip_ctx(self, clip_id: int) -> ToolContext:
+        if clip_id not in self.ctxs:
+            def first_change(cid: int = clip_id) -> None:
+                if self.reply_id is None:
+                    return
+                cp = _checkpoint(self.store, self.thread["id"], self.reply_id, cid, f"Чат: {_short(self.message)}")
+                if cp:
+                    self.changes.append({"checkpoint_id": cp, "clip_plan_id": cid})
+
+            self.ctxs[clip_id] = ToolContext(store=self.store, clip_plan_id=clip_id, on_first_change=first_change)
+        return self.ctxs[clip_id]
+
+    def run_call(self, state: TurnState, name: str, args: dict) -> tuple[Any, bool]:
+        store, project_id = self.store, self.project_id
+        tool = CT.all_tools().get(name)
+        label_text = tool.step_label(args) if tool else f"Неизвестный инструмент {name}"
+        step: dict = {"tool": name, "label": label_text, "ok": None, "args": brief_args(args), "kind": "tool"}
+        if tool and tool.scope == "clip" and args.get("clip_id") not in (None, ""):
+            try:
+                step["clip_id"] = int(args["clip_id"])
+            except (TypeError, ValueError):
+                pass
+        state.steps.append(step)
+        state.emit("tool")
+        ok = False
+        if tool and CT.is_dangerous(store, name, args, project_id):
+            result: Any = hold_for_owner(store, self.thread["id"], self.reply_id, step, name, args, label_text)
+        else:
+            group = CT.group_of(name) if tool is not None and name != CT.LOAD_TOOLS else None
+            if group and group not in self.groups:
+                self.groups.append(group)  # позвала инструмент неподгруженной группы — оставим её
+            result, ok, clip_id = CT.run(store, name, args, project_id=project_id, clip_ctx=self.clip_ctx)
+            _step_from_result(step, result, ok)
+            if ok and name == CT.LOAD_TOOLS:
+                self.groups[:] = list(dict.fromkeys([*self.groups, *(result.get("loaded") or [])]))
+            if clip_id and "clip_id" not in step:
+                step["clip_id"] = clip_id
+            preview = CT.preview_for(store, name, result, clip_id) if ok else None
+            if preview:
+                step["preview"] = preview
+        state.emit()
+        return result, ok
+
+    def on_blocked(self, state: TurnState, reason: Any) -> str:
+        return f"Gemini остановился на своём фильтре контента ({reason}). Переформулируй или выбери другую модель."
+
+    def finish(self, state: TurnState, text: str) -> str:
+        if text:
+            return text
+        done = [s["label"] for s in state.steps if s.get("ok") and s.get("kind") == "tool"]
+        return self.note or ("Сделал:\n" + "\n".join(f"- {d}" for d in done[:20]) if done else "Готово.")
+
+
+def hold_for_owner(store: Any, thread_id: int, reply_id: int | None, step: dict, name: str, args: dict, label: str) -> dict:
+    """Опасное не выполняем: карточка владельцу в переписке, модели — «ждёт подтверждения»."""
+    conf_id = None
+    if reply_id is not None:
+        cur = store.db.execute(
+            "INSERT INTO chat_confirmations (thread_id, message_id, tool, args_json, label) "
+            "VALUES (?, ?, ?, ?, ?)", (thread_id, reply_id, name, _dumps(args), label))
+        conf_id = int(cur.lastrowid)
+    step.update(kind="confirm", ok=None, confirmation_id=conf_id, danger=CT.danger_label(name))
+    return {"ok": False, "pending_confirmation": True,
+            "note": "не выполнено: ждёт подтверждения владельца кнопкой в чате; не повторяй "
+                    "вызов, скажи владельцу, что ждёшь подтверждения"}
 
 
 def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat:ui", message_id: int | None = None,
              reply_id: int | None = None, history: list[dict] | None = None, client: Any = None,
              on_step: Callable[[list], None] | None = None, run: _Run | None = None,
-             max_rounds: int = MAX_ROUNDS) -> dict:
+             max_rounds: int = MAX_ROUNDS, model: str | None = None, max_steps: int | None = None) -> dict:
     """Один ход: обучение на словах владельца (в проекте), затем модель ↔ инструменты.
     Возвращает ``{text, steps, learned, decided, ai, model, changes}``."""
-    from app.ai.editor_agent import _clean_reply, _history_contents, _parts_text, _prune_images, _response_object, \
-        _shrink_frame
-
     if not isinstance(thread, dict):
         thread = get_thread(store, int(thread))
+    if thread.get("clip_plan_id"):
+        from app.clip_chat import run_clip_turn
+
+        return run_clip_turn(store, thread, message, reply_id=reply_id, history=history, client=client,
+                             on_step=on_step, run=run, model=model, max_steps=max_steps)
     project_id = thread.get("project_id")
     source_id = thread.get("source_id")
     if source_id:
@@ -393,142 +422,19 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
     first = f"{message.strip()}\n\n---\nСвежий {label}:\n{context}"
     if note:
         first += f"\n\nСервис уже сделал: {note}"
-    contents = _history_contents(history or []) + [{"role": "user", "parts": [{"text": first}]}]
+    contents = history_contents(history or []) + [{"role": "user", "parts": [{"text": first}]}]
     if len(contents) > 1 and contents[-2]["role"] == "user":  # история кончилась вопросом без ответа
         contents.insert(-1, {"role": "model", "parts": [{"text": "(ответ прерван)"}]})
-    steps: list[dict] = []
-    changes: list[dict] = []
-    ctxs: dict[int, ToolContext] = {}
-    use_json = True
-    used_model = thread.get("model") or settings.gemini_agent_model
-    final = ""
-
-    def emit(phase: str | None = None) -> None:
-        if run:
-            run.set_steps(steps, phase)
-        if on_step:
-            on_step(copy.deepcopy(steps))
-
-    def clip_ctx(clip_id: int) -> ToolContext:
-        if clip_id not in ctxs:
-            def first_change(cid: int = clip_id) -> None:
-                if reply_id is None:
-                    return
-                cp = _checkpoint(store, thread["id"], reply_id, cid, f"Чат: {_short(message)}")
-                if cp:
-                    changes.append({"checkpoint_id": cp, "clip_plan_id": cid})
-
-            ctxs[clip_id] = ToolContext(store=store, clip_plan_id=clip_id, on_first_change=first_change)
-        return ctxs[clip_id]
-
-    for rounds in range(max_rounds + 1):
-        if run and run.cancel.is_set():
-            raise ChatCancelled()
-        tools_on = rounds < max_rounds
-        payload: dict = {"systemInstruction": {"parts": [{"text": _system(thread, groups)}]}, "contents": contents,
-                         "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS}}
-        if tools_on:
-            payload["tools"] = [{"functionDeclarations": CT.declarations(groups, use_json)}]
-        elif rounds:
-            contents.append({"role": "user", "parts": [{"text": "Лимит шагов исчерпан — коротко отчитайся, что "
-                                                                 "сделал и что осталось."}]})
-        try:
-            response = call_model(gemini, used_model, payload, run)
-        except RuntimeError as exc:
-            if tools_on and use_json and "parametersJsonSchema" in str(exc):
-                use_json = False
-                payload["tools"] = [{"functionDeclarations": CT.declarations(groups, False)}]
-                response = call_model(gemini, used_model, payload, run)
-            else:
-                raise
-        candidates = (response or {}).get("candidates") if isinstance(response, dict) else None
-        if not candidates:
-            blocked = ((response or {}).get("promptFeedback") or {}).get("blockReason") \
-                if isinstance(response, dict) else None
-            if blocked:
-                final = f"Gemini остановился на своём фильтре контента ({blocked}). Переформулируй или выбери " \
-                        f"другую модель."
-                break
-            raise RuntimeError("модель не ответила")
-        parts = [p for p in (candidates[0].get("content") or {}).get("parts") or [] if isinstance(p, dict)]
-        calls = [p for p in parts if isinstance(p.get("functionCall"), dict)]
-        if parts:
-            contents.append({"role": "model", "parts": parts})
-        if not calls:
-            final = _clean_reply(_parts_text(parts))
-            break
-        said = _parts_text(parts)
-        if run:
-            run.take_text()
-        if said:
-            steps.append({"tool": SAY, "label": said[:600], "ok": True, "kind": "say"})
-        responses = []
-        images: list[dict] = []
-        for part in calls:
-            if run and run.cancel.is_set():
-                raise ChatCancelled()
-            call = part["functionCall"]
-            name = str(call.get("name") or "")
-            args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            tool = CT.all_tools().get(name)
-            label_text = tool.step_label(args) if tool else f"Неизвестный инструмент {name}"
-            from app.ai.editor_agent import _brief_args
-
-            step: dict = {"tool": name, "label": label_text, "ok": None, "args": _brief_args(args), "kind": "tool"}
-            if tool and tool.scope == "clip" and args.get("clip_id") not in (None, ""):
-                try:
-                    step["clip_id"] = int(args["clip_id"])
-                except (TypeError, ValueError):
-                    pass
-            steps.append(step)
-            emit("tool")
-            if tool and CT.is_dangerous(store, name, args, project_id):
-                conf_id = None
-                if reply_id is not None:
-                    cur = store.db.execute(
-                        "INSERT INTO chat_confirmations (thread_id, message_id, tool, args_json, label) "
-                        "VALUES (?, ?, ?, ?, ?)", (thread["id"], reply_id, name, _dumps(args), label_text))
-                    conf_id = int(cur.lastrowid)
-                step.update(kind="confirm", ok=None, confirmation_id=conf_id, danger=CT.danger_label(name))
-                result: Any = {"ok": False, "pending_confirmation": True,
-                               "note": "не выполнено: ждёт подтверждения владельца кнопкой в чате; не повторяй "
-                                       "вызов, скажи владельцу, что ждёшь подтверждения"}
-            else:
-                group = CT.group_of(name) if tool is not None and name != CT.LOAD_TOOLS else None
-                if group and group not in groups:
-                    groups.append(group)  # позвала инструмент неподгруженной группы — оставим её
-                result, ok, clip_id = CT.run(store, name, args, project_id=project_id, clip_ctx=clip_ctx)
-                _step_from_result(step, result, ok)
-                if ok and name == CT.LOAD_TOOLS:
-                    groups = list(dict.fromkeys([*groups, *(result.get("loaded") or [])]))
-                if clip_id and "clip_id" not in step:
-                    step["clip_id"] = clip_id
-                preview = CT.preview_for(store, name, result, clip_id) if ok else None
-                if preview:
-                    step["preview"] = preview
-            emit()
-            body = _response_object(result)
-            if isinstance(result, ImageResult):
-                data, mime = _shrink_frame(result)
-                body["note"] = "кадр приложен следующей картинкой"
-                images.append({"text": f"Кадр на {result.info.get('t')} с:"})
-                images.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode("ascii")}})
-            response_part: dict = {"functionResponse": {"name": name, "response": body}}
-            if call.get("id"):
-                response_part["functionResponse"]["id"] = call["id"]
-            responses.append(response_part)
-        contents.append({"role": "user", "parts": responses + images})
-        _prune_images(contents)
-    if not final:
-        done = [s["label"] for s in steps if s.get("ok") and s.get("kind") == "tool"]
-        final = note or ("Сделал:\n" + "\n".join(f"- {d}" for d in done[:20]) if done else "Готово.")
+    used_model = model or thread.get("model") or settings.gemini_agent_model
+    policy = ThreadPolicy(store, thread, groups, message, reply_id, note)
+    final, state = run_loop(policy, gemini, used_model, contents, limit=max_steps or max_rounds, on_step=on_step, run=run)
     try:
         if sorted(groups) != sorted(thread.get("tool_groups", [])):
             update_thread(store, thread["id"], tool_groups=groups)
     except KeyError:
         pass
-    return {"text": final, "steps": steps, "learned": learned, "decided": decided, "remembered": remembered, "ai": True,
-            "model": used_model, "changes": changes}
+    return {"text": final, "steps": state.steps, "learned": learned, "decided": decided, "remembered": remembered,
+            "ai": True, "model": used_model, "changes": policy.changes}
 
 
 # --------------------------------------------------------------------------- #
@@ -558,7 +464,8 @@ def _attachments_note(attachments: list[dict]) -> tuple[str, list[dict]]:
 
 def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui", actor: str = "chat:ui",
                    client: Any = None, attachments: list[dict] | None = None,
-                   on_done: Callable[[str], None] | None = None) -> dict:
+                   on_done: Callable[[str], None] | None = None, model: str | None = None,
+                   max_steps: int | None = None) -> dict:
     """Сообщение владельца → ход агента в фоне. Возвращает {message_id, reply_id, thread_id}."""
     text = str(text or "").strip()
     note, files = _attachments_note(attachments or [])
@@ -566,18 +473,16 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
         raise ValueError("пустое сообщение")
     thread = get_thread(store, thread_id)
     with _LOCK:
-        current = _RUNS.get(int(thread_id))
-        if current is not None and not current.done:
+        if _live(_RUNS.get(int(thread_id))):
             raise ChatBusy("агент ещё отвечает на прошлое сообщение")
-        history = [m for m in thread_messages(store, thread_id, after=int(thread.get("summary_upto") or 0))
-                   if m["status"] != "running"][-HISTORY_KEEP:]
+        history = model_history(store, thread)
         user_id = add_thread_message(store, thread_id, "user", text or "(файл)", origin=origin,
                                      meta={"attachments": files} if files else None)
-        model = thread.get("model") or settings.gemini_agent_model
-        reply_id = add_thread_message(store, thread_id, "assistant", "", status="running", origin=origin, model=model)
+        used_model = model or thread.get("model") or settings.gemini_agent_model
+        reply_id = add_thread_message(store, thread_id, "assistant", "", status="running", origin=origin, model=used_model)
         if thread["title"] in ("Новый чат", "") and not thread["is_default"] and text:
             update_thread(store, thread_id, title=_short(text, 60))
-        run = _Run(int(thread_id), thread.get("project_id"), reply_id)
+        run = _Run(int(thread_id), thread.get("project_id"), reply_id, thread.get("clip_plan_id"))
         _RUNS[int(thread_id)] = run
         prompt = (text + ("\n" + note if note else "")).strip()
 
@@ -588,7 +493,8 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
             reply = ""
             try:
                 result = run_turn(store, get_thread(store, thread_id), prompt, actor=actor, message_id=user_id,
-                                  reply_id=reply_id, history=history, client=client, on_step=on_step, run=run)
+                                  reply_id=reply_id, history=history, client=client, on_step=on_step, run=run,
+                                  model=model, max_steps=max_steps)
                 meta = {"changes": result.get("changes") or [],
                         **({"remembered": result["remembered"]} if result.get("remembered") else {})}
                 update_message(store, reply_id, text=result["text"], steps=result["steps"],
@@ -604,7 +510,7 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
             except Exception as exc:  # noqa: BLE001 - честно: ИИ недоступен
                 _log.warning("chat thread %s failed: %s", thread_id, exc)
                 partial = run.snapshot()
-                reply = f"ИИ-агент не ответил. {error_hint(exc)} Сообщение сохранено."
+                reply = _failure_text(thread, exc)
                 update_message(store, reply_id, text=reply, status="error", steps=partial["steps"],
                                meta={"changes": _changes_of(store, reply_id)})
             try:
@@ -625,7 +531,14 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
         thread_obj = threading.Thread(target=work, name=f"chat-{thread_id}", daemon=True)
         run.thread = thread_obj
         thread_obj.start()
-    return {"message_id": user_id, "reply_id": reply_id, "thread_id": int(thread_id)}
+    return {"message_id": user_id, "reply_id": reply_id, "thread_id": int(thread_id), "run_id": run.id}
+
+
+def _failure_text(thread: dict, exc: Exception) -> str:
+    hint = error_hint(exc)
+    if thread.get("clip_plan_id"):  # чат клипа всегда начинал сбой со слова «Ошибка»: на это смотрят скрипты
+        return hint if hint.startswith("Ошибка") else f"Ошибка: {hint}"
+    return f"ИИ-агент не ответил. {hint} Сообщение сохранено."
 
 
 def _changes_of(store: Any, message_id: int) -> list[dict]:
