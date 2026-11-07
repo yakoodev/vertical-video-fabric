@@ -20,6 +20,8 @@ T_WORLD, T_CHAR, T_LOC, T_SCENE, T_EP = "story_world", "story_char", "story_loc"
 
 
 ACTIVE_STATUSES = ("new", "scripted", "planned", "awaiting_approval", "generating", "assembling")
+# Черновик выпуска: сценарий лежит и читается. Работник его не берёт, денег он не тратит; дальше только по «Запустить».
+DRAFT_STATUS = "draft"
 
 
 ORIGINS = ("generated", "upload", "agent")
@@ -226,6 +228,10 @@ def delete_world(store: Any, world_id: int) -> dict:
         (int(world_id), *ACTIVE_STATUSES))]
     if busy:
         raise StoryError(f"у мира эпизоды в работе {busy} — отмени их (story_cancel)")
+    drafts = [int(r["id"]) for r in store.db.query_all("SELECT id FROM story_episodes WHERE world_id = ? AND status = ?",
+                                                       (int(world_id), DRAFT_STATUS))]
+    if drafts:
+        raise StoryError(f"у мира черновики {drafts}: сценарии пропадут вместе с миром, сначала удали их (story_delete)")
     for table, target in (("story_characters", T_CHAR), ("story_locations", T_LOC), ("story_scenes", T_SCENE),
                           ("story_episodes", T_EP)):
         for r in store.db.query_all(f"SELECT id FROM {table} WHERE world_id = ?", (int(world_id),)):

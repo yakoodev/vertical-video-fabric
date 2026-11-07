@@ -291,19 +291,22 @@ function VersionsCard({
   // «Последняя» — последний готовый файл; снимок «до отката» файла не имеет.
   const newest = view.versions.find((v) => v.status === "succeeded");
   const mergeable = view.neighbors.filter((n) => n.id !== view.id && n.format === view.format);
+  const uploaded = Boolean(view.uploaded);
   return (
     <section className="ccard cvers">
       <div className="ccard-h">
-        <h2>Версии монтажа <span className="ccard-n">{view.version_count}</span></h2>
-        <button
-          type="button"
-          className="btn ghost sm"
-          disabled={newVersion.isPending}
-          title="Копия текущего монтажа новой версией этого клипа: прежняя останется"
-          onClick={() => newVersion.mutate()}
-        >
-          + Новая версия
-        </button>
+        <h2>{uploaded ? "Версии" : "Версии монтажа"} <span className="ccard-n">{view.version_count}</span></h2>
+        {uploaded ? null : (
+          <button
+            type="button"
+            className="btn ghost sm"
+            disabled={newVersion.isPending}
+            title="Копия текущего монтажа новой версией этого клипа: прежняя останется"
+            onClick={() => newVersion.mutate()}
+          >
+            + Новая версия
+          </button>
+        )}
       </div>
       <div className="cvers-list">
         {view.stale && view.versions.length ? (
@@ -347,7 +350,7 @@ function VersionsCard({
                     {[version.format, version.duration_sec ? formatDuration(version.duration_sec) : "", dateTimeRu(version.at)].filter(Boolean).join(", ")}
                   </span>
                   <span className="cver-c" title={version.changes.join(", ")}>
-                    {version.changes.join(", ") || (version.render_id ? "без новых правок" : "снимок перед откатом")}
+                    {uploaded ? "файл как загружен" : version.changes.join(", ") || (version.render_id ? "без новых правок" : "снимок перед откатом")}
                   </span>
                 </span>
               </button>
@@ -362,7 +365,7 @@ function VersionsCard({
         {!view.versions.length ? <p className="muted cvers-empty">Рендеров пока нет. Смотреть монтаж можно и без них.</p> : null}
       </div>
       {view.drafts ? <div className="cvers-drafts muted">Ещё {plural(view.drafts, "пустой черновик", "пустых черновика", "пустых черновиков")} спрятано</div> : null}
-      <details className="cvers-group">
+      {uploaded ? null : <details className="cvers-group">
         <summary>Объединить или разъединить</summary>
         <div className="cvers-group-b">
           {view.plans.length > 1 ? (
@@ -388,7 +391,7 @@ function VersionsCard({
             <button type="button" className="btn sm" disabled={!mergeWith || merge.isPending} onClick={() => merge.mutate(Number(mergeWith))}>Объединить</button>
           </div>
         </div>
-      </details>
+      </details>}
       {target ? (
         <RollbackDialog
           view={view}
@@ -690,7 +693,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
         ) : null}
       </div>
       <div className="cpub-more">
-        <a href={playbackApi.packageUrl(view.id)} title="Zip для Premiere и DaVinci Resolve: монтаж, субтитры, файлы, без рендера">Экспорт для монтажки</a>
+        {view.uploaded ? null : <a href={playbackApi.packageUrl(view.id)} title="Zip для Premiere и DaVinci Resolve: монтаж, субтитры, файлы, без рендера">Экспорт для монтажки</a>}
         {publishingOn && render ? <button type="button" className="linkish" title={`Версия ${render.label}`} onClick={() => setDialogRender(render)}>Все настройки публикации</button> : null}
         {jobId ? <Link to={`/pubs/${jobId}`}>Публикация №{jobId} в очереди</Link> : view.published ? <Link to="/pubs?tab=pubs">Опубликован: {view.published}</Link> : null}
       </div>
@@ -760,8 +763,9 @@ export function ClipPage() {
   if (query.isError) return <ErrorState error={query.error} onRetry={() => query.refetch()} />;
   if (!view) return null;
 
-  const fileGone = !view.canvas && !view.source.has_file;
-  const canRender = !fileGone && view.status !== "rendering" && !rendering;
+  const uploaded = Boolean(view.uploaded);
+  const fileGone = !view.canvas && !uploaded && !view.source.has_file;
+  const canRender = !uploaded && !fileGone && view.status !== "rendering" && !rendering;
   const start = view.start_sec && !view.canvas ? `, ${formatDuration(view.start_sec)}` : "";
   const parent = view.canvas ? view.project?.name ?? "холст" : view.source.name;
   const release = view.release;
@@ -779,7 +783,12 @@ export function ClipPage() {
                 из выпуска «<Link to={release.steps_to ?? release.to}>{release.name}</Link>»
               </span>
             ) : null}
-            {release?.has_steps ? null : <span>
+            {uploaded ? (
+              <span>
+                загружен готовым файлом{view.project ? <>, проект «<Link to={projectPath(view.project.id)}>{view.project.name}</Link>»</> : ""}
+              </span>
+            ) : null}
+            {release?.has_steps || uploaded ? null : <span>
               из {view.canvas ? "проекта" : "видео"} «
               {view.canvas ? (
                 view.project ? <Link to={projectPath(view.project.id)}>{parent}</Link> : parent
@@ -806,9 +815,18 @@ export function ClipPage() {
           ) : (
             <span className="btn" aria-disabled="true"><Icon name="arrow" size={16} /> Следующий клип</span>
           )}
-          <Link className="btn primary" to={clipEditorPath(view.source.id, view.id)}><Icon name="scissors" size={16} /> Открыть монтаж</Link>
+          {uploaded ? (
+            <span className="btn" aria-disabled="true" title="У загруженного файла нет монтажа"><Icon name="scissors" size={16} /> Открыть монтаж</span>
+          ) : (
+            <Link className="btn primary" to={clipEditorPath(view.source.id, view.id)}><Icon name="scissors" size={16} /> Открыть монтаж</Link>
+          )}
         </div>
       </div>
+      {uploaded ? (
+        <p className="cpage-note" role="note">
+          Это готовый файл, сервис его не менял. Его можно смотреть, скачать, подписать и опубликовать. Монтажа у него нет, поэтому нарезать заново и пересобрать здесь нельзя: новую версию загрузите файлом.
+        </p>
+      ) : null}
       {fileGone ? <MissingSourceNotice source={{ id: view.source.id, original_url: view.source.original_url }} /> : null}
       {on("stream_questions") ? <ClipQuestions clipPlanId={view.id} /> : null}
       <div className="cpage-grid">
@@ -818,10 +836,12 @@ export function ClipPage() {
               <video key={selected.key} src={selected.url} poster={selected.thumb ?? undefined} controls preload="metadata" playsInline style={wide ? undefined : { aspectRatio: stageRatio, width: "auto" }} />
             ) : (
               <div className="cstage-empty">
-                <p>{view.status === "rendering" ? "Рендер идёт…" : "Этот клип ещё не рендерили."}</p>
-                <button type="button" className="btn" disabled={!canRender} title={canRender ? "" : "Для рендера нужна запись стрима"} onClick={() => render.mutate()}>
-                  Рендерить
-                </button>
+                <p>{uploaded ? "Файл этого клипа удалён." : view.status === "rendering" ? "Рендер идёт…" : "Этот клип ещё не рендерили."}</p>
+                {uploaded ? null : (
+                  <button type="button" className="btn" disabled={!canRender} title={canRender ? "" : "Для рендера нужна запись стрима"} onClick={() => render.mutate()}>
+                    Рендерить
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -837,16 +857,18 @@ export function ClipPage() {
                 `${view.format}, ${formatDuration(view.duration_sec)}`
               )}
             </span>
-            <button type="button" className="btn sm" title="Весь монтаж без рендера: склейки, слои, субтитры, музыка" onClick={() => setWatching(true)}>
-              ▶ Смотреть монтаж
-            </button>
+            {uploaded ? null : (
+              <button type="button" className="btn sm" title="Весь монтаж без рендера: склейки, слои, субтитры, музыка" onClick={() => setWatching(true)}>
+                ▶ Смотреть монтаж
+              </button>
+            )}
             {view.stale && selected ? (
               <button type="button" className="btn sm" disabled={!canRender} title={canRender ? "Монтаж новее этого файла" : "Для рендера нужна запись стрима"} onClick={() => render.mutate()}>
                 {rendering || view.status === "rendering" ? "Рендер идёт…" : "Рендерить"}
               </button>
             ) : null}
           </div>
-          <SegmentsCard view={view} onChanged={refresh} />
+          {uploaded ? null : <SegmentsCard view={view} onChanged={refresh} />}
         </div>
         <div className="cpage-col">
           <VersionsCard
@@ -857,7 +879,7 @@ export function ClipPage() {
             canRender={canRender}
             onRender={() => render.mutate()}
           />
-          {on("editor_agent") ? (
+          {on("editor_agent") && !uploaded ? (
             <section className="ccard cchat">
               <h2>Чат с агентом о клипе</h2>
               <OlderChat view={view} />

@@ -277,6 +277,7 @@
 .cpage-h { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px 14px; }
 .cpage-title { flex: 1; min-width: 240px; }
 .cpage-title h1 { margin: 0; font-size: 26px; line-height: 1.2; font-weight: 700; }
+.cpage-note { margin: 0 0 12px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text-dim); font-size: 14px; line-height: 1.45; }
 .cpage-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 3px; color: var(--text-dim); font-size: 14px; }
 .cpage-sub a { color: var(--text); text-decoration: underline; text-decoration-color: var(--border-strong); text-underline-offset: 2px; }
 .cpage-sub a.cpage-moment { color: var(--accent-2); text-decoration-color: currentColor; }

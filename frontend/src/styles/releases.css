@@ -92,7 +92,35 @@
 .rel-older summary { cursor: pointer; color: var(--text-dim); }
 .rel-older ul { margin: 6px 0 0; padding-left: 18px; }
 .rel-older a { color: var(--accent-2); }
+/* Черновик: сценарий читают глазами, поэтому текст крупный и без моноширинного. */
+.rel-draft-start { border-color: var(--border-strong); background: var(--surface); }
+.rel-draft-start b { font-size: 16px; font-weight: 650; }
+.rel-draft-start p { margin: 4px 0 0; font-size: 14px; line-height: 1.45; }
+.rel-draft { display: grid; gap: 12px; min-width: 0; }
+.rel-draft-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.rel-draft-h h2 { margin: 0; font-size: 19px; font-weight: 650; }
+.rel-draft-log { margin: 0; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
+.rel-draft-premise { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.rel-draft-text { display: grid; gap: 10px; max-width: 72ch; }
+.rel-draft-text p { margin: 0; font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
+.rel-draft-role { display: block; color: var(--text-faint); font-size: 12.5px; line-height: 1.4; }
+.rel-draft-hud { display: block; color: var(--text-dim); font-size: 13.5px; line-height: 1.4; }
+.rel-draft-hud.danger { color: var(--danger); }
+.rel-draft-hud.resource { color: var(--warn); }
+.rel-draft-extra { display: grid; gap: 8px; margin: 0; padding-top: 12px; border-top: 1px solid var(--border); }
+.rel-draft-extra dt { color: var(--text-faint); font-size: 12.5px; }
+.rel-draft-extra dd { margin: 0; font-size: 15px; line-height: 1.45; overflow-wrap: anywhere; }
+.rel-beats { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.rel-beats li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; padding: 9px 0; border-top: 1px solid var(--border); }
+.rel-beats li:first-child { border-top: 0; }
+.rel-beat-n { color: var(--text-faint); font-size: 14px; line-height: 1.45; text-align: right; font-variant-numeric: tabular-nums; }
+.rel-beat-b { display: grid; gap: 3px; min-width: 0; }
+.rel-beat-t { font-size: 15.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.rel-beat-m { display: flex; flex-wrap: wrap; gap: 2px 12px; color: var(--text-dim); font-size: 13.5px; line-height: 1.4; }
+.rel-beat-f { overflow-wrap: anywhere; min-width: 0; }
+.rel-beat-f b { font-weight: 550; color: var(--text-faint); }
 @media (max-width: 860px) {
+  .rel-draft-text p { font-size: 16px; }
   .rel-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .rel-rail { position: static; }
   .rel-steps { grid-auto-flow: column; grid-auto-columns: minmax(150px, 1fr); overflow-x: auto; padding-bottom: 4px; }

@@ -65,6 +65,10 @@ class PlanRender:
     ) -> dict:
         """``end_hold_sec`` — стоп-кадр в конце для этого рендера (0..1.5); None — из настроек
         клипа (render_settings.end_hold_sec), там нет — RENDER_END_HOLD_SEC."""
+        from app.clip_upload import NO_MONTAGE, is_upload_plan
+
+        if is_upload_plan(self.store, clip_plan_id):
+            raise ValueError(NO_MONTAGE)
         plan = self.store.get_clip_plan(clip_plan_id)
         segments = plan.get("segments") or []
         if not segments:

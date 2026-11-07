@@ -107,7 +107,7 @@ export type StoryQuality = "fast" | "fast720" | "final" | "draft";
 export type Render3dWait = { job_id: number; status: string; progress: number; label: string; note: string; worker: string };
 
 export type EpisodeStatus =
-  | "new" | "scripted" | "planned" | "awaiting_approval" | "generating" | "assembling" | "done" | "failed" | "cancelled";
+  | "draft" | "new" | "scripted" | "planned" | "awaiting_approval" | "generating" | "assembling" | "done" | "failed" | "cancelled";
 
 export interface StoryBeat {
   i: number;
@@ -278,5 +278,7 @@ export const storiesApi = {
   episode: (id: number) => api.get<StoryEpisode>(`/api/stories/episodes/${id}`),
   continueEpisode: (id: number, reassemble = false) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/continue`, { reassemble }),
   cancelEpisode: (id: number) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/cancel`),
+  /** «Запустить» черновик: дальше обычный конвейер, платное — карточкой. */
+  startEpisode: (id: number) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/start`),
   deleteEpisode: (id: number) => api.del(`/api/stories/episodes/${id}`),
 };

@@ -44,7 +44,7 @@ from app.settings import settings
 from app.stories_gen_script import (  # noqa: F401
     CPS, MAX_NEW_CAST, MAX_NEW_LOCATIONS, MAX_SHOTS_PER_SENTENCE, CAMERA_MOVES, SCRIPT_RULES, _shot_schema,
     script_schema, script_rules, _base_schema, _sfx_brief, script_context, _sentence, _key, _materialize, _shot,
-    normalize_script, script_words, set_script,
+    normalize_script, script_words, set_script, normalize_beats,
 )
 from app.stories_gen_beats import (  # noqa: F401
     BEAT_MIN_SEC, BEAT_MAX_SEC, BEAT_MERGE_SEC, MAX_NEW_SCENES, CAMERA_CYCLE, CAMERA_ALT, _est, split_text,
@@ -407,6 +407,8 @@ def advance(store: Any, episode_id: int, client: Any = None, max_steps: int = 8)
 def resume(store: Any, episode_id: int, client: Any = None) -> dict:
     """Продолжить упавший/отменённый эпизод с того шага, где есть данные."""
     ep = S.get_episode(store, episode_id)
+    if ep["status"] == S.DRAFT_STATUS:
+        raise S.StoryError("это черновик: продолжать нечего, его запускают кнопкой «Запустить» (story_start)")
     if ep["status"] in ("failed", "cancelled"):
         if not S.narration_text(ep):
             status = "new"
@@ -428,6 +430,9 @@ def reassemble(store: Any, episode_id: int) -> dict:
 
 def cancel(store: Any, episode_id: int) -> dict:
     ep = S.get_episode(store, episode_id, full=False)
+    if ep["status"] == S.DRAFT_STATUS:
+        # Отмена с последующим «Продолжить» обошла бы «Запустить». Черновик ничего не тратит: его просто удаляют.
+        raise S.StoryError("черновик не запущен, отменять нечего: его можно удалить")
     if ep.get("approval_id"):
         store.db.execute("UPDATE aiv_gen_jobs SET status = 'cancelled', error = 'эпизод отменён' "
                          "WHERE approval_id = ? AND status IN ('awaiting', 'approved', 'held')",
@@ -452,6 +457,75 @@ def create(store: Any, world_id: int, premise: str, duration: Any = None, tone: 
         return advance(store, int(ep["id"]), client=client)
     kick()
     return S.get_episode(store, int(ep["id"]))
+
+
+def create_draft(store: Any, world_id: int, premise: str, duration: Any = None, tone: str = "", script: dict | None = None,
+                 options: dict | None = None, requested_by: str = "agent") -> dict:
+    """Черновик выпуска: готовый сценарий и биты в статусе ``draft``. Ни Gemini, ни голоса, ни рендера, ни денег: работник
+    такой эпизод не берёт. Дальше — ``start_draft``. ``beats`` в ``script`` необязательны: нет — разбивка по сценарию."""
+    script = script or {}
+    if not script.get("sentences") and not P._text(script.get("text")):
+        raise S.StoryError("черновику нужен готовый сценарий: sentences [{text, shots}] или text")
+    premise = str(premise or "").strip() or P._text(script.get("logline")) or P._text(script.get("title"))
+    ep = S.create_episode(store, world_id, premise, duration, tone, options, requested_by, status=S.DRAFT_STATUS)
+    try:
+        return set_script(store, int(ep["id"]), script, source=requested_by)
+    except Exception:
+        S.delete_episode(store, int(ep["id"]))
+        raise
+
+
+def agent_start_refusal(store: Any, project_id: int) -> str:
+    """Почему агенту нельзя запустить черновик (пусто — можно): запуск ведёт к тратам, агенту это разрешает только
+    настройка проекта. Сами траты в обоих случаях идут обычным путём: карточка или потолки той же настройки."""
+    from app import agent_settings as AS
+
+    if AS.get_settings(store, project_id)["spend"]["enabled"]:
+        return ""
+    return (f"Черновик запускает владелец кнопкой «Запустить» на странице выпуска: настройка «{AS.NAME_SPEND}» в проекте "
+            f"выключена ({AS.WHERE})")
+
+
+def start_draft(store: Any, episode_id: int) -> dict:
+    """«Запустить»: черновик уходит в обычный конвейер с шага подбора сцен. Работа и деньги — как у любого эпизода:
+    платное только через карточку (``request_generation``). Запускает работник, ответ не ждёт озвучку и рендер."""
+    ep = S.get_episode(store, episode_id, full=False)
+    if ep["status"] != S.DRAFT_STATUS:
+        raise S.StoryError(f"запустить можно только черновик, а этот эпизод: {ep['status_label']}")
+    if not S.narration_text(S.get_episode(store, episode_id)):
+        raise S.StoryError("в черновике нет сценария")
+    S.set_status(store, episode_id, "scripted", (S.DRAFT_STATUS,), error="")  # двойное нажатие запустит один раз
+    kick()
+    return S.get_episode(store, episode_id)
+
+
+_ROLE_LABELS = {"hook": "крючок", "problem": "проблема", "solution": "решение", "mistake": "ошибка", "cta": "вопрос зрителю",
+                "finale": "финал"}
+
+
+def draft_view(store: Any, ep: dict) -> dict:
+    """Черновик для чтения глазами: сценарий и биты с именами вместо номеров. Только чтение, ничего не считает и не тратит."""
+    script = ep.get("script") or {}
+    world_id = int(ep["world_id"])
+    people = {int(c["id"]): c["name"] for c in S.list_characters(store, world_id)}
+    places = {int(loc["id"]): loc["name"] for loc in S.list_locations(store, world_id)}
+    raw = ep.get("beats") or (split_beats(script) if script.get("sentences") else [])
+    beats = []
+    for beat in raw:
+        spec = beat.get("spec") or {}
+        beats.append({"i": int(beat.get("i") or 0), "text": beat.get("text") or "", "sec": beat.get("est_sec") or 0,
+                      "sentence": beat.get("sentence"), "action": spec.get("action") or "", "accent": spec.get("accent") or "",
+                      "place": places.get(int(spec.get("location_id") or 0), ""),
+                      "who": [people[c] for c in spec.get("cast") or [] if c in people],
+                      "camera": spec.get("camera") or "", "sound": spec.get("sfx") or "", "scene_id": spec.get("scene_id")})
+    sentences = [{"text": s.get("text") or "", "role": _ROLE_LABELS.get(str(s.get("role") or ""), ""), "hud": s.get("hud") or "",
+                  "hud_kind": s.get("hud_kind") or ""} for s in script.get("sentences") or []]
+    extras = {k: script.get(k) for k in ("logline", "part_title", "hook_words", "viewer_question", "hashtags", "mistake",
+                                         "cliffhanger", "part") if script.get(k)}
+    return {"episode_id": int(ep["id"]), "title": script.get("title") or ep.get("title") or "", "premise": ep.get("premise") or "",
+            "tone": ep.get("tone") or "", "duration_target": float(ep.get("duration_target") or 0),
+            "est_sec": float(script.get("est_sec") or 0), "chars": int(script.get("chars") or 0), "text": script.get("text") or "",
+            "sentences": sentences, "beats": beats, **extras}
 
 
 _wake: threading.Event | None = None

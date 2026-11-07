@@ -42,7 +42,7 @@ from app import projects as P
 from app.settings import settings
 
 from app.stories_library import (  # noqa: F401
-    STYLE_KIND, SHEET_KIND, PLATE_KIND, SCENE_KIND, T_WORLD, T_CHAR, T_LOC, T_SCENE, T_EP, ACTIVE_STATUSES, ORIGINS,
+    STYLE_KIND, SHEET_KIND, PLATE_KIND, SCENE_KIND, T_WORLD, T_CHAR, T_LOC, T_SCENE, T_EP, ACTIVE_STATUSES, DRAFT_STATUS, ORIGINS,
     REUSE_MIN, STYLE_REFS_MAX, DEFAULT_STYLE_LABEL, DEFAULT_STYLE, FORMAT_STORY, FORMAT_DISASTER, FORMATS,
     DEFAULT_CAPTIONS, StoryError, _loads, _json, _tags, _drop_refs, _ref_brief, _image_asset, WORLD_FIELDS,
     MUSIC_MODES, _captions, _world_view, style_refs, get_world, list_worlds, save_world, mark_world_stale,
@@ -169,12 +169,13 @@ NARRATION_KIND = "story_narration"
 
 
 STATUSES = ("new", "scripted", "planned", "awaiting_approval", "generating", "assembling", "done", "failed",
-            "cancelled")
+            "cancelled", DRAFT_STATUS)
 
 
 STATUS_LABELS = {"new": "пишу сценарий", "scripted": "подбираю сцены", "planned": "считаю стоимость",
                  "awaiting_approval": "ждёт одобрения", "generating": "рисую сцены и озвучку",
-                 "assembling": "собираю клип", "done": "готово", "failed": "ошибка", "cancelled": "отменено"}
+                 "assembling": "собираю клип", "done": "готово", "failed": "ошибка", "cancelled": "отменено",
+                 DRAFT_STATUS: "только сценарий, не запущен"}
 TONES = ("смешно", "с иронией", "абсурдно", "уютно", "драматично", "напряжённо")
 DURATION_MIN = 30.0
 DURATION_MAX = 75.0
@@ -376,8 +377,8 @@ def is_3d(ep: dict | None) -> bool:
 
 
 def create_episode(store: Any, world_id: int, premise: str, duration: Any = None, tone: str = "",
-                   options: dict | None = None, requested_by: str = "agent") -> dict:
-    """Новый эпизод. Жанр — ``options.format`` или формат мира; у сериала-катастрофы эпизод — часть
+                   options: dict | None = None, requested_by: str = "agent", status: str = "new") -> dict:
+    """Новый эпизод. ``status`` пишется сразу: черновик (``draft``) работник не увидит ни на миг. Жанр — ``options.format`` или формат мира; у сериала-катастрофы эпизод — часть
     сериала мира (``options.part``: следующая по счёту, если не задана), длина 60–90 с. ``options.engine``:
     ``3d`` — серия на своём 3D-движке (без картинок сцен, 0 ₽), иначе картинки сцен; ``options.renderer`` у 3D:
     ``three`` — лоу-поли движок в сервисе, ``blender`` — кино-качество Blender на компьютере владельца (очередь
@@ -418,11 +419,11 @@ def create_episode(store: Any, world_id: int, premise: str, duration: Any = None
 
         options = D.episode_options(store, world, options)
     cur = store.db.execute(
-        "INSERT INTO story_episodes (project_id, world_id, premise, duration_target, tone, options_json, requested_by) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO story_episodes (project_id, world_id, premise, duration_target, tone, options_json, requested_by, status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (int(world["project_id"]), int(world_id), premise, round(seconds, 1),
          P._text(tone, 60) or ("напряжённо" if fmt == FORMAT_DISASTER else TONES[0]),
-         _json(options), P._text(requested_by, 40)))
+         _json(options), P._text(requested_by, 40), P._choice(status, STATUSES, "status")))
     return get_episode(store, int(cur.lastrowid))
 
 

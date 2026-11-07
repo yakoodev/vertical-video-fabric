@@ -50,14 +50,14 @@ export const clipsApi = {
       `/api/clips/posts-batch`,
       body,
     ),
-  // Pre-edited vertical clip → standalone clips library. The /ui endpoint 303s to
-  // the clip page; we don't need the body, callers just invalidate the clips list.
-  uploadEdited: (file: File, title = "", description = "") => {
+  // Готовый ролик файлом: клип с экраном, файл не меняется (app/clip_upload.py). ``to`` — адрес его экрана.
+  uploadEdited: (file: File, options: { title?: string; description?: string; projectId?: number } = {}) => {
     const fd = new FormData();
     fd.append("file", file);
-    fd.append("title", title);
-    fd.append("description", description);
-    return api.form<unknown>("/ui/clips/upload", fd);
+    fd.append("title", options.title ?? "");
+    fd.append("description", options.description ?? "");
+    if (options.projectId) fd.append("project_id", String(options.projectId));
+    return api.form<{ clip_id: number; clip_plan_id: number; to: string; project_id: number | null }>("/api/clips/upload", fd);
   },
 };
 

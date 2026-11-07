@@ -14,6 +14,8 @@ export interface ClipGridItem {
   name: string;
   title: string;
   source_id: number;
+  /** Готовый загруженный файл: монтажа у него нет. */
+  uploaded?: boolean;
   video_name?: string;
   format: string;
   versions: number;
@@ -96,6 +98,8 @@ export interface ClipView {
   /** Что изменилось после последнего файла: подпись строки «Текущий монтаж». */
   pending: string[];
   canvas: boolean;
+  /** Готовый загруженный файл: смотреть и публиковать можно, монтажа и рендера нет. */
+  uploaded?: boolean;
   source: {
     id: number;
     name: string;

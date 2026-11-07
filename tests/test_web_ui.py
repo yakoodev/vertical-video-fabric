@@ -124,8 +124,10 @@ def test_core_api_flow(tmp_path, monkeypatch):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    uploaded_clip_id = int(response.headers["location"].rsplit("/", 1)[1])
-    uploaded_clip = store.get_clip(uploaded_clip_id)
+    # /clips/:id берёт id плана: загрузка ведёт на экран своего клипа (tests/test_clip_upload.py).
+    uploaded_plan_id = int(response.headers["location"].rsplit("/", 1)[1])
+    uploaded_clip = next(c for c in store.list_clips() if c["clip_plan_id"] == uploaded_plan_id)
+    uploaded_clip_id = uploaded_clip["id"]
     assert uploaded_clip["status"] == "succeeded"
     assert uploaded_clip["title"] == "Hand-edited clip"
     # The backing source is hidden from the Projects list.
@@ -138,7 +140,7 @@ def test_core_api_flow(tmp_path, monkeypatch):
 
     # The render route delegates to the render service and redirects to the new
     # clip. ffmpeg is not available in the test env, so the service is stubbed.
-    rendered = store.create_clip(uploaded_clip["source_id"], title="Hand-edited clip")
+    rendered = store.create_clip(uploaded_clip["source_id"], clip_plan_id=uploaded_plan_id, title="Hand-edited clip")
     rendered = store.finish_clip_render(
         rendered["id"], status="succeeded", output_path=settings.clip_dir / "rendered.mp4",
         preview_path=settings.clip_dir / "rendered.mp4", duration_sec=8, width=1080, height=1920, size_bytes=10,
@@ -158,7 +160,7 @@ def test_core_api_flow(tmp_path, monkeypatch):
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == f"/clips/{rendered['id']}"
+    assert response.headers["location"] == f"/clips/{uploaded_plan_id}"
     assert captured["clip_id"] == uploaded_clip_id
 
     # The auto start route forwards the parsed config to the automation service.

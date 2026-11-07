@@ -161,6 +161,7 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
     source = dict(source_row)
     source_name = titles_for(store, [source]).get(int(source["id"])) or f"Видео #{source['id']}"
     canvas = str(source["source_type"]) == "canvas"
+    uploaded = str(source["source_type"]) == "clip_upload"  # готовый файл: монтажа нет, экран только показывает
     project = _project_of(store, head)
     # Выпуски — только холсты и компиляции: у клипа из записи список выпусков не читаем.
     release = None
@@ -174,13 +175,13 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
         row = store.db.query_one("SELECT id, name FROM projects WHERE id = ?", (int(release["project_id"]),))
         project = {"id": int(row["id"]), "name": row["name"]} if row else None
 
-    # Соседи: те же клипы, что в сетке видео, в том же порядке. У холстов «видео» — проект.
-    if canvas and project:
+    # Соседи: те же клипы, что в сетке видео, в том же порядке. У холстов и загрузок «видео» — проект.
+    if (canvas or uploaded) and project:
         rows = _member_plans(
             store, "cp.id IN (SELECT pp.clip_plan_id FROM plan_projects pp WHERE pp.project_id = ?)", (project["id"],)
         )
         siblings = _cards_from_plans(store, rows)
-    elif canvas:
+    elif canvas or uploaded:
         siblings = [card]
     else:
         siblings = _cards_from_plans(store, _member_plans(store, "cp.source_id = ?", (int(source["id"]),)), {int(source["id"])})
@@ -202,7 +203,9 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
     ]
     latest = card["latest"]
     stale = False
-    if latest and int(latest.get("clip_plan_id") or 0) == head_id:
+    if uploaded:
+        stale = False  # файл и есть клип: рендерить нечего, что бы ни менялось в плане
+    elif latest and int(latest.get("clip_plan_id") or 0) == head_id:
         stale = render_is_stale(store, head_id, latest)
     elif latest:
         stale = True  # новый план группы ещё не рендерили
@@ -269,6 +272,7 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
         "stale": stale,
         "pending": pending[-4:],
         "canvas": canvas,
+        "uploaded": uploaded,
         "source": {
             "id": int(source["id"]),
             "name": source_name,

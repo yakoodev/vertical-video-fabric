@@ -3,7 +3,7 @@ import type { ClipGridItem } from "@/api/clipGroups";
 
 /** Выпуск: ролик с нуля (app/releases.py). Своего хранилища нет: взгляд поверх объяснялок, историй, ИИ-видео и холстов. */
 
-export type ReleaseKind = "expl" | "story" | "3d" | "aiv" | "promo" | "top" | "canvas";
+export type ReleaseKind = "expl" | "story" | "3d" | "aiv" | "promo" | "top" | "canvas" | "upload";
 export type ReleaseStatus = "ready" | "approval" | "working" | "failed" | "cancelled" | "script" | "empty";
 export type StepState = "done" | "now" | "wait" | "failed" | "todo";
 
@@ -31,6 +31,28 @@ export interface SubtitleFixes {
   examples: string[];
   lost: string[];
   note: string;
+}
+
+/** Черновик истории или 3D-серии: только чтение (app/stories_gen.py, draft_view). */
+export interface ReleaseScriptDraft {
+  episode_id: number;
+  title: string;
+  premise: string;
+  tone: string;
+  duration_target: number;
+  est_sec: number;
+  chars: number;
+  text: string;
+  sentences: { text: string; role: string; hud: string; hud_kind: string }[];
+  beats: { i: number; text: string; sec: number; action: string; accent: string; place: string; who: string[]; camera: string; sound: string }[];
+  logline?: string;
+  part_title?: string;
+  hook_words?: string;
+  viewer_question?: string;
+  hashtags?: string[];
+  mistake?: string;
+  cliffhanger?: string;
+  part?: number;
 }
 
 export interface ReleaseView {
@@ -62,6 +84,8 @@ export interface ReleaseView {
   notes: string[];
   raw: Record<string, unknown>;
   approval: ReleaseCard | null;
+  /** Есть только у черновика: сценарий и биты для чтения, кнопка «Запустить». */
+  script_draft?: ReleaseScriptDraft | null;
   clips: ClipGridItem[];
   older: { id: number; title: string; date: string }[];
   reassemble: { possible: boolean; clip_id: number | null; subtitle_fixes: SubtitleFixes; hand_edits: string[]; note: string };

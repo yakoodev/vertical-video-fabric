@@ -112,13 +112,13 @@ class FakeGemini:
 _REAL_CREATE_EPISODE = S.create_episode
 
 
-def _create_dry_by_default(store, world_id, premise, duration=None, tone="", options=None, requested_by="agent"):
+def _create_dry_by_default(store, world_id, premise, duration=None, tone="", options=None, requested_by="agent", status="new"):
     """Эти тесты ведут эпизод без сети: в проекте без платного провайдера он — явный сухой прогон. Настоящий путь (голос,
     субтитры по речи, карточка) — фикстура ``paid`` и tests/test_releases.py."""
     opts = dict(options or {})
     if V._style_row(store, S.get_world(store, world_id)["project_id"])["provider"] == "none":
         opts.setdefault("dry_run", True)
-    return _REAL_CREATE_EPISODE(store, world_id, premise, duration, tone, opts, requested_by)
+    return _REAL_CREATE_EPISODE(store, world_id, premise, duration, tone, opts, requested_by, status)
 
 
 @pytest.fixture

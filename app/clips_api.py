@@ -1,4 +1,4 @@
-"""Готовые ролики: список и карточка, отдача файла, загрузка смонтированного клипа, обложки, метаданные публикации.
+"""Готовые ролики: список и карточка, отдача файла, загрузка готового ролика (app/clip_upload.py), обложки, метаданные публикации.
 
 Роутер собирается функцией, как ``app/cuts_api.py``: ``main.py`` передаёт зависимость авторизации и доступ к хранилищу
 и сервисам лямбдами (тесты подменяют ``app.main.store`` и другие имена)."""
@@ -23,6 +23,12 @@ from app.thumbs import clip_thumb
 
 
 COVER_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _clip_screen(clip: dict) -> str:
+    """Адрес экрана клипа: /clips/:id берёт id плана. Файл без плана своего экрана не имеет — он в «Готовых роликах»."""
+    plan_id = clip.get("clip_plan_id")
+    return f"/clips/{int(plan_id)}" if plan_id else "/pubs?tab=ready"
 
 
 class ClipRenamePayload(BaseModel):
@@ -53,14 +59,22 @@ def build_clips_router(
         file: Annotated[UploadFile, File()],
         title: Annotated[str, Form()] = "",
         description: Annotated[str, Form()] = "",
+        project_id: Annotated[str, Form()] = "",
     ) -> RedirectResponse:
-        try:
-            clip = await _register_uploaded_clip(file, title, description)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        finally:
-            await file.close()
-        return RedirectResponse(url=f"/clips/{clip['id']}", status_code=303)
+        clip = await _accept_upload(file, title, description, project_id)
+        return RedirectResponse(url=_clip_screen(clip), status_code=303)
+
+    @router.post("/api/clips/upload", tags=["Render"], summary="Загрузить готовый ролик: файл не меняется, появляется клип с экраном")
+    async def api_upload_clip(
+        _auth: auth_dep,
+        file: Annotated[UploadFile, File()],
+        title: Annotated[str, Form()] = "",
+        description: Annotated[str, Form()] = "",
+        project_id: Annotated[str, Form()] = "",
+    ) -> dict:
+        clip = await _accept_upload(file, title, description, project_id)
+        return {"clip_id": int(clip["id"]), "clip_plan_id": int(clip["clip_plan_id"]), "to": _clip_screen(clip),
+                "project_id": _optional_form_int(project_id)}
 
     @router.post("/ui/clips/{clip_id}/render", include_in_schema=False)
     def ui_render_uploaded_clip(
@@ -99,7 +113,7 @@ def build_clips_router(
             )
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return RedirectResponse(url=f"/clips/{clip['id']}", status_code=303)
+        return RedirectResponse(url=_clip_screen(clip), status_code=303)
 
     @router.get("/media/clips/{clip_id}", include_in_schema=False)
     def clip_media(clip_id: int, _auth: auth_dep) -> FileResponse:
@@ -293,15 +307,33 @@ def build_clips_router(
             raise HTTPException(status_code=404, detail="cover not found") from exc
         return FileResponse(path, media_type="image/jpeg")
 
-    async def _register_uploaded_clip(file: UploadFile, title: str, description: str) -> dict:
-        """Ingest an already-edited vertical clip and register it in the clips library.
+    async def _accept_upload(file: UploadFile, title: str, description: str, project_id: str) -> dict:
+        from app.projects import get_project
+
+        try:
+            wanted = _optional_form_int(project_id)
+            if wanted is not None:
+                get_project(get_store(), wanted, include_sources=False)  # до записи файла: чужой номер не оставит мусора
+            return await _register_uploaded_clip(file, title, description, wanted)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Такого проекта нет") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            await file.close()
+
+    async def _register_uploaded_clip(file: UploadFile, title: str, description: str, project_id: int | None = None) -> dict:
+        """Ingest a finished video and register it as a real clip with its own screen.
 
         The pristine upload is stored in the source directory as a backing
-        ``clip_upload`` source (hidden from Projects), and a copy is placed in the
-        clip directory as the clip's playable output, marked 'succeeded'. Keeping the
-        untouched original lets the clip later be (re)rendered with subtitles, music
-        and a banner from a clean source — see ``ClipRenderService.render_uploaded_clip``.
+        ``clip_upload`` source (hidden from Projects), and a byte-identical copy is
+        placed in the clip directory as the clip's playable output, marked 'succeeded'.
+        The clip gets a plan (app/clip_upload.py), so ``clips.clip_plan_id`` is set and
+        ``/clips/<plan id>`` opens it. Keeping the untouched original lets the clip
+        later be rendered with subtitles, music and a banner from a clean source as a
+        new version — see ``ClipRenderService.render_uploaded_clip``.
         """
+        from app import clip_upload
 
         safe_name = Path(file.filename or "clip.mp4").name
         source_path = settings.source_dir / f"{uuid4().hex}-{safe_name}"
@@ -341,7 +373,9 @@ def build_clips_router(
         clip_path = settings.clip_dir / f"{uuid4().hex}-{safe_name}"
         clip_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source_path, clip_path)
-        clip = get_store().create_clip(source["id"], title=title.strip() or Path(safe_name).stem, description=description.strip())
+        name = title.strip() or Path(safe_name).stem
+        plan = clip_upload.create_plan(get_store(), source, name, description.strip(), project_id)
+        clip = get_store().create_clip(source["id"], clip_plan_id=int(plan["id"]), title=name, description=description.strip())
         return get_store().finish_clip_render(
             clip["id"],
             status="succeeded",
