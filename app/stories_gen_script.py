@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Any
 
@@ -323,3 +324,40 @@ def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -
         if current in _SCRIPT_KEEPS_STATUS:
             S.set_status(store, episode_id, current, (current,), **fields)
     return S.get_episode(store, episode_id)
+
+
+def _edited_sentences(old: list[dict], lines: list[str]) -> list[dict]:
+    """Строки текста → фразы. Строка, которая осталась или переписана на своём месте, сохраняет кадры, цифры на экране и
+    роль: владелец правит слова, а не постановку. Новая строка приходит без кадров, убранная забирает свои с собой."""
+    fresh = [_sentence(line) for line in lines]
+    out: list[dict] = [{"text": text} for text in fresh]
+    was = [_sentence(s.get("text")) for s in old]
+    for tag, a0, a1, b0, b1 in difflib.SequenceMatcher(None, was, fresh, autojunk=False).get_opcodes():
+        if tag in ("equal", "replace"):
+            for k in range(min(a1 - a0, b1 - b0)):
+                out[b0 + k] = {**old[a0 + k], "text": fresh[b0 + k]}
+    return out
+
+
+def edit_draft(store: Any, episode_id: int, title: Any, text: Any, replace_beats: bool = False) -> dict:
+    """Правка черновика на странице выпуска: название и текст, по фразе на строку. Остальное в сценарии (постановка фраз,
+    поля серии) остаётся, статус тоже. Биты автора привязаны к словам: те же слова — биты остаются; слова другие — отказ,
+    пока владелец не согласился их заменить (``replace_beats``): тогда текст снова разбивается по фразам, как у ``set_script``."""
+    ep = S.get_episode(store, episode_id)
+    if ep["status"] != S.DRAFT_STATUS:
+        raise S.StoryError(f"поправить здесь можно только черновик, а этот эпизод: {ep['status_label']}")
+    name = P._text(title, 100)
+    if not name:
+        raise S.StoryError("нужно название")
+    lines = [line for line in str(text or "").replace("\r", "").split("\n") if line.strip()]
+    if not lines:
+        raise S.StoryError("в сценарии нет текста")
+    script = ep.get("script") or {}
+    data = {**script, "title": name, "sentences": _edited_sentences(script.get("sentences") or [], lines)}
+    beats = ep.get("beats") or []
+    if beats:
+        if _word_list(" ".join(lines)) == _word_list(" ".join(b["text"] for b in beats)):
+            data["beats"] = [{**(b.get("spec") or {}), "text": b["text"]} for b in beats]
+        elif not replace_beats:
+            raise S.StoryError("текст изменился, и биты этого сценария больше не подходят. Ничего не сохранено: подтвердите замену битов")
+    return set_script(store, episode_id, data, source="owner")

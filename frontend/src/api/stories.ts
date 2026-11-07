@@ -280,5 +280,8 @@ export const storiesApi = {
   cancelEpisode: (id: number) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/cancel`),
   /** «Запустить» черновик: дальше обычный конвейер, платное — карточкой. */
   startEpisode: (id: number) => api.post<StoryEpisode>(`/api/stories/episodes/${id}/start`),
+  /** Название и текст черновика, он остаётся черновиком. replace_beats — владелец согласился заменить биты автора. */
+  editDraft: (id: number, body: { title: string; text: string; replace_beats?: boolean }) =>
+    api.patch<StoryEpisode>(`/api/stories/episodes/${id}/draft`, body),
   deleteEpisode: (id: number) => api.del(`/api/stories/episodes/${id}`),
 };

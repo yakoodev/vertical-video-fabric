@@ -256,6 +256,10 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
         X.kick()
         return out
 
+    @router.patch("/api/stories/episodes/{episode_id}/draft", summary="Название и текст черновика: остальное в сценарии не меняется")
+    def api_episode_draft_edit(episode_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        return call(X.edit_draft, episode_id, payload.get("title"), payload.get("text"), bool(payload.get("replace_beats")))
+
     @router.get("/api/stories/sfx", summary="Звуки действий (настоящие записи)")
     def api_sfx(_auth: auth_dep, q: str = "", project_id: int | None = None) -> dict:
         store = get_store()

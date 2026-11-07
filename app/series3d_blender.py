@@ -246,7 +246,8 @@ def _code_hash() -> str:
     root = Path(__file__).resolve().parent.parent
     h = hashlib.sha1()
     for p in (root / "tools" / "blender" / "series_scene.py", root / "tools" / "blender" / "hero_shot.py",
-              root / "tools" / "blender" / "series_places.py", root / "app" / "motion3d.py"):
+              root / "tools" / "blender" / "series_places.py", root / "tools" / "blender" / "series_lift.py",
+              root / "app" / "motion3d.py"):
         if p.is_file():
             h.update(p.read_bytes())
     return h.hexdigest()[:12]

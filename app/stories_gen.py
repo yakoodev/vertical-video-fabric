@@ -44,7 +44,7 @@ from app.settings import settings
 from app.stories_gen_script import (  # noqa: F401
     CPS, MAX_NEW_CAST, MAX_NEW_LOCATIONS, MAX_SHOTS_PER_SENTENCE, CAMERA_MOVES, SCRIPT_RULES, _shot_schema,
     script_schema, script_rules, _base_schema, _sfx_brief, script_context, _sentence, _key, _materialize, _shot,
-    normalize_script, script_words, set_script, normalize_beats,
+    normalize_script, script_words, set_script, edit_draft, normalize_beats,
 )
 from app.stories_gen_beats import (  # noqa: F401
     BEAT_MIN_SEC, BEAT_MAX_SEC, BEAT_MERGE_SEC, MAX_NEW_SCENES, CAMERA_CYCLE, CAMERA_ALT, _est, split_text,
@@ -524,7 +524,10 @@ def draft_view(store: Any, ep: dict) -> dict:
                   "hud_kind": s.get("hud_kind") or ""} for s in script.get("sentences") or []]
     extras = {k: script.get(k) for k in ("logline", "part_title", "hook_words", "viewer_question", "hashtags", "mistake",
                                          "cliffhanger", "part") if script.get(k)}
+    options = ep.get("options") or {}
+    disaster = S.episode_format(S.get_world(store, world_id), ep) == S.FORMAT_DISASTER
     return {"episode_id": int(ep["id"]), "title": script.get("title") or ep.get("title") or "", "premise": ep.get("premise") or "",
+            "author_beats": bool(ep.get("beats")), "title_on_frame": bool(options.get("title_card", disaster)),
             "tone": ep.get("tone") or "", "duration_target": float(ep.get("duration_target") or 0),
             "est_sec": float(script.get("est_sec") or 0), "chars": int(script.get("chars") or 0), "text": script.get("text") or "",
             "sentences": sentences, "beats": beats, **extras}

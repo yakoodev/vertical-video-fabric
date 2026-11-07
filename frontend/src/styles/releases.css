@@ -101,6 +101,11 @@
 .rel-draft-h h2 { margin: 0; font-size: 19px; font-weight: 650; }
 .rel-draft-log { margin: 0; font-size: 16px; line-height: 1.45; overflow-wrap: anywhere; }
 .rel-draft-premise { margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.rel-draft-edit-btn { margin-left: auto; }
+.rel-draft-edit { display: grid; gap: 14px; max-width: 72ch; min-width: 0; }
+.rel-draft-edit .input { width: 100%; font-size: 16px; line-height: 1.45; }
+.rel-draft-edit small { font-size: 13px; line-height: 1.4; }
+.rel-draft-warn { margin: 0; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 10px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
 .rel-draft-text { display: grid; gap: 10px; max-width: 72ch; }
 .rel-draft-text p { margin: 0; font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
 .rel-draft-role { display: block; color: var(--text-faint); font-size: 12.5px; line-height: 1.4; }

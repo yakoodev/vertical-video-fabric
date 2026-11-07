@@ -270,6 +270,61 @@ def test_lost_race_between_read_and_write_keeps_cancelled(env, monkeypatch):
     assert S.get_episode(store, ep["id"])["script"]["text"]
 
 
+def _planned(store, ids) -> dict:
+    ep = X.create(store, ids["world_id"], "Лифт застрял")
+    X.set_script(store, ep["id"], STORY)
+    X.plan_beats(store, ep["id"])
+    assert S.get_episode(store, ep["id"], full=False)["status"] == "planned"
+    return ep
+
+
+def test_beat_edit_keeps_cancelled_and_nothing_restarts(env, monkeypatch):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _planned(store, ids)
+    assert X.cancel(store, ep["id"])["status"] == "cancelled"
+    r = client.patch(f"/api/stories/episodes/{ep['id']}/beats", json={"beats": [{"i": 0, "camera": "static"}]})
+    assert r.status_code == 200 and r.json()["status"] == "cancelled" and r.json()["error"] == "отменено"
+    assert r.json()["beats"][0]["camera"] == "static"  # правка не пропала
+    # Инструмент по умолчанию ещё и «ведёт дальше»: всё равно ни шага, ни запросов на траты.
+    called = _traps(monkeypatch)
+    out, ok = run_tool(ToolContext(store=store), "story_update_beats", {"episode_id": ep["id"], "beats": [{"i": 1, "camera": "pan_left"}]})
+    assert ok and out["status"] == "cancelled" and called == []
+    assert ep["id"] not in X.StoriesWorker(store).run_once() and S.get_episode(store, ep["id"])["status"] == "cancelled"
+    assert store.db.query_one("SELECT COUNT(*) AS n FROM aiv_gen_jobs")["n"] == 0
+    # Продолжают явно, с той же точки и уже с правкой.
+    monkeypatch.setattr(X, "advance", lambda store_, eid, client=None: S.get_episode(store_, eid))
+    resumed = X.resume(store, ep["id"])
+    assert resumed["status"] == "planned" and resumed["error"] == "" and resumed["beats"][0]["camera"] == "static"
+
+
+def test_cancel_during_beat_edit_is_not_overwritten(env, monkeypatch):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _planned(store, ids)
+    import app.stories_gen_beats as SGB
+
+    real = SGB._decorate
+
+    def cancel_after_read(*args, **kwargs):
+        S.set_status(store, ep["id"], "cancelled", None, error="отменено")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(SGB, "_decorate", cancel_after_read)
+    out = X.update_beats(store, ep["id"], [{"i": 0, "camera": "static"}])
+    assert out["status"] == "cancelled" and out["error"] == "отменено" and out["beats"][0]["camera"] == "static"
+
+
+def test_beat_edit_still_replans_other_statuses(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    for status in ("planned", "awaiting_approval", "generating", "done", "failed"):
+        ep = _planned(store, ids)
+        S.set_status(store, ep["id"], status, None, error="старая ошибка" if status == "failed" else "")
+        out = X.update_beats(store, ep["id"], [{"i": 0, "camera": "static"}])
+        assert out["status"] == "planned" and out["error"] == "", status
+
+
 def test_author_beats_survive_start_and_must_match_the_script(env):
     client, store, tmp = env
     ids = _setup(store, tmp, music=False, sounds=False)
@@ -301,6 +356,110 @@ def test_author_beats_survive_start_and_must_match_the_script(env):
     second = _draft(store, ids, beats=[{"text": s["text"]} for s in SHORT["sentences"]])
     assert len(second["beats"]) == 3
     assert X.set_script(store, second["id"], SHORT)["beats"] == []
+
+
+AUTHOR_BEATS = [{"text": "Кабина встала", "action": "the cabin jolts", "camera": "push_in", "sfx": "скрежет"},
+                {"text": "между этажами.", "action": "dark shaft"},
+                {"text": "Заряд телефона тает на глазах. А потом погас свет.", "accent": "floating sparks", "action": "phone"}]
+DISASTER = {"engine": "3d", "format": "disaster"}
+SERIES = {"part_title": "Трос", "hook_words": "лифт встал", "viewer_question": "Что бы вы сделали?", "hashtags": ["#лифт"],
+          "mistake": "Нажал не ту кнопку", "cliffhanger": "Кто-то стучит сверху"}
+
+
+def _lines(ep: dict) -> list[str]:
+    return [s["text"] for s in ep["script"]["sentences"]]
+
+
+def test_title_edit_keeps_everything_else_and_spends_nothing(env, monkeypatch):
+    client, store, tmp = env
+    called = _traps(monkeypatch)
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _draft(store, ids, options=DISASTER, beats=AUTHOR_BEATS, **SERIES)
+    before = S.get_episode(store, ep["id"])
+    assert before["beats"][0]["spec"]["action"] == "the cabin jolts"
+    r = client.patch(f"/api/stories/episodes/{ep['id']}/draft", json={"title": "  Лифт:   новое имя ", "text": "\n".join(_lines(before))})
+    assert r.status_code == 200, r.text
+    after = S.get_episode(store, ep["id"])
+    assert after["status"] == "draft" and after["title"] == "Лифт: новое имя" and after["script"]["title"] == "Лифт: новое имя"
+    assert after["beats"] == before["beats"]  # биты автора целиком, с постановкой
+    assert after["script"]["sentences"] == before["script"]["sentences"]  # цифры на экране и роли на месте
+    for key in ("part_title", "hook_words", "viewer_question", "hashtags", "mistake", "cliffhanger", "logline", "part"):
+        assert after["script"][key] == before["script"][key], key
+    assert after["updated_at"] and not X.StoriesWorker(store).run_once()
+    assert called == []
+    for table in ("aiv_gen_jobs", "approvals", "render3d_jobs"):
+        assert store.db.query_one(f"SELECT COUNT(*) AS n FROM {table}")["n"] == 0, table
+    view = R.view(store, f"story-{ep['id']}")
+    assert view["status"] == "script" and view["script_draft"]["title"] == "Лифт: новое имя" and view["script_draft"]["author_beats"]
+    assert view["script_draft"]["title_on_frame"] is True
+
+
+def test_same_words_keep_author_beats(env):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _draft(store, ids, beats=AUTHOR_BEATS)
+    before = S.get_episode(store, ep["id"])["beats"]
+    # Знаки, регистр и деление на строки: слова те же, озвучка привяжется к битам как раньше.
+    text = "Кабина встала между этажами!\nЗаряд телефона тает на глазах…\nА ПОТОМ погас свет."
+    r = client.patch(f"/api/stories/episodes/{ep['id']}/draft", json={"title": "Лифт", "text": text})
+    assert r.status_code == 200, r.text
+    after = S.get_episode(store, ep["id"])
+    assert [b["text"] for b in after["beats"]] == [b["text"] for b in before] and [b["spec"] for b in after["beats"]] == [b["spec"] for b in before]
+    assert after["script"]["text"].startswith("Кабина встала между этажами!")
+
+
+def test_new_words_never_drop_author_beats_silently(env):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _draft(store, ids, beats=AUTHOR_BEATS)
+    url = f"/api/stories/episodes/{ep['id']}/draft"
+    before = S.get_episode(store, ep["id"])
+    text = "Кабина встала между этажами.\nЗаряд тает.\nА потом погас свет."
+    r = client.patch(url, json={"title": "Новое", "text": text})
+    assert r.status_code == 400 and "биты" in r.json()["detail"]
+    same = S.get_episode(store, ep["id"])
+    assert same["beats"] == before["beats"] and same["script"] == before["script"] and same["title"] == before["title"]
+    # Согласие дано: биты заменены разбивкой по фразам, как у нового сценария без своих битов. Статус тот же.
+    r = client.patch(url, json={"title": "Новое", "text": text, "replace_beats": True})
+    assert r.status_code == 200 and r.json()["status"] == "draft" and r.json()["beats"] == []
+    view = R.view(store, f"story-{ep['id']}")["script_draft"]
+    assert view["author_beats"] is False and view["title"] == "Новое" and view["beats"]
+    assert " ".join(b["text"] for b in view["beats"]) == " ".join(text.split("\n"))
+
+
+def test_text_edit_keeps_staging_of_lines_that_stayed(env):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    sentences = [{"text": "Кабина встала между этажами.", "hud": "22 / 23 ЭТАЖ", "role": "hook",
+                  "shots": [{"action": "cabin stops", "camera": "push_in"}]},
+                 {"text": "Заряд телефона тает на глазах.", "hud": "ЗАРЯД 9%", "role": "problem", "shots": [{"action": "phone", "camera": "static"}]},
+                 {"text": "А потом погас свет.", "role": "finale", "shots": [{"action": "dark"}]}]
+    ep = _draft(store, ids, options=DISASTER, sentences=sentences, **SERIES)
+    text = "Кабина встала между этажами.\nЗаряд телефона почти на нуле\nТолько теперь стало тихо.\nА потом погас свет."
+    r = client.patch(f"/api/stories/episodes/{ep['id']}/draft", json={"title": "Лифт", "text": text})
+    assert r.status_code == 200, r.text
+    got = S.get_episode(store, ep["id"])["script"]["sentences"]
+    assert [s["text"] for s in got] == ["Кабина встала между этажами.", "Заряд телефона почти на нуле.", "Только теперь стало тихо.", "А потом погас свет."]
+    assert got[0]["hud"] == "22 / 23 ЭТАЖ" and got[0]["shots"][0]["action"] == "cabin stops"
+    assert got[1]["hud"] == "ЗАРЯД 9%" and got[1]["shots"][0]["action"] == "phone" and got[1]["role"] == "problem"  # переписана на месте
+    assert not got[2]["shots"] and not got[2].get("hud")  # новая строка
+    assert got[3]["role"] == "finale" and got[3]["shots"][0]["action"] == "dark"
+    assert S.get_episode(store, ep["id"])["script"]["part_title"] == "ТРОС"
+
+
+def test_only_a_draft_is_edited_this_way(env):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _draft(store, ids)
+    url = f"/api/stories/episodes/{ep['id']}/draft"
+    before = S.get_episode(store, ep["id"])
+    for body in ({"title": "", "text": "Текст."}, {"title": "Лифт", "text": " \n "}, {"title": "   ", "text": ""}):
+        assert client.patch(url, json=body).status_code == 400, body
+    assert S.get_episode(store, ep["id"])["script"] == before["script"]
+    assert client.patch("/api/stories/episodes/99999/draft", json={"title": "Лифт", "text": "Текст."}).status_code == 404
+    X.start_draft(store, ep["id"])
+    r = client.patch(url, json={"title": "Лифт", "text": "Текст."})
+    assert r.status_code == 400 and S.get_episode(store, ep["id"])["status"] == "scripted" and S.get_episode(store, ep["id"])["script"] == before["script"]
 
 
 def test_world_with_drafts_is_not_deleted_silently(env):
