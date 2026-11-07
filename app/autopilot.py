@@ -372,6 +372,7 @@ _DO_RE = re.compile(
 # Это про конкретный клип, а не правило на будущее.
 _ONE_OFF_RE = re.compile(r"(в этом клипе|в этом ролике|тут|здесь|на \d+[:.]\d\d|\b\d+:\d\d\b|на \d+ ?сек|в начале|"
                          r"в конце|этот кадр|эту сцену)", re.IGNORECASE)
+_JUST_ANSWER_RE = re.compile(r"(ничего не|пока не)\s+(созда|мен|дела|трога|запуска)\w*|ответь коротко|просто ответь", re.IGNORECASE)
 
 
 _NOT_LANDS_RE = re.compile(r"не\s+(заход|залета)\w*", re.IGNORECASE)
@@ -404,6 +405,10 @@ def classify_reply(text: str) -> dict:
         return {"intent": "approve", "confidence": 0.9}
     if bare in REJECT_WORDS:
         return {"intent": "reject", "confidence": 0.9}
+    # «Ничего не меняй, ответь коротко» — просьба на эту реплику, а не правило: карточка спрашивала бы зря,
+    # а записанное правило запретило бы агенту работать в проекте.
+    if _JUST_ANSWER_RE.search(raw):
+        return {"intent": "none", "confidence": 0.0}
     if _REVOKE_RE.search(raw):
         subject = _REVOKE_RE.sub(" ", raw)
         subject = re.sub(r"\b(правило|правила|про|что|я|контент|старое|все|всё|и)\b", " ", subject, flags=re.I)
