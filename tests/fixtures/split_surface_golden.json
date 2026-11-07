@@ -424,7 +424,7 @@
 "update_source": "(self, source_id: 'int', **fields: 'Any') -> 'dict'",
 "update_subtitle_profile": "(self, profile_id: 'int', **fields: 'Any') -> 'dict'",
 "update_subtitle_track": "(self, track_id: 'int', **fields: 'Any') -> 'dict'",
-"upsert_account": "(self, platform: 'str', label: 'str', raw_cookie: 'str', proxy_url: 'str' = '') -> 'dict'"
+"upsert_account": "(self, platform: 'str', label: 'str', raw_cookie: 'str', proxy_url: 'str' = '', clear_proxy: 'bool' = False) -> 'dict'"
 },
 "ClipRenderService": {
 "__init__": "(self, store: 'AppStore') -> 'None'",
