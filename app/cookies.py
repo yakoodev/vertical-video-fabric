@@ -21,19 +21,6 @@ class CookieRecord:
     http_only: bool = False
     expires: int | None = None
 
-    def to_vendor_dict(self, fallback_domain: str) -> dict:
-        item = {
-            "name": self.name,
-            "value": self.value,
-            "domain": self.domain or fallback_domain,
-            "path": self.path or "/",
-            "secure": bool(self.secure),
-            "httpOnly": bool(self.http_only),
-        }
-        if self.expires:
-            item["expiry"] = int(self.expires)
-        return item
-
 
 def parse_cookie_input(raw: str, platform: str) -> list[CookieRecord]:
     text = raw.strip()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
+import os
 import re
 import secrets
 import string
@@ -29,6 +29,10 @@ _UA = (
 # Таймауты запросов (соединение, чтение): без них зависшее соединение держало воркер вечно.
 _TIMEOUT = (30, 120)
 _CHUNK_TIMEOUT = (30, 600)
+# Подпись: браузер открывает www.tiktok.com, поэтому идёт через прокси аккаунта (node/tiktok-sign.cjs).
+_SIGN_SCRIPT = Path(__file__).resolve().parents[2] / "node" / "tiktok-sign.cjs"
+_SIGN_PROXY_ENV = "TIKTOK_SIGN_PROXY"
+_SIGN_TIMEOUT = 60
 # Ключи id поста в ответе публикации (числовой id ролика — для ссылки и статистики).
 _ITEM_ID_KEYS = ("item_id", "itemId", "aweme_id", "awemeId", "item_id_str")
 _ITEM_ID_RE = re.compile(r"\d{10,25}")
@@ -80,9 +84,9 @@ class TikTokProvider(Provider):
             return ProviderResult(status=_classify_tiktok_error(message), error=_safe_error(message))
 
     def _ensure_signature_helper(self) -> None:
-        helper = self._signature_helper_path()
-        if not helper.exists():
-            raise RuntimeError(f"TikTok signature helper not found: {helper}")
+        for helper in (self._signature_dir() / "index.js", _SIGN_SCRIPT):
+            if not helper.exists():
+                raise RuntimeError(f"TikTok signature helper not found: {helper}")
 
     def _upload_with_vendor_requests(
         self,
@@ -96,10 +100,10 @@ class TikTokProvider(Provider):
         account_label: str,
         proxy_url: str,
     ) -> ProviderResult:
-        self._write_vendor_cookie_file(account_label, cookies)
-
         session = requests.Session()
         session.verify = True
+        # Иначе HTTP(S)_PROXY окружения перекрывает прокси аккаунта: в requests запрос сильнее сессии.
+        session.trust_env = False
         user_agent = _user_agent()
         session.headers.update({"User-Agent": user_agent, "Accept": "application/json, text/plain, */*"})
         if proxy_url:
@@ -188,7 +192,7 @@ class TikTokProvider(Provider):
             "https://www.tiktok.com/api/v1/web/project/post/"
             f"?app_name=tiktok_web&channel=tiktok_web&device_platform=web&aid=1988&msToken={ms_token}"
         )
-        signatures = _run_signature_helper(self._signature_helper_path(), user_agent, sig_url)
+        signatures = _run_signature_helper(self._signature_dir(), user_agent, sig_url, proxy_url)
         if not signatures:
             return ProviderResult(status="failed", error="TikTok signature generation failed")
         signature_data = json.loads(signatures)["data"]
@@ -232,17 +236,8 @@ class TikTokProvider(Provider):
                       "project_id": project_id},
         )
 
-    def _write_vendor_cookie_file(self, account_label: str, cookies: list[CookieRecord]) -> None:
-        runtime_dir = settings.runtime_dir / "tiktok-cookies"
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-        safe_label = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in account_label)[:80]
-        path = runtime_dir / f"tiktok_session-{safe_label or 'account'}.cookie"
-        data = [cookie.to_vendor_dict(".tiktok.com") for cookie in cookies]
-        with path.open("wb") as f:
-            pickle.dump(data, f)
-
-    def _signature_helper_path(self) -> Path:
-        return settings.tiktok_vendor_root / "tiktok_uploader" / "tiktok-signature" / "browser.js"
+    def _signature_dir(self) -> Path:
+        return settings.tiktok_vendor_root / "tiktok_uploader" / "tiktok-signature"
 
 
 def _upload_to_tiktok(file_path: Path, session: requests.Session):
@@ -343,14 +338,22 @@ def _find_item_id(value, depth: int = 0) -> str:
     return ""
 
 
-def _run_signature_helper(js_path: Path, user_agent: str, url: str) -> str:
-    proc = subprocess.run(
-        [settings.node_bin, str(js_path), url, user_agent],
-        text=True,
-        capture_output=True,
-        timeout=60,
-        check=False,
-    )
+def _run_signature_helper(signature_dir: Path, user_agent: str, url: str, proxy_url: str = "") -> str:
+    env = {key: value for key, value in os.environ.items() if key != _SIGN_PROXY_ENV}
+    if proxy_url:
+        env[_SIGN_PROXY_ENV] = proxy_url
+    try:
+        proc = subprocess.run(
+            [settings.node_bin, str(_SIGN_SCRIPT), str(signature_dir), url, user_agent],
+            text=True,
+            capture_output=True,
+            timeout=_SIGN_TIMEOUT,
+            check=False,
+            env=env,
+        )
+    except subprocess.TimeoutExpired:
+        # from None: в тексте TimeoutExpired вся команда, а в ней адрес с msToken.
+        raise RuntimeError(f"TikTok signature helper timed out after {_SIGN_TIMEOUT} s") from None
     if proc.returncode != 0:
         raise RuntimeError(f"TikTok signature helper failed: {proc.stderr.strip()}")
     stdout = proc.stdout.strip()

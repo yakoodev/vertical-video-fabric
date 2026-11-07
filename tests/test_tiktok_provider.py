@@ -78,7 +78,7 @@ def fake_tiktok(tmp_path, monkeypatch):
     monkeypatch.setattr(tiktok.TikTokProvider, "_ensure_signature_helper", lambda self: None)
     seen = {}
 
-    def signature(js_path, user_agent, url):
+    def signature(signature_dir, user_agent, url, proxy_url=""):
         seen["ua"] = user_agent
         return json.dumps({"data": {"x-bogus": "xb", "signature": "sig"}})
 
