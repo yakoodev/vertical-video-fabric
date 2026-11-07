@@ -22,7 +22,8 @@ def _fmt_of_plan(settings_fmt: Any, last: dict | None) -> str:
 
 _PLAN_SELECT = f"""
     SELECT cp.id, cp.source_id, cp.title, cp.status, cp.hidden, cp.favorite, cp.owner_picked, cp.score, cp.created_at,
-           cp.clip_group_id, cp.group_locked, {_FMT_SQL} AS fmt
+           cp.clip_group_id, cp.group_locked, {_FMT_SQL} AS fmt,
+           (SELECT s.source_type FROM sources s WHERE s.id = cp.source_id) AS source_type
     FROM clip_plans cp
 """
 
@@ -94,6 +95,7 @@ def _card(plans: list[dict], renders: dict[int, list[dict]], pieces: dict[int, l
         "name": display_name(named["title"]),
         "title": head["title"],
         "source_id": int(head["source_id"]),
+        "uploaded": head.get("source_type") == "clip_upload",
         "format": fmt,
         "versions": len(done),
         "plans": len(plans),

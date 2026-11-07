@@ -49,7 +49,7 @@ class ClipsStore:
         marks = ",".join("?" for _ in clip_plan_ids)
         rows = self.db.query_all(
             f"""
-            SELECT c.*,
+            SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
                    (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
                      WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
@@ -66,7 +66,7 @@ class ClipsStore:
         """Страница «Готовые ролики»: новые первыми, поля как у list_clips."""
         rows = self.db.query_all(
             f"""
-            SELECT c.*,
+            SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
                    (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
                      WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
@@ -175,7 +175,7 @@ class ClipsStore:
             params = [project_id, project_id, int(limit)]
         rows = self.db.query_all(
             f"""
-            SELECT c.*,
+            SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
                    (
                        SELECT COUNT(*)
@@ -210,7 +210,7 @@ class ClipsStore:
     def get_clip(self, clip_id: int) -> dict:
         row = self.db.query_one(
             """
-            SELECT c.*,
+            SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
                    (
                        SELECT COUNT(*)

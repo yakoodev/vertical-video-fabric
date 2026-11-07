@@ -9,6 +9,7 @@ import { BatchPublishDialog } from "@/components/BatchPublishDialog";
 import { ClipCard } from "@/components/ClipCard";
 import { Icon } from "@/components/Icon";
 import { ShowMore, useShowMore } from "@/components/ShowMore";
+import { UploadClipButton } from "@/components/UploadClipButton";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { useModuleOn } from "@/hooks/useModules";
@@ -118,7 +119,7 @@ export function ClipTile({
           </button>
           {menu ? (
             <div className="ctile-menu" role="menu">
-              <Link role="menuitem" to={clipEditorPath(clip.source_id, clip.id)}>Открыть монтаж</Link>
+              {clip.uploaded ? null : <Link role="menuitem" to={clipEditorPath(clip.source_id, clip.id)}>Открыть монтаж</Link>}
               {clip.latest ? <a role="menuitem" href={`/media/clips/${clip.latest.id}`} download>Скачать</a> : null}
               <button role="menuitem" type="button" onClick={() => flags.mutate({ favorite: !clip.favorite })}>
                 {clip.favorite ? "Убрать ★" : draft ? "Взять в работу ★" : "В избранное ★"}
@@ -283,7 +284,7 @@ export function ClipGrid({
       )}
       {orphans.length ? (
         <details className="cgrid-more">
-          <summary>Рендеры без клипа (его монтаж удалён): {orphans.length}</summary>
+          <summary>Готовые файлы без клипа: {orphans.length}</summary>
           <div className="card-grid clip-grid">
             {orphans.slice(0, 48).map((clip) => (
               <ClipCard key={clip.id} clip={clip} />
@@ -310,7 +311,12 @@ export function ProjectClipsTab({ projectId }: { projectId: number }) {
     <ClipGrid
       projectId={projectId}
       emptyActions={<Link className="btn primary" to={`/p/${projectId}`}>К видео проекта</Link>}
-      actions={<Link className="btn ghost sm" to="/pubs?tab=ready" title="Все готовые файлы всех проектов, загрузка своего клипа">Готовые ролики</Link>}
+      actions={
+        <>
+          <UploadClipButton projectId={projectId} className="btn ghost sm" label="Загрузить готовый клип" />
+          <Link className="btn ghost sm" to="/pubs?tab=ready" title="Все готовые файлы всех проектов">Готовые ролики</Link>
+        </>
+      }
     />
   );
 }

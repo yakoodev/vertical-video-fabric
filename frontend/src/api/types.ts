@@ -72,6 +72,7 @@ export interface RenderQc {
 export interface Clip {
   id: number;
   source_id: number;
+  source_type?: string;
   clip_plan_id: number | null;
   segment_id: number | null;
   status: string;

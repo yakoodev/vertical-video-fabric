@@ -447,6 +447,7 @@ class MontageRender:
             subtitle_profile_id = preset.get("subtitle_profile_id")
         clip = self.store.create_clip(
             source["id"],
+            clip_plan_id=origin.get("clip_plan_id"),
             ffmpeg_preset_id=preset["id"],
             subtitle_profile_id=subtitle_profile_id,
             title=origin.get("title") or "",

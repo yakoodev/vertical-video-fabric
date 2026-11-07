@@ -211,15 +211,19 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
       const videoCount = project?.videos ?? nav?.no_project_videos ?? 0;
       const plans = (source.data?.clip_plans ?? []).filter((p) => !p.hidden);
       const plan = planId ? source.data?.clip_plans.find((p) => p.id === planId) : null;
-      const shownVideo = hiddenVideo ? "" : videoId || (view && !view.canvas ? String(view.source.id) : "");
+      // Холст и загруженный файл лежат на служебном источнике: ступени «видео» у них нет.
+      const noVideo = Boolean(view?.canvas || view?.uploaded);
+      const shownVideo = hiddenVideo ? "" : videoId || (view && !noVideo ? String(view.source.id) : "");
       const shownVideoName = hiddenVideo
         ? KIND_LABELS[source.data?.source_type ?? ""]
         : videoId
           ? source.data?.display_name || source.data?.original_filename || "…"
           : view
-            ? view.canvas
-              ? "Холст"
-              : view.source.name
+            ? view.uploaded
+              ? "Загруженный клип"
+              : view.canvas
+                ? "Холст"
+                : view.source.name
             : "…";
       const cardItems = cards.data?.clips.filter((c) => !c.hidden) ?? [];
       const newVideo = head === "p" && parts[2] === "new";
@@ -246,7 +250,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
                 hint: n.format,
                 cur: n.id === view?.id,
               })),
-              ...(view && !view.canvas ? [{ to: videoPath(view.source.id), label: "Все клипы этого видео", action: true }] : []),
+              ...(view && !noVideo ? [{ to: videoPath(view.source.id), label: "Все клипы этого видео", action: true }] : []),
             ],
             searchLabel: "Найти клип",
           }
@@ -291,7 +295,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
       ];
       const onRelease = Boolean(releaseKey || viewRelease);
       const chosen = videoId || clipId || releaseKey;
-      const midCap = onRelease ? "Выпуск" : videoId || (view && !view.canvas) ? "Видео" : "Видео или выпуск";
+      const midCap = onRelease ? "Выпуск" : videoId || (view && !noVideo) ? "Видео" : "Видео или выпуск";
       const midVal = newVideo
         ? "Новое видео"
         : releaseKey

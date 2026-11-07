@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { ClipCard } from "@/components/ClipCard";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PublishDialog } from "@/components/PublishDialog";
+import { UploadClipButton } from "@/components/UploadClipButton";
 import { useModuleOn } from "@/hooks/useModules";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
@@ -32,15 +33,6 @@ export function ReadyClipsPage({ embedded }: { embedded?: boolean } = {}) {
   const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const first = query.data?.pages[0];
 
-  const upload = useMutation({
-    mutationFn: (file: File) => clipsApi.uploadEdited(file),
-    onSuccess: () => {
-      toast.success("Клип загружен");
-      qc.invalidateQueries({ queryKey: qk.clips() });
-    },
-    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось загрузить клип"),
-  });
-
   const del = useMutation({
     mutationFn: (id: number) => clipsApi.remove(id),
     onSuccess: () => {
@@ -51,23 +43,8 @@ export function ReadyClipsPage({ embedded }: { embedded?: boolean } = {}) {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось удалить"),
   });
 
-  // Загруженный клип без видео-основы не лежит в проекте: кнопка живёт в «Готовых роликах».
-  const uploadButton = (
-    <label className="btn primary" style={{ cursor: upload.isPending ? "wait" : "pointer" }}>
-      {upload.isPending ? "Загрузка…" : "📤 Загрузить клип"}
-      <input
-        type="file"
-        accept="video/*"
-        hidden
-        disabled={upload.isPending}
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) upload.mutate(f);
-          e.target.value = "";
-        }}
-      />
-    </label>
-  );
+  // Отсюда клип без проекта; в проект — кнопкой на его вкладке «Клипы».
+  const uploadButton = <UploadClipButton />;
 
   return (
     <>

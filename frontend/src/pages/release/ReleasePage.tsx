@@ -140,9 +140,11 @@ function ClipsBlock({ release }: { release: ReleaseView }) {
               <Link className="btn primary sm" to={clipPath(c.id)}>
                 Открыть клип
               </Link>
-              <Link className="btn ghost sm" to={clipEditorPath(c.source_id, c.id)}>
-                Монтаж
-              </Link>
+              {c.uploaded ? null : (
+                <Link className="btn ghost sm" to={clipEditorPath(c.source_id, c.id)}>
+                  Монтаж
+                </Link>
+              )}
             </div>
           </div>
         ))}

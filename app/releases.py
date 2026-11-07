@@ -34,6 +34,7 @@ KIND_LABEL = {
     "promo": "Промо приложения",
     "top": "ТОП-N",
     "canvas": "Холст",
+    "upload": "Загруженный клип",
 }
 STATUS_LABEL = {
     "ready": "Готов",
@@ -79,7 +80,7 @@ def _plans(store: Any) -> dict[int, dict]:
                s.source_type, s.project_id AS source_project,
                (SELECT pp.project_id FROM plan_projects pp WHERE pp.clip_plan_id = cp.id) AS assigned
         FROM clip_plans cp JOIN sources s ON s.id = cp.source_id
-        WHERE s.source_type = 'canvas' OR cp.description LIKE 'Компиляция: %'
+        WHERE s.source_type IN ('canvas', 'clip_upload') OR cp.description LIKE 'Компиляция: %'
            OR cp.id IN (SELECT clip_id FROM expl_videos WHERE clip_id IS NOT NULL)
            OR cp.id IN (SELECT clip_id FROM story_episodes WHERE clip_id IS NOT NULL)
            OR cp.id IN (SELECT clip_plan_id FROM aiv_scripts WHERE clip_plan_id IS NOT NULL)
@@ -188,11 +189,12 @@ def collect(store: Any) -> list[dict]:
         title = str(head.get("title") or "").strip()
         compilation = str(head.get("description") or "").startswith("Компиляция: ")
         canvas = head.get("source_type") == "canvas"
-        if not canvas and not compilation:
+        uploaded = head.get("source_type") == "clip_upload"
+        if not canvas and not compilation and not uploaded:
             continue
         is_promo = any(m.get("promo_layers") or "промо" in str(m.get("title") or "").lower() for m in members)
-        kind = "top" if compilation else ("promo" if is_promo else "canvas")
-        unnamed = title.casefold() in _UNNAMED
+        kind = "upload" if uploaded else "top" if compilation else ("promo" if is_promo else "canvas")
+        unnamed = canvas and title.casefold() in _UNNAMED
         releases.append({
             "key": f"canvas-{head['id']}", "table_id": int(head["id"]), "kind": kind,
             "project_id": int(project) if project is not None else None,

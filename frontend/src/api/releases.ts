@@ -3,7 +3,7 @@ import type { ClipGridItem } from "@/api/clipGroups";
 
 /** Выпуск: ролик с нуля (app/releases.py). Своего хранилища нет: взгляд поверх объяснялок, историй, ИИ-видео и холстов. */
 
-export type ReleaseKind = "expl" | "story" | "3d" | "aiv" | "promo" | "top" | "canvas";
+export type ReleaseKind = "expl" | "story" | "3d" | "aiv" | "promo" | "top" | "canvas" | "upload";
 export type ReleaseStatus = "ready" | "approval" | "working" | "failed" | "cancelled" | "script" | "empty";
 export type StepState = "done" | "now" | "wait" | "failed" | "todo";
 

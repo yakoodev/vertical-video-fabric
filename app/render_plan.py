@@ -16,6 +16,10 @@ class PlanRender:
         или агент и кнопка в редакторе — уже трижды роняли Docker по памяти; очередь
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
         может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
+        from app.clip_upload import NO_MONTAGE, is_upload_plan
+
+        if is_upload_plan(self.store, clip_plan_id):
+            raise ValueError(NO_MONTAGE)
         with heavy_slot("render", f"клип {clip_plan_id}"):
             from app.clip_groups import capture_quiet, snapshot_render
 
