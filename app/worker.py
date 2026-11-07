@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app import publish_master
 from app.ai.publish_meta import platform_texts
+from app.providers.base import safe_provider_error
 from app.providers.registry import get_provider
 from app.publish_format import upload_extras
 from app.settings import settings
@@ -107,5 +108,4 @@ class JobWorker:
 
 
 def _safe_error(exc: Exception) -> str:
-    text = str(exc or "").strip()
-    return text[:500] or "provider upload failed"
+    return safe_provider_error(str(exc or ""), "provider upload failed", limit=500)
