@@ -33,10 +33,14 @@ export interface SubtitleFixes {
   note: string;
 }
 
-/** Черновик истории или 3D-серии: только чтение (app/stories_gen.py, draft_view). */
+/** Черновик истории или 3D-серии (app/stories_gen.py, draft_view). Правятся название и текст: storiesApi.editDraft. */
 export interface ReleaseScriptDraft {
   episode_id: number;
   title: string;
+  /** Биты написал автор черновика: они привязаны к словам текста. Нет — разбивка считается по фразам. */
+  author_beats: boolean;
+  /** Название появится на первом кадре видео. */
+  title_on_frame: boolean;
   premise: string;
   tone: string;
   duration_target: number;

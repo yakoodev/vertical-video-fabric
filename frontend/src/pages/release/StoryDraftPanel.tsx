@@ -8,10 +8,11 @@ import { storiesApi, storiesKey } from "@/api/stories";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { formatDuration, plural } from "@/components/ui";
+import { StoryDraftEditForm } from "@/pages/release/StoryDraftEditForm";
 
 /**
- * Черновик выпуска: только сценарий и биты. Ничего не идёт и не тратится, пока владелец не нажмёт «Запустить»
- * (app/stories_gen.py, start_draft): дальше обычный конвейер, платное — обычной карточкой.
+ * Черновик выпуска: только сценарий и биты, название и текст правятся здесь же. Ничего не идёт и не тратится, пока
+ * владелец не нажмёт «Запустить» (app/stories_gen.py, start_draft): дальше обычный конвейер, платное — обычной карточкой.
  */
 
 const EXTRAS: [keyof ReleaseScriptDraft, string][] = [
@@ -37,6 +38,7 @@ export function StoryDraftPanel({ draft, projectId, onDeleted }: { draft: Releas
   const qc = useQueryClient();
   const toast = useToast();
   const [asking, setAsking] = useState(false);
+  const [editing, setEditing] = useState(false);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: releaseKeys.all });
     qc.invalidateQueries({ queryKey: navKeys.all });
@@ -73,7 +75,13 @@ export function StoryDraftPanel({ draft, projectId, onDeleted }: { draft: Releas
           <p className="muted">Ничего не запущено и ничего не потрачено. После запуска сервис сам подберёт сцены, запишет голос и соберёт клип. Платное спросит отдельно.</p>
         </div>
         <div className="series-row">
-          <button type="button" className="btn primary" disabled={start.isPending} onClick={() => start.mutate()}>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={start.isPending || editing}
+            title={editing ? "Сначала сохраните правку или отмените её" : undefined}
+            onClick={() => start.mutate()}
+          >
             {start.isPending ? "Запускаю…" : "Запустить"}
           </button>
           <button type="button" className="btn ghost" disabled={remove.isPending} onClick={() => setAsking(true)}>
@@ -85,18 +93,33 @@ export function StoryDraftPanel({ draft, projectId, onDeleted }: { draft: Releas
         <div className="rel-draft-h">
           <h2>Сценарий</h2>
           {facts.length ? <span className="muted">{facts.join(", ")}</span> : null}
+          {editing ? null : (
+            <button type="button" className="btn ghost sm rel-draft-edit-btn" onClick={() => setEditing(true)}>
+              Изменить
+            </button>
+          )}
         </div>
         {draft.logline ? <p className="rel-draft-log">{draft.logline}</p> : null}
         {draft.premise && draft.premise !== draft.logline ? <p className="muted rel-draft-premise">Завязка: {draft.premise}</p> : null}
-        <div className="rel-draft-text">
-          {draft.sentences.map((s, n) => (
-            <p key={n}>
-              {s.role ? <span className="rel-draft-role">{s.role}</span> : null}
-              {s.text}
-              {s.hud ? <span className={`rel-draft-hud ${s.hud_kind}`}>на экране: {s.hud}</span> : null}
-            </p>
-          ))}
-        </div>
+        {editing ? (
+          <StoryDraftEditForm
+            draft={draft}
+            onDone={(saved) => {
+              setEditing(false);
+              if (saved) refresh();
+            }}
+          />
+        ) : (
+          <div className="rel-draft-text">
+            {draft.sentences.map((s, n) => (
+              <p key={n}>
+                {s.role ? <span className="rel-draft-role">{s.role}</span> : null}
+                {s.text}
+                {s.hud ? <span className={`rel-draft-hud ${s.hud_kind}`}>на экране: {s.hud}</span> : null}
+              </p>
+            ))}
+          </div>
+        )}
         {EXTRAS.some(([k]) => draft[k]) || draft.hashtags?.length ? (
           <dl className="rel-draft-extra">
             {EXTRAS.filter(([k]) => draft[k]).map(([k, label]) => (
