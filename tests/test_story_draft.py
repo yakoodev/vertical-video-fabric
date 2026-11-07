@@ -286,6 +286,8 @@ def test_author_beats_survive_start_and_must_match_the_script(env):
     assert view["beats"][0]["action"] == "the cabin jolts" and view["beats"][0]["sound"] == "скрежет"
     # Запуск идёт по битам автора, а не режет сценарий заново.
     assert X.start_draft(store, ep["id"])["status"] == "scripted"
+    with pytest.raises(S.StoryError):  # пока сцены не подобраны, биты не правят
+        X.update_beats(store, ep["id"], [{"i": 0, "camera": "static"}])
     X.plan_beats(store, ep["id"])
     started = S.get_episode(store, ep["id"])
     assert started["status"] == "planned" and [b["text"] for b in started["beats"]] == [b["text"] for b in beats]

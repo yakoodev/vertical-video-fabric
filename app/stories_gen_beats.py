@@ -228,7 +228,7 @@ def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
     if ep["status"] == S.DRAFT_STATUS:
         raise S.StoryError("это черновик: биты меняются вместе со сценарием (story_set_script с beats), запускает «Запустить»")
     beats = ep.get("beats") or []
-    if not beats:
+    if not beats or ep["status"] == "scripted":  # у запущенного черновика биты есть, а сцены ещё подбираются
         raise S.StoryError("сначала биты: story_continue (после сценария)")
     world = S.get_world(store, int(ep["world_id"]))
     library = S.list_scenes(store, int(world["id"]))
