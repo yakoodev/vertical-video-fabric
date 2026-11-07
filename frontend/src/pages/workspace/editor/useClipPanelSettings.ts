@@ -160,6 +160,8 @@ export function useClipPanelSettings({
   // Что сервер последним принял от этой вкладки: правка извне (агент, другая вкладка) — всё остальное.
   const lastServerSettingsRef = useRef<Record<number, string>>({});
   const saveInFlightRef = useRef(0);
+  // Сколько записей начато: чтение, с которым разминулась своя запись, не считается правкой извне.
+  const savesStartedRef = useRef(0);
   const saveSettings = (planId: number, settings: RenderSettings) => {
     const prev = qc.getQueryData<SourceDetail>(qk.source(sourceId));
     if (prev) {
@@ -175,6 +177,7 @@ export function useClipPanelSettings({
       ((settings as { audio?: { joins?: unknown } }).audio?.joins ?? null),
     );
     saveInFlightRef.current += 1;
+    savesStartedRef.current += 1;
     return clipPlansApi
       .setRenderSettings(planId, settings)
       .then((r) => {
@@ -319,10 +322,14 @@ export function useClipPanelSettings({
   useClipRevision(editorPlanId, async () => {
     const planId = editorPlanId;
     if (!planId || pendingSaveRef.current || saveInFlightRef.current || agentRunningRef.current || layerDragRef.current) return;
+    const savesBefore = savesStartedRef.current;
     await Promise.all([
       qc.invalidateQueries({ queryKey: qk.source(sourceId) }),
       qc.invalidateQueries({ queryKey: ["plan-subtitles", planId] }),
     ]);
+    // Пока ехал ответ, ушла своя запись: он старее панели. Приняв его за правку извне, панель откатила бы
+    // последнюю правку и сняла выделение. Эта запись сменит ревизию, опрос перечитает клип ещё раз.
+    if (savesStartedRef.current !== savesBefore) return;
     const fresh = qc.getQueryData<SourceDetail>(qk.source(sourceId))?.clip_plans.find((p) => p.id === planId);
     const json = JSON.stringify(fresh?.render_settings);
     if (json !== lastServerSettingsRef.current[planId] && !pendingSaveRef.current) {
