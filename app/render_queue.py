@@ -248,6 +248,18 @@ def cancel(store: Any, job_id: int) -> dict:
     return get(store, job_id)
 
 
+def cancel_stale_queued(store: Any, episode_id: int, key: str) -> list[int]:
+    """Перед новым заданием эпизода: то, что ещё стоит в очереди под другим ключом, — со старой режиссурой или озвучкой;
+    воркер берёт старейшее, значит, отрендерил бы его. Запущенные не трогаем."""
+    rows = store.db.query_all("SELECT id FROM render3d_jobs WHERE episode_id = ? AND status = 'queued' AND key != ?",
+                              (int(episode_id), str(key)))
+    ids = [int(r["id"]) for r in rows]
+    for job_id in ids:
+        store.db.execute("UPDATE render3d_jobs SET status = 'cancelled', note = 'заменено новым заданием', "
+                         "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'", (job_id,))
+    return ids
+
+
 def result_file(job: dict) -> Path | None:
     p = Path(job.get("result_path") or "")
     return p if job.get("status") == "done" and p.is_file() else None

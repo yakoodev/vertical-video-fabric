@@ -61,7 +61,11 @@ def build_lift(fonts, floors: list[str]):
     black = kit.principled("black_glass", kit.hexc("#050506"), rough=0.08, spec=0.7)
     rubber = kit.principled("rubber", kit.hexc("#111214"), rough=0.7)
     concrete = kit.principled("concrete", kit.hexc("#55524c"), rough=0.92, bump=(60.0, 0.5, 8.0))
-    grease = kit.principled("shaft_dark", kit.hexc("#1b1a18"), rough=0.85, bump=(30.0, 0.4, 6.0))
+    # стена шахты — голый бетон: фонарик должен её показать, чёрная она не читается (см. проём, series3d_blender_stage.DOORWAY)
+    shaft_concrete = kit.principled("shaft_wall", kit.hexc("#6f6a60"), rough=0.95, bump=(38.0, 0.7, 9.0))
+    door_rubber = kit.principled("door_rubber", kit.hexc("#0a0a0b"), rough=0.8)
+    # дверь этажа крашеная, не зеркальная: стальная отражала красный свет кабины и блик фонарика, двери не было видно
+    door_paint = kit.principled("floor_door_paint", kit.hexc("#5b5f63"), rough=0.62, bump=(70.0, 0.15, 5.0))
     W, D, H, FRONT, LEFT = B.W, B.D, B.H, B.FRONT, B.LEFT
     t = 0.04
     kit.box("floor", (W + 0.1, D + 0.1, t), (0, 0, -t / 2), floor, bevel=0)
@@ -115,10 +119,14 @@ def build_lift(fonts, floors: list[str]):
     kit.box("lintel", (door_w + 0.08, 0.05, 0.03), (0, fy + 0.0, door_h + 0.025), steel_dark, bevel=0.006)
     # за дверями — шахта: кабина застряла между этажами, в проёме — бетонный край перекрытия и низ дверей этажа
     sy = fy - 0.30
-    kit.box("shaft_wall", (door_w + 0.8, 0.04, H + 0.6), (0, sy, H / 2), grease, bevel=0)
+    # вниз стена уходит далеко: с верхнего плана видно щель между кабиной и стеной
+    kit.box("shaft_wall", (door_w + 0.8, 0.04, 4.8), (0, sy, 0.2), shaft_concrete, bevel=0)
     kit.box("shaft_slab", (door_w + 0.7, 0.26, 0.24), (0, fy - 0.17, 1.12), concrete, bevel=0.01)
     kit.box("shaft_sill", (door_w + 0.1, 0.06, 0.02), (0, fy - 0.075, 1.25), steel_dark, bevel=0.003)
-    kit.box("landing_door", (door_w, 0.03, 0.8), (0, fy - 0.10, 1.66), door_steel)
+    kit.box("landing_door", (door_w, 0.03, 0.8), (0, fy - 0.10, 1.66), door_paint)
+    # дверь этажа читается дверью: шов двух створок посередине и уплотнитель снизу
+    kit.box("landing_door_seam", (0.016, 0.004, 0.8), (0, fy - 0.0835, 1.66), door_rubber, bevel=0)
+    kit.box("landing_door_foot", (door_w, 0.004, 0.018), (0, fy - 0.0835, 1.275), door_rubber, bevel=0)
     for x in (-0.30, 0.31):
         kit.cylinder(f"cable{x:+.1f}", 0.008, H + 0.5, (x, sy + 0.05, H / 2), steel_dark, verts=10)
     # табло: чёрное стекло, цифры этажей (видна одна), стрелка
@@ -514,6 +522,10 @@ def phone_screen_text(phone, perf, frames, font):
 
 # ============================================================== свет
 
+REVEAL_W = 17.0     # Вт света в шахте при открытых дверях и включённом фонарике
+REVEAL_FOG = 0.08   # взвесь в кабине при этом реже: иначе плита и стена за белым конусом не видны
+
+
 def build_lights(L, perf, frames, phone):
     sc = bpy.context.scene
     lt = perf["lights"]
@@ -571,6 +583,10 @@ def build_lights(L, perf, frames, phone):
     dl = kit.make_light("display_glow", "AREA", (1.0, 0.35, 0.1), 5.0, (disp[0], disp[1] + 0.06, disp[2]),
                         rot=(math.radians(90), 0, 0), size=0.25, shadow=False, volume=0.3)
     kit.fcurve(dl.data, "energy", 0, frames, [5.0 * lt[i]["display"] for i in range(n)])
+    # свет фонарика в шахте: сам луч узкий, плиту, дверь этажа и стену он целиком не покажет
+    shaft = kit.make_light("shaft_reveal", "SPOT", (0.86, 0.92, 1.0), 0.0, (0.1, B.FRONT + 0.24, 0.94),
+                           rot=(math.radians(-90), 0, 0), size=0.05, spot=(math.radians(150), 0.6), volume=0.0)
+    kit.fcurve(shaft.data, "energy", 0, frames, [REVEAL_W * lt[i].get("reveal", 0.0) for i in range(n)])
     # двери
     dw = B.DOOR_W
     kit.fcurve(L["door_l"], "location", 0, frames, [-dw / 4 - lt[i]["doors"] for i in range(n)])
@@ -586,7 +602,9 @@ def build_lights(L, perf, frames, phone):
     screen.location = (0, -0.03, 0)
     screen.rotation_euler = (math.radians(-90), 0, 0)
     ph = perf["phone"]
-    flash_e = [70.0 * ph[i]["light"] * ph[i]["on"] for i in range(n)]
+    # пятно на близкой поверхности (створки, стена шахты) не должно выгорать в белый диск: мощность по расстоянию до цели
+    near = [min(1.0, max(0.3, (math.dist(perf["root"][i], ph[i]["beam"][:2]) / 0.9) ** 2)) for i in range(n)]
+    flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] for i in range(n)]
     scr_e = [1.2 * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) for i in range(n)]
     kit.fcurve(flash.data, "energy", 0, frames, flash_e)
     kit.fcurve(screen.data, "energy", 0, frames, scr_e)
@@ -609,7 +627,8 @@ def build_lights(L, perf, frames, phone):
     vol = fnt.nodes.new("ShaderNodeVolumePrincipled")
     vol.inputs["Anisotropy"].default_value = 0.45
     kit.fcurve(fnt, f'nodes["{vol.name}"].inputs[2].default_value', 0, frames,
-               [0.35 if lt[i]["dark"] else 0.05 for i in range(n)], interp="CONSTANT")
+               [REVEAL_FOG if lt[i].get("reveal", 0.0) > 0.3 else (0.35 if lt[i]["dark"] else 0.05) for i in range(n)],
+               interp="CONSTANT")
     fnt.links.new(vol.outputs["Volume"], fout.inputs["Volume"])
     kit.box("fog_volume", (B.W - 0.01, B.D - 0.01, B.H - 0.01), (0, 0, B.H / 2), fog, bevel=0)
 

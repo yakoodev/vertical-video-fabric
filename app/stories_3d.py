@@ -381,16 +381,28 @@ def assemble(store: Any, episode_id: int) -> dict:
     blender = S.episode_renderer(ep) == S.RENDERER_BLENDER
     key = blender_key(ep, ref) if blender else ""
     job = _blender_job(store, ep, key) if blender else None
+    disaster = D.is_disaster(world, ep)
+    narr_asset = ref["asset_id"]
+    fit = stored_fit(store, ep, ref)
     # Слова уже распознаны для задания рендера — не гоняем Whisper на каждом проходе ожидания.
     words: list[dict] = [dict(w) for w in ((job or {}).get("payload") or {}).get("words") or []]
+    if not words and fit:
+        words = [dict(w) for w in fit["words"]]
     if words:
         pass
     elif not S.is_dry(ep):
         # Субтитры — слова сценария со временем распознанных; без речи серию не выпускаем (как у объяснялок).
         words, _heard = X.real_words(store, S.narration_text(ep), ref, path, S.StoryError, "серию", SG.transcribe_words)
+        if disaster and options_fit(ep):
+            fit = make_fit(store, ep, ref, path, words, notes)
+            if fit:
+                words = [dict(w) for w in fit["words"]]
+    if fit:   # дальше всё — на озвучке под темп серии: голос клипа, огибающая рта, длина
+        narr_asset = fit["asset_id"]
+        path = _asset_path(store, {"asset_id": narr_asset})
+        audio_sec = float(fit["audio_sec"])
     if not words:  # только явный сухой прогон: вместо речи тон
         words = proportional_words(S.narration_text(ep), audio_sec)
-    disaster = D.is_disaster(world, ep)
     speech_end = round(float(words[-1]["end"]), 3)
     tail = D.PART_SEC if disaster else SG.TAIL_SEC
     total = round(max(speech_end + tail, audio_sec + (0.0 if disaster else 0.4), MIN_DURATION_SEC), 2)
@@ -463,7 +475,7 @@ def assemble(store: Any, episode_id: int) -> dict:
         if result.get("faces"):
             notes += place_titles(layers, result["faces"], float(world["captions"]["y"]), prefix)
     layers.append({"id": f"{prefix}narr", "type": "audio", "name": "Рассказчик", "start": 0.0, "end": round(total, 3),
-                   "props": {"asset_id": str(ref["asset_id"]), "mode": "track", "volume": 1.0, "role": "voice"}})
+                   "props": {"asset_id": str(narr_asset), "mode": "track", "volume": 1.0, "role": "voice"}})
     layers.append({"id": f"{prefix}caps", "type": "captions", "name": "Субтитры по 1–3 слова", "start": 0.0,
                    "end": round(speech_end, 3), "track": 6, "x": 0.5, "y": float(world["captions"]["y"]),
                    "props": _captions(world)})
@@ -496,6 +508,7 @@ def assemble(store: Any, episode_id: int) -> dict:
         notes.append(version["note"])
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2), "engine": S.ENGINE_3D,
                 "editor_url": f"/clips/{clip_id}", "version": version, "subtitle_fixes": sub_fixes,
+                **({"voice_fit": fit} if fit else {}),
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "camera", "sfx", "sentence")} for p in placed],
                 "shots_per_min": round(len(shots) / total * 60, 1), "sfx": len(result.get("sfx") or []),
                 "layers": len(render["layers"]), "music_track_id": track, "music_bed": bed, "cover_frames": covers,
@@ -598,6 +611,49 @@ def place_titles(layers: list[dict], faces: list[dict], captions_y: float, prefi
     return notes
 
 
+def options_fit(ep: dict) -> bool:
+    """Опция эпизода ``voice_fit: false`` — оставить запись как есть."""
+    return (ep.get("options") or {}).get("voice_fit") is not False
+
+
+def stored_fit(store: Any, ep: dict, ref: dict) -> dict | None:
+    """Готовая озвучка под темп от этой же записи (файл на месте) — иначе нет."""
+    from app import series3d_voice as VF
+    from app.aivideo_gen import _asset_path
+
+    fit = (ep.get("timeline") or {}).get("voice_fit")
+    if not fit or fit.get("v") != VF.VERSION or int(fit.get("source") or 0) != int(ref["asset_id"]):
+        return None
+    try:
+        return fit if _asset_path(store, {"asset_id": fit["asset_id"]}) else None
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def make_fit(store: Any, ep: dict, ref: dict, path: Path, words: list[dict], notes: list[str]) -> dict | None:
+    """Озвучка под темп серии отдельным файлом (``app/series3d_voice.py``), бесплатно; не вышло — исходная и заметка."""
+    from app import series3d_voice as VF
+    from app.montage_assets import assets_dir, probe_asset
+
+    dest = assets_dir() / f"series3d-voice-{uuid4().hex[:10]}.mp3"
+    sentences = [s for s in (ep.get("script") or {}).get("sentences") or [] if str(s.get("text") or "").strip()]
+    try:
+        fit = VF.fit_narration(path, dest, sentences, words)
+    except (VF.VoiceFitError, OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        dest.unlink(missing_ok=True)
+        notes.append(f"3D: озвучка осталась как есть, темп не подогнан ({type(exc).__name__}: {str(exc)[:100]})")
+        return None
+    meta = probe_asset(dest)
+    asset = store.create_montage_asset(kind="audio", label=f"Озвучка под темп: {ep.get('title') or ep['premise']}"[:120],
+                                       description="3D-серия: паузы короче, повторы одним звуком", tags="3d,озвучка",
+                                       file_path=str(dest), original_filename=dest.name, mime_type="audio/mpeg",
+                                       size_bytes=dest.stat().st_size, project_id=int(ep["project_id"]), **meta)
+    fit = {**fit, "source": int(ref["asset_id"]), "asset_id": int(asset["id"])}
+    ep["timeline"] = {**(ep.get("timeline") or {}), "voice_fit": fit}
+    S.update_episode(store, int(ep["id"]), timeline=ep["timeline"])
+    return fit
+
+
 def blender_quality(ep: dict) -> str:
     from app import series3d_blender as SB
 
@@ -609,11 +665,13 @@ def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
     """Что рендерим: фразы сценария + озвучка + версия сцены (+ пресет) — то же задание не ставим дважды.
     Без пресета — ключ режиссуры: другой пресет той же серии берёт ту же режиссуру (сравнимо, без нового Gemini)."""
     from app import series3d_blender as SB
+    from app import series3d_voice as VF
 
     opts = ep.get("options") or {}
     blob = {"sentences": [s.get("text") for s in (ep.get("script") or {}).get("sentences") or []],
             "narration": str(ref.get("asset_id")), "lipsync": opts.get("lipsync") or "speaking",
-            "v": SB.SCENE_VERSION, "episode": int(ep["id"])}
+            "v": SB.SCENE_VERSION, "episode": int(ep["id"]), "voice": VF.VERSION if options_fit(ep) else 0,
+            "plans": SB.plan_key(ep.get("beats"))}
     base = "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
     return f"{base}-{blender_quality(ep)}" if with_quality else base
 
@@ -667,7 +725,7 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
     if payload is None:
         payload = SB.build_job(ep["script"], words, total, gemini=True, envelope=SB.audio_envelope(audio),
                                lipsync_mode=str(opts.get("lipsync") or "speaking"),
-                               quality=blender_quality(ep), look=look, seed=eid)
+                               quality=blender_quality(ep), look=look, seed=eid, beats=ep.get("beats"))
         payload["key"] = blender_key_base(key)
         if payload.get("director_error"):
             notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")
@@ -679,6 +737,7 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
         return SB.result_for(payload), out, {"seconds": info.get("seconds"), "frames": info.get("frames"),
                                              "cached": info.get("cached")}
     if job is None:
+        RQ.cancel_stale_queued(store, eid, key)
         job = RQ.enqueue(store, payload, key=key, episode_id=eid, title=str(ep.get("title") or ep.get("premise") or ""))
     if job["status"] == "done":
         res = job.get("result") or {}

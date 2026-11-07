@@ -9,7 +9,7 @@ from typing import Any
 
 from app import motion3d as m
 from app.series3d_blender_stage import (
-    S, H, FRONT, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL, DISPLAY, CEIL_LIGHT, HATCH, CLIP_LEN, WALK_CLIP,
+    S, H, FRONT, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL, DISPLAY, DOORWAY, CEIL_LIGHT, HATCH, CLIP_LEN, WALK_CLIP,
     WALK_FEET, MAX_WALK_STEPS, WALK_CYCLE_UNITS, STEP_LEN, stance_units, walk_plan, walk_seconds, button_pos,
     reachable, facing, to_world, KNOCK_POINT, press_stand, spot_for, LOCS, loc_of, loc_spot, loc_target, inside_loc,
     show_items, _low
@@ -205,21 +205,34 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     phone_hold: dict | None = None
     cur_loc = shots[0].get("location") if shots and shots[0].get("location") in LOCS else "cabin"
     door_tracks: dict[str, _Track] = {}
+    doorway = any(s_.get("frame") == "doorway" for s_ in shots)
+    # «раздвинул шире»: двери уже приоткрыты с прошлой серии, в щели темно
+    door_slit = 0.05 if any(s_["action"] == "pry_doors" and "шире" in _low(s_.get("text")) for s_ in shots) else 0.0
+    release_t = next((e["t"] for e in events if e["kind"] == "doors_release"), None)
+    if release_t is None:
+        release_t = next((e["t"] for e in events if e["kind"] == "doors_close"), None)
+    flash_off = False
+    beam_over: list[tuple[float, float, tuple]] = []   # где луч идёт не туда, куда смотрит герой
+    door_from = min((float(s_["t0"]) for s_ in shots if s_.get("frame") == "doorway"), default=None)
+    door_until = next((e["t"] for e in events if e["kind"] == "doors_close"), 1e9)
     pos_keys.append((0.0, pos))
     head_keys.keys = [(0.0, heading)]
     add_clip("Idle_A", 0.0, blend=0.01)
     shot_out = []
     for k, s in enumerate(shots):
         t0, t1 = float(s["t0"]), float(s["t1"])
+        # склейка на границе кадра, как у кусков рендера (chunks: round(t0·fps)): иначе первый кадр плана — ещё со старого
+        # места, и камера, идущая за лицом с пружиной, смотрит мимо героя (тёмный кадр на первые 0.3 с)
+        t_cut = round(t0 * fps) / fps
         a = s["action"]
         span = t1 - t0
         loc = s.get("location") if s.get("location") in LOCS else "cabin"
         if loc != cur_loc:
             # другое место — склейкой: герой уже там, стоит у входа (телефон в руке остаётся)
             spot0, h0 = loc_spot(loc, "entry" if loc != "cabin" else "center")
-            pos_keys.append((t0, spot0))
-            head_keys.key(t0 - 1e-3, heading)
-            head_keys.key(t0, h0)
+            pos_keys.append((t_cut, spot0))
+            head_keys.key(t_cut - 1e-3, heading)
+            head_keys.key(t_cut, h0)
             pos, heading, posture = spot0, h0, "stand"
             if seg_clip != "Idle_A":
                 add_clip("Idle_A", t0, blend=0.01)
@@ -228,9 +241,16 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
 
         def W(p_: tuple, o_=origin) -> tuple:
             return (p_[0] + o_[0], p_[1] + o_[1], *p_[2:])
-        dtrack = door_tracks.setdefault(loc, _Track(DOOR_OPEN.get(loc, 0.0)))
+        dtrack = door_tracks.setdefault(loc, _Track(door_slit if loc == "cabin" else DOOR_OPEN.get(loc, 0.0)))
+        close_t = next((e["t"] for e in events if e["kind"] == "doors_close" and t0 <= e["t"] < t1), None)
         # куда и как стоять
-        if a == "press_button":
+        author_face = s.get("by") == "author" and s.get("camera") == "face"
+        # автор снимает проём: от первого такого кадра до «сомкнулись» герой держит створки у края, за ним видно шахту
+        at_door = door_from is not None and door_from <= t0 < door_until and loc == "cabin" and posture == "stand" \
+            and a not in HAND_ACTIONS
+        if at_door:
+            spot, hd = DOORWAY["spot"], DOORWAY["heading"]    # встаёт склейкой
+        elif a == "press_button":
             want = ["1", "3", "2", "4"] if s.get("button") == "all" else [reachable(s.get("button") or "1")]
             want = [reachable(b) for b in want]
             spot, hd = press_stand(want)
@@ -239,6 +259,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             spot = W(spot)
         elif a == "pry_doors":
             spot, hd = spot_for("pry")
+            if doorway and loc == "cabin":
+                spot = (spot[0], DOORWAY["pry_y"])    # двери расходятся шире: иначе руки не дотянутся до створок
             spot = W(spot)
         elif a == "sit_corner":
             spot, hd = spot_for("corner")
@@ -246,7 +268,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             spot, hd = loc_spot(loc, s.get("target") or "center")
         elif loc == "cabin" and a in ("shout", "listen") and posture == "stand" and abs(_ang(heading)) > math.radians(35):
             spot, hd = pos, 0.0
-        elif loc == "cabin" and posture == "stand" and pos[1] < FRONT + 0.45 and a not in ("shout", "listen", "flinch"):
+        elif loc == "cabin" and posture == "stand" and pos[1] < FRONT + 0.45 \
+                and (a not in ("shout", "listen", "flinch") or (author_face and s.get("frame") not in ("doorway", "doors"))):
             # у самых дверей лицу некуда снимать — отходит в середину кабины
             spot, hd = spot_for("center")
         else:
@@ -260,8 +283,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 want_h = m.heading_of((p_[0] - pos[0], p_[1] - pos[1]))
                 if math.hypot(p_[0] - pos[0], p_[1] - pos[1]) > 0.35 and abs(_ang(want_h - heading)) > math.radians(55):
                     # разворот склейкой: на новом плане герой уже смотрит туда
-                    head_keys.key(t0 - 1e-3, heading)
-                    head_keys.key(t0, want_h)
+                    head_keys.key(t_cut - 1e-3, heading)
+                    head_keys.key(t_cut, want_h)
                     heading = hd = want_h
                 fx_, fy_ = facing(heading)
                 if not inside_loc(loc, (pos[0] - fx_ * 1.1, pos[1] - fy_ * 1.1, 1.0), 0.05):
@@ -270,7 +293,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                         p2 = (round(pos[0] + fx_ * k_, 4), round(pos[1] + fy_ * k_, 4))
                         if inside_loc(loc, (p2[0] - fx_ * 1.1, p2[1] - fy_ * 1.1, 1.0), 0.05) and \
                                 inside_loc(loc, (p2[0], p2[1], 1.0), 0.25):
-                            pos_keys.append((t0, p2))
+                            pos_keys.append((t_cut, p2))
                             pos = spot = p2
                             break
             if s.get("screen") and posture == "stand":
@@ -279,8 +302,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                     fx_, fy_ = facing(heading + dh_)
                     if inside_loc(loc, (pos[0] + fx_ * 0.75, pos[1] + fy_ * 0.75, 1.0), 0.05):
                         if dh_:
-                            head_keys.key(t0 - 1e-3, heading)
-                            head_keys.key(t0, heading + dh_)
+                            head_keys.key(t_cut - 1e-3, heading)
+                            head_keys.key(t_cut, heading + dh_)
                             heading = hd = heading + dh_
                         break
         moved = math.dist(spot, pos) > 0.04
@@ -306,11 +329,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             _d0, _d1 = abs(_ang(walk_head - heading)), abs(_ang(hd - walk_head))
             wsec = walk_seconds(clip_sec + (_h if _d0 > math.radians(100) else 0.0)
                                 + (0.0 if _d1 <= math.radians(40) else _h * (2 if _d1 > math.radians(100) else 1)))
-        if moved and (k == 0 or far or t_turn0 + wsec > (0.9 if a == "approach" else 0.6) * span or a == "sit_corner" and walk_dist > 0.45):
+        if moved and (k == 0 or far or t_turn0 + wsec > (0.9 if a == "approach" else 0.6) * span or a == "sit_corner" and walk_dist > 0.45
+                      or at_door or author_face or (doorway and a == "pry_doors")):
             # склейка: герой уже на месте (переход между кадрами не показываем)
-            pos_keys.append((t0, spot))
-            head_keys.key(t0 - 1e-3, heading)
-            head_keys.key(t0, hd)
+            pos_keys.append((t_cut, spot))
+            head_keys.key(t_cut - 1e-3, heading)
+            head_keys.key(t_cut, hd)
             if posture == "stand" and seg_clip not in ("Idle_A",):
                 add_clip("Idle_A", t0, blend=0.01)
             pos, heading = spot, hd
@@ -389,6 +413,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if t < shot_end - 0.05:
                 gaze.key(max(t, t0), v)
         cam_subject = "face"
+        if phone_out and flash_off and a not in ("phone_out", "phone_light", "sit_corner"):
+            # фонарик выключен, экран уже посмотрел — телефон в карман: иначе он до конца серии закрывает подбородок
+            phone_iv[-1][1] = a0 + 0.3
+            if phone_hold is not None:
+                phone_hold["t1"] = a0 + 0.3
+            phone_out = False
         # действие
         if a == "press_button":
             seq = ["1", "3", "2", "4"] if s.get("button") == "all" else [reachable(s.get("button") or "1")]
@@ -439,12 +469,20 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             base_gap = dtrack.keys[-1][1]
             dtrack.key(open_t, base_gap)
             if full:
-                dtrack.key(open_t + 1.1, 0.24)
+                wide = doorway and loc == "cabin"
+                dtrack.key(max(open_t + 0.5, min(open_t + 1.1, t1 - 0.05)) if wide else open_t + 1.1,
+                           DOORWAY["gap"] if wide else 0.24)
+                if wide and release_t is not None and release_t > t1:
+                    # дальше держит одной рукой: вторая берёт телефон, створки стоят, пока он их не отпустит
+                    holds.append({"side": "r", "t0": t1 - 0.1, "t1": release_t + 0.25, "grip": t1 - 0.09, "mode": "doors",
+                                  "origin": origin, "loc": loc})
             else:
-                dtrack.key(open_t + 0.4, base_gap + 0.025)
-                dtrack.key(open_t + 0.8, base_gap + 0.012)
-                dtrack.key(min(t1, open_t + 1.5), base_gap + 0.03)
-                dtrack.key(min(t1 + 0.3, open_t + 2.0), base_gap)
+                # створки поддаются и возвращаются; если они в этом кадре схлопываются, снова не открывать
+                limit = close_t if close_t is not None else 1e9
+                for dt_, gap_ in ((open_t + 0.4, 0.025), (open_t + 0.8, 0.012), (min(t1, open_t + 1.5), 0.03),
+                                  (min(t1 + 0.3, open_t + 2.0), 0.0)):
+                    if dt_ < limit:
+                        dtrack.key(dt_, base_gap + gap_)
             contacts.append({"kind": "doors", "t": open_t, "full": full})
             gkey(a0 - 0.1, W((0.0, DOOR_FACE_Y, 0.75)))
             # тужится — отворачивает лицо вбок (к камере детали, она с +X): лицо видно, а не капюшон
@@ -476,11 +514,23 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             aim = a == "phone_light"
             phone_mode.key(a0 + 0.55, phone_mode.keys[-1][1])
             phone_mode.key(a0 + 0.8, 1.0 if aim else 0.0)
-            if aim or dark(a0 + 0.5):
+            if aim or (dark(a0 + 0.5) and not flash_off):
                 flash_track.key(a0 + 0.85, flash_track.keys[-1][1])
                 flash_track.key(a0 + 0.9, 1.0)
-            gkey(a0 + 0.1, "phone")
             if aim:
+                flash_off = False
+            gkey(a0 + 0.1, "phone")
+            if aim and at_door:
+                # луч ведёт автор: наверх по плите и двери этажа или вниз по стене, где человеку негде встать
+                up = re.search(r"наверху|плит|двер", _low(s.get("text")))
+                first_, second_ = (DOORWAY["slab"], DOORWAY["floor_door"]) if up else (DOORWAY["wall"], (0.0, DOORWAY["wall"][1], 0.3))
+                if s.get("camera") == "face":
+                    # камера стоит у стены: он смотрит мимо объектива на стену, луч вниз и в сторону (не в объектив, не через лицо)
+                    beam_over.append((t0, t1 + 0.1, (-0.40, DOORWAY["wall"][1], 0.05)))
+                    first_ = second_ = (0.10, DOORWAY["wall"][1], 0.86)
+                gkey(a0 + 0.25, first_)
+                gkey(a0 + max(0.9, (t1 - a0) * 0.55), second_)
+            elif aim:
                 # светит туда, куда смотрит: на двери, потом ведёт лучом по кабине
                 if loc == "cabin":
                     tgt = (0.0, DOOR_FACE_Y, 0.9) if rnd.random() < 0.5 else (DISPLAY[0], DISPLAY[1], DISPLAY[2] - 0.1)
@@ -493,7 +543,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             gkey(a0, loc_target(loc, "key"))
             cam_subject = "display"
         elif a == "look_ceiling":
-            if loc == "cabin":
+            if s.get("by") == "author" and s.get("camera") == "overhead":
+                gkey(a0, "camera")      # смотрит вверх и камера сверху: лицо в объектив, а не макушка
+            elif loc == "cabin":
                 gkey(a0, HATCH)
                 gkey(a0 + max(0.6, span * 0.55), (CEIL_LIGHT[0] - 0.15, CEIL_LIGHT[1] - 0.2, H))
             else:
@@ -502,7 +554,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         elif a == "look_camera":
             gkey(a0, "camera")
         elif a == "flinch":
-            ev = [e["t"] for e in events if t0 - 0.2 <= e["t"] < t1 and e["kind"] in ("blackout", "jolt", "knock", "scrape", "flash")]
+            ev = [e["t"] for e in events if t0 - 0.2 <= e["t"] < t1 and e["kind"] in ("blackout", "jolt", "knock", "scrape", "flash", "doors_close")]
             tf = ev[0] if ev else a0 + 0.15
             startles.append((tf + 0.05, 1.0))
             add_clip("Hit_A", max(tt, tf), blend=0.12, loop=False) if posture == "stand" else None
@@ -527,6 +579,11 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 gkey(a0, loc_target(loc, "key"))
                 gkey(a0 + span * 0.5, loc_target(loc, "sound"))
             lean_v = -0.05
+        if re.search(r"(выключил|погасил)\w*\s+(\w+\s+)?фонар", _low(s.get("text"))):
+            # выключил фонарик: луч гаснет на этом кадре и сам больше не загорается
+            flash_track.key(a0 + 0.1, flash_track.keys[-1][1])
+            flash_track.key(a0 + 0.15, 0.0)
+            flash_off = True
         for e in events:
             if e["kind"] == "doors_close" and t0 <= e["t"] < t1:
                 dtrack.key(e["t"], dtrack.keys[-1][1])
@@ -544,6 +601,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         roll.key(t0 + 0.4, roll_v)
         shot_out.append({**s, "a0": round(a0, 3), "spot": [round(pos[0], 4), round(pos[1], 4)], "heading": round(heading, 4),
                          "posture_end": posture, "subject": cam_subject, "phone": phone_out, "location": loc,
+                         "at_door": at_door or (doorway and a == "pry_doors" and s.get("by") == "author"),
                          "origin": list(origin), "key_target": list(loc_target(loc, "key")),
                          "show": show_items(loc, s)})
 
@@ -611,6 +669,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 if h["t1"] is not None:
                     w *= 1.0 - m.smoothstep((t - (h["t1"] - 0.4)) / 0.4)
                 for side, sx in (("r", -1.0), ("l", 1.0)):
+                    if h["side"] not in ("both", side):
+                        continue
                     # створки разъезжаются — кисти на кромках (x: −1 — вправо от героя к −X мира)
                     p = (ox + sx * (0.045 + op), oy + DOOR_FACE_Y + 0.025, 0.62)
                     if w > 0 and (hand[side][f] is None or hand[side][f][1] < w):
@@ -672,6 +732,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         if c["kind"] == "press" and c["button"] != "bell":
             lit_at.setdefault(c["button"], c["t"])
     door_c = door_c0
+    fl_c = flash_track.curve(ease="linear")
     named_display = [(float(x_["t0"]), float(x_["t1"])) for x_ in shot_out if x_["location"] == "cabin"
                      and any(it["item"] == "display" or str(it["item"]).startswith("надпись") for it in x_["show"])]
     for t in times:
@@ -720,10 +781,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if t >= tj:
                 drop += -0.05 * m.smoothstep((t - tj) / 0.12) * math.exp(-max(0.0, t - tj - 0.12) / 0.35)
         lit = sorted(b for b, tb in lit_at.items() if t >= tb)
+        # двери открыты и фонарик горит — свет уходит в шахту: сцена подсвечивает её (проём читается только от него)
+        reveal = m.smoothstep(door_c.at(t) / 0.12) * fl_c.at(t) if phone_iv else 0.0
         lights.append({"main": round(main, 4), "red": round(red, 4), "flash": round(flash, 4), "display": round(disp_on, 4),
                        "floor": value, "doors": round(door_c.at(t), 4), "shake": round(shake, 5), "drop": round(drop, 5),
                        "ldoors": {k: round(c_.at(t), 4) for k, c_ in door_cs.items() if k != "cabin"},
-                       "lit": lit, "dark": dark(t)})
+                       "lit": lit, "dark": dark(t), "reveal": round(reveal, 4)})
 
     phone = []
     pm = phone_mode.curve()
@@ -732,7 +795,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     for f, t in enumerate(times):
         # луч — туда, куда смотрит герой (в объектив/на телефон — вперёд в пол: не слепить камеру)
         g = gz[f]
-        if isinstance(g, tuple):
+        over = next((p_ for a_, b_, p_ in beam_over if a_ <= t < b_), None)
+        if over is not None:
+            beam_raw.append(over)
+        elif isinstance(g, tuple):
             beam_raw.append(g)
         else:
             fx, fy = facing(heads[f])
@@ -747,7 +813,11 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     perf["cameras"] = camera_plan(perf, int(job.get("seed") or 7))
     # луч фонарика не в объектив: камера в конусе — увести луч вбок-вниз (иначе кадр — белая вспышка)
     beam_raw = _beam_off_camera(perf, beam_raw)
-    beam_s = m.spring_follow(beam_raw, 1.0 / fps, 0.18)
+    # пружина луча внутри плана: на склейке луч сразу там, где надо, иначе первые 0.3 с он идёт через лицо в новый кадр
+    cut_frames = sorted({int(round(c_["t0"] * fps)) for c_ in perf["cameras"]} | {0, nf})
+    beam_s: list[tuple] = []
+    for a_, b_ in zip(cut_frames, cut_frames[1:]):
+        beam_s.extend(m.spring_follow(beam_raw[a_:b_], 1.0 / fps, 0.18))
     for f, t in enumerate(times):
         # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с)
         sh_ = next((x_ for x_ in shot_out if x_["t0"] <= t < x_["t1"]), None)
@@ -763,6 +833,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
 def _beam_off_camera(perf: dict, beam: list[tuple]) -> list[tuple]:
     fps = perf["fps"]
     starts = [(int(round(c["t0"] * fps)), c) for c in perf["cameras"]]
+    by_door = {s_["n"]: bool(s_.get("at_door")) for s_ in perf["shots"]}
     out = []
     for f, b in enumerate(beam):
         cam = next((c for f0, c in reversed(starts) if f >= f0), starts[0][1])
@@ -770,10 +841,17 @@ def _beam_off_camera(perf: dict, beam: list[tuple]) -> list[tuple]:
         ph = to_world(perf["root"][f], perf["heading"][f], (-0.07, 0.25, 0.57 - (SIT_DROP if posture == "sit" else 0.0)))
         to_b = m.v_norm(m.v_sub(b, ph))
         to_c = m.v_norm(m.v_sub(cam["pos_a"], ph))
-        if m.v_dot(to_b, to_c) > math.cos(math.radians(40)):
-            # повернуть луч от камеры на ~70° по горизонтали и опустить к полу
+        # на лицо камера смотрит спереди: луч даже мимо объектива пересекает голову и заливает кадр, уводим его шире
+        close = cam["kind"] in ("face", "detail") and not by_door.get(cam["n"])   # у проёма луч и так уходит в шахту
+        if m.v_dot(to_b, to_c) > math.cos(math.radians(80 if close else 40)):
+            # повернуть луч от камеры по горизонтали и опустить к полу
             side = 1.0 if (to_b[0] * to_c[1] - to_b[1] * to_c[0]) >= 0 else -1.0
-            d = _rot((to_c[0], to_c[1]), math.radians(70 * side))
+            d = _rot((to_c[0], to_c[1]), math.radians((115 if close else 70) * side))
+            if close:      # из двух сторон — та, что дальше от героя: луч через грудь даёт жёлтую вспышку на дождевике
+                d2 = _rot((to_c[0], to_c[1]), math.radians(-115 * side))
+                root_ = perf["root"][f]
+                if math.dist((ph[0] + d2[0], ph[1] + d2[1]), root_) > math.dist((ph[0] + d[0], ph[1] + d[1]), root_):
+                    d = d2
             b = (ph[0] + d[0] * 0.9, ph[1] + d[1] * 0.9, 0.1)
         out.append(b)
     return out

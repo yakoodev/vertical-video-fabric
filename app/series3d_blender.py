@@ -47,7 +47,7 @@ from app.series3d_blender_stage import (  # noqa: F401
     DISPLAY, CEIL_LIGHT, HATCH, REACH, SHOULDER_R, MAX_PRESS_Z, CLIP_LEN, WALK_CLIP, WALK_FEET, MAX_WALK_STEPS,
     _walk_stance, WALK_STANCE, WALK_CYCLE_UNITS, STEP_LEN, _STANCE_CUM, _v, stance_units, walk_plan, walk_seconds,
     CLIPS_NEEDED, button_pos, reachable, facing, to_world, PRESS_TURN, KNOCK_POINT, press_stand, spot_for, LOCS,
-    LOC_NAMES, LOC_TARGETS, loc_of, loc_world, loc_spot, loc_target, FILL_W, RIM_W, EXPOSURE, inside_loc,
+    LOC_NAMES, LOC_TARGETS, loc_of, loc_world, loc_spot, loc_target, FILL_W, RIM_W, EXPOSURE, inside_loc, DOORWAY,
     SHOW_WORDS, show_items, SCRIPT_SEC, SCRIPT_WORDS, writer_places, OFFLIST, offlist_mentions, rule_location,
     DECAL_RX, decal_from_text, _low,
 )
@@ -59,15 +59,16 @@ from app.series3d_blender_direction import (  # noqa: F401
 )
 from app.series3d_blender_camera import (  # noqa: F401
     FACE_Z, SIT_DROP, PHONE_SHOW, CAM_BOUNDS, _CAM, cam_bounds, cam_inside, _rot, face_point, shot_camera, cam_sees,
-    ots_ok, camera_plan, TITLE_Y, PART_Y, face_target, face_bands,
+    ots_ok, camera_plan, TITLE_Y, PART_Y, face_target, face_bands, DOORWAY_CAMS, doorway_camera,
 )
+from app.series3d_blender_plan import beat_plan, has_plans, plan_key, shots_from_beats  # noqa: F401
 from app.series3d_blender_perform import (  # noqa: F401
     FPS, WALK_FOOT_X, WALK_PASS, STRIDE, DOOR_OPEN, VISEMES, VOWELS, _DIGITS, _letters, viseme_keys, lipsync,
     _pulse, _ang, _Track, perform, _beam_off_camera, planted_local, clip_to_world, walk_root, foot_slide,
     _posture_at, track_of,
 )
 
-SCENE_VERSION = 3          # меняй, когда меняется сцена Blender: кэш кусков станет недействительным
+SCENE_VERSION = 4          # меняй, когда меняется сцена Blender: кэш кусков станет недействительным
 
 
 LIPSYNC_MODES = ("speaking", "all", "off")
@@ -119,7 +120,7 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(S3.SFX["scrape"], t, "скрежет", "scrape")
         elif k == "flash":
             add(S3.SFX["flash"], t, "вспышка", "flash")
-        elif k == "knock":
+        elif k in ("knock", "knock_far"):
             add(S3.SFX["knock"], t, "стук", "knock")
         elif k == "sting":
             add(S3.SFX["sting"], t, "акцент", "sting")
@@ -217,9 +218,10 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
 
 def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
               envelope: list[float] | None = None, lipsync_mode: str = "speaking", quality: str = DEFAULT_QUALITY,
-              look: dict | None = None, seed: int = 7) -> dict:
-    """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество."""
-    plan = plan_shots(script, words, total, gemini=gemini, client=client)
+              look: dict | None = None, seed: int = 7, beats: list[dict] | None = None) -> dict:
+    """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество. ``beats`` —
+    биты эпизода: строка «План:» в бите сильнее режиссёра (``app/series3d_blender_plan.py``)."""
+    plan = plan_shots(script, words, total, gemini=gemini, client=client, beats=beats)
     return {"version": SCENE_VERSION, "fps": FPS, "duration": round(float(total), 3), "title": script.get("title") or "",
             "shots": plan["shots"], "events": plan["events"], "words": plan["words"], "director": plan["director"],
             "speech": plan["speech"],

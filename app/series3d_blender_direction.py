@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from app.series3d_blender_plan import ACTION_EMOTION, shots_from_beats
 from app.series3d_blender_stage import LOCS, show_items, rule_location, decal_from_text, _low
 
 # --------------------------------------------------------------------------- #
@@ -77,19 +78,19 @@ SIT_OK = ("sit_corner", "wait", "listen", "look_display", "look_ceiling", "look_
 _RX = {
     "bell": r"вызов|диспетчер|колокол",
     "all_buttons": r"вс[еяю]\s+кнопк|кнопки подряд|подряд",
-    "press": r"кнопк|нажа|нажм|нажим|жмет|жмите|жал\b|тыка",
+    "press": r"кнопк|нажа|нажм|нажим|жмет|жмите|\bжал\b|тыка",
     "pry": r"раздвин|раздвиг|разжа|разжим|двер\w*\s+рук|откры\w*\s+двер|тяну\w*\s+створ",
     "knock_self": r"(стучит|стучал|колотит|колотил|барабанит|барабанил|стукнул)\s+(в|по)",
     "shout": r"крич|закрич|зовет|звал|позвал|помогите|эй\b|ау\b",
-    "sit": r"\bсел\b|сел[аи]?\b|сидит|сидел|присел|на пол\b|в угол",
+    "sit": r"\bсел[аи]?\b|сидит|сидел|присел|на пол\b|в угол",
     "stand": r"встал|встает|поднялся|поднимается",
     "light": r"фонар|подсвет|посвет",
     "phone": r"телефон|заряд|связи|сети нет|смартфон|звонит|позвон",
     "display": r"табло|цифр|этаж",
-    "ceiling": r"потол|люк|сверху|наверх|над голов|трос|крыш",
+    "ceiling": r"потол|\bлюк|сверху|наверх|над голов|\bтрос|крыш",
     "listen": r"слыш|слуша|голос|шаг|тишин|шорох|постуча|стук",
-    "flinch": r"дерн|тряс|рывок|тряхн|качну|опусти|провали|упал|рухну|грохн",
-    "wait": r"ждал|ждет|ждать|минут|час|сберечь|сил",
+    "flinch": r"дерн|тряс|рывок|тряхн|качну|опусти|провали|\bупал|рухну|грохн",
+    "wait": r"ждал|ждет|ждать|минут|\bчас\b|сберечь|\bсил",
     "viewer": r"\bвы\b|\bвас\b|\bвам\b|\bвами\b|\bне\s+\w+те\b|\bжмите\b|\bпытайтесь\b",
 }
 
@@ -372,6 +373,10 @@ def split_hook(shots: list[dict]) -> list[dict]:
     first = dict(shots[0])
     span = float(first.get("t1") or 0.0) - float(first.get("t0") or 0.0)
     items = hook_items(first)
+    if first.get("by") == "author" and first.get("planned"):
+        # план автора сильнее: крючок лицом — только если он сам так решил
+        first["hook"] = 1 if first.get("camera") == "face" else 0
+        return [{**first, "show_none": bool(items)}, *shots[1:]]
     if first["action"] in ("look_display", "wait", "approach", "phone_light", "look_ceiling", *HAND_ACTIONS):
         first["action"] = "look_camera"
         first["target"] = "center"
@@ -438,6 +443,14 @@ def fix_sequence(shots: list[dict]) -> list[dict]:
         else:
             posture = "stand"
         cam = s.get("camera") if s.get("camera") in CAMERAS else CAMERA_PREFS[a][0]
+        if s.get("by") == "author" and s.get("planned") and s.get("camera") in CAMERAS:
+            if s.get("screen"):
+                cam = "detail"
+            s["camera"] = cam
+            s["posture"] = posture
+            prev_cam = cam
+            out.append(s)
+            continue
         if cam not in CAMERA_PREFS[a] and a in ("look_camera", "sit_corner", "stand_up", "flinch", "look_ceiling"):
             cam = CAMERA_PREFS[a][0]   # спиной к объективу/деталь без детали — не тот план
         if cam == prev_cam:
@@ -463,8 +476,10 @@ def fix_sequence(shots: list[dict]) -> list[dict]:
     return out
 
 
-def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None) -> dict:
-    """Сценарий + слова озвучки → ``{shots, events, words, director}``: кадры с действием, эмоцией, планом."""
+def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
+               beats: list[dict] | None = None) -> dict:
+    """Сценарий + слова озвучки → ``{shots, events, words, director}``: кадры с действием, эмоцией, планом. Бит со строкой
+    «План:» (``app/series3d_blender_plan.py``) задаёт кадры сам, режиссёр выбирает только там, где автор молчит."""
     from app import series3d as S3
 
     sentences = [s for s in (script.get("sentences") or []) if str(s.get("text") or "").strip()]
@@ -474,7 +489,8 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         raise S3.DirectionError("нет слов озвучки")
     words = S3.align_words(" ".join(s["text"] for s in sentences), words)
     spans = S3.sentence_spans(sentences, words, total)
-    shots = S3.split_shots(spans, words)
+    shots = shots_from_beats(beats or [], spans, words, lambda group: S3.split_shots([dict(g) for g in group], words)) \
+        or S3.split_shots(spans, words)
     for k, s in enumerate(shots):
         s["n"] = k
         s["t1"] = shots[k + 1]["t0"] if k + 1 < len(shots) else float(total)
@@ -487,12 +503,25 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         low_ = _low(sp["text"])
         if re.search(r"двер|створ", low_) and re.search(r"схлопнул|захлопнул|закрыл|сомкнул|сдвинул", low_):
             k_ = S3.find_word(words, sp["w0"], sp["w1"], r"^(схлопнул|захлопнул|закрыл|сомкнул|сдвинул)")
-            events.append({"kind": "doors_close", "t": float(words[k_]["start"]) if k_ is not None else sp["t0"],
+            t_close = float(words[k_]["start"]) if k_ is not None else sp["t0"]
+            events.append({"kind": "doors_close", "t": t_close, "sentence": sp["i"], "role": sp["role"]})
+            k_ = S3.find_word(words, sp["w0"], sp["w1"], r"^(отпустил|выпустил|разжал)")
+            if k_ is not None:     # герой держал створки и отпустил: руки уходят с дверей до того, как они схлопнутся
+                events.append({"kind": "doors_release", "t": float(words[k_]["start"]), "sentence": sp["i"], "role": sp["role"]})
+        hit_ = re.search(r"три удара|трижды ударил", low_)
+        if hit_ and not any(e["kind"] == "knock" and e.get("sentence") == sp["i"] for e in events):
+            # «Три удара»: рывок даёт один звук, а по сюжету это ответ — настоящая серия ударов (запись стука)
+            k_ = S3.find_word(words, sp["w0"], sp["w1"], r"^удар")
+            events.append({"kind": "knock_far", "t": float(words[k_]["start"]) if k_ is not None else sp["t0"],
                            "sentence": sp["i"], "role": sp["role"]})
     blackout = next((e["t"] for e in events if e["kind"] == "blackout"), None)
     choices: dict[int, dict] = {}
     director, error = "rules", ""
-    if gemini:
+    # Автор задал действие и план каждого кадра — режиссёру выбирать нечего, вызова нет: что проверено, то и выйдет.
+    silent = [s for s in shots if not ((s.get("author") or {}).get("camera") and (s.get("author") or {}).get("action"))]
+    if not silent:
+        director = "author"
+    elif gemini:
         try:
             choices = gemini_choices(str(script.get("title") or ""), shots, by_shot, client=client)
             director = "gemini" if choices else "rules"
@@ -512,6 +541,17 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         loc = pick.get("location") if pick.get("location") in LOCS else by_rules
         if by_rules != where and loc == where:
             loc = by_rules       # текст явно назвал другое место — правило сильнее
+        author = s.get("author") or {}
+        if author:
+            loc = by_rules       # у бита с планом место — по тексту: режиссёр не уводит кадр из того, что автор снимает
+            if author.get("frame") in ("doorway", "display"):
+                loc = "cabin"    # проём и табло есть только в кабине
+            pick = {**pick, **{k: author[k] for k in ("camera", "action", "emotion") if author.get(k)},
+                    "frame": author.get("frame") or "", "by": "author", "planned": bool(author.get("camera"))}
+            if not author.get("emotion") and not choices.get(s["n"]) and author.get("action"):
+                pick["emotion"] = ACTION_EMOTION.get(author["action"], pick.get("emotion"))
+            if pick["action"] in ("knock", "pry_doors"):
+                pick["target"] = "doors"
         where = loc
         decal = pick.get("decal") or decal_from_text(text_)
         if re.fullmatch(r"\d{1,2}[:.]\d{2}", decal or ""):

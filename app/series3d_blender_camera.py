@@ -5,7 +5,9 @@ from __future__ import annotations
 import math
 import random
 
-from app.series3d_blender_stage import S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, button_pos, facing, to_world, loc_of
+from app.series3d_blender_stage import (
+    S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, DOORWAY, button_pos, facing, to_world, loc_of,
+)
 from app.series3d_blender_direction import CAMERA_PREFS
 
 FACE_Z = {"stand": 1.62 * S, "sit": 1.28 * S}
@@ -168,6 +170,35 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
     return out("face", p, face, 1.0, 30.0, fstop=2.2, focus="face", push=0.9, offset=(0.0, 0.0, -0.06))
 
 
+# Ракурсы на проём: герой стоит у левого края, камера с другой стороны, луч уходит от неё в шахту (в объектив не бьёт).
+DOORWAY_CAMS = {
+    # за плечом: герой снизу слева, в проёме плита, дверь этажа и стена
+    "ots": {"pos": (0.30, FRONT + 0.92, 1.38), "point": (-0.15, FRONT - 0.10, 0.96), "face_w": 0.0, "lens": 21.0,
+            "fstop": 5.6, "focus": "point", "push": 0.95},
+    # сверху: через голову героя вниз по стене, видно, что между кабиной и стеной стоять негде
+    "overhead": {"pos": (0.40, FRONT + 1.16, 1.92), "point": (0.11, FRONT - 0.26, 0.56), "face_w": 0.0, "lens": 19.0,
+                 "fstop": 5.6, "focus": "point", "push": 0.96},
+    # лицо из шахты, с того места, где человеку негде встать: герой смотрит в объектив, луч уходит мимо него к стене
+    "face": {"pos": (0.16, FRONT - 0.24, 0.82), "point": None, "face_w": 1.0, "lens": 20.0, "fstop": 2.8, "focus": "face",
+             "push": 0.97},
+}
+DOORWAY_CAMS["detail"] = DOORWAY_CAMS["ots"]
+# Стук: чуть сверху от самых дверей, с той стороны, куда он повёрнут: лицо вполоборота и кулак на створке.
+KNOCK_CAM = {"pos": (0.62, FRONT + 0.09, 1.05), "point": (-0.03, FRONT + 0.14, 0.70), "face_w": 0.0, "lens": 18.0, "fstop": 5.6,
+             "focus": "point", "push": 0.96}
+
+
+def doorway_camera(kind: str, face: tuple, spec: dict | None = None) -> dict:
+    """Камера плана с проёмом в кадре (``frame: doorway``). Точка цели своя: лицо героя тут не главное."""
+    c = spec or DOORWAY_CAMS.get(kind) or DOORWAY_CAMS["ots"]
+    pos = c["pos"]
+    point = c["point"] or face
+    pivot = face if c["focus"] == "face" else point
+    pos_b = tuple(round(pivot[i] + (pos[i] - pivot[i]) * c["push"], 4) for i in range(3))
+    return {"kind": "ots" if kind == "detail" else kind, "pos_a": pos, "pos_b": pos_b, "point": tuple(round(x, 4) for x in point),
+            "face_w": c["face_w"], "lens": c["lens"], "fstop": c["fstop"], "focus": c["focus"], "offset": (0.0, 0.0, 0.0)}
+
+
 def cam_sees(cam: dict, face: tuple, point: tuple, margin: float = 0.9) -> bool:
     """Попадает ли точка в вертикальный кадр 9:16 камеры плана (без Blender: как сцена целит — между вещью и лицом)."""
     pos = cam["pos_a"]
@@ -218,13 +249,20 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         prev = out[-1]["kind"] if out else ""
         root, head = tuple(perf["root"][f]), perf["heading"][f]
         face = face_point(root, head, posture)
+        authored = s.get("by") == "author" and s.get("planned")
+        if authored and (s.get("at_door") or (s["action"] == "knock" and s["camera"] == "overhead")):
+            cam = doorway_camera(s["camera"], face, None if s.get("at_door") else KNOCK_CAM)
+            s["camera"] = cam["kind"]
+            cam["face_y"] = face_target(s["n"], len(perf["shots"]), cam["kind"])
+            out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], "location": "cabin", **cam})
+            continue
         # что фраза называет (лампа, надпись, двери…) — план, где это в кадре; за плечом смотрим на эту вещь
-        items = [tuple(x["point"]) for x in s.get("show") or [] if x.get("point")]
+        items = [] if authored else [tuple(x["point"]) for x in s.get("show") or [] if x.get("point")]
         cam, best = None, -1
         rnd_n = random.Random(seed * 1000 + s["n"])   # свой случай у плана: пробы ракурсов не сдвигают другие планы
         kinds = list(dict.fromkeys((s["camera"], *CAMERA_PREFS.get(s["action"], ()), "face", "overhead", "ots", "detail")))
         # тот же план подряд — только последней попыткой и только если иначе названное не видно (с другого места)
-        order = [(k, False) for k in kinds if k != prev] + ([(prev, True)] if items and prev else [])
+        order = [(k, False) for k in kinds if k != prev or authored] + ([(prev, True)] if items and prev else [])
         if s.get("screen") or s.get("hook") == 1:
             # экран телефона — деталью, крючок — лицом: этот план первым, даже если прошлый такой же
             must = "detail" if s.get("screen") else "face"
@@ -232,7 +270,8 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         for kind, again in order:
             if again and cam is not None and best == len(items):
                 break
-            avoid = [c["pos_a"] for c in out if c["kind"] == kind][-2:]
+            # у автора план один и тот же ракурс лучший (лицо к камере): другой угол ради разнообразия даёт макушку
+            avoid = [] if authored else [c["pos_a"] for c in out if c["kind"] == kind][-2:]
             if again:
                 avoid = avoid + [out[-1]["pos_a"]]
             for aim_ in ((items[0], aim) if items and kind == "ots" else (aim,)):
