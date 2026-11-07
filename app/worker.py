@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -11,6 +12,8 @@ from app.providers.registry import get_provider
 from app.publish_format import upload_extras
 from app.settings import settings
 from app.store import AppStore
+
+log = logging.getLogger(__name__)
 
 
 class JobWorker:
@@ -39,6 +42,7 @@ class JobWorker:
             try:
                 self.process_once()
             except Exception:
+                log.exception("publishing worker pass failed")
                 time.sleep(settings.worker_poll_seconds)
             stop.wait(settings.worker_poll_seconds)
 
@@ -46,7 +50,8 @@ class JobWorker:
         job = self.store.next_queued_job()
         if not job:
             return False
-        self.store.mark_job_running(job["id"])
+        if not self.store.mark_job_running(job["id"]):
+            return False  # взял другой поток (перезапуск модуля) или отменил владелец
         fresh_job = self.store.get_job(job["id"])
         # Мастер-файл для площадок (app/publish_master.py): один на задание, все площадки
         # получают его; файл по спецификации уходит как есть. Сбой — исходный файл.
@@ -60,7 +65,8 @@ class JobWorker:
 
     def _process_targets(self, fresh_job: dict, master: publish_master.MasterResult) -> None:
         for target in fresh_job["targets"]:
-            self.store.mark_target_running(target["id"])
+            if not self.store.mark_target_running(target["id"]):
+                continue
             try:
                 account = self.store.get_account(target["account_id"], include_secret=False)
                 cookies = self.store.get_account_cookies(target["account_id"])

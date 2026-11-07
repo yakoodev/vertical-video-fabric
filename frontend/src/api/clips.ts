@@ -1,4 +1,4 @@
-import { api } from "@/api/client";
+import { api, ApiError } from "@/api/client";
 import type { Clip, CoverVariant, Job } from "@/api/types";
 
 export interface PublishRequest {
@@ -8,6 +8,7 @@ export interface PublishRequest {
   privacy?: string;
   allow_comments?: boolean;
   scheduled_at?: string;
+  allow_repost?: boolean;
 }
 
 export const clipsApi = {
@@ -19,6 +20,18 @@ export const clipsApi = {
   remove: (id: number | string) => api.del<{ deleted: boolean }>(`/api/clips/${id}`),
   rename: (id: number | string, title: string) => api.patch<Clip>(`/api/clips/${id}`, { title }),
   publish: (id: number | string, body: PublishRequest) => api.post<Job>(`/api/clips/${id}/posts`, body),
+  /** Как publish, но ролик, который на этом аккаунте уже вышел или мог выйти (ответ 409), уходит ещё раз только после
+   *  «да» владельца. «Нет» — та же ошибка с причиной. */
+  publishConfirmed: async (id: number | string, body: PublishRequest): Promise<Job> => {
+    try {
+      return await clipsApi.publish(id, body);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && window.confirm(`${e.message}.\n\nВыложить ещё раз?`)) {
+        return clipsApi.publish(id, { ...body, allow_repost: true });
+      }
+      throw e;
+    }
+  },
   /** AI title / description / hashtags from the clip's own transcript + moment. */
   publishMeta: (id: number | string) =>
     api.post<{ title: string; description: string; hashtags: string[]; model: string; has_transcript: boolean }>(

@@ -668,6 +668,10 @@ def _place(store: Any, approval_id: int, actor: str = "", at: datetime | None = 
             if problems:
                 raise ValueError("; ".join(problems))
             moment = at or proposed or next_slot(store, project_id, platforms, exclude=approval_id)
+        # Прежнее задание (перенос «в ближайший слот») снимаем раньше нового: работник успел его взять — второго не будет.
+        old_job = approval.get("job_id")
+        if old_job and not store.cancel_job(int(old_job)) and store.get_job(int(old_job))["status"] != "cancelled":
+            raise ValueError(f"публикация №{old_job} уже идёт — переносить поздно")
         job = store.create_clip_post_job(
             int(approval["clip_id"]), approval["title"], _description_with_tags(approval["description"],
                                                                                  approval["tags"]),
@@ -677,20 +681,12 @@ def _place(store: Any, approval_id: int, actor: str = "", at: datetime | None = 
         _update(store, approval_id, publish_status="failed", publish_error=str(exc)[:500])
         log_event(store, approval_id, project_id, "schedule_failed", actor, str(exc)[:500])
         return {"ok": False, "error": str(exc)}
-    if approval.get("job_id"):  # старое задание (перенос «в ближайший слот») больше не нужно
-        _cancel_job(store, int(approval["job_id"]))
     _update(store, approval_id, publish_status="scheduled", publish_error="", scheduled_at=fmt_utc(moment),
             job_id=int(job["id"]), platforms_json=_json(platforms))
     local = to_local(moment, cfg["timezone"])
     log_event(store, approval_id, project_id, "scheduled", actor, f"{local} ({cfg['timezone']})",
               {"job_id": job["id"], "scheduled_at": fmt_utc(moment)})
     return {"ok": True, "job_id": job["id"], "scheduled_at": fmt_utc(moment), "scheduled_local": local}
-
-
-def _cancel_job(store: Any, job_id: int) -> bool:
-    cur = store.db.execute("UPDATE jobs SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP "
-                           "WHERE id = ? AND status = 'queued'", (int(job_id),))
-    return bool(cur.rowcount)
 
 
 @atomic
@@ -705,7 +701,7 @@ def reschedule(store: Any, approval_id: int, action: str = "move", at: Any = Non
         raise ValueError(f"публикация уже {job['status']} — переносить поздно")
     if action == "cancel":
         if job:
-            _cancel_job(store, int(job["id"]))
+            store.cancel_job(int(job["id"]))
         _update(store, approval_id, publish_status="cancelled")
         log_event(store, approval_id, project_id, "cancelled", actor, "публикация отменена")
         return {"ok": True, "approval": get_approval(store, approval_id)}

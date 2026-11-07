@@ -259,7 +259,7 @@ class AnalysesStore:
         Что и куда могло уйти, видно по площадкам задания; решает человек. Запланированные (``queued``) не трогаем."""
         jobs = [int(row["id"]) for row in self.db.query_all("SELECT id FROM jobs WHERE status = 'running'")]
         targets = self.db.execute(
-            "UPDATE job_targets SET status = 'failed', error = ?, finished_at = CURRENT_TIMESTAMP, "
+            "UPDATE job_targets SET status = 'failed', error = ?, maybe_posted = 1, finished_at = CURRENT_TIMESTAMP, "
             "updated_at = CURRENT_TIMESTAMP WHERE status = 'running'",
             (PUBLISH_INTERRUPTED_ERROR,),
         ).rowcount

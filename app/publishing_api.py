@@ -8,12 +8,14 @@
 from datetime import datetime, timedelta
 from typing import Annotated, Any, Callable, Literal
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app.ai.publish_meta import apply_ai_metadata
+from app.agent_settings_api import owner_only
 from app.api_common import _normalize_schedule_text
+from app.store_jobs import RepostNeedsConfirm
 
 
 class AccountCreate(BaseModel):
@@ -56,6 +58,7 @@ class JobTargetRead(BaseModel):
     remote_url: str
     error: str
     response_json: str
+    maybe_posted: bool = False  # запрос поста ушёл, а ответа нет: проверить на площадке
     created_at: str
     updated_at: str
     started_at: str | None = None
@@ -93,6 +96,8 @@ class ClipPostRequest(BaseModel):
     privacy: Literal["public", "unlisted", "private"] = "public"
     allow_comments: bool = True
     scheduled_at: str = ""
+    # Владелец подтвердил: выложить ещё раз то, что на этом аккаунте уже вышло или могло выйти.
+    allow_repost: bool = False
 
 
 class ClipPostBatchRequest(BaseModel):
@@ -193,7 +198,10 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 payload.privacy,
                 payload.allow_comments,
                 scheduled_at=_normalize_schedule_text(payload.scheduled_at),
+                allow_repost=payload.allow_repost,
             )
+        except RepostNeedsConfirm as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (KeyError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -276,8 +284,10 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         ] = "public",
         allow_comments: Annotated[bool, Form(description="Whether comments should be enabled where supported.")] = True,
         scheduled_at: Annotated[str, Form(description="Optional local datetime for delayed publication.")] = "",
+        allow_repost: Annotated[bool, Form(description="Post again what this account already has.")] = False,
     ) -> dict:
-        return await _create_post_from_upload(file, title, description, targets, privacy, allow_comments, scheduled_at)
+        return await _create_post_from_upload(file, title, description, targets, privacy, allow_comments, scheduled_at,
+                                              allow_repost)
 
     @router.get(
         "/api/jobs",
@@ -300,6 +310,22 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    @router.post(
+        "/api/jobs/{job_id}/cancel",
+        response_model=JobRead,
+        tags=["Jobs"],
+        summary="Cancel a queued job before the worker takes it",
+    )
+    def api_cancel_job(job_id: int, request: Request, _auth: auth_dep) -> dict:
+        owner_only(request, "Публикацию отменяет владелец")
+        try:
+            job = get_store().get_job(job_id)
+            if not get_store().cancel_job(job_id):
+                raise HTTPException(status_code=409, detail=f"Публикация уже {job['status']}: отменять поздно")
+            return get_store().get_job(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     async def _create_post_from_upload(
         file: UploadFile,
         title: str,
@@ -308,6 +334,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         privacy: str,
         allow_comments: bool,
         scheduled_at: str = "",
+        allow_repost: bool = False,
     ) -> dict:
         try:
             job = get_store().create_job(
@@ -319,7 +346,10 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 privacy,
                 allow_comments,
                 scheduled_at=_normalize_schedule_text(scheduled_at),
+                allow_repost=allow_repost,
             )
+        except RepostNeedsConfirm as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         except (ValueError, KeyError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:

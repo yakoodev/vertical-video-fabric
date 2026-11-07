@@ -613,7 +613,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
   const description = [view.meta.description, view.meta.hashtags.join(" ")].filter(Boolean).join("\n\n");
   const publish = useMutation({
     mutationFn: () =>
-      clipsApi.publish(render!.id, {
+      clipsApi.publishConfirmed(render!.id, {
         title: view.meta.title.trim(),
         description,
         targets,

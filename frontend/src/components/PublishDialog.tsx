@@ -25,7 +25,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
   const [scheduledAt, setScheduledAt] = useState("");
 
   const publish = useMutation({
-    mutationFn: (body: PublishRequest) => clipsApi.publish(clip.id, body),
+    mutationFn: (body: PublishRequest) => clipsApi.publishConfirmed(clip.id, body),
     onSuccess: (job) => {
       toast.success("Поставлено в очередь публикации");
       qc.invalidateQueries({ queryKey: qk.jobs });

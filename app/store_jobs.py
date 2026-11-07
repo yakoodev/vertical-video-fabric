@@ -18,6 +18,10 @@ def copy_fileobj_to_path(fileobj: BinaryIO, path: Path) -> None:
         shutil.copyfileobj(fileobj, out)
 
 
+class RepostNeedsConfirm(ValueError):
+    """Этот файл уже вышел или мог выйти на этом аккаунте: ещё раз только с согласия владельца."""
+
+
 def _hash_path_and_size(path: Path) -> tuple[str, int]:
     hasher = hashlib.sha256()
     size = 0
@@ -43,6 +47,7 @@ class JobsStore:
         allow_comments: bool,
         clip_id: int | None = None,
         scheduled_at: str = "",
+        allow_repost: bool = False,
     ) -> dict:
         title = title.strip()
         if not title:
@@ -54,38 +59,16 @@ class JobsStore:
             raise ValueError("at least one target account is required")
         if clip_id is not None:
             self.get_clip(clip_id)
-        accounts = [self.get_account(account_id, include_secret=False) for account_id in target_account_ids]
+        accounts = self._job_accounts(target_account_ids)
         file_info = self._save_upload(fileobj, source_filename)
-        cur = self.db.execute(
-            """
-            INSERT INTO jobs
-                (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
-                 source_sha256, source_size_bytes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                clip_id,
-                title,
-                description,
-                privacy,
-                int(allow_comments),
-                scheduled_at.strip(),
-                source_filename,
-                str(file_info["path"]),
-                file_info["sha256"],
-                file_info["size"],
-            ),
-        )
-        job_id = cur.lastrowid
-        for account in accounts:
-            self.db.execute(
-                """
-                INSERT INTO job_targets (job_id, account_id, platform)
-                VALUES (?, ?, ?)
-                """,
-                (job_id, account["id"], account["platform"]),
+        try:
+            return self._insert_job(
+                accounts, allow_repost, clip_id, title, description, privacy, allow_comments, scheduled_at,
+                source_filename, str(file_info["path"]), file_info["sha256"], file_info["size"],
             )
-        return self.get_job(job_id)
+        except ValueError:
+            file_info["path"].unlink(missing_ok=True)
+            raise
 
     def create_clip_post_job(
         self,
@@ -97,6 +80,7 @@ class JobsStore:
         allow_comments: bool,
         scheduled_at: str = "",
         made_by: str = "",
+        allow_repost: bool = False,
     ) -> dict:
         clip = self.get_clip(clip_id)
         if clip["status"] != "succeeded":
@@ -111,9 +95,26 @@ class JobsStore:
             raise ValueError(f"invalid privacy: {privacy}")
         if not target_account_ids:
             raise ValueError("at least one target account is required")
-        accounts = [self.get_account(account_id, include_secret=False) for account_id in target_account_ids]
+        accounts = self._job_accounts(target_account_ids)
         sha256, size_bytes = _hash_path_and_size(source_path)
-        with self.db.transaction():  # задание без площадок работник взял бы и опубликовал в никуда
+        return self._insert_job(
+            accounts, allow_repost, clip_id, title, description, privacy, allow_comments, scheduled_at,
+            source_path.name, str(source_path), sha256, size_bytes, made_by,
+        )
+
+    def _job_accounts(self, account_ids: list[int]) -> list[dict]:
+        """Аккаунты задания: один и тот же, названный дважды, получает ролик один раз."""
+        return [self.get_account(account_id, include_secret=False) for account_id in dict.fromkeys(account_ids)]
+
+    def _insert_job(
+        self, accounts: list[dict], allow_repost: bool, clip_id: int | None, title: str, description: str, privacy: str,
+        allow_comments: bool, scheduled_at: str, source_filename: str, source_path: str, sha256: str, size_bytes: int,
+        made_by: str = "",
+    ) -> dict:
+        """Проверка на дубль и запись — одна транзакция: двойной клик не проскочит между ними, а задание без площадок
+        не появится вовсе (работник взял бы его и опубликовал в никуда)."""
+        with self.db.transaction():
+            self._refuse_double_post(accounts, clip_id, sha256, allow_repost)
             cur = self.db.execute(
                 """
                 INSERT INTO jobs
@@ -128,8 +129,8 @@ class JobsStore:
                     privacy,
                     int(allow_comments),
                     scheduled_at.strip(),
-                    source_path.name,
-                    str(source_path),
+                    source_filename,
+                    source_path,
                     sha256,
                     size_bytes,
                     str(made_by or "")[:40],
@@ -145,6 +146,51 @@ class JobsStore:
                     (job_id, account["id"], account["platform"]),
                 )
         return self.get_job(job_id)
+
+    def _refuse_double_post(self, accounts: list[dict], clip_id: int | None, sha256: str, allow_repost: bool) -> None:
+        """Тот же клип или файл на том же аккаунте. В очереди — отказ всегда: это двойной клик или забытое расписание.
+        Уже вышел или мог выйти — отказ, пока владелец не подтвердит. Точный сбой (ролик не ушёл) повторять можно сразу."""
+        by_account = {int(account["id"]): account for account in accounts}
+        marks = ", ".join("?" for _ in by_account)
+        # Готовый клип узнаётся по номеру (версия — свой номер), загруженный файл — по содержимому.
+        same = ("j.clip_id = ?", clip_id) if clip_id is not None else ("j.source_sha256 = ?", sha256)
+        rows = self.db.query_all(
+            f"""
+            SELECT j.id AS job_id, jt.account_id, jt.status, jt.maybe_posted
+            FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+            WHERE jt.account_id IN ({marks}) AND j.status != 'cancelled' AND {same[0]}
+              AND (jt.status IN ('queued', 'running', 'succeeded') OR jt.maybe_posted = 1)
+            ORDER BY j.id DESC
+            """,
+            (*by_account, same[1]),
+        )
+
+        def where(row) -> str:
+            account = by_account[int(row["account_id"])]
+            return f"{account['platform']} · {account['label']}, публикация №{row['job_id']}"
+
+        for row in rows:
+            if row["status"] in ("queued", "running"):
+                raise ValueError(f"Этот ролик уже в очереди: {where(row)}. Отмените её или дождитесь")
+        if rows and not allow_repost:
+            row = rows[0]
+            state = "уже опубликован" if row["status"] == "succeeded" else "мог уже выйти (проверьте на площадке)"
+            raise RepostNeedsConfirm(f"Этот ролик {state}: {where(row)}")
+
+    def cancel_job(self, job_id: int) -> bool:
+        """Снять задание, пока работник его не взял. Уже идёт или закончилось — False: отменять нечего."""
+        with self.db.transaction():
+            cancelled = self.db.execute(
+                "UPDATE jobs SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'queued'",
+                (int(job_id),),
+            ).rowcount
+            if cancelled:
+                self.db.execute(
+                    "UPDATE job_targets SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE job_id = ? AND status = 'queued'",
+                    (int(job_id),),
+                )
+        return bool(cancelled)
 
     def list_jobs(self) -> list[dict]:
         rows = self.db.query_all("SELECT * FROM jobs ORDER BY id DESC LIMIT 200")
@@ -307,8 +353,9 @@ class JobsStore:
             entry["error"] = row["error"] or ""
         return out
 
-    def mark_job_running(self, job_id: int) -> None:
-        self.db.execute(
+    def mark_job_running(self, job_id: int) -> bool:
+        """Взять задание. False — его уже взяли или отменили: работать с ним нельзя."""
+        return bool(self.db.execute(
             """
             UPDATE jobs
             SET status = 'running', started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
@@ -316,23 +363,24 @@ class JobsStore:
             WHERE id = ? AND status = 'queued'
             """,
             (job_id,),
-        )
+        ).rowcount)
 
-    def mark_target_running(self, target_id: int) -> None:
-        self.db.execute(
+    def mark_target_running(self, target_id: int) -> bool:
+        """Взять площадку задания. False — у неё уже есть итог: второй раз на площадку не идём."""
+        return bool(self.db.execute(
             """
             UPDATE job_targets
             SET status = 'running', started_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
+            WHERE id = ? AND status = 'queued'
             """,
             (target_id,),
-        )
+        ).rowcount)
 
     def finish_target(self, target_id: int, status: str, result: dict) -> None:
         self.db.execute(
             """
             UPDATE job_targets
-            SET status = ?, remote_id = ?, remote_url = ?, error = ?, response_json = ?,
+            SET status = ?, remote_id = ?, remote_url = ?, error = ?, response_json = ?, maybe_posted = ?,
                 finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             """,
@@ -342,6 +390,7 @@ class JobsStore:
                 result.get("remote_url", ""),
                 result.get("error", ""),
                 json.dumps(result.get("response", {}), ensure_ascii=False),
+                int(bool(result.get("maybe_posted"))),
                 target_id,
             ),
         )
@@ -349,15 +398,17 @@ class JobsStore:
     def finish_job_from_targets(self, job_id: int) -> None:
         targets = self._targets_for_job(job_id)
         statuses = {target["status"] for target in targets}
+        # Настоящая причина с площадки: она же уходит в карточку одобрения и в Telegram.
+        reason = next((t["error"] for t in targets if t["status"] != "succeeded" and t["error"]), "")
         if statuses == {"succeeded"}:
             final = "succeeded"
             error = ""
         elif "needs_reauth" in statuses:
             final = "needs_reauth"
-            error = "one or more accounts require fresh cookies"
+            error = f"Нужны свежие cookie: {reason}"[:500] if reason else "Нужны свежие cookie"
         else:
             final = "failed"
-            error = "one or more targets failed"
+            error = reason[:500] or "Публикация не удалась"
         self.db.execute(
             """
             UPDATE jobs

@@ -144,6 +144,31 @@ function MadeByAgent({ job }: { job: Job }) {
   ) : null;
 }
 
+/** Снять публикацию из очереди, пока работник её не взял (расписание выбрано не то). */
+function CancelJobButton({ job }: { job: Job }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cancel = useMutation({
+    mutationFn: () => jobsApi.cancel(job.id),
+    onSuccess: () => {
+      toast.success("Публикация отменена");
+      void qc.invalidateQueries({ queryKey: qk.job(String(job.id)) });
+      void qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"),
+  });
+  if (job.status !== "queued") return null;
+  return (
+    <button
+      className="btn ghost sm"
+      disabled={cancel.isPending}
+      onClick={() => window.confirm("Отменить эту публикацию?") && cancel.mutate()}
+    >
+      Отменить
+    </button>
+  );
+}
+
 function JobDetail({ jobId }: { jobId: string }) {
   const query = useQuery({ queryKey: qk.job(jobId), queryFn: () => jobsApi.get(jobId) });
   const stats = usePublicationStats();
@@ -158,6 +183,7 @@ function JobDetail({ jobId }: { jobId: string }) {
         sub={`Создано ${job.created_at} · ${job.privacy}`}
         actions={
           <>
+            <CancelJobButton job={job} />
             <RefreshStatsButton />
             <Link to="/pubs" className="btn ghost sm">
               ← К списку
