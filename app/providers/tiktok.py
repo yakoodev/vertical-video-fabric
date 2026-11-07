@@ -51,7 +51,8 @@ class _StepFailed(Exception):
 
 
 def _user_agent() -> str:
-    """UA веб-загрузки: ``TIKTOK_USER_AGENT`` (браузер, из которого взяты cookie) или прежний."""
+    """UA всей загрузки и подписи: ``TIKTOK_USER_AGENT`` (браузер, из которого взяты cookie), иначе встроенный
+    Linux Chrome 120. Один на сервис, не на аккаунт."""
     return settings.tiktok_user_agent or _UA
 
 
@@ -76,7 +77,7 @@ class TikTokProvider(Provider):
         # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт.
         del thumbnail_path
         if privacy not in ("public", "private"):
-            return ProviderResult(status="failed", error=TIKTOK_UNLISTED)  # не публично «на всякий случай»
+            return ProviderResult(status="failed", error=TIKTOK_UNLISTED)  # иначе «по ссылке» ушло бы всем
         try:
             self._ensure_signature_helper()
             result = self._upload_and_post(
