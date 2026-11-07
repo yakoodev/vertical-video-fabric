@@ -632,6 +632,11 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
     onError: (e) => toast.error(errorText(e, "Не удалось опубликовать")),
   });
   const accountList = accounts.data ?? [];
+  // Неправленый текст последней версии уходит вариантом площадки (app/ai/publish_meta.platform_texts): показать какой.
+  const variants: Record<string, { title: string } | undefined> =
+    render && view.latest && render.id === view.latest.id ? view.latest.publish_meta?.platforms ?? {} : {};
+  const swapped = [...new Set(accountList.filter((a) => targets.includes(a.id)).map((a) => a.platform))]
+    .filter((p) => variants[p]?.title);
   return (
     <section className="ccard cpub">
       <h2>Публикация</h2>
@@ -673,6 +678,11 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
           {when === "later" ? (
             <input className="input" type="datetime-local" aria-label="Время публикации" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
           ) : null}
+          {swapped.map((p) => (
+            <p key={p} className="muted cpub-none">
+              На {p === "tiktok" ? "TikTok" : p === "youtube" ? "YouTube" : p} уйдёт заголовок «{variants[p]!.title}»
+            </p>
+          ))}
         </>
       ) : null}
       <div className="cpub-btns">
