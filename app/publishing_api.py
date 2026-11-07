@@ -153,8 +153,8 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         summary="Add or update an account",
         description="Stores encrypted cookies for a YouTube or TikTok account. The cookie value is never returned.",
     )
-    def api_add_account(payload: AccountCreate, request: Request, _auth: auth_dep) -> dict:
-        owner_only(request, "Аккаунты и их cookie меняет только владелец")
+    def api_add_account(payload: AccountCreate, _auth: auth_dep) -> dict:
+        # Не owner_only: владелец добавляет аккаунт и curl с токеном (docs/cookie-import.md). Обратно cookie не отдаются.
         try:
             return get_store().upsert_account(payload.platform, payload.label, payload.cookie, payload.proxy_url,
                                               clear_proxy=payload.clear_proxy)
@@ -176,8 +176,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         tags=["Accounts"],
         summary="Delete an account",
     )
-    def api_delete_account(account_id: int, request: Request, _auth: auth_dep) -> dict:
-        owner_only(request, "Аккаунты удаляет только владелец")
+    def api_delete_account(account_id: int, _auth: auth_dep) -> dict:
         try:
             deleted = get_store().delete_account(account_id)
         except KeyError as exc:

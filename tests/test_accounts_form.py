@@ -111,19 +111,16 @@ def test_secrets_never_come_back(api):
         assert "SESSIONVALUE" not in text and "SECRETPASS" not in text and "abc==" not in text
 
 
-def test_only_the_owner_changes_accounts_and_exports_cookies(api):
+def test_only_the_owner_gets_cookies_out_or_sets_up_the_bot(api):
     client, _store = api
     agent = {"Authorization": "Bearer agent-token"}
-    account = _add(client).json()
-    assert client.post("/api/accounts", headers=agent,
-                       json={"platform": "tiktok", "label": "x", "cookie": "sessionid=a"}).status_code == 403
-    assert client.delete(f"/api/accounts/{account['id']}", headers=agent).status_code == 403
+    _add(client)
     assert client.get("/api/export?accounts=true", headers=agent).status_code == 403
+    assert client.get("/api/export?accounts=true").json()["accounts"][0]["label"] == "geo"  # владелец — может
     assert client.get("/api/export", headers=agent).status_code == 200  # без аккаунтов можно
     assert client.post("/api/import", headers=agent, json={"accounts": [{"platform": "tiktok", "label": "y"}]}
                        ).status_code == 403
     assert client.put("/api/settings/telegram", headers=agent, json={"allowed_user_ids": ["1"]}).status_code == 403
-    assert client.delete(f"/api/accounts/{account['id']}").status_code == 200
 
 
 def _request(headers: dict[str, str]) -> Request:
