@@ -189,7 +189,8 @@ export function VideoPage() {
 
       <Suspense fallback={<Loading />}>
       <Routes>
-        <Route index element={<Navigate to="clips" replace />} />
+        {/* Адрес ведёт на вкладку вместе с параметрами: ?pane=agent открывает чат видео. */}
+        <Route index element={<Navigate to={{ pathname: "clips", search: location.search }} replace />} />
         <Route path="source" element={<SourceTab sourceId={sourceId} />} />
         <Route path="segments" element={<SegmentsTab sourceId={sourceId} />} />
         <Route path="candidates" element={<DraftsAndEditorTab sourceId={sourceId} />} />

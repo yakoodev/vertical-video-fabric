@@ -145,18 +145,22 @@ def build_clip_groups_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
         filter: Literal["all", "ready", "vertical", "horizontal", "error", "published"] = "all",  # noqa: A002
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=60, ge=1, le=200),
+        clip_plan_id: int | None = Query(default=None, description="Только рендеры этого клипа"),
     ) -> dict:
         store = get_store()
-        condition = _PAGE_FILTERS[filter]
-        where = f"WHERE {condition}" if condition else ""
+        plan_sql = "c.clip_plan_id = ?" if clip_plan_id is not None else ""
+        args = (clip_plan_id,) if clip_plan_id is not None else ()
+
+        def where_of(condition: str) -> str:
+            parts = [part for part in (condition, plan_sql) if part]
+            return f"WHERE {' AND '.join(parts)}" if parts else ""
+
         counts = {
-            key: int(store.db.query_one(
-                f"SELECT COUNT(*) AS n FROM clips c {'WHERE ' + sql if sql else ''}"
-            )["n"])
+            key: int(store.db.query_one(f"SELECT COUNT(*) AS n FROM clips c {where_of(sql)}", args)["n"])
             for key, sql in _PAGE_FILTERS.items()
         }
         return {
-            "items": store.list_clips_page(offset=offset, limit=limit, where=where),
+            "items": store.list_clips_page(offset=offset, limit=limit, where=where_of(_PAGE_FILTERS[filter]), args=args),
             "total": counts[filter],
             "counts": counts,
             "offset": offset,

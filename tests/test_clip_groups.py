@@ -386,6 +386,13 @@ def test_clip_renders_page_beyond_200(client, store):
     assert len(last["items"]) == 26
     assert client.get("/api/clip-renders?filter=horizontal").json()["total"] == 1
 
+    other = add_plan(store, source, "Другой клип")
+    own = add_render(store, other)
+    only = client.get(f"/api/clip-renders?clip_plan_id={other['id']}").json()
+    assert [item["id"] for item in only["items"]] == [own["id"]]
+    assert only["total"] == 1 and only["counts"]["all"] == 1 and only["counts"]["horizontal"] == 0
+    assert client.get(f"/api/clip-renders?clip_plan_id={plan['id']}&filter=horizontal").json()["total"] == 1
+
 
 def _run_script(db: Path, *args: str) -> str:
     done = subprocess.run(
