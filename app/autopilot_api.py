@@ -142,13 +142,16 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
         return call(notify_tg.status)
 
     @router.put("/api/settings/telegram", tags=["Settings"], summary="Задать бота: токен, chat_id, тема, прокси")
-    def api_tg_save(_auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_tg_save(request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        # Бот решает карточки публикации: кто может нажимать — решает владелец.
+        owner_only(request, "Telegram-бота настраивает только владелец")
         allowed = {k: payload[k] for k in ("token", "chat_id", "thread_id", "enabled", "use_proxy", "public_url",
                                            "allowed_user_ids") if k in payload}
         return call(notify_tg.save, **allowed)
 
     @router.delete("/api/settings/telegram", tags=["Settings"], summary="Убрать бота (карточки — только в UI)")
-    def api_tg_clear(_auth: auth_dep) -> dict:
+    def api_tg_clear(request: Request, _auth: auth_dep) -> dict:
+        owner_only(request, "Telegram-бота настраивает только владелец")
         return call(notify_tg.clear)
 
     @router.post("/api/settings/telegram/test", tags=["Settings"], summary="Проверить бота: тестовое сообщение")

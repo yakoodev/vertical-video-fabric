@@ -30,9 +30,10 @@ class AccountCreate(BaseModel):
         examples=["http://user:pass@host:port"],
     )
     cookie: str = Field(
-        description="Raw Cookie header or Netscape cookie export. Never returned by API responses.",
+        description="Raw Cookie header, Netscape export or JSON export (Cookie-Editor). Never returned by API responses.",
         examples=["SID=...; HSID=...; SSID=...; APISID=...; SAPISID=..."],
     )
+    clear_proxy: bool = Field(default=False, description="Remove the account proxy (an empty proxy_url keeps it).")
 
 
 class AccountRead(BaseModel):
@@ -152,9 +153,11 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         summary="Add or update an account",
         description="Stores encrypted cookies for a YouTube or TikTok account. The cookie value is never returned.",
     )
-    def api_add_account(payload: AccountCreate, _auth: auth_dep) -> dict:
+    def api_add_account(payload: AccountCreate, request: Request, _auth: auth_dep) -> dict:
+        owner_only(request, "Аккаунты и их cookie меняет только владелец")
         try:
-            return get_store().upsert_account(payload.platform, payload.label, payload.cookie, payload.proxy_url)
+            return get_store().upsert_account(payload.platform, payload.label, payload.cookie, payload.proxy_url,
+                                              clear_proxy=payload.clear_proxy)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -173,7 +176,8 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         tags=["Accounts"],
         summary="Delete an account",
     )
-    def api_delete_account(account_id: int, _auth: auth_dep) -> dict:
+    def api_delete_account(account_id: int, request: Request, _auth: auth_dep) -> dict:
+        owner_only(request, "Аккаунты удаляет только владелец")
         try:
             deleted = get_store().delete_account(account_id)
         except KeyError as exc:

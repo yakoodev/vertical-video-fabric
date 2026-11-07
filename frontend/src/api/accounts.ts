@@ -6,6 +6,8 @@ export interface AccountCreate {
   label: string;
   cookie: string;
   proxy_url?: string;
+  /** Убрать прокси у аккаунта (пустой proxy_url прежний прокси оставляет). */
+  clear_proxy?: boolean;
 }
 
 export const accountsApi = {
