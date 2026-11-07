@@ -16,6 +16,9 @@ export function AccountsSettings() {
   const [label, setLabel] = useState("");
   const [proxy, setProxy] = useState("");
   const [cookie, setCookie] = useState("");
+  const [clearProxy, setClearProxy] = useState(false);
+  // Та же площадка и метка — это обновление cookie: пустой прокси прежний прокси не трогает.
+  const existing = query.data?.find((a) => a.platform === platform && a.label === label.trim());
 
   const create = useMutation({
     mutationFn: (body: AccountCreate) => accountsApi.create(body),
@@ -24,6 +27,7 @@ export function AccountsSettings() {
       setLabel("");
       setProxy("");
       setCookie("");
+      setClearProxy(false);
       qc.invalidateQueries({ queryKey: qk.accounts });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить аккаунт"),
@@ -61,7 +65,18 @@ export function AccountsSettings() {
             onChange={(e) => setProxy(e.target.value)}
             placeholder="http://user:pass@host:port"
           />
+          {existing?.proxy_configured ? (
+            <span className="muted" style={{ fontSize: 12 }}>
+              Сейчас: {existing.proxy_display}. Пусто — прокси останется прежним.
+            </span>
+          ) : null}
         </label>
+        {existing?.proxy_configured && !proxy.trim() ? (
+          <label className="check">
+            <input type="checkbox" checked={clearProxy} onChange={(e) => setClearProxy(e.target.checked)} />
+            <span>Убрать прокси: публиковать с адреса сервера</span>
+          </label>
+        ) : null}
         <label className="field">
           <span>Cookies</span>
           <textarea
@@ -76,7 +91,15 @@ export function AccountsSettings() {
           <button
             className="btn primary"
             disabled={create.isPending || !label.trim() || !cookie.trim()}
-            onClick={() => create.mutate({ platform, label: label.trim(), cookie: cookie.trim(), proxy_url: proxy.trim() || undefined })}
+            onClick={() =>
+              create.mutate({
+                platform,
+                label: label.trim(),
+                cookie: cookie.trim(),
+                proxy_url: proxy.trim() || undefined,
+                clear_proxy: clearProxy && !proxy.trim() ? true : undefined,
+              })
+            }
           >
             {create.isPending ? "Сохранение…" : "Сохранить аккаунт"}
           </button>

@@ -4,7 +4,9 @@
 
 * YouTube и TikTok — метаданные публичной ссылки через yt-dlp
   (``--dump-json --skip-download``): без логина, как кривая пересмотров
-  (app/youtube_heatmap.py). Напрямую не вышло — ещё раз через прокси загрузок;
+  (app/youtube_heatmap.py). Есть прокси у аккаунта — только через него: пост и его статистика
+  не должны светить настоящий IP сервера, ни прямой запрос, ни запасной прокси. Нет — напрямую,
+  а не вышло — ещё раз через прокси загрузок;
 * через N часов после публикации ``app/zero_views.py`` проверяет, не ноль ли просмотров (тревога
   «внимание» владельцу с причинами и чек-листом) — тем же фоном;
 * Instagram — без логина чисел не отдаёт: через instagrapi тем же входом по cookie
@@ -78,14 +80,18 @@ def parse_ytdlp_info(info: dict) -> dict:
     }
 
 
-def fetch_ytdlp_stats(url: str) -> dict:
-    """Числа публичной ссылки из метаданных yt-dlp. Ошибка — RuntimeError с хвостом лога."""
+def fetch_ytdlp_stats(url: str, account_proxy: str = "") -> dict:
+    """Числа публичной ссылки из метаданных yt-dlp. ``account_proxy`` — единственный путь, без запасных.
+    Ошибка — RuntimeError с хвостом лога."""
     from app.proxy_config import download_proxy, mask_secrets, proxy_env
 
-    attempts = [""]
-    proxy = download_proxy()
-    if proxy:
-        attempts.append(proxy)
+    if account_proxy:
+        attempts = [account_proxy]
+    else:
+        attempts = [""]
+        proxy = download_proxy()
+        if proxy:
+            attempts.append(proxy)
     last_error = "yt-dlp ничего не вернул"
     for proxy_url in attempts:
         try:
@@ -115,7 +121,7 @@ def fetch_ytdlp_stats(url: str) -> dict:
 def _fetch_one(store: Any, target: dict, ig_clients: dict) -> dict:
     platform = platform_of_url(target.get("remote_url") or "")
     if platform in ("youtube", "tiktok"):
-        return fetch_ytdlp_stats(target["remote_url"])
+        return fetch_ytdlp_stats(target["remote_url"], store.get_account_proxy_url(int(target["account_id"])))
     if platform == "instagram":
         from app.providers import instagram
 

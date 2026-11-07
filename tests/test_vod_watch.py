@@ -225,7 +225,11 @@ def test_auto_never_publishes_without_approval(env, monkeypatch):
     save_settings(store, pid, {"publish": {"enabled": True, "account_ids": [yt["id"]]}})
     run = svc._new_run(label="t2")
     svc._run(run, "", {}, {"provider": "mock"}, {}, publish, source_id=source["id"])
-    assert run["auto_approved"] == 1 and len(_jobs(store)) == 2
+    assert run["auto_approved"] == 1
+    # Тот же клип на тот же аккаунт уже в очереди: второго задания нет, причина — в карточке.
+    assert len(_jobs(store)) == 1
+    again = A.list_approvals(store, pid, status="approved")[0]
+    assert again["publish_status"] == "failed" and "уже в очереди" in again["publish_error"]
 
 
 def test_auto_source_without_series_goes_to_inbox(env, monkeypatch):

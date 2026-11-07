@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass
 from typing import Iterable
 
@@ -21,25 +22,14 @@ class CookieRecord:
     http_only: bool = False
     expires: int | None = None
 
-    def to_vendor_dict(self, fallback_domain: str) -> dict:
-        item = {
-            "name": self.name,
-            "value": self.value,
-            "domain": self.domain or fallback_domain,
-            "path": self.path or "/",
-            "secure": bool(self.secure),
-            "httpOnly": bool(self.http_only),
-        }
-        if self.expires:
-            item["expiry"] = int(self.expires)
-        return item
-
 
 def parse_cookie_input(raw: str, platform: str) -> list[CookieRecord]:
     text = raw.strip()
     if not text:
         raise ValueError("cookie is empty")
     default_domain = DEFAULT_DOMAINS.get(platform, "")
+    if text[0] in "[{":
+        return _parse_json(text, default_domain)
     if _looks_like_netscape(text):
         return _parse_netscape(text, default_domain)
     return _parse_cookie_header(_extract_cookie_header(text), default_domain)
@@ -90,12 +80,22 @@ def required_cookie_status(platform: str, cookies: Iterable[CookieRecord]) -> tu
     return not missing, missing
 
 
-def tiktok_caption(title: str, description: str) -> str:
+TIKTOK_CAPTION_LIMIT = 2200
+
+
+def tiktok_full_caption(title: str, description: str) -> str:
+    """Подпись TikTok целиком: заголовок, пустая строка, описание."""
     caption = title.strip()
     description = description.strip()
     if description:
         caption = f"{caption}\n\n{description}" if caption else description
-    return caption[:2200]
+    return caption
+
+
+def tiktok_caption(title: str, description: str) -> str:
+    """Подпись в пределах TikTok. Длиннее задание не ставится (app/publish_format.platform_refusal); обрезка — запас для
+    уже стоящих в очереди."""
+    return tiktok_full_caption(title, description)[:TIKTOK_CAPTION_LIMIT]
 
 
 def _looks_like_netscape(text: str) -> bool:
@@ -138,6 +138,35 @@ def _parse_netscape(text: str, default_domain: str) -> list[CookieRecord]:
         )
     if not cookies:
         raise ValueError("no cookies found in Netscape input")
+    return cookies
+
+
+def _parse_json(text: str, default_domain: str) -> list[CookieRecord]:
+    """JSON-экспорт: Cookie-Editor и EditThisCookie (список ``{name, value, domain, path, secure, httpOnly,
+    expirationDate}``), storage state Playwright (``{"cookies": [...]}``) или просто ``{"имя": "значение"}``."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        raise ValueError("cookie: JSON не разобрать — вставьте экспорт целиком") from None
+    if isinstance(data, dict):
+        data = data["cookies"] if isinstance(data.get("cookies"), list) else [
+            {"name": name, "value": value} for name, value in data.items() if isinstance(value, str)]
+    cookies: list[CookieRecord] = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict) or not item.get("name") or not isinstance(item.get("value"), str):
+            continue
+        expires = item.get("expirationDate", item.get("expires", item.get("expiry")))
+        cookies.append(CookieRecord(
+            name=str(item["name"]),
+            value=item["value"],
+            domain=str(item.get("domain") or default_domain),
+            path=str(item.get("path") or "/"),
+            secure=bool(item.get("secure", True)),
+            http_only=bool(item.get("httpOnly", item.get("http_only", False))),
+            expires=int(expires) if isinstance(expires, (int, float)) and expires > 0 else None,
+        ))
+    if not cookies:
+        raise ValueError("no cookies found in JSON input")
     return cookies
 
 

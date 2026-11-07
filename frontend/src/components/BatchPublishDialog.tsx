@@ -7,6 +7,7 @@ import type { Clip } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading, formatDuration } from "@/components/ui";
+import { localInputToUtc } from "@/lib/time";
 
 /**
  * Publish several rendered clips at once — the last step of
@@ -34,7 +35,7 @@ export function BatchPublishDialog({ clips, onClose }: { clips: Clip[]; onClose:
         clip_ids: clips.map((c) => c.id),
         targets,
         privacy,
-        start_at: startAt ? startAt.replace("T", " ") : "",
+        start_at: startAt ? localInputToUtc(startAt) : "",
         interval_minutes: intervalMin,
         ai_metadata: aiMeta,
       }),

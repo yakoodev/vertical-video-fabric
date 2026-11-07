@@ -49,7 +49,11 @@ def normalize_url(raw: str) -> str:
         else:
             raise ValueError("прокси: нужен вид http://логин:пароль@хост:порт, socks5://… или логин:пароль:хост:порт")
     parsed = urlsplit(text)
-    if parsed.scheme not in {"http", "https", "socks5", "socks5h"} or not parsed.hostname or not parsed.port:
+    try:
+        port = parsed.port
+    except ValueError:  # текст этой ошибки цитирует кусок адреса, а там может быть пароль
+        port = None
+    if parsed.scheme not in {"http", "https", "socks5", "socks5h"} or not parsed.hostname or not port:
         raise ValueError("прокси: схема http/https/socks5 и хост с портом")
     return text
 
@@ -60,7 +64,10 @@ def masked(url: str) -> str:
         return ""
     parsed = urlsplit(url)
     auth = "•••@" if parsed.username else ""
-    return f"{parsed.scheme}://{auth}{parsed.hostname}:{parsed.port}"
+    try:
+        return f"{parsed.scheme}://{auth}{parsed.hostname}:{parsed.port}"
+    except ValueError:
+        return f"{parsed.scheme}://{auth}{parsed.hostname}"
 
 
 # «схема://логин:пароль@» в любом тексте (ошибка yt-dlp, httpx, лог) → «схема://•••@».

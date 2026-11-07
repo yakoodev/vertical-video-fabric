@@ -19,6 +19,7 @@ import struct
 from pathlib import Path
 from typing import Any
 
+from app.cookies import TIKTOK_CAPTION_LIMIT, tiktok_full_caption
 from app.formats import DEFAULT_FORMAT, FORMATS, format_of_size, settings_render_format
 
 # Размер файла, у которого пропорция отличается от формата реестра не больше чем на столько
@@ -32,6 +33,8 @@ TIKTOK_LANDSCAPE = ("TikTok ждёт вертикаль 9:16: горизонта
 TIKTOK_FEED = "TikTok ждёт вертикаль 9:16: ролик {fmt} покажут с полосами сверху и снизу"
 INSTAGRAM_LANDSCAPE = ("Reels — только вертикаль: ролик 16:9 уйдёт в Instagram постом в ленту (там горизонталь "
                        "показывается мелко); для Reels отрендерите клип в 9:16")
+# У TikTok нет «по ссылке»: раньше такой пост уходил всем. Пока владелец не выбрал замену (друзья или отказ) — отказ.
+TIKTOK_UNLISTED = "В TikTok нет «по ссылке»: выберите «Открыто» или «Скрыто», иначе ролик увидели бы все"
 
 
 def video_format(width: Any, height: Any) -> str | None:
@@ -92,6 +95,18 @@ def publish_plan(platform: str, fmt: str | None) -> dict:
         if fmt == "16:9":
             plan["warning"] = INSTAGRAM_LANDSCAPE
     return plan
+
+
+def platform_refusal(platforms: set[str] | list[str], title: str, description: str, privacy: str) -> str:
+    """Почему задание нельзя ставить: площадка не умеет выбранного или текст не влезет. Пусто — можно."""
+    if "tiktok" in platforms:
+        if privacy not in ("public", "private"):
+            return TIKTOK_UNLISTED
+        length = len(tiktok_full_caption(title, description))
+        if length > TIKTOK_CAPTION_LIMIT:
+            return (f"Подпись для TikTok (заголовок и описание) — {length} символов, TikTok берёт до "
+                    f"{TIKTOK_CAPTION_LIMIT}: сократите описание")
+    return ""
 
 
 def is_regular_video(platform: str, fmt: str | None) -> bool:

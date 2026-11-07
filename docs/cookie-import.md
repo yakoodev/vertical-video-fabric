@@ -142,7 +142,15 @@ curl -X POST http://localhost:8088/api/accounts \
   }'
 ```
 
-Если аккаунт уже существует с тем же `platform + label`, запрос обновит cookies и proxy.
+Если аккаунт уже существует с тем же `platform + label`, запрос обновит cookies. Прокси меняется, только если
+`proxy_url` указан: пустой оставляет прежний (иначе свежие cookie молча пускали аккаунт напрямую). Убрать прокси —
+`"clear_proxy": true`. Прокси принимается как `http://логин:пароль@хост:порт` или `логин:пароль:хост:порт`; без порта
+и socks5 — отказ.
+
+В поле Cookies подходит Netscape (`cookies.txt`), строка заголовка `Cookie:` и JSON-экспорт (Cookie-Editor,
+EditThisCookie, storage state Playwright).
+
+Выгрузить аккаунты с cookie (`GET /api/export?accounts=true`) может только владелец из браузера: токен агента получит 403.
 
 ## YouTube: как снять cookies
 

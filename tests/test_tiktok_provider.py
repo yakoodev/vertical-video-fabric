@@ -7,6 +7,7 @@ import requests
 
 from app.cookies import CookieRecord
 from app.providers import tiktok
+from app.providers.base import safe_provider_error
 from app.providers.tiktok import TikTokProvider, _find_item_id
 from app.settings import settings
 
@@ -78,7 +79,7 @@ def fake_tiktok(tmp_path, monkeypatch):
     monkeypatch.setattr(tiktok.TikTokProvider, "_ensure_signature_helper", lambda self: None)
     seen = {}
 
-    def signature(js_path, user_agent, url):
+    def signature(signature_dir, user_agent, url, proxy_url=""):
         seen["ua"] = user_agent
         return json.dumps({"data": {"x-bogus": "xb", "signature": "sig"}})
 
@@ -86,14 +87,15 @@ def fake_tiktok(tmp_path, monkeypatch):
     video = tmp_path / "clip.mp4"
     video.write_bytes(b"0123456789")
 
-    def run(script):
+    def run(script, **overrides):
         session = FakeSession(script)
         monkeypatch.setattr(tiktok.requests, "Session", lambda: session)
-        result = TikTokProvider().upload(
+        args = dict(
             cookies=[CookieRecord("sessionid", "abc", ".tiktok.com"), CookieRecord("msToken", "m", ".tiktok.com")],
             file_path=video, title="Заголовок #тест", description="", privacy="public",
             allow_comments=True, account_label="acc", proxy_url="",
         )
+        result = TikTokProvider().upload(**{**args, **overrides})
         return result, session, seen
 
     return run
@@ -113,6 +115,7 @@ def test_post_without_item_id_falls_back_to_vod_id(fake_tiktok):
     result, _, _ = fake_tiktok(_script(post_body={"status_code": 0}))
     assert result.status == "succeeded"
     assert result.remote_id == "v0vid" and result.remote_url == ""
+    assert result.error == tiktok.NO_POST_LINK  # владелец видит, почему у поста не будет чисел
 
 
 def test_transient_failures_of_upload_steps_are_retried(fake_tiktok):
@@ -154,3 +157,144 @@ def test_find_item_id_shapes():
     assert _find_item_id({"item_id": "short"}) == ""
     assert _find_item_id({"status_code": 0}) == ""
     assert _find_item_id([{"x": [{"itemId": "1234567890123"}]}]) == "1234567890123"
+
+
+def _post_calls(session):
+    return sum("web/project/post/v1" in url for _, url, _ in session.calls)
+
+
+class HtmlResponse(FakeResponse):
+    def __init__(self, status, text):
+        super().__init__(status)
+        self.text = text
+
+    def json(self):
+        raise ValueError("not json")
+
+
+# --- правдивая причина: cookie, прокси и сеть не путаются ------------------------------------------------------------ #
+
+
+def test_dead_cookies_are_needs_reauth_with_tiktok_words(fake_tiktok):
+    answer = FakeResponse(body={"status_code": 8, "status_msg": "Please login first"})
+    result, session, _ = fake_tiktok(_script(**{"project/create": [answer]}))
+    assert result.status == "needs_reauth"
+    assert "Please login first" in result.error and "KeyError" not in result.error
+    assert _post_calls(session) == 0
+
+
+def test_session_gated_step_without_field_asks_for_fresh_cookies(fake_tiktok):
+    result, session, _ = fake_tiktok(_script(**{"video/upload/auth": [FakeResponse(body={"status_code": 5})]}))
+    assert result.status == "needs_reauth"
+    assert "video_token_v5" in result.error
+    assert _post_calls(session) == 0
+
+
+def test_expired_session_on_401_is_needs_reauth(fake_tiktok):
+    result, _, _ = fake_tiktok(_script(**{"video/upload/auth": [FakeResponse(401)]}))
+    assert result.status == "needs_reauth"
+
+
+def test_auth_in_step_name_or_url_does_not_blame_cookies(fake_tiktok):
+    result, _, _ = fake_tiktok(_script(**{"video/upload/auth": [FakeResponse(503)]}))
+    assert result.status == "failed" and "503" in result.error
+
+    down = requests.ConnectionError("Max retries exceeded with url: /api/v1/video/upload/auth/?aid=1988")
+    result, _, _ = fake_tiktok(_script(**{"video/upload/auth": [down]}))
+    assert result.status == "failed"
+
+
+def test_proxy_auth_failure_is_named_and_is_not_a_cookie_problem(fake_tiktok):
+    dead = requests.exceptions.ProxyError("Tunnel connection failed: 407 Proxy Authentication Required")
+    result, session, _ = fake_tiktok(_script(**{"project/create": [dead]}), proxy_url="http://user:SECRET@geo.example:8080")
+    assert result.status == "failed"
+    assert "geo.example:8080" in result.error and "407" in result.error
+    assert "SECRET" not in result.error and "напрямую не пробовали" in result.error
+    assert session.calls and _post_calls(session) == 0
+
+
+def test_html_error_page_with_auth_words_does_not_blame_cookies(fake_tiktok):
+    page = HtmlResponse(502, "<html>Proxy authentication gateway error, please login to the panel</html>")
+    result, _, _ = fake_tiktok(_script(**{"project/create": [page]}))
+    assert result.status == "failed" and "502" in result.error
+
+
+def test_local_failure_is_reported_as_it_is(fake_tiktok, tmp_path):
+    missing = tmp_path / "session_auth_cookie" / "gone.mp4"
+    result, _, _ = fake_tiktok(_script(), file_path=missing)
+    assert result.status == "failed"  # слова «session», «auth» в пути — не повод просить cookie
+    assert "FileNotFoundError" in result.error
+
+
+def test_broken_signature_answer_fails_before_the_post(fake_tiktok, monkeypatch):
+    monkeypatch.setattr(tiktok, "_run_signature_helper", lambda *a, **k: "not json")
+    result, session, _ = fake_tiktok(_script())
+    assert result.status == "failed" and "signature" in result.error
+    assert _post_calls(session) == 0
+
+
+# --- сам пост: что точно не вышло, а что могло ---------------------------------------------------------------------- #
+
+
+def test_timeout_on_the_post_is_not_retried_and_says_it_may_have_gone_out(fake_tiktok):
+    result, session, _ = fake_tiktok(_script(**{"web/project/post/v1": [requests.Timeout("read timed out")]}))
+    assert result.status == "failed" and result.maybe_posted
+    assert "мог выйти" in result.error
+    assert _post_calls(session) == 1
+
+
+def test_gateway_error_on_the_post_may_have_gone_out(fake_tiktok):
+    result, session, _ = fake_tiktok(_script(**{"web/project/post/v1": [HtmlResponse(502, "bad gateway")]}))
+    assert result.status == "failed" and result.maybe_posted
+    assert _post_calls(session) == 1
+
+
+def test_proxy_refusing_the_post_means_nothing_went_out(fake_tiktok):
+    dead = requests.exceptions.ProxyError("Cannot connect to proxy")
+    result, session, _ = fake_tiktok(_script(**{"web/project/post/v1": [dead]}), proxy_url="http://u:p@geo.example:8080")
+    assert result.status == "failed" and not result.maybe_posted
+    assert _post_calls(session) == 1
+
+
+def test_tiktok_refusal_of_the_post_is_final_and_keeps_its_words(fake_tiktok):
+    body = {"status_code": 4, "status_msg": "You are posting too fast. Take a rest."}
+    result, session, _ = fake_tiktok(_script(post_body=body))
+    assert result.status == "failed" and not result.maybe_posted
+    assert result.error == "You are posting too fast. Take a rest."
+    assert _post_calls(session) == 1
+
+
+def test_login_refusal_of_the_post_is_needs_reauth(fake_tiktok):
+    result, _, _ = fake_tiktok(_script(post_body={"status_code": 8, "status_msg": "Login expired"}))
+    assert result.status == "needs_reauth" and not result.maybe_posted
+
+
+# --- секреты и файл --------------------------------------------------------------------------------------------------- #
+
+
+def test_errors_carry_no_tokens_or_passwords(fake_tiktok):
+    leak = requests.ConnectionError(
+        "HTTPSConnectionPool: url: /tiktok/web/project/post/v1/?msToken=TOKENVALUE&aid=1988 proxy http://u:P@SS@geo.example:1")
+    result, _, _ = fake_tiktok(_script(**{"web/project/post/v1": [leak]}))
+    assert "TOKENVALUE" not in result.error and "P@SS" not in result.error
+    assert result.maybe_posted
+
+
+def test_safe_provider_error_masks_all_proxy_forms():
+    text = safe_provider_error("a socks5://u:pa@ss@h:1 b https://x:y@h:2/ Cookie: sessionid=abc\nnext", "f")
+    assert "pa@ss" not in text and "x:y" not in text and "sessionid=abc" not in text
+    assert "h:1" in text and "next" in text
+
+
+def test_file_goes_in_chunks_with_matching_checksums(fake_tiktok, tmp_path, monkeypatch):
+    monkeypatch.setattr(tiktok, "_CHUNK_SIZE", 4)
+    video = tmp_path / "chunks.mp4"
+    video.write_bytes(b"0123456789")
+    result, session, _ = fake_tiktok(_script(), file_path=video)
+    assert result.status == "succeeded", result.error
+    parts = [kwargs["data"] for _, url, kwargs in session.calls if "phase=transfer" in url]
+    assert parts == [b"0123", b"4567", b"89"]
+    finish = next(kwargs["data"] for _, url, kwargs in session.calls if "phase=finish" in url)
+    assert finish == ",".join(f"{i + 1}:{tiktok._crc32(part)}" for i, part in enumerate(parts))
+    apply_url = next(url for _, url, _ in session.calls if "ApplyUploadInner" in url)
+    assert "FileSize=10&" in apply_url

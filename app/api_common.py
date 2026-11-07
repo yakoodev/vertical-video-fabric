@@ -1,7 +1,7 @@
 """Общие мелочи HTTP-ручек: разбор полей формы и расписания, безопасный адрес возврата, кэш миниатюр, настройки по
 умолчанию."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -65,9 +65,18 @@ def _parse_schedule_dt(value: str | None) -> datetime | None:
 
 
 def _normalize_schedule_text(value: str | None) -> str:
+    """Время публикации для очереди: UTC «ГГГГ-ММ-ДД ЧЧ:ММ:СС», как ``CURRENT_TIMESTAMP`` SQLite, с которым его сравнивает
+    ``next_queued_job``. Время без пояса — уже UTC (экран переводит своё местное сам); с поясом (``Z``, ``+04:00``) —
+    переводится."""
     text = str(value or "").strip()
     if not text:
         return ""
+    try:
+        aware = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        aware = None
+    if aware is not None and aware.tzinfo is not None:
+        return aware.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     normalized = text.replace("T", " ")
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:

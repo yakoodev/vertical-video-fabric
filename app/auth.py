@@ -29,9 +29,11 @@ def token_is_valid(token: str | None) -> bool:
 
 
 def is_agent_request(request: Request) -> bool:
-    """Токен в заголовке и нет куки входа: это агент или скрипт (vvf.py), а не владелец в браузере."""
+    """Токен в заголовке и нет действующей куки входа: это агент или скрипт (vvf.py), а не владелец в браузере.
+    Куку с любым значением агент может прислать сам — владельцем делает только настоящая."""
     header = request.headers.get("authorization", "")
-    return header.lower().startswith("bearer ") and not request.cookies.get(settings.auth_cookie_name)
+    cookie = request.cookies.get(settings.auth_cookie_name)
+    return header.lower().startswith("bearer ") and not (cookie and token_is_valid(cookie))
 
 
 async def require_auth(

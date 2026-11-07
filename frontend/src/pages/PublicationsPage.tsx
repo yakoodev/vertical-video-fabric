@@ -144,6 +144,31 @@ function MadeByAgent({ job }: { job: Job }) {
   ) : null;
 }
 
+/** Снять публикацию из очереди, пока работник её не взял (расписание выбрано не то). */
+function CancelJobButton({ job }: { job: Job }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const cancel = useMutation({
+    mutationFn: () => jobsApi.cancel(job.id),
+    onSuccess: () => {
+      toast.success("Публикация отменена");
+      void qc.invalidateQueries({ queryKey: qk.job(String(job.id)) });
+      void qc.invalidateQueries({ queryKey: qk.jobs });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить"),
+  });
+  if (job.status !== "queued") return null;
+  return (
+    <button
+      className="btn ghost sm"
+      disabled={cancel.isPending}
+      onClick={() => window.confirm("Отменить эту публикацию?") && cancel.mutate()}
+    >
+      Отменить
+    </button>
+  );
+}
+
 function JobDetail({ jobId }: { jobId: string }) {
   const query = useQuery({ queryKey: qk.job(jobId), queryFn: () => jobsApi.get(jobId) });
   const stats = usePublicationStats();
@@ -155,9 +180,10 @@ function JobDetail({ jobId }: { jobId: string }) {
     <>
       <PageHead
         title={job.title || `Публикация #${job.id}`}
-        sub={`Создано ${job.created_at} · ${job.privacy}`}
+        sub={`Создано ${formatSnapshotTime(job.created_at)} · ${job.privacy}`}
         actions={
           <>
+            <CancelJobButton job={job} />
             <RefreshStatsButton />
             <Link to="/pubs" className="btn ghost sm">
               ← К списку
@@ -168,7 +194,7 @@ function JobDetail({ jobId }: { jobId: string }) {
       <div className="panel" style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
         <Badge status={job.status} />
         <MadeByAgent job={job} />
-        {job.scheduled_at ? <span className="muted">по расписанию: {job.scheduled_at}</span> : null}
+        {job.scheduled_at ? <span className="muted">по расписанию: {formatSnapshotTime(job.scheduled_at)}</span> : null}
         {job.error ? <span style={{ color: "var(--danger)" }}>{job.error}</span> : null}
       </div>
       <div className="panel">
@@ -297,8 +323,8 @@ export function PublicationsPage({ embedded }: { embedded?: boolean } = {}) {
                       alerts={(job.targets ?? []).map((t) => stats.data?.alerts?.[String(t.id)])}
                     />
                   </td>
-                  <td>{job.scheduled_at || "—"}</td>
-                  <td className="muted">{job.created_at}</td>
+                  <td>{job.scheduled_at ? formatSnapshotTime(job.scheduled_at) : "—"}</td>
+                  <td className="muted">{formatSnapshotTime(job.created_at)}</td>
                 </tr>
               ))}
             </tbody>

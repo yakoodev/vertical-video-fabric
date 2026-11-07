@@ -50,7 +50,7 @@ from app.store_common import (  # noqa: F401
 )
 from app.store_accounts import _redact_proxy_url, _valid_proxy_url, AccountsStore  # noqa: F401
 from app.store_settings import SettingsStore  # noqa: F401
-from app.store_jobs import _hash_path_and_size, copy_fileobj_to_path, JobsStore  # noqa: F401
+from app.store_jobs import _hash_path_and_size, copy_fileobj_to_path, JobsStore, RepostNeedsConfirm  # noqa: F401
 from app.store_sources import (  # noqa: F401
     _normalize_content_crop, _parse_chroma_key, _parse_content_crop, _parse_facecam, _parse_transcript,
     source_file_present, SourcesStore,

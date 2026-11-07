@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
 
 from app import publish_master
 from app.ai.publish_meta import platform_texts
+from app.providers.base import safe_provider_error
 from app.providers.registry import get_provider
 from app.publish_format import upload_extras
 from app.settings import settings
 from app.store import AppStore
+from app.store_common import PUBLISH_FILE_CHANGED_ERROR, PUBLISH_FILE_MISSING_ERROR
+from app.store_jobs import _hash_path_and_size
+
+log = logging.getLogger(__name__)
 
 
 class JobWorker:
@@ -38,6 +44,7 @@ class JobWorker:
             try:
                 self.process_once()
             except Exception:
+                log.exception("publishing worker pass failed")
                 time.sleep(settings.worker_poll_seconds)
             stop.wait(settings.worker_poll_seconds)
 
@@ -45,8 +52,16 @@ class JobWorker:
         job = self.store.next_queued_job()
         if not job:
             return False
-        self.store.mark_job_running(job["id"])
+        if not self.store.mark_job_running(job["id"]):
+            return False  # взял другой поток (перезапуск модуля) или отменил владелец
         fresh_job = self.store.get_job(job["id"])
+        problem = _source_problem(fresh_job)
+        if problem:
+            for target in fresh_job["targets"]:
+                if self.store.mark_target_running(target["id"]):
+                    self.store.finish_target(target["id"], "failed", {"error": problem})
+            self.store.finish_job_from_targets(job["id"])
+            return True
         # Мастер-файл для площадок (app/publish_master.py): один на задание, все площадки
         # получают его; файл по спецификации уходит как есть. Сбой — исходный файл.
         master = publish_master.prepare(Path(fresh_job["source_path"]))
@@ -59,7 +74,8 @@ class JobWorker:
 
     def _process_targets(self, fresh_job: dict, master: publish_master.MasterResult) -> None:
         for target in fresh_job["targets"]:
-            self.store.mark_target_running(target["id"])
+            if not self.store.mark_target_running(target["id"]):
+                continue
             try:
                 account = self.store.get_account(target["account_id"], include_secret=False)
                 cookies = self.store.get_account_cookies(target["account_id"])
@@ -91,7 +107,9 @@ class JobWorker:
                     except Exception:  # noqa: BLE001 - cookie refresh is best-effort
                         pass
                 payload = {k: v for k, v in result.__dict__.items() if k != "refreshed_cookies"}
-                payload["response"] = {**(payload.get("response") or {}), "master": master.summary()}
+                # Что ушло на самом деле: вариант площадки мог заменить текст задания (platform_texts).
+                payload["response"] = {**(payload.get("response") or {}), "master": master.summary(),
+                                       "sent": {"title": title, "description": description}}
                 self.store.finish_target(target["id"], result.status, payload)
             except Exception as exc:  # noqa: BLE001 - target failures must be persisted
                 self.store.finish_target(
@@ -106,6 +124,16 @@ class JobWorker:
                 )
 
 
+def _source_problem(job: dict) -> str:
+    """Уйдёт ровно тот файл, что выбрали при постановке: его хэш записан в задании. Пропал или стал другим — отказ."""
+    path = Path(job["source_path"])
+    if not path.is_file():
+        return PUBLISH_FILE_MISSING_ERROR
+    expected = str(job.get("source_sha256") or "")
+    if expected and _hash_path_and_size(path)[0] != expected:
+        return PUBLISH_FILE_CHANGED_ERROR
+    return ""
+
+
 def _safe_error(exc: Exception) -> str:
-    text = str(exc or "").strip()
-    return text[:500] or "provider upload failed"
+    return safe_provider_error(str(exc or ""), "provider upload failed", limit=500)

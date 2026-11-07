@@ -17,6 +17,9 @@ RENDER_INTERRUPTED_ERROR = "Рендер прервался из-за перез
 PUBLISH_INTERRUPTED_ERROR = ("Публикация прервалась из-за перезапуска сервиса. Видео могло уже выйти: "
                              "проверьте на площадке, прежде чем публиковать снова")
 PUBLISH_NOT_STARTED_ERROR = "Публикация прервалась из-за перезапуска сервиса. На эту площадку видео не отправляли"
+PUBLISH_FILE_MISSING_ERROR = "Файла ролика больше нет: публикация не отправлена. Поставьте её заново"
+PUBLISH_FILE_CHANGED_ERROR = ("Файл ролика изменился после постановки в очередь: ушла бы не та версия. Публикация не "
+                              "отправлена, поставьте её заново")
 
 VALID_FOCUS_PRESETS = set(FOCUS_PRESETS)
 VALID_FOCUS_STRATEGIES = {s["key"] for s in FOCUS_STRATEGIES}

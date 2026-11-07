@@ -376,6 +376,8 @@ class Database:
             )
             self._ensure_column(conn, "accounts", "encrypted_proxy_url", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
+            # Запрос поста ушёл, а ответа нет: ролик мог выйти (app/store_jobs.py не даст повторить молча).
+            self._ensure_column(conn, "job_targets", "maybe_posted", "INTEGER NOT NULL DEFAULT 0")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.
             self._ensure_column(conn, "sources", "content_crop", "TEXT NOT NULL DEFAULT ''")
             # Chroma key of a green-screen source (JSON {color, similarity, blend}), app/chroma_key.py.

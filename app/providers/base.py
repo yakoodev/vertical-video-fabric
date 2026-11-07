@@ -6,7 +6,10 @@ from pathlib import Path
 
 from app.cookies import CookieRecord
 
-_URL_USERINFO_RE = re.compile(r"\b(https?://)[^/\s:@]+:[^/\s:@]+@", re.IGNORECASE)
+# До последней @ перед хостом: пароль бывает с @, схема любая (прокси — и socks5).
+_URL_USERINFO_RE = re.compile(r"\b([a-z][a-z0-9+.-]*://)[^\s/]+@", re.IGNORECASE)
+# В тексте ошибки requests и браузера подписи — адрес с параметрами запроса.
+_QUERY_SECRET_RE = re.compile(r"\b(mstoken|sessionid|sid_tt|session_token|access_key_id)=[^&\s'\"]+", re.IGNORECASE)
 _HEADER_SECRET_RE = re.compile(
     r"\b(authorization|proxy-authorization|cookie)\s*:\s*[^\r\n]+",
     re.IGNORECASE,
@@ -23,6 +26,8 @@ class ProviderResult:
     # Refreshed auth material (e.g. rotated cookies {name: value}) to persist
     # back to the account after a successful upload, keeping the session alive.
     refreshed_cookies: dict = field(default_factory=dict)
+    # Запрос поста ушёл, а ответа нет: ролик мог выйти. Повторять только осознанно (app/store_jobs.py).
+    maybe_posted: bool = False
 
 
 class Provider:
@@ -51,6 +56,7 @@ class Provider:
 def safe_provider_error(message: str, fallback: str, limit: int = 2000) -> str:
     text = (message or fallback).strip()
     text = _URL_USERINFO_RE.sub(r"\1***:***@", text)
+    text = _QUERY_SECRET_RE.sub(lambda match: f"{match.group(1)}=***", text)
     text = _HEADER_SECRET_RE.sub(lambda match: f"{match.group(1)}: ***", text)
     if len(text) > limit:
         text = text[:limit] + "..."

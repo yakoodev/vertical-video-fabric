@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { CoverVariants } from "@/components/CoverVariants";
 import { useModules } from "@/hooks/useModules";
+import { localInputToUtc } from "@/lib/time";
 
 export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; versionLabel?: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -25,7 +26,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
   const [scheduledAt, setScheduledAt] = useState("");
 
   const publish = useMutation({
-    mutationFn: (body: PublishRequest) => clipsApi.publish(clip.id, body),
+    mutationFn: (body: PublishRequest) => clipsApi.publishConfirmed(clip.id, body),
     onSuccess: (job) => {
       toast.success("Поставлено в очередь публикации");
       qc.invalidateQueries({ queryKey: qk.jobs });
@@ -174,7 +175,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
                 description: description.trim(),
                 targets,
                 privacy,
-                scheduled_at: scheduledAt ? scheduledAt.replace("T", " ") : undefined,
+                scheduled_at: scheduledAt ? localInputToUtc(scheduledAt) : undefined,
               })
             }
           >

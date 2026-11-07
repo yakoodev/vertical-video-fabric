@@ -9,7 +9,6 @@ from app.cookies import (
     CookieRecord, cookies_from_jsonable, cookies_to_jsonable, DEFAULT_DOMAINS, parse_cookie_input,
     required_cookie_status,
 )
-from app.settings import settings
 from app.store_common import VALID_PLATFORMS
 
 
@@ -18,10 +17,28 @@ def _valid_proxy_url(proxy_url: str) -> bool:
     return scheme in {"http", "https"}
 
 
+def _account_proxy(raw: str) -> str:
+    """Прокси аккаунта из формы: ``http://логин:пароль@хост:порт`` или ``логин:пароль:хост:порт`` (как дают продавцы).
+    Только http/https: браузер подписи TikTok не умеет socks5 с паролем. Без порта и с мусором — отказ сразу, а не
+    сломанный список аккаунтов потом."""
+    from app.proxy_config import normalize_url
+
+    try:
+        url = normalize_url(raw)
+    except ValueError:
+        raise ValueError("proxy_url: нужен вид http://логин:пароль@хост:порт или логин:пароль:хост:порт") from None
+    if not _valid_proxy_url(url):
+        raise ValueError("proxy_url must start with http:// or https://")
+    return url
+
+
 def _redact_proxy_url(proxy_url: str) -> str:
     parts = urlsplit(proxy_url)
     host = parts.hostname or ""
-    port = f":{parts.port}" if parts.port else ""
+    try:
+        port = f":{parts.port}" if parts.port else ""
+    except ValueError:  # сохранён до проверки адреса: список аккаунтов не должен из-за него падать
+        port = ""
     if not host:
         return "configured"
     netloc = f"***@{host}{port}" if parts.username or parts.password else f"{host}{port}"
@@ -29,24 +46,27 @@ def _redact_proxy_url(proxy_url: str) -> str:
 
 
 class AccountsStore:
-    def upsert_account(self, platform: str, label: str, raw_cookie: str, proxy_url: str = "") -> dict:
+    def upsert_account(self, platform: str, label: str, raw_cookie: str, proxy_url: str = "",
+                       clear_proxy: bool = False) -> dict:
+        """Новый аккаунт или свежие cookie старого (тот же платформа + метка). Пустой ``proxy_url`` у старого прокси не
+        трогает: иначе обновление cookie молча пускало аккаунт напрямую. Убрать прокси — ``clear_proxy``."""
         platform = platform.lower().strip()
         label = label.strip()
-        proxy_url = proxy_url.strip()
+        proxy_url = _account_proxy(proxy_url) if proxy_url.strip() else ""
         if platform not in VALID_PLATFORMS:
             raise ValueError(f"unsupported platform: {platform}")
         if not label:
             raise ValueError("label is required")
-        if proxy_url and not _valid_proxy_url(proxy_url):
-            raise ValueError("proxy_url must start with http:// or https://")
         cookies = parse_cookie_input(raw_cookie, platform)
         ok, missing = required_cookie_status(platform, cookies)
         encrypted = self.cipher.encrypt_json(cookies_to_jsonable(cookies))
         encrypted_proxy_url = self.cipher.encrypt_json(proxy_url) if proxy_url else ""
         existing = self.db.query_one(
-            "SELECT id FROM accounts WHERE platform = ? AND label = ?",
+            "SELECT id, encrypted_proxy_url FROM accounts WHERE platform = ? AND label = ?",
             (platform, label),
         )
+        if existing and not proxy_url and not clear_proxy:
+            encrypted_proxy_url = existing["encrypted_proxy_url"] or ""
         if existing:
             self.db.execute(
                 """
@@ -179,8 +199,9 @@ class AccountsStore:
             proxy_url = str(self.cipher.decrypt_json(encrypted_proxy_url)).strip()
         data["has_required_cookies"] = bool(data["has_required_cookies"])
         data["proxy_configured"] = bool(proxy_url)
+        # Тот же запасной прокси, что берёт get_account_proxy_url (настройка сервиса, затем env).
         data["proxy_display"] = _redact_proxy_url(proxy_url) if proxy_url else (
-            "global proxy" if settings.posting_proxy_url else "direct"
+            "global proxy" if self.get_global_proxy_url() else "direct"
         )
         if include_secret:
             data["proxy_url"] = proxy_url

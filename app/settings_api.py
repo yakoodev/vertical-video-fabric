@@ -9,11 +9,12 @@
 import json
 from typing import Annotated, Any, Callable
 
-from fastapi import APIRouter, Form, HTTPException
+from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from app import proxy_config
+from app.agent_settings_api import owner_only
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.api_common import _safe_next, _setting_int
 from app.default_prompts import BASE_ANALYSIS_PROMPT, DEFAULT_PUBLISHING_PROMPT, DEFAULT_SUBTITLE_PROMPT
@@ -224,11 +225,15 @@ def build_settings_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
         return RedirectResponse(url=_safe_next(next), status_code=303)
 
     @router.get("/api/export", tags=["Settings"], summary="Export a shareable config bundle")
-    def api_export_bundle(_auth: auth_dep, accounts: bool = False) -> dict:
+    def api_export_bundle(request: Request, _auth: auth_dep, accounts: bool = False) -> dict:
+        if accounts:  # в пакете живые cookie и пароли прокси
+            owner_only(request, "Аккаунты с cookie выгружает только владелец")
         return get_store().export_bundle(include_accounts=accounts)
 
     @router.post("/api/import", tags=["Settings"], summary="Import a config bundle")
-    def api_import_bundle(payload: dict, _auth: auth_dep) -> dict:
+    def api_import_bundle(payload: dict, request: Request, _auth: auth_dep) -> dict:
+        if payload.get("accounts"):
+            owner_only(request, "Аккаунты загружает только владелец")
         try:
             return get_store().import_bundle(payload)
         except ValueError as exc:
