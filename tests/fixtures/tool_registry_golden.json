@@ -2128,9 +2128,31 @@
 "label": true
 },
 {
+"name": "story_draft",
+"title": "Сценарий без запуска",
+"description": "9ca32d636dc78f39",
+"parameters": "ca9a949302bf0648",
+"mutating": true,
+"scope": "project",
+"module": "stories",
+"handler": "h_draft",
+"label": true
+},
+{
+"name": "story_start",
+"title": "Запускаю черновик",
+"description": "9a17739f67b6d5ab",
+"parameters": "43df71ad9d2f5583",
+"mutating": true,
+"scope": "project",
+"module": "stories",
+"handler": "h_start",
+"label": false
+},
+{
 "name": "story_status",
 "title": "Статус истории",
-"description": "335156221e21770d",
+"description": "4d37873cf8ac2286",
 "parameters": "43df71ad9d2f5583",
 "mutating": false,
 "scope": "project",
@@ -2141,8 +2163,8 @@
 {
 "name": "story_set_script",
 "title": "Пишу сценарий истории",
-"description": "be593272e42a60c1",
-"parameters": "765899a5f97e24ae",
+"description": "f499520e7db6d5a2",
+"parameters": "5e27fb3c4dc6f1bb",
 "mutating": true,
 "scope": "project",
 "module": "stories",

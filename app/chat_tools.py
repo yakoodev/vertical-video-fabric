@@ -90,7 +90,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "stories": ("истории: мир, актёры, локации, библиотека сцен, эпизод «завязка → клип», карточка на новые сцены", (
         "story_overview", "story_save_world", "story_save_character", "story_save_location", "story_add_scene",
         "story_generate_image", "story_delete", "story_sfx", "story_create", "story_status", "story_set_script",
-        "story_update_beats", "story_continue", "story_cancel", "tts_preview")),
+        "story_update_beats", "story_continue", "story_cancel", "story_draft", "story_start", "tts_preview")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).

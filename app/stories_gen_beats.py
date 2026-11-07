@@ -122,7 +122,8 @@ def plan_beats(store: Any, episode_id: int) -> dict:
     if not S.narration_text(ep):
         raise S.StoryError("у эпизода нет сценария")
     world = S.get_world(store, int(ep["world_id"]))
-    beats = split_beats(ep["script"])
+    # Биты до подбора сцен бывают только у запущенного черновика: автор разбил текст сам, резать заново нельзя.
+    beats = ep.get("beats") or split_beats(ep["script"])
     if S.is_3d(ep):
         # 3D-движок: картинок сцен нет — биты только для времени фраз, HUD и звуков (кадры ставит режиссура
         # app/series3d.py по словам озвучки при сборке).
@@ -224,6 +225,8 @@ def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
     ep = S.get_episode(store, episode_id)
     if ep["status"] == "assembling":
         raise S.StoryError("эпизод собирается — дождись сборки")
+    if ep["status"] == S.DRAFT_STATUS:
+        raise S.StoryError("это черновик: биты меняются вместе со сценарием (story_set_script с beats), запускает «Запустить»")
     beats = ep.get("beats") or []
     if not beats:
         raise S.StoryError("сначала биты: story_continue (после сценария)")

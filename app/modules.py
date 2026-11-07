@@ -168,7 +168,7 @@ MODULES: list[Module] = [
         depends=("ai_video",),
         tools=("story_overview", "story_save_world", "story_save_character", "story_save_location", "story_add_scene",
                "story_generate_image", "story_delete", "story_sfx", "story_create", "story_status", "story_set_script",
-               "story_update_beats", "story_continue", "story_cancel"),
+               "story_update_beats", "story_continue", "story_cancel", "story_draft", "story_start"),
         routes=("/api/stories/*", "/api/projects/{id}/stories*"),
         ui=("вкладка «Истории» на странице проекта вида ИИ-видео",),
         workers=("stories",),

@@ -14,6 +14,8 @@
   (story | disaster), part?, music?, engine? (images | 3d — свой 3D-движок, 0 ₽), location? (elevator | apartment),
   renderer? (three | blender — 3D-серия в Blender на компьютере владельца, очередь хост-воркера),
   quality? (пресет Blender: fast — по умолчанию, fast720, final — кино, preview, draft — черновик)};
+  ``draft: true`` и готовый сценарий — черновик: ни генерации, ни денег, работник его не берёт;
+  ``POST …/start`` — «Запустить» черновик (агенту — только при настройке трат проекта);
   ``GET/DELETE /api/stories/episodes/{eid}``, ``POST …/continue`` {reassemble?}, ``POST …/cancel``,
   ``PATCH …/beats`` {beats}, ``PUT …/script`` {sentences, new_characters, new_locations | text}
 * ``GET /api/stories/sfx`` — настоящие записи для звуков действий
@@ -27,11 +29,15 @@ from pathlib import Path
 from typing import Any, Callable
 from uuid import uuid4
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 
 from app import aivideo_gen as G
 from app import stories as S
 from app import stories_gen as X
+from app.auth import is_agent_request
+
+SCRIPT_FIELDS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
+                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats")
 
 
 def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -195,9 +201,13 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     # --- эпизоды ------------------------------------------------------------- #
 
     @router.post("/api/stories/worlds/{world_id}/episodes", summary="Новый эпизод «завязка → клип»")
-    def api_episode_create(world_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+    def api_episode_create(world_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         options = {k: payload[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part",
                                            "music", "engine", "location", "renderer", "quality", "dry_run") if payload.get(k) is not None}
+        if payload.get("draft"):
+            return call(X.create_draft, world_id, str(payload.get("premise") or ""), payload.get("duration"),
+                        str(payload.get("tone") or ""), {k: payload.get(k) for k in SCRIPT_FIELDS}, options,
+                        "agent" if is_agent_request(request) else "ui")
         return call(X.create, world_id, str(payload.get("premise") or ""), payload.get("duration"),
                     str(payload.get("tone") or ""), None, options, "ui")
 
@@ -222,6 +232,14 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
             return call(X.reassemble, episode_id)
         return call(X.resume, episode_id)
 
+    @router.post("/api/stories/episodes/{episode_id}/start", summary="Запустить черновик: дальше обычный конвейер и карточка")
+    def api_episode_start(episode_id: int, request: Request, _auth: auth_dep) -> dict:
+        if is_agent_request(request):
+            refusal = X.agent_start_refusal(get_store(), int(call(S.get_episode, episode_id, False)["project_id"]))
+            if refusal:
+                raise HTTPException(status_code=403, detail=refusal)
+        return call(X.start_draft, episode_id)
+
     @router.post("/api/stories/episodes/{episode_id}/cancel", summary="Отменить эпизод")
     def api_episode_cancel(episode_id: int, _auth: auth_dep) -> dict:
         return call(X.cancel, episode_id)
@@ -234,10 +252,7 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
 
     @router.put("/api/stories/episodes/{episode_id}/script", summary="Свой сценарий")
     def api_episode_script(episode_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
-        data = {k: payload.get(k) for k in ("title", "logline", "sentences", "new_characters", "new_locations", "text",
-                                            "part_title", "hook_words", "viewer_question", "hashtags", "mistake",
-                                            "cliffhanger")}
-        out = call(X.set_script, episode_id, data, "owner")
+        out = call(X.set_script, episode_id, {k: payload.get(k) for k in SCRIPT_FIELDS}, "owner")
         X.kick()
         return out
 

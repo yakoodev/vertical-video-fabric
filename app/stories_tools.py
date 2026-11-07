@@ -48,6 +48,13 @@ _NEW_LOCS = {"type": "array", "items": _obj({"key": {"type": "string"}, "name": 
                                              "description": {"type": "string"}}, ["name", "description"])}
 _SCRIPT_KEYS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
                 "viewer_question", "hashtags", "mistake", "cliffhanger")
+_DRAFT_BEATS = {"type": "array", "description": "свои биты черновика: текст подряд = текст сценария; нет — разбивка по фразам",
+                "items": _obj({"text": {"type": "string", "description": "кусок слов рассказчика"},
+                               "location": {"type": "string"}, "characters": {"type": "array", "items": {"type": "string"}},
+                               "action": {"type": "string", "description": "что на экране"},
+                               "tags": {"type": "array", "items": {"type": "string"}},
+                               "camera": {"type": "string", "enum": list(X.CAMERA_MOVES)}, "sfx": {"type": "string"},
+                               "accent": {"type": "string"}, "scene_id": {"type": "integer"}}, ["text"])}
 _SERIES = {"part_title": {"type": "string", "description": "катастрофа: крючок следующей части капсом — титр "
                                                             "«ЧАСТЬ N+1 — …» в конце"},
            "hook_words": {"type": "string", "description": "катастрофа: 2–4 слова для красной плашки обложки"},
@@ -96,6 +103,10 @@ def episode_brief(store: Any, episode_id: int) -> dict:
         out["timeline"] = {k: timeline.get(k) for k in ("duration", "shots_per_min", "sfx", "layers", "camera_keys",
                                                         "music_track_id", "mix", "format", "part", "speech_end",
                                                         "part_card", "hud", "publish") if k in timeline}
+    if ep["status"] == S.DRAFT_STATUS:
+        out["beats"] = X.draft_view(store, ep)["beats"]
+        out["note"] = ("черновик: только сценарий и биты, ничего не запущено и не потрачено. Запускает владелец кнопкой "
+                       "«Запустить», агент — story_start при включённой настройке трат проекта")
     if ep["status"] in ("planned", "awaiting_approval", "generating", "failed") and ep.get("beats"):
         try:
             out["estimate"] = X.estimate(store, episode_id)
@@ -203,13 +214,32 @@ def h_create(ctx: ToolContext, args: dict) -> dict:
                      "ОДНА карточка владельцу → сборка. Статус — story_status(episode_id)")}
 
 
+def h_draft(ctx: ToolContext, args: dict) -> dict:
+    options = {k: args[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part", "music",
+                                    "engine", "location", "renderer", "quality") if args.get(k) is not None}
+    ep = _call(X.create_draft, ctx.store, _need(args, "world_id", "story_overview"), str(args.get("premise") or ""),
+               args.get("duration"), str(args.get("tone") or ""), {k: args.get(k) for k in (*_SCRIPT_KEYS, "beats")}, options,
+               "agent")
+    return {"ok": True, "episode_id": ep["id"], "status": ep["status"], "release_url": f"/r/story-{ep['id']}",
+            "episode": episode_brief(ctx.store, int(ep["id"]))}
+
+
+def h_start(ctx: ToolContext, args: dict) -> dict:
+    eid = _need(args, "episode_id", "story_draft")
+    refusal = X.agent_start_refusal(ctx.store, int(_call(S.get_episode, ctx.store, eid, False)["project_id"]))
+    if refusal:
+        raise ToolError(refusal)
+    _call(X.start_draft, ctx.store, eid)
+    return episode_brief(ctx.store, eid)
+
+
 def h_status(ctx: ToolContext, args: dict) -> dict:
     return _call(episode_brief, ctx.store, _need(args, "episode_id", "story_create / story_overview"))
 
 
 def h_set_script(ctx: ToolContext, args: dict) -> dict:
     eid = _need(args, "episode_id", "story_create")
-    _call(X.set_script, ctx.store, eid, {k: args.get(k) for k in _SCRIPT_KEYS}, "agent")
+    _call(X.set_script, ctx.store, eid, {k: args.get(k) for k in (*_SCRIPT_KEYS, "beats")}, "agent")
     if args.get("continue", True):
         _call(X.advance, ctx.store, eid)
     return episode_brief(ctx.store, eid)
@@ -336,8 +366,32 @@ def tools() -> list[Tool]:
                   ["world_id", "premise"]),
              h_create, mutating=True, scope="project",
              label=lambda a: f"История: {str(a.get('premise') or '')[:60]}"),
+        Tool("story_draft", "Сценарий без запуска",
+             "Черновик выпуска: готовый сценарий и биты лежат в сервисе и читаются на странице выпуска. Ни Gemini, ни "
+             "голоса, ни рендера, ни денег: работник черновик не берёт. world_id, premise (нет — возьмётся logline или "
+             "title), duration, tone; sentences [{text, shots, hud, hud_kind, role}] или text; beats [{text, action, camera, "
+             "sfx}] — свои биты (текст подряд равен тексту сценария), нет — разбивка по фразам; format, part; engine 3d, "
+             "renderer blender, quality, location — чем потом делать серию. Запуск — кнопка «Запустить» у владельца или "
+             "story_start. / Save a ready script and beats as a draft: nothing runs and nothing is spent.",
+             _obj({"world_id": {"type": "integer"}, "premise": {"type": "string"}, "duration": {"type": "number"},
+                   "tone": {"type": "string"}, "format": _FORMAT, "part": {"type": "integer"},
+                   "music": {"type": "string", "enum": ["auto", "none"]}, **_SERIES, "title": {"type": "string"},
+                   "logline": {"type": "string"}, "sentences": _SENTENCES, "new_characters": _NEW_CAST,
+                   "new_locations": _NEW_LOCS, "text": {"type": "string"}, "beats": _DRAFT_BEATS,
+                   "render": {"type": "boolean"}, "cover": {"type": "boolean"}, "title_card": {"type": "boolean"},
+                   "cut_sfx": {"type": "boolean"}, "music_track_id": {"type": "integer"},
+                   "engine": {"type": "string", "enum": list(S.ENGINES)}, "renderer": {"type": "string", "enum": list(S.RENDERERS)},
+                   "quality": {"type": "string"}, "location": {"type": "string"}}, ["world_id"]),
+             h_draft, mutating=True, scope="project",
+             label=lambda a: f"Сценарий: {str(a.get('title') or a.get('premise') or '')[:60]}"),
+        Tool("story_start", "Запускаю черновик",
+             "Черновик → обычный конвейер (подбор сцен, карточка на платное, озвучка, сборка). Можно, только если в "
+             "проекте включена настройка трат без подтверждения; иначе запускает владелец кнопкой «Запустить». Платное и "
+             "так идёт через карточку или потолки этой настройки. / Start a draft: normal pipeline and spending approval.",
+             _obj({"episode_id": {"type": "integer"}}, ["episode_id"]), h_start, mutating=True, scope="project"),
         Tool("story_status", "Статус истории",
-             "Эпизод: статус (new → scripted → planned → awaiting_approval → generating → assembling → done | failed), "
+             "Эпизод: статус (draft — только сценарий, не запущен; new → scripted → planned → awaiting_approval → "
+             "generating → assembling → done | failed), "
              "сценарий с кадрами, биты (время, сцена, новая ли, камера, звук), оценка (новых сцен, из библиотеки, "
              "листы, плиты, озвучка), что не готово, карточка, clip_id и ссылка в редактор. / Story episode status.",
              _obj({"episode_id": {"type": "integer"}}, ["episode_id"]), h_status, scope="project"),
@@ -346,10 +400,12 @@ def tools() -> list[Tool]:
              "characters, action ПО-АНГЛИЙСКИ, tags, camera, sfx, accent, scene_id?}]}], new_characters [{key, name, "
              "identity_card, persona}], new_locations [{key, name, description}], title, logline. Только text — сцены "
              "подберутся из библиотеки по словам. Биты и сцены — заново (continue=false — не продолжать сразу). "
-             "/ Set the story script with shots.",
+             "Черновик остаётся черновиком (beats — его свои биты), отменённый эпизод остаётся отменённым: сценарий "
+             "сохранён, продолжить — story_continue. / Set the story script with shots.",
              _obj({"episode_id": {"type": "integer"}, "title": {"type": "string"}, "logline": {"type": "string"},
                    "sentences": _SENTENCES, "new_characters": _NEW_CAST, "new_locations": _NEW_LOCS,
-                   "text": {"type": "string"}, "continue": {"type": "boolean"}, **_SERIES}, ["episode_id"]),
+                   "text": {"type": "string"}, "beats": _DRAFT_BEATS, "continue": {"type": "boolean"}, **_SERIES},
+                  ["episode_id"]),
              h_set_script, mutating=True, scope="project"),
         Tool("story_update_beats", "Правлю биты истории",
              "До сборки: beats [{i, scene_id (из библиотеки) | new_scene {location_id, cast, action, tags, accent}, "
@@ -388,4 +444,4 @@ def all_tools() -> list[Tool]:
 
 TOOL_NAMES = ("story_overview", "story_save_world", "story_save_character", "story_save_location", "story_add_scene",
               "story_generate_image", "story_delete", "story_sfx", "story_create", "story_status", "story_set_script",
-              "story_update_beats", "story_continue", "story_cancel")
+              "story_update_beats", "story_continue", "story_cancel", "story_draft", "story_start")

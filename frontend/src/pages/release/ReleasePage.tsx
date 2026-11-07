@@ -11,6 +11,7 @@ import { ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { clipEditorPath, clipPath, projectPath } from "@/lib/paths";
 import { AiVideoTab } from "@/pages/AiVideoTab";
 import { ExplainerVideoPanel } from "@/pages/ExplainerTab";
+import { StoryDraftPanel } from "@/pages/release/StoryDraftPanel";
 import { StoryEpisodePanel } from "@/pages/StoriesTab";
 import "@/styles/aivideo.css";
 import "@/styles/explainer.css";
@@ -205,7 +206,7 @@ export function ReleasePage() {
             </span>
           ))}
           <span className={`chip rel-status ${r.status}`}>{r.status_label}</span>
-          {r.voice ? <span className="muted">{r.voice}</span> : null}
+          {r.voice && !r.script_draft ? <span className="muted">{r.voice}</span> : null}
         </div>
         {/* Биты или сценарий уже правят: что будет с правками субтитров, видно до новой сборки. */}
         {r.status !== "ready" && r.reassemble.subtitle_fixes.note ? <p className="muted rel-summary">{r.reassemble.subtitle_fixes.note}</p> : null}
@@ -221,7 +222,8 @@ export function ReleasePage() {
           {r.kind === "expl" && projectId ? (
             <ExplainerVideoPanel projectId={projectId} videoId={r.table_id} reassembleNote={r.reassemble.note} onDeleted={gone} />
           ) : null}
-          {(r.kind === "story" || r.kind === "3d") && projectId ? (
+          {r.script_draft ? <StoryDraftPanel draft={r.script_draft} projectId={projectId} onDeleted={gone} /> : null}
+          {(r.kind === "story" || r.kind === "3d") && projectId && !r.script_draft ? (
             <StoryEpisodePanel projectId={projectId} episodeId={r.table_id} reassembleNote={r.reassemble.note} onDeleted={gone} />
           ) : null}
           {r.kind === "aiv" && projectId ? <AiVideoTab projectId={projectId} scriptId={r.table_id} /> : null}

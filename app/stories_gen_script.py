@@ -259,8 +259,49 @@ def script_words(sentences: list[dict]) -> int:
     return sum(len(str(s.get("text") or "").split()) for s in sentences)
 
 
+def _word_list(text: str) -> list[str]:
+    return re.findall(r"[a-zа-я0-9]+", str(text or "").lower().replace("ё", "е"))
+
+
+def normalize_beats(store: Any, world: dict, script: dict, raw: Any) -> list[dict]:
+    """Биты, написанные автором черновика: ``[{text, location, characters, action, tags, camera, sfx, accent, scene_id}]``.
+    Форма та же, что у разбивки по сценарию: подбор сцен потом идёт по ним, а не режет заново. Озвучка привязывается к
+    битам по словам, поэтому их текст подряд обязан быть текстом сценария."""
+    if not isinstance(raw, list) or not raw:
+        raise S.StoryError("биты: нужен непустой список [{text, action, camera, sfx}]")
+    char_map, loc_map = _materialize(store, world, {}, script["warnings"])
+    scene_ids = {int(s["id"]) for s in S.list_scenes(store, int(world["id"]))}
+    ends: list[int] = []
+    for sentence in script["sentences"]:
+        ends.append((ends[-1] if ends else 0) + len(_word_list(sentence["text"])))
+    beats: list[dict] = []
+    said = 0
+    for n, item in enumerate(raw, 1):
+        item = {"text": item} if isinstance(item, str) else item
+        text = " ".join(str(item.get("text") or "").split()) if isinstance(item, dict) else ""
+        if not text:
+            raise S.StoryError(f"бит {n}: нужен text, кусок текста сценария")
+        sentence = next((k for k, end in enumerate(ends) if said < end), len(ends) - 1)
+        beats.append({"i": n - 1, "text": text, "sentence": sentence, "shot": 0,
+                      "spec": _shot(item, char_map, loc_map, scene_ids, script["warnings"], n), "variant": None,
+                      "est_sec": round(len(text) / CPS, 2)})
+        said += len(_word_list(text))
+    wanted, given = _word_list(script["text"]), _word_list(" ".join(b["text"] for b in beats))
+    if wanted != given:
+        at = next((k for k, (a, b) in enumerate(zip(wanted, given)) if a != b), min(len(wanted), len(given)))
+        raise S.StoryError(f"текст битов подряд не совпадает с текстом сценария: слово {at + 1}, в сценарии "
+                           f"«{wanted[at] if at < len(wanted) else 'конец'}», в битах «{given[at] if at < len(given) else 'конец'}». "
+                           "В text — слова рассказчика, что на экране — в action")
+    return beats
+
+
+# Сценарий не двигает такие эпизоды: черновик ждёт «Запустить», отменённый продолжают только явно.
+_SCRIPT_KEEPS_STATUS = (S.DRAFT_STATUS, "cancelled")
+
+
 def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -> dict:
-    """Сценарий эпизода → фразы с кадрами; биты и сборка сбрасываются (дальше — подбор сцен)."""
+    """Сценарий эпизода → фразы с кадрами; биты и сборка сбрасываются (дальше — подбор сцен).
+    Черновик и отменённый эпизод остаются в своём статусе: сценарий сохранён, работник их не берёт."""
     ep = S.get_episode(store, episode_id)
     if ep["status"] == "assembling":
         raise S.StoryError("эпизод собирается — дождись сборки")
@@ -270,7 +311,15 @@ def set_script(store: Any, episode_id: int, data: dict, source: str = "agent") -
     target = float(ep["duration_target"])
     if abs(script["est_sec"] - target) > target * 0.25:
         script["warnings"].append(f"текст ≈ {script['est_sec']:.0f} с при цели {target:.0f} с")
+    given = (data or {}).get("beats")
+    beats = normalize_beats(store, world, script, given) if ep["status"] == S.DRAFT_STATUS and given else []
     # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    S.set_status(store, episode_id, "scripted", None, script=script, beats=[], timeline={},
-                 title=script["title"] or P._text(ep["premise"], 100), error="", approval_id=None)
+    fields = {"script": script, "beats": beats, "timeline": {}, "title": script["title"] or P._text(ep["premise"], 100),
+              "approval_id": None}
+    moving = tuple(s for s in S.STATUSES if s not in _SCRIPT_KEEPS_STATUS)
+    # Сравнить и записать: отмена могла прийти, пока Gemini писал текст, и сценарий её не перетрёт.
+    if not S.set_status(store, episode_id, "scripted", moving, **fields, error=""):
+        current = S.get_episode(store, episode_id, full=False)["status"]
+        if current in _SCRIPT_KEEPS_STATUS:
+            S.set_status(store, episode_id, current, (current,), **fields)
     return S.get_episode(store, episode_id)

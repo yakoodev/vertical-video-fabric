@@ -44,7 +44,7 @@ STATUS_LABEL = {
     "script": "Только сценарий",
     "empty": "Пустой",
 }
-_STATUS = {"done": "ready", "awaiting_approval": "approval", "failed": "failed", "cancelled": "cancelled"}
+_STATUS = {"done": "ready", "awaiting_approval": "approval", "failed": "failed", "cancelled": "cancelled", "draft": "script"}
 _DESCRIPTION = re.compile(r"^(?:Объяснялка|История|3D-серия) \([^)]*\): (.*)$", re.S)
 _UNNAMED = {"", "холст"}
 # Подпись холста без названия: дата из created_at.
@@ -448,9 +448,13 @@ def _story_steps(store: Any, item: dict) -> dict:
         _step("clip", "Клип", "todo", ""),
     ]
     scenes_done = not (readiness and any("сцена" in m for m in readiness.get("missing") or []))
+    draft = status == S.DRAFT_STATUS
     if status == "done":
         for step in steps:
             step["state"] = "done"
+    elif draft:
+        # Сценарий готов, дальше ничего не идёт: ни «в работе», ни ошибки.
+        steps[1]["state"] = "done"
     else:
         at = _pipeline_at(status, ep.get("error") or "", ep, scenes_done, words=("подбор", "оценка", "генерация"))
         state = {"failed": "failed", "cancelled": "failed", "awaiting_approval": "wait"}.get(status, "now")
@@ -464,7 +468,7 @@ def _story_steps(store: Any, item: dict) -> dict:
             "spent_estimated_rub": money["estimated_rub"],
             "approval_id": ep.get("approval_id") if status == "awaiting_approval" else None,
             "error": ep.get("error") or "", "notes": ep.get("notes") or [], "words": ep.get("words") or [],
-            "raw": {"id": ep["id"], "world_id": ep["world_id"]}}
+            "raw": {"id": ep["id"], "world_id": ep["world_id"]}, "script_draft": X.draft_view(store, ep) if draft else None}
 
 
 def _aiv_steps(store: Any, item: dict) -> dict:
@@ -589,6 +593,7 @@ def view(store: Any, key: str) -> dict:
         "notes": data["notes"],
         "raw": data["raw"],
         "approval": _approval_card(store, data.get("approval_id")),
+        "script_draft": data.get("script_draft"),
         "clips": cards,
         "older": older,
         "reassemble": reassemble_info(store, item, data),
