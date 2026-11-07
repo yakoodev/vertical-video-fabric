@@ -8,7 +8,7 @@ from typing import Any
 
 from app import projects as P
 from app import stories as S
-from app.stories_gen_script import CPS, CAMERA_MOVES
+from app.stories_gen_script import CPS, CAMERA_MOVES, _SCRIPT_KEEPS_STATUS
 
 BEAT_MIN_SEC = 1.2
 BEAT_MAX_SEC = 3.0
@@ -221,7 +221,8 @@ def _decorate(store: Any, world_id: int, beats: list[dict]) -> None:
 
 def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
     """Агент/владелец правит биты до сборки: ``[{i, scene_id | new_scene {location_id, cast, action, tags,
-    accent}, camera?, sfx?}]`` → эпизод снова «планируется» (новая оценка и карточка)."""
+    accent}, camera?, sfx?}]`` → эпизод снова «планируется» (новая оценка и карточка).
+    Отменённый эпизод остаётся отменённым: правка сохранена, работник его не берёт, продолжают явно."""
     ep = S.get_episode(store, episode_id)
     if ep["status"] == "assembling":
         raise S.StoryError("эпизод собирается — дождись сборки")
@@ -278,5 +279,8 @@ def update_beats(store: Any, episode_id: int, changes: list[dict]) -> dict:
         raise S.StoryError("биты не приняты: " + "; ".join(problems))
     _decorate(store, int(world["id"]), beats)
     # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    S.set_status(store, episode_id, "planned", None, beats=beats, error="", timeline={})
+    moving = tuple(s for s in S.STATUSES if s not in _SCRIPT_KEEPS_STATUS)
+    # Сравнить и записать: отмена могла прийти, пока биты правились, и правка её не перетрёт (траты не начнутся снова).
+    if not S.set_status(store, episode_id, "planned", moving, beats=beats, error="", timeline={}):
+        S.set_status(store, episode_id, "cancelled", ("cancelled",), beats=beats, timeline={})
     return S.get_episode(store, episode_id)

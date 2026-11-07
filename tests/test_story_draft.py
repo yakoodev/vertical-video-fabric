@@ -270,6 +270,61 @@ def test_lost_race_between_read_and_write_keeps_cancelled(env, monkeypatch):
     assert S.get_episode(store, ep["id"])["script"]["text"]
 
 
+def _planned(store, ids) -> dict:
+    ep = X.create(store, ids["world_id"], "Лифт застрял")
+    X.set_script(store, ep["id"], STORY)
+    X.plan_beats(store, ep["id"])
+    assert S.get_episode(store, ep["id"], full=False)["status"] == "planned"
+    return ep
+
+
+def test_beat_edit_keeps_cancelled_and_nothing_restarts(env, monkeypatch):
+    client, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _planned(store, ids)
+    assert X.cancel(store, ep["id"])["status"] == "cancelled"
+    r = client.patch(f"/api/stories/episodes/{ep['id']}/beats", json={"beats": [{"i": 0, "camera": "static"}]})
+    assert r.status_code == 200 and r.json()["status"] == "cancelled" and r.json()["error"] == "отменено"
+    assert r.json()["beats"][0]["camera"] == "static"  # правка не пропала
+    # Инструмент по умолчанию ещё и «ведёт дальше»: всё равно ни шага, ни запросов на траты.
+    called = _traps(monkeypatch)
+    out, ok = run_tool(ToolContext(store=store), "story_update_beats", {"episode_id": ep["id"], "beats": [{"i": 1, "camera": "pan_left"}]})
+    assert ok and out["status"] == "cancelled" and called == []
+    assert ep["id"] not in X.StoriesWorker(store).run_once() and S.get_episode(store, ep["id"])["status"] == "cancelled"
+    assert store.db.query_one("SELECT COUNT(*) AS n FROM aiv_gen_jobs")["n"] == 0
+    # Продолжают явно, с той же точки и уже с правкой.
+    monkeypatch.setattr(X, "advance", lambda store_, eid, client=None: S.get_episode(store_, eid))
+    resumed = X.resume(store, ep["id"])
+    assert resumed["status"] == "planned" and resumed["error"] == "" and resumed["beats"][0]["camera"] == "static"
+
+
+def test_cancel_during_beat_edit_is_not_overwritten(env, monkeypatch):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    ep = _planned(store, ids)
+    import app.stories_gen_beats as SGB
+
+    real = SGB._decorate
+
+    def cancel_after_read(*args, **kwargs):
+        S.set_status(store, ep["id"], "cancelled", None, error="отменено")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(SGB, "_decorate", cancel_after_read)
+    out = X.update_beats(store, ep["id"], [{"i": 0, "camera": "static"}])
+    assert out["status"] == "cancelled" and out["error"] == "отменено" and out["beats"][0]["camera"] == "static"
+
+
+def test_beat_edit_still_replans_other_statuses(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    for status in ("planned", "awaiting_approval", "generating", "done", "failed"):
+        ep = _planned(store, ids)
+        S.set_status(store, ep["id"], status, None, error="старая ошибка" if status == "failed" else "")
+        out = X.update_beats(store, ep["id"], [{"i": 0, "camera": "static"}])
+        assert out["status"] == "planned" and out["error"] == "", status
+
+
 def test_author_beats_survive_start_and_must_match_the_script(env):
     client, store, tmp = env
     ids = _setup(store, tmp, music=False, sounds=False)
