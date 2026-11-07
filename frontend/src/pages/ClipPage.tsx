@@ -19,6 +19,7 @@ import { ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
 import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
+import { localInputToUtc } from "@/lib/time";
 import { ClipQuestions } from "@/pages/workspace/ClipQuestions";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 
@@ -618,7 +619,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
         description,
         targets,
         privacy,
-        scheduled_at: when === "later" && scheduledAt ? scheduledAt.replace("T", " ") : undefined,
+        scheduled_at: when === "later" && scheduledAt ? localInputToUtc(scheduledAt) : undefined,
       }),
     onSuccess: (job) => {
       toast.success("Поставлено в очередь публикации");

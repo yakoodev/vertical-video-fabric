@@ -10,6 +10,7 @@ import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { CoverVariants } from "@/components/CoverVariants";
 import { useModules } from "@/hooks/useModules";
+import { localInputToUtc } from "@/lib/time";
 
 export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; versionLabel?: string; onClose: () => void }) {
   const qc = useQueryClient();
@@ -174,7 +175,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
                 description: description.trim(),
                 targets,
                 privacy,
-                scheduled_at: scheduledAt ? scheduledAt.replace("T", " ") : undefined,
+                scheduled_at: scheduledAt ? localInputToUtc(scheduledAt) : undefined,
               })
             }
           >

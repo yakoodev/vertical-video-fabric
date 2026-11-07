@@ -180,7 +180,7 @@ function JobDetail({ jobId }: { jobId: string }) {
     <>
       <PageHead
         title={job.title || `Публикация #${job.id}`}
-        sub={`Создано ${job.created_at} · ${job.privacy}`}
+        sub={`Создано ${formatSnapshotTime(job.created_at)} · ${job.privacy}`}
         actions={
           <>
             <CancelJobButton job={job} />
@@ -194,7 +194,7 @@ function JobDetail({ jobId }: { jobId: string }) {
       <div className="panel" style={{ display: "flex", gap: 14, alignItems: "center", marginBottom: 16 }}>
         <Badge status={job.status} />
         <MadeByAgent job={job} />
-        {job.scheduled_at ? <span className="muted">по расписанию: {job.scheduled_at}</span> : null}
+        {job.scheduled_at ? <span className="muted">по расписанию: {formatSnapshotTime(job.scheduled_at)}</span> : null}
         {job.error ? <span style={{ color: "var(--danger)" }}>{job.error}</span> : null}
       </div>
       <div className="panel">
@@ -323,8 +323,8 @@ export function PublicationsPage({ embedded }: { embedded?: boolean } = {}) {
                       alerts={(job.targets ?? []).map((t) => stats.data?.alerts?.[String(t.id)])}
                     />
                   </td>
-                  <td>{job.scheduled_at || "—"}</td>
-                  <td className="muted">{job.created_at}</td>
+                  <td>{job.scheduled_at ? formatSnapshotTime(job.scheduled_at) : "—"}</td>
+                  <td className="muted">{formatSnapshotTime(job.created_at)}</td>
                 </tr>
               ))}
             </tbody>

@@ -5,7 +5,7 @@
 
 # Без from __future__ import annotations: FastAPI читает аннотации вида
 # _auth: auth_dep в момент объявления, а auth_dep — локальная переменная.
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Callable, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
@@ -112,6 +112,22 @@ class ClipPostBatchRequest(BaseModel):
     ai_metadata: bool = False
 
 
+# Время чуть в прошлом (пока жали кнопку) — «сейчас»; дальше — ошибка, а не публикация сразу.
+SCHEDULE_PAST_GRACE = timedelta(minutes=2)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _schedule_text(value: str | None) -> str:
+    """Время публикации (UTC) из запроса. Прошедшее — ValueError: ролик не должен выйти сразу из-за опечатки в дате."""
+    text = _normalize_schedule_text(value)
+    if text and datetime.strptime(text, "%Y-%m-%d %H:%M:%S") < _utc_now() - SCHEDULE_PAST_GRACE:
+        raise ValueError(f"время публикации уже прошло: {text} UTC")
+    return text
+
+
 def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
     router = APIRouter()
 
@@ -197,7 +213,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 payload.targets,
                 payload.privacy,
                 payload.allow_comments,
-                scheduled_at=_normalize_schedule_text(payload.scheduled_at),
+                scheduled_at=_schedule_text(payload.scheduled_at),
                 allow_repost=payload.allow_repost,
             )
         except RepostNeedsConfirm as exc:
@@ -225,7 +241,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         if payload.interval_minutes < 0 or payload.interval_minutes > 7 * 24 * 60:
             raise HTTPException(status_code=400, detail="interval_minutes must be 0..10080")
         try:
-            start_text = _normalize_schedule_text(payload.start_at)
+            start_text = _schedule_text(payload.start_at)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         start = datetime.strptime(start_text, "%Y-%m-%d %H:%M:%S") if start_text else None
@@ -238,7 +254,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         for index, clip_id in enumerate(dict.fromkeys(payload.clip_ids)):
             scheduled = ""
             if start is not None or payload.interval_minutes:
-                base = start or datetime.now()
+                base = start or _utc_now()  # очередь живёт в UTC, как и время из запроса
                 scheduled = (base + timedelta(minutes=index * payload.interval_minutes)).strftime("%Y-%m-%d %H:%M:%S")
                 if start is None and index == 0:
                     scheduled = ""  # the first one goes right away
@@ -283,7 +299,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
             Form(description="Publication visibility. TikTok supports public/private only."),
         ] = "public",
         allow_comments: Annotated[bool, Form(description="Whether comments should be enabled where supported.")] = True,
-        scheduled_at: Annotated[str, Form(description="Optional local datetime for delayed publication.")] = "",
+        scheduled_at: Annotated[str, Form(description="Optional UTC datetime for delayed publication (or with offset).")] = "",
         allow_repost: Annotated[bool, Form(description="Post again what this account already has.")] = False,
     ) -> dict:
         return await _create_post_from_upload(file, title, description, targets, privacy, allow_comments, scheduled_at,
@@ -345,7 +361,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 targets,
                 privacy,
                 allow_comments,
-                scheduled_at=_normalize_schedule_text(scheduled_at),
+                scheduled_at=_schedule_text(scheduled_at),
                 allow_repost=allow_repost,
             )
         except RepostNeedsConfirm as exc:
