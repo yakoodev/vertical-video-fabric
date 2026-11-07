@@ -321,3 +321,9 @@ def test_tool_names_are_registered():
         assert name in ST.TOOL_NAMES and name in names
         assert modules.module_of_tool(name) == "stories" and name in chat_tools.group_tools("stories")
 
+
+def test_draft_is_rendered_to_a_file_by_default(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp, music=False, sounds=False)
+    assert _draft(store, ids)["options"]["render"] is True
+    assert _draft(store, ids, options={"render": False})["options"]["render"] is False

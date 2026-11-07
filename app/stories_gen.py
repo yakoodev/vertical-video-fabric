@@ -467,6 +467,8 @@ def create_draft(store: Any, world_id: int, premise: str, duration: Any = None, 
     if not script.get("sentences") and not P._text(script.get("text")):
         raise S.StoryError("черновику нужен готовый сценарий: sentences [{text, shots}] или text")
     premise = str(premise or "").strip() or P._text(script.get("logline")) or P._text(script.get("title"))
+    # «Запустить» обещает готовый клип, поэтому черновик по умолчанию собирается до файла.
+    options = {"render": True, **(options or {})}
     ep = S.create_episode(store, world_id, premise, duration, tone, options, requested_by, status=S.DRAFT_STATUS)
     try:
         return set_script(store, int(ep["id"]), script, source=requested_by)
