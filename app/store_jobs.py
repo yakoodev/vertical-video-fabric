@@ -113,6 +113,11 @@ class JobsStore:
     ) -> dict:
         """Проверка на дубль и запись — одна транзакция: двойной клик не проскочит между ними, а задание без площадок
         не появится вовсе (работник взял бы его и опубликовал в никуда)."""
+        from app.publish_format import platform_refusal
+
+        refusal = platform_refusal({account["platform"] for account in accounts}, title, description, privacy)
+        if refusal:
+            raise ValueError(refusal)
         with self.db.transaction():
             self._refuse_double_post(accounts, clip_id, sha256, allow_repost)
             cur = self.db.execute(

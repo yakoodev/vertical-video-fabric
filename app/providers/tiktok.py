@@ -15,10 +15,10 @@ from pathlib import Path
 import requests
 from requests_auth_aws_sigv4 import AWSSigV4
 
-from app.cookies import CookieRecord, tiktok_caption
+from app.cookies import CookieRecord, tiktok_caption, tiktok_full_caption
 from app.providers.base import Provider, ProviderResult, safe_provider_error
 from app.proxy_config import masked
-from app.publish_format import publish_plan
+from app.publish_format import TIKTOK_UNLISTED, publish_plan
 from app.settings import settings
 
 log = logging.getLogger(__name__)
@@ -75,6 +75,8 @@ class TikTokProvider(Provider):
         # TikTok ждёт вертикаль: 16:9/1:1/4:5 публикуем как есть (площадка покажет с полосами),
         # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт.
         del thumbnail_path
+        if privacy not in ("public", "private"):
+            return ProviderResult(status="failed", error=TIKTOK_UNLISTED)  # не публично «на всякий случай»
         try:
             self._ensure_signature_helper()
             result = self._upload_and_post(
@@ -161,6 +163,7 @@ class TikTokProvider(Provider):
 
         _safe_head(session, user_agent)
         caption = tiktok_caption(title, description)
+        caption_cut = len(tiktok_full_caption(title, description)) > len(caption)
         markup_text, text_extra = _convert_hashtags(caption)
         visibility_type = 1 if privacy == "private" else 0
         data = {
@@ -258,7 +261,7 @@ class TikTokProvider(Provider):
             remote_url=f"https://www.tiktok.com/@/video/{item_id}" if item_id else "",
             error="" if item_id else NO_POST_LINK,
             response={"tiktok": body, "video_id": video_id, "item_id": item_id, "creation_id": creation_id,
-                      "project_id": project_id},
+                      "project_id": project_id, **({"caption_cut": True} if caption_cut else {})},
         )
 
     def _signature_dir(self) -> Path:

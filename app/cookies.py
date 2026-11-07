@@ -77,12 +77,22 @@ def required_cookie_status(platform: str, cookies: Iterable[CookieRecord]) -> tu
     return not missing, missing
 
 
-def tiktok_caption(title: str, description: str) -> str:
+TIKTOK_CAPTION_LIMIT = 2200
+
+
+def tiktok_full_caption(title: str, description: str) -> str:
+    """Подпись TikTok целиком: заголовок, пустая строка, описание."""
     caption = title.strip()
     description = description.strip()
     if description:
         caption = f"{caption}\n\n{description}" if caption else description
-    return caption[:2200]
+    return caption
+
+
+def tiktok_caption(title: str, description: str) -> str:
+    """Подпись в пределах TikTok. Длиннее задание не ставится (app/publish_format.platform_refusal); обрезка — запас для
+    уже стоящих в очереди."""
+    return tiktok_full_caption(title, description)[:TIKTOK_CAPTION_LIMIT]
 
 
 def _looks_like_netscape(text: str) -> bool:
