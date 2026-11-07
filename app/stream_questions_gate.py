@@ -53,7 +53,7 @@ def montage_gate(store: Any, source_id: int, clip_plan_id: int | None = None) ->
 def release_montage(store: Any, source_id: int) -> dict:
     """«Монтировать без ответов»: решение владельца про это видео, инструментов агента к нему нет."""
     store.get_source(int(source_id))
-    with store.db._lock:
+    with store.db.transaction():
         top = store.db.query_one("SELECT COALESCE(MAX(id), 0) AS n FROM stream_questions WHERE source_id = ?",
                                  (int(source_id),))
         store.db.execute(

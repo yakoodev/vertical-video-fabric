@@ -22,6 +22,7 @@ import json
 from typing import Any, Callable
 
 from app.clip_spec import apply_spec, export_spec
+from app.db import atomic
 
 HISTORY_DEPTH = 20
 # Что именно сохраняем: клип-файл целиком плюс субтитры (их в файле нет).
@@ -65,6 +66,7 @@ def save_with_snapshot(store: Any, clip_plan_id: int, label: str, save: Callable
     return result
 
 
+@atomic
 def restore(store: Any, clip_plan_id: int, state: dict) -> tuple[dict, list[str]]:
     """Вернуть клип к сохранённому состоянию (снимок истории или чата агента)."""
     spec = dict((state or {}).get("spec") or {})
@@ -76,6 +78,7 @@ def restore(store: Any, clip_plan_id: int, state: dict) -> tuple[dict, list[str]
     return fresh, changes
 
 
+@atomic
 def undo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
     """Вернуть клип к последнему снимку. Возвращает (клип-файл, что изменилось, метка)."""
     entry = store.pop_clip_plan_history(clip_plan_id)
@@ -115,17 +118,18 @@ def redo(store: Any, clip_plan_id: int) -> tuple[dict, list[str], str]:
     if top["after_undo"] != _fingerprint(current):
         _redo_clear(store, clip_plan_id)
         raise KeyError("повторять нечего: клип уже поменялся")
-    store.db.execute("DELETE FROM clip_plan_redo WHERE id = ?", (top["id"],))
     label = str(top["label"] or "правка")
-    store.push_clip_plan_history(clip_plan_id, current, label, depth=HISTORY_DEPTH)
-    fresh, changes = restore(store, clip_plan_id, json.loads(top["state_json"]))
-    # Куски могли создаться заново (другие segment_id): следующий шаг вперёд сверяем с тем, что вышло сейчас.
-    following = _redo_top(store, clip_plan_id)
-    if following:
-        store.db.execute(
-            "UPDATE clip_plan_redo SET after_undo = ? WHERE id = ?",
-            (_fingerprint(capture(store, clip_plan_id)), following["id"]),
-        )
+    with store.db.transaction():
+        store.db.execute("DELETE FROM clip_plan_redo WHERE id = ?", (top["id"],))
+        store.push_clip_plan_history(clip_plan_id, current, label, depth=HISTORY_DEPTH)
+        fresh, changes = restore(store, clip_plan_id, json.loads(top["state_json"]))
+        # Куски могли создаться заново (другие segment_id): следующий шаг вперёд сверяем с тем, что вышло сейчас.
+        following = _redo_top(store, clip_plan_id)
+        if following:
+            store.db.execute(
+                "UPDATE clip_plan_redo SET after_undo = ? WHERE id = ?",
+                (_fingerprint(capture(store, clip_plan_id)), following["id"]),
+            )
     return fresh, changes, label
 
 

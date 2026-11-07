@@ -113,36 +113,37 @@ class JobsStore:
             raise ValueError("at least one target account is required")
         accounts = [self.get_account(account_id, include_secret=False) for account_id in target_account_ids]
         sha256, size_bytes = _hash_path_and_size(source_path)
-        cur = self.db.execute(
-            """
-            INSERT INTO jobs
-                (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
-                 source_sha256, source_size_bytes, made_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                clip_id,
-                title,
-                description,
-                privacy,
-                int(allow_comments),
-                scheduled_at.strip(),
-                source_path.name,
-                str(source_path),
-                sha256,
-                size_bytes,
-                str(made_by or "")[:40],
-            ),
-        )
-        job_id = cur.lastrowid
-        for account in accounts:
-            self.db.execute(
+        with self.db.transaction():  # задание без площадок работник взял бы и опубликовал в никуда
+            cur = self.db.execute(
                 """
-                INSERT INTO job_targets (job_id, account_id, platform)
-                VALUES (?, ?, ?)
+                INSERT INTO jobs
+                    (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
+                     source_sha256, source_size_bytes, made_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, account["id"], account["platform"]),
+                (
+                    clip_id,
+                    title,
+                    description,
+                    privacy,
+                    int(allow_comments),
+                    scheduled_at.strip(),
+                    source_path.name,
+                    str(source_path),
+                    sha256,
+                    size_bytes,
+                    str(made_by or "")[:40],
+                ),
             )
+            job_id = cur.lastrowid
+            for account in accounts:
+                self.db.execute(
+                    """
+                    INSERT INTO job_targets (job_id, account_id, platform)
+                    VALUES (?, ?, ?)
+                    """,
+                    (job_id, account["id"], account["platform"]),
+                )
         return self.get_job(job_id)
 
     def list_jobs(self) -> list[dict]:

@@ -123,25 +123,46 @@ def _true_peak(path) -> float:
     return float(_measure_loudness(path, -14.0)["input_tp"])
 
 
-def test_real_transient_true_peak_stays_under_ceiling(tmp_path):
-    """Синтетика: тон 11025 Гц с фазой 45° на 44.1 кГц (сэмплы на 3 дБ ниже настоящего
-    пика) и резкие щелчки, громкость +3 дБ. Старый лимитер по сэмплам → AAC даёт пик выше
-    нуля, новый — не выше −1.5 dBTP."""
+_TRANSIENT = ("0.9*sin(2*PI*11025*t+PI/4)*lt(mod(t,1),0.5)"
+              "+if(lt(mod(t,0.25),0.0008),0.98*(1-mod(t,0.25)/0.0008),0)")
+
+
+def test_limiter_output_stays_under_ceiling_before_the_codec(tmp_path):
+    """Синтетика: тон 11025 Гц с фазой 45° на 44.1 кГц (сэмплы на 3 дБ ниже настоящего пика) и резкие щелчки, громкость
+    +3 дБ. Старый лимитер по сэмплам пропускает пик за ноль, новый держит потолок. Без кодека: одинаково на ffmpeg 5.1 и 8.0."""
     _require_ffmpeg()
     from app.render import LOUDNESS_LIMITER, LOUDNESS_PEAK_DB
 
     src = tmp_path / "src.wav"
-    expr = ("0.9*sin(2*PI*11025*t+PI/4)*lt(mod(t,1),0.5)"
-            "+if(lt(mod(t,0.25),0.0008),0.98*(1-mod(t,0.25)/0.0008),0)")
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"aevalsrc='{expr}':s=44100:d=3:c=stereo",
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"aevalsrc='{_TRANSIENT}':s=44100:d=3:c=stereo",
                     str(src)], check=True)
     peaks = {}
     for name, limiter in (("old", "alimiter=limit=0.84:attack=5:release=80:level=disabled"),
                           ("new", LOUDNESS_LIMITER)):
-        out = tmp_path / f"{name}.m4a"
-        chain = f"volume=3dB,{limiter},aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo"
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", chain, "-c:a", "aac", "-b:a", "192k",
-                        str(out)], check=True)
+        out = tmp_path / f"{name}.wav"
+        chain = f"volume=3dB,{limiter},aresample=48000,aformat=sample_fmts=flt:channel_layouts=stereo"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), "-af", chain, "-c:a", "pcm_f32le", str(out)],
+                       check=True)
         peaks[name] = _true_peak(out)
     assert peaks["old"] > 0.0, json.dumps(peaks)  # та самая беда: пик за потолком
-    assert peaks["new"] <= LOUDNESS_PEAK_DB + 0.05, json.dumps(peaks)
+    assert peaks["new"] <= LOUDNESS_PEAK_DB, json.dumps(peaks)
+
+
+def test_finished_file_with_sharp_transients_is_under_ceiling(tmp_path, monkeypatch):
+    """Весь проход сервиса. Кодек AAC сам добавляет пик (сколько — зависит от сигнала, битрейта и версии ffmpeg: этот
+    сигнал на 192k даёт +2.85 dBTP в 5.1 и −1.61 в 8.0), поэтому потолок держит проверка готового файла, а не лимитер."""
+    _require_ffmpeg()
+    from app.render import LOUDNESS_PEAK_DB, TRUE_PEAK_TOLERANCE_DB, ClipRenderService
+
+    store = _store(tmp_path, monkeypatch)
+    clip = _clip(store, tmp_path)
+    monkeypatch.setattr(settings, "render_loudnorm", True)
+    monkeypatch.setattr(settings, "render_end_hold_sec", 0.0)
+    monkeypatch.setattr(ClipRenderService, "_attach_qc", lambda self, c, p, m: c)
+    path = settings.clip_dir / "loud.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:r=10:d=3", "-f", "lavfi",
+                    "-i", f"aevalsrc='{_TRANSIENT}':s=44100:d=3:c=stereo", "-af", "volume=3dB", "-c:v", "libx264",
+                    "-c:a", "pcm_s16le", "-f", "mov", str(path)], check=True)
+    out = ClipRenderService(store)._normalize_loudness(clip)
+    assert not (out.get("error") or ""), out.get("error")
+    assert _true_peak(path) <= LOUDNESS_PEAK_DB + TRUE_PEAK_TOLERANCE_DB

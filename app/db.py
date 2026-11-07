@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Iterable
+from functools import wraps
+from typing import Any, Callable, Iterable, Iterator
 
+from app.db_prompt_fingerprints import _should_update_seeded_prompt
 from app.default_prompts import (
     DEFAULT_PROMPT_PRESETS,
     DEFAULT_PROMPT_SEED_KEY,
@@ -14,20 +18,86 @@ from app.default_prompts import (
 )
 
 
+_log = logging.getLogger(__name__)
+
+# Сколько запись ждёт чужую запись (другой процесс, скрипт из tools/), прежде чем «database is locked».
+BUSY_TIMEOUT_SEC = 30.0
+# WAL держит общую память в mmap и полагается на блокировки файлов: через границу ядра (9p в Docker Desktop,
+# сетевые диски) это ненадёжно и может испортить базу. Там остаёмся в обычном журнале, чтение и так без замка.
+_NO_WAL_FILESYSTEMS = {"9p", "nfs", "nfs4", "cifs", "smb3", "smbfs", "virtiofs", "fuse", "drvfs", "vboxsf", "afs"}
+
+
+def atomic(fn: Callable) -> Callable:
+    """Функция хранилища целиком — одна транзакция. Первый аргумент — ``store`` или ``self`` с полем ``db``."""
+
+    @wraps(fn)
+    def run(store: Any, *args: Any, **kwargs: Any) -> Any:
+        with store.db.transaction():
+            return fn(store, *args, **kwargs)
+
+    return run
+
+
+def _filesystem_of(path: Path) -> str:
+    """Тип файловой системы базы; не Linux — пусто."""
+    try:
+        mounts = Path("/proc/mounts").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return _mount_fstype(str(Path(path).resolve()), mounts)
+
+
+def _mount_fstype(target: str, mounts: str) -> str:
+    """Самая длинная точка монтирования из таблицы /proc/mounts, которая содержит ``target``."""
+    best, fstype = -1, ""
+    for line in mounts.splitlines():
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        point = parts[1].replace("\\040", " ")
+        if (target == point or target.startswith(point.rstrip("/") + "/")) and len(point) > best:
+            best, fstype = len(point), parts[2]
+    return fstype
+
+
 class Database:
+    """Чтение идёт каждое на своём соединении и ничего не ждёт. ``_lock`` — замок записи: одна запись за раз
+    в этом процессе (другие процессы ждут ``BUSY_TIMEOUT_SEC`` на уровне SQLite). Несколько записей, которые
+    должны пройти целиком, — :meth:`transaction`."""
+
     def __init__(self, path: Path) -> None:
         self.path = path
         self._lock = threading.RLock()
+        self._local = threading.local()
+        self._wal = False
 
     def connect(self) -> sqlite3.Connection:
+        """Новое соединение. Писать через него внутри :meth:`transaction` нельзя: оно будет ждать саму транзакцию."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self.path, check_same_thread=False)
+        conn = sqlite3.connect(self.path, timeout=BUSY_TIMEOUT_SEC, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        if self._wal:
+            conn.execute("PRAGMA synchronous = NORMAL")
         return conn
 
+    def _enable_wal(self) -> None:
+        """Режим WAL (хранится в самом файле базы). Копировать живую базу теперь только ``python -m app.db_backup``."""
+        fstype = _filesystem_of(self.path)
+        if fstype in _NO_WAL_FILESYSTEMS:
+            _log.warning("база на %s: WAL небезопасен, остаётся обычный журнал", fstype)
+            return
+        conn = self.connect()
+        try:
+            self._wal = str(conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]).lower() == "wal"
+        except sqlite3.OperationalError as exc:  # файл занят другим процессом: включится при следующем старте
+            _log.warning("WAL не включён: %s", exc)
+        finally:
+            conn.close()
+
     def init(self) -> None:
-        with self._lock, self.connect() as conn:
+        self._enable_wal()
+        with self._lock, closing(self.connect()) as conn, conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS accounts (
@@ -710,19 +780,89 @@ class Database:
             (DEFAULT_PROMPT_SEED_KEY, json.dumps(DEFAULT_PROMPT_SEED_VERSION)),
         )
 
+    @contextmanager
+    def transaction(self) -> Iterator[sqlite3.Connection]:
+        """Всё внутри проходит целиком или никак. ``execute``/``query_*`` этого потока сами идут в транзакцию, так что
+        обычные методы хранилища можно звать как есть. Вложенная — точка сохранения: её ошибка, пойманная снаружи,
+        откатывает только её. Читатели в других потоках не ждут и видят базу до коммита; ждут только записи, поэтому
+        внутри не должно быть сети, долгой работы и ожидания других потоков."""
+        conn = self._tx()
+        if conn is not None:
+            self._local.depth += 1
+            name = f"tx_{self._local.depth}"
+            conn.execute(f"SAVEPOINT {name}")
+            try:
+                yield conn
+                conn.execute(f"RELEASE {name}")
+            except BaseException:
+                conn.execute(f"ROLLBACK TO {name}")
+                conn.execute(f"RELEASE {name}")
+                raise
+            finally:
+                self._local.depth -= 1
+            return
+        with self._lock:
+            conn = self.connect()
+            try:
+                # Деньги, решения и удаления переживают и падение машины, не только процесса.
+                conn.execute("PRAGMA synchronous = FULL")
+                conn.execute("BEGIN IMMEDIATE")
+                self._local.conn, self._local.depth, self._local.after = conn, 0, []
+                try:
+                    yield conn
+                    conn.commit()
+                except BaseException:
+                    conn.rollback()
+                    raise
+                finally:
+                    self._local.conn = None
+            finally:
+                conn.close()
+        for callback in self._local.after:
+            callback()
+
+    def after_commit(self, callback: Callable[[], None]) -> None:
+        """Выполнить после коммита текущей транзакции (разбудить работника, чтобы он уже увидел строки); без неё — сразу."""
+        if self._tx() is None:
+            callback()
+        else:
+            self._local.after.append(callback)
+
+    def _tx(self) -> sqlite3.Connection | None:
+        return getattr(self._local, "conn", None)
+
     def execute(self, sql: str, params: Iterable = ()) -> sqlite3.Cursor:
-        with self._lock, self.connect() as conn:
-            cur = conn.execute(sql, tuple(params))
-            conn.commit()
-            return cur
+        tx = self._tx()
+        if tx is not None:
+            return tx.execute(sql, tuple(params))
+        with self._lock:
+            conn = self.connect()
+            try:
+                cur = conn.execute(sql, tuple(params))
+                conn.commit()
+                return cur  # lastrowid и rowcount живут и после закрытия
+            finally:
+                conn.close()  # сам не закроется: соединение держит цикл ссылок до сборщика мусора
 
     def query_one(self, sql: str, params: Iterable = ()) -> sqlite3.Row | None:
-        with self._lock, self.connect() as conn:
+        tx = self._tx()
+        if tx is not None:
+            return tx.execute(sql, tuple(params)).fetchone()
+        conn = self.connect()
+        try:
             return conn.execute(sql, tuple(params)).fetchone()
+        finally:
+            conn.close()
 
     def query_all(self, sql: str, params: Iterable = ()) -> list[sqlite3.Row]:
-        with self._lock, self.connect() as conn:
+        tx = self._tx()
+        if tx is not None:
+            return tx.execute(sql, tuple(params)).fetchall()
+        conn = self.connect()
+        try:
             return conn.execute(sql, tuple(params)).fetchall()
+        finally:
+            conn.close()
 
 
 def _json_value(value_json: str):
@@ -730,189 +870,3 @@ def _json_value(value_json: str):
         return json.loads(value_json)
     except (TypeError, json.JSONDecodeError):
         return None
-
-
-def _should_update_seeded_prompt(existing, legacy_prompt: str | None, seed_updated_at: str) -> bool:
-    current_prompt = str(existing["prompt"] or "").strip()
-    if legacy_prompt and current_prompt == legacy_prompt:
-        return True
-    if not seed_updated_at:
-        return False
-    updated_at = str(existing["updated_at"] or "")
-    key = (str(existing["task"]), str(existing["label"]))
-    return bool(
-        updated_at
-        and updated_at <= seed_updated_at
-        and _matches_seeded_prompt_fingerprint(key, current_prompt)
-    )
-
-
-def _matches_seeded_prompt_fingerprint(key: tuple[str, str], prompt: str) -> bool:
-    fingerprints = {
-        ("analysis", "Apex analysis"): (
-            (
-                "Analyze this source for vertical short-form publishing.",
-                "Return clips[] as finished edit plans, not just isolated detections.",
-                "If a clip needs context, include a short setup segment before the payoff.",
-            ),
-        ),
-        ("analysis", "Anime analysis"): (
-            (
-                "Analyze this anime source for vertical short-form publishing.",
-                "Return clips[] as finished edit plans.",
-                "setup and reaction, joke and punchline",
-            ),
-            (
-                "Analyze this anime episode as a connected story digest",
-                "Build clips[] as chronological story",
-                "Prefer combined clip length around 45 to 150 seconds.",
-            ),
-            (
-                "Analyze this anime episode as a connected story digest",
-                "Keep each individual segment around 25 to 70 seconds",
-                "never longer than 90 seconds",
-            ),
-            (
-                "Analyze this anime episode for self-contained main story clips",
-                "Do not cover the episode mechanically from beginning to end",
-                "Every returned clip must have its own local hook",
-            ),
-            (
-                "Analyze this anime episode for vertical publishing.",
-                "clips[0] is mandatory and must be titled like",
-                "Episode Story Recap",
-            ),
-            (
-                "Analyze this anime episode for vertical publishing.",
-                "Prefer recap clip length around 120 to 180 seconds",
-                "5 to 6 ordered segments",
-            ),
-            (
-                "Analyze this anime episode for vertical publishing.",
-                "Prefer recap clip length around 90 to 150 seconds",
-                "Do not return any finished clip around 3 minutes",
-            ),
-        ),
-        ("analysis", "Series analysis"): (
-            (
-                "Analyze this TV series or episodic live-action source for vertical short-form",
-                "Return clips[] as finished edit plans.",
-                "setup and reveal, accusation and response",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source as a connected story",
-                "chronological story chapters",
-                "Prefer combined clip length around 45 to 150 seconds.",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source as a connected story",
-                "Keep each individual segment around 25 to 70 seconds",
-                "never longer than 90 seconds",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source for self-contained main",
-                "Do not cover the episode mechanically from beginning to end",
-                "Every returned clip must have its own local hook",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source for vertical publishing.",
-                "clips[0] is mandatory and must be titled like",
-                "Episode Story Recap",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source for vertical publishing.",
-                "Prefer recap clip length around 120 to 180 seconds",
-                "5 to 6 ordered segments",
-            ),
-            (
-                "Analyze this TV series or episodic live-action source for vertical publishing.",
-                "Prefer recap clip length around 90 to 150 seconds",
-                "Do not return any finished clip around 3 minutes",
-            ),
-        ),
-        # Эти пресеты появились позже и отпечатков не имели — значит, обновить
-        # их сид не мог. Строки взяты из частей, которые правки длины не трогали.
-        ("analysis", "Action drama highlights"): (
-            (
-                "This is a live-action ACTION series",
-                "Your #1 job is to find the FIGHTS and the ACTION.",
-                "Never cut mid-punch, mid-line, or mid-action.",
-            ),
-        ),
-        ("analysis", "Подкаст: цитаты"): (
-            (
-                "Analyze this podcast, interview, or talking-head source for vertical short-form.",
-                "Find the most quotable, shareable spoken moments",
-                "Merge a setup question and its answer into one clip",
-            ),
-        ),
-        ("analysis", "Обучающее: тезисы"): (
-            (
-                "Analyze this educational, tutorial, lecture, or explainer source for vertical",
-                "Each clip teaches one",
-                "Skip long tangents, repeated recaps",
-            ),
-        ),
-        ("analysis", "Юмор: смешные моменты"): (
-            (
-                "Analyze this source for the funniest standalone moments for vertical short-form:",
-                "Always include the setup and the punchline",
-                "Never cut through the punchline or a key reaction.",
-            ),
-        ),
-        ("publishing", "Publishing metadata"): (
-            (
-                "Generate publishing metadata for a rendered vertical clip.",
-                "Return JSON only with title and description suitable for YouTube Shorts and TikTok.",
-                "Keep the title short, direct, and based on the clip content.",
-            ),
-            (
-                "Generate publishing metadata for a rendered vertical clip.",
-                "Make the title specific to the clip, not generic.",
-                "Avoid clickbait that misrepresents the scene.",
-            ),
-        ),
-        ("subtitle", "Apex subtitles"): (
-            (
-                "Transcribe this audio for karaoke subtitles.",
-                "Split readable subtitle segments by phrase",
-                "Keep word timestamps aligned tightly enough for karaoke highlighting.",
-            ),
-            (
-                "Transcribe this audio for karaoke subtitles.",
-                "Do not stretch a word or segment through silence.",
-                "Word end timestamps should be close to the audible end of the word",
-            ),
-        ),
-        ("subtitle", "Anime subtitles"): (
-            (
-                "Transcribe this anime audio for karaoke subtitles.",
-                "Preserve character names, honorifics",
-                "keep word timestamps tight for karaoke highlighting",
-            ),
-            (
-                "Transcribe this anime audio for karaoke subtitles.",
-                "Preserve character names, honorifics",
-                "Keep word timestamps tight for karaoke highlighting.",
-            ),
-            (
-                "Transcribe this anime audio for karaoke subtitles.",
-                "Do not stretch subtitles across dramatic silence",
-                "Word end timestamps should be close to the audible end",
-            ),
-        ),
-        ("subtitle", "Series subtitles"): (
-            (
-                "Transcribe this TV series audio for karaoke subtitles.",
-                "Preserve exact dialogue, names, places",
-                "Keep word timestamps tight for karaoke highlighting.",
-            ),
-            (
-                "Transcribe this TV series audio for karaoke subtitles.",
-                "Do not stretch subtitles across dramatic silence",
-                "Word end timestamps should be close to the audible end",
-            ),
-        ),
-    }
-    expected_options = fingerprints.get(key)
-    return bool(expected_options and any(all(part in prompt for part in expected) for expected in expected_options))

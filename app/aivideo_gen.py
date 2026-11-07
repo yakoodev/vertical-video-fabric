@@ -192,7 +192,7 @@ def _on_decide(store: Any, approval: dict, action: str, comment: str, actor: str
                 dupes += 1
         cur = store.db.execute("UPDATE aiv_gen_jobs SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
                                "WHERE approval_id = ? AND status = 'awaiting'", (approval["id"],))
-        kick()
+        store.db.after_commit(kick)  # внутри решения карточки: работник должен уже увидеть «approved»
         return {"aiv": {"approved_jobs": int(cur.rowcount or 0), "duplicate_jobs": dupes,
                         "note": "запуски одобрены — работник ИИ-видео их выполнит"
                                 + (f"; {dupes} шт. уже делает другая карточка — не повторяю" if dupes else "")}}
@@ -202,7 +202,7 @@ def _on_decide(store: Any, approval: dict, action: str, comment: str, actor: str
     return {"aiv": {"cancelled_jobs": int(cur.rowcount or 0)}}
 
 
-A.register_card_action(CARD_ACTION, [("approve", "✅ Разрешить"), ("reject", "🗑 Отказ")], _on_decide)
+A.register_card_action(CARD_ACTION, [("approve", "✅ Разрешить"), ("reject", "🗑 Отказ")], _on_decide, atomic=True)
 
 
 def _preflight(store: Any, job: dict) -> list[str]:
@@ -239,28 +239,20 @@ def _claim(store: Any, job_id: int) -> tuple[dict | None, list[str]]:
     """Взять запуск в работу: проверка денег и ``approved → submitting`` в ОДНОЙ записи-транзакции
     (BEGIN IMMEDIATE). Сколько бы исполнителей ни было (работник, aiv_run_approved, второй процесс),
     запуск отправляется один раз: кто не успел — получает ``None``."""
-    with _LOCK, store.db._lock:
-        conn = store.db.connect()
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            row = conn.execute("SELECT status FROM aiv_gen_jobs WHERE id = ?", (int(job_id),)).fetchone()
-            if not row or row["status"] != "approved":
-                conn.rollback()
-                return None, []
-            problems = _preflight(store, get_job(store, job_id))
-            if problems:
-                conn.execute("UPDATE aiv_gen_jobs SET status = 'held', error = ?, updated_at = CURRENT_TIMESTAMP "
-                             "WHERE id = ? AND status = 'approved'", ("; ".join(problems)[:500], int(job_id)))
-                conn.commit()
-                return None, problems
-            cur = conn.execute(
-                "UPDATE aiv_gen_jobs SET status = 'submitting', worker_id = ?, attempts = attempts + 1, error = '', "
-                "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (_runner_id(), int(job_id)))
-            conn.commit()
-            if not cur.rowcount:
-                return None, []
-        finally:
-            conn.close()
+    with _LOCK, store.db.transaction() as conn:
+        row = conn.execute("SELECT status FROM aiv_gen_jobs WHERE id = ?", (int(job_id),)).fetchone()
+        if not row or row["status"] != "approved":
+            return None, []
+        problems = _preflight(store, get_job(store, job_id))
+        if problems:
+            conn.execute("UPDATE aiv_gen_jobs SET status = 'held', error = ?, updated_at = CURRENT_TIMESTAMP "
+                         "WHERE id = ? AND status = 'approved'", ("; ".join(problems)[:500], int(job_id)))
+            return None, problems
+        cur = conn.execute(
+            "UPDATE aiv_gen_jobs SET status = 'submitting', worker_id = ?, attempts = attempts + 1, error = '', "
+            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'approved'", (_runner_id(), int(job_id)))
+        if not cur.rowcount:
+            return None, []
         _INFLIGHT.add(int(job_id))
     return get_job(store, job_id), []
 
@@ -329,9 +321,10 @@ def _mark_uncertain(store: Any, job: dict, exc: BaseException, provider: Any, be
                  "Polza; сам не повторяю (повтор — aiv_regenerate)")
     params = {**get_job(store, job["id"])["params"], "net": "uncertain", "balance_check": check,
               "retry_free": retry_free}
-    if _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="uncertain", error=error[:500],
-            params_json=json.dumps(params, ensure_ascii=False), **fields) and fields:
-        add_ledger(store, job, fields["cost_rub"], "balance", "ответ не дошёл — списание по разнице баланса")
+    with store.db.transaction():
+        if _cas(store, job["id"], ("submitting",), where="remote_id = ''", status="uncertain", error=error[:500],
+                params_json=json.dumps(params, ensure_ascii=False), **fields) and fields:
+            add_ledger(store, job, fields["cost_rub"], "balance", "ответ не дошёл — списание по разнице баланса")
 
 
 def retry_job(store: Any, job_id: int, run: bool = False) -> dict:
@@ -371,9 +364,27 @@ def retry_card(store: Any, approval_id: int, run: bool = False) -> dict:
 def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source: str, note: str = "",
           own_asset: bool = True) -> dict | None:
     """Готово: версия + трата. Записывает только ПЕРВЫЙ «готово» (сравнить-и-записать статуса):
-    второй опрос того же запуска (другой поток/процесс) не плодит версию и не пишет вторую трату."""
-    if not _cas(store, job["id"], ("submitting", "polling"), status="done", cost_rub=round(cost, 4),
-                cost_source=source, error=""):
+    второй опрос того же запуска (другой поток/процесс) не плодит версию и не пишет вторую трату.
+    Статус, трата и версия пишутся одной транзакцией: упало посреди — запуск остаётся в опросе и дочитается
+    без нового платежа. Отказ записать версию (не ошибка базы) трату не отменяет: деньги ушли."""
+    ref, first, refused = None, False, None
+    with store.db.transaction():
+        first = _cas(store, job["id"], ("submitting", "polling"), status="done", cost_rub=round(cost, 4),
+                     cost_source=source, error="")
+        if first:
+            if _paid(job["provider"], job["kind"]) and cost > 0:
+                add_ledger(store, job, cost, source, note)
+            try:
+                with store.db.transaction():
+                    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]),
+                                    job["ref_kind"], int(asset_id), prompt=prompt, job_id=int(job["id"]),
+                                    slot=job.get("slot") or "")
+                    _set_job(store, job["id"], result_ref_id=ref["id"])
+            except (V.AivError, KeyError, ValueError) as exc:
+                refused = exc
+    if refused is not None:
+        raise refused
+    if not first:
         _log.warning("aiv job %s: повторное «готово» пропущено (уже %s)", job["id"], get_job(store, job["id"])["status"])
         if own_asset:
             try:
@@ -381,11 +392,6 @@ def _done(store: Any, job: dict, asset_id: int, prompt: str, cost: float, source
             except KeyError:
                 pass
         return None
-    if _paid(job["provider"], job["kind"]) and cost > 0:
-        add_ledger(store, job, cost, source, note)
-    ref = V.add_ref(store, int(job["project_id"]), job["target_type"], int(job["target_id"]), job["ref_kind"],
-                    int(asset_id), prompt=prompt, job_id=int(job["id"]), slot=job.get("slot") or "")
-    _set_job(store, job["id"], result_ref_id=ref["id"])
     if auto_check(store, job, ref) is not None:
         ref = V.get_ref(store, int(ref["id"]))
     return ref
@@ -651,9 +657,11 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
             charged = round(max(0.0, float(cost)), 4) if cost is not None and provider.paid else 0.0
             error = str(result.get("error") or "отказ")[:440]
             error += f" — провайдер списал {charged:.2f} ₽" if charged > 0 else " — не списано (резерв освобождён)"
-            if _cas(store, job["id"], ("polling",), status="blocked_policy" if result.get("policy") else "failed",
-                    error=error[:500], cost_rub=charged, cost_source="provider" if cost is not None else "none")                     and charged > 0:
-                add_ledger(store, job, charged, "provider", "отказ провайдера — списание по его ответу")
+            with store.db.transaction():
+                if _cas(store, job["id"], ("polling",), status="blocked_policy" if result.get("policy") else "failed",
+                        error=error[:500], cost_rub=charged, cost_source="provider" if cost is not None else "none") \
+                        and charged > 0:
+                    add_ledger(store, job, charged, "provider", "отказ провайдера — списание по его ответу")
             return None
         video = job["kind"] == "video"
         tmp = settings.tmp_dir / f"aiv-{uuid4().hex}{'.mp4' if video else '.jpg'}"
@@ -683,10 +691,11 @@ def _finish(store: Any, job: dict, provider: Any, poll_timeout: float | None) ->
                 # Сеть: результат у провайдера есть — следующий опрос возьмёт ссылку заново.
                 _set_job(store, job["id"], error=f"скачивание: сеть ({type(exc).__name__}) — повторю позже"[:500])
                 return None
-            if _cas(store, job["id"], ("polling",), status="failed", error=f"результат не скачан: {exc}"[:500]) \
-                    and provider.paid:
-                add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
-                           "provider" if cost is not None else "estimate", "оплачено, файл не скачан")
+            with store.db.transaction():
+                if _cas(store, job["id"], ("polling",), status="failed", error=f"результат не скачан: {exc}"[:500]) \
+                        and provider.paid:
+                    add_ledger(store, job, float(cost) if cost is not None else float(job["estimate_rub"]),
+                               "provider" if cost is not None else "estimate", "оплачено, файл не скачан")
             return None
         if video:
             asset = _save_asset(store, job, tmp, "video", "video/mp4", f"ИИ-видео: {job['label']}")

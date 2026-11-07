@@ -442,8 +442,10 @@ def buttons_for(approval: dict) -> list[tuple[str, str]]:
 CARD_ACTIONS: dict[str, dict] = {}
 
 
-def register_card_action(action: str, buttons: list[tuple[str, str]], on_decide: Callable[..., dict]) -> None:
-    CARD_ACTIONS[action] = {"buttons": buttons, "on_decide": on_decide}
+def register_card_action(action: str, buttons: list[tuple[str, str]], on_decide: Callable[..., dict],
+                         atomic: bool = False) -> None:
+    """``atomic`` — обработчик идёт в одной транзакции с самим решением: только записи в базу, без сети и ожидания."""
+    CARD_ACTIONS[action] = {"buttons": buttons, "on_decide": on_decide, "atomic": atomic}
 
 
 def get_approval(store: Any, approval_id: int) -> dict:

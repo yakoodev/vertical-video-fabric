@@ -68,11 +68,21 @@ Swagger UI: `http://localhost:8088/docs`. Порт меняется в `docker-c
 
 - Том `vv-fabric-data` → `/data`: `app.sqlite` (база), `secret.key` (ключ шифрования куки — **не теряй**),
   `api_token.txt`, загрузки/клипы, `whisper-models/`. Дефолтный пак (луки, стили субтитров, промпты) сеется сам.
-- **Бэкап/перенос** — выгрузить/загрузить том:
+- **Копия базы** (перед обновлением и в любой момент, сервис не останавливаем):
+  ```bash
+  docker compose exec app python -m app.db_backup /data/app.sqlite.bak-$(date +%Y%m%d-%H%M)
+  ```
+  База работает в режиме WAL, поэтому **`cp` и `docker cp` файла `app.sqlite` использовать нельзя**: свежие записи лежат
+  рядом в `app.sqlite-wal`, копия молча окажется старой, а в момент сброса журнала может быть испорчена. Готовую копию
+  `*.bak-*` уже можно копировать куда угодно. Восстановление: остановить сервис, положить копию на место `app.sqlite`
+  и удалить `app.sqlite-wal` и `app.sqlite-shm` (старый журнал испортил бы восстановленную базу).
+- **Бэкап/перенос** — выгрузить/загрузить том, **при остановленном сервисе** (`docker compose stop app`):
   ```bash
   docker run --rm -v vv-fabric-data:/data -v "$PWD":/backup alpine tar czf /backup/vvf-data.tar.gz -C /data .
   docker run --rm -v vv-fabric-data:/data -v "$PWD":/backup alpine tar xzf /backup/vvf-data.tar.gz -C /data
   ```
+- База должна лежать в томе Docker (ext4 внутри WSL), а не в папке Windows: на смонтированной папке (9p) WAL небезопасен,
+  сервис сам это видит и остаётся в обычном журнале.
 - **Обновление**: `git pull && docker compose up -d --build` (миграции БД применяются автоматически).
 - **Управление**: `docker compose stop|start|restart app`, `docker compose down` (том остаётся),
   `docker compose down -v` ⚠️ удалит и данные.

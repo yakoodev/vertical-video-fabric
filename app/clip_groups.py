@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from app.db import atomic
 from app.clip_groups_facts import (  # noqa: F401
     CLOSE_START_SEC, SHARED_MATERIAL, ALMOST_SAME_MATERIAL, _VERSION, _PARENS, _NUMBERED, _PREFIX, version_mark,
     name_key, display_name, _size_format, PlanFact, shared_fraction, same_moment, Query, _columns, _FMT_SQL,
@@ -49,6 +50,7 @@ from app.clip_groups_view import (  # noqa: F401
 # ---- новые версии, объединение, разъединение -------------------------------------------------------
 
 
+@atomic
 def attach_new_plan(store: Any, plan_id: int, *, version_of: int | None = None) -> int | None:
     """Новый план — новая версия клипа? ``version_of`` указал агент или кнопка; без него — только если
     в названии есть номер версии и то же название, начало и формат находятся у плана этого видео.
@@ -112,6 +114,7 @@ def _write_group(store: Any, members: list[dict], number: int) -> None:
             store.db.execute("UPDATE clip_plans SET clip_group_id = ? WHERE id = ?", (number, int(member["id"])))
 
 
+@atomic
 def on_format_change(store: Any, plan_id: int) -> None:
     """Формат плана сменили: вертикаль и горизонталь — разные клипы. Отделяем от группы другого формата
     и пробуем найти группу своего. Владелец отделил план руками (group_locked) — не трогаем."""
@@ -131,6 +134,7 @@ def on_format_change(store: Any, plan_id: int) -> None:
         _attach_by_rule(store, int(plan_id))
 
 
+@atomic
 def merge_clips(store: Any, clip_plan_id: int, other_plan_id: int) -> dict:
     """Объединить два клипа в один. Формат должен совпадать; видео — то же или того же проекта."""
     a = group_members(store, clip_plan_id)
@@ -166,6 +170,7 @@ def split_plan(store: Any, plan_id: int) -> dict:
     return {"id": int(plan_id), "rest_id": int(rest[-1]["id"])}
 
 
+@atomic
 def new_version(store: Any, clip_plan_id: int) -> dict:
     """Кнопка «Новая версия»: копия монтажа главного плана новым планом в той же группе."""
     from app.clip_history import capture, restore
@@ -204,6 +209,7 @@ def new_version(store: Any, clip_plan_id: int) -> dict:
     return {"id": int(created["id"]), "title": fresh["title"]}
 
 
+@atomic
 def rollback(store: Any, clip_plan_id: int, *, render_id: int | None = None, snapshot_id: int | None = None) -> dict:
     """Вернуть главному плану правки монтажа выбранной версии. Текст клипа не трогаем, рендеры не удаляем,
     текущий монтаж остаётся версией: либо у него уже есть файл с тем же отпечатком, либо он сохраняется
@@ -307,6 +313,7 @@ def hold_assembly(store: Any, plan_id: int) -> None:
     store.db.execute("UPDATE clip_plans SET hidden = 1 WHERE id = ?", (int(plan_id),))
 
 
+@atomic
 def finish_assembly(store: Any, plan_id: int, previous: int | None) -> dict:
     """Сборка дошла до конца: план виден и, если выпуск уже собирали, стал новой версией того же клипа.
     Без прошлого клипа, с удалённым прошлым или с прошлым другого формата (вертикаль и горизонталь — разные клипы,

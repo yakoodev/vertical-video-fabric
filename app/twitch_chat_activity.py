@@ -133,16 +133,16 @@ def chat_activity(store, source_id: int, bucket: float = 10.0) -> dict:
     if cached is not None:
         return cached
     emote_names = list(chat_emotes(store, source_id).keys())
-    # Идём курсором, не fetchall: в 4-часовом VOD сотни тысяч сообщений.
-    with db._lock:
-        conn = db.connect()
-        try:
-            cur = conn.execute(
-                "SELECT offset_sec, text FROM chat_messages WHERE source_id = ? ORDER BY offset_sec", (source_id,)
-            )
-            result = score_activity(((r[0], r[1]) for r in cur), bucket, duration, emote_names)
-        finally:
-            conn.close()
+    # Идём курсором, не fetchall: в 4-часовом VOD сотни тысяч сообщений. Своё соединение, без замка записи:
+    # разбор идёт секунды, и всё это время база открыта для всех.
+    conn = db.connect()
+    try:
+        cur = conn.execute(
+            "SELECT offset_sec, text FROM chat_messages WHERE source_id = ? ORDER BY offset_sec", (source_id,)
+        )
+        result = score_activity(((r[0], r[1]) for r in cur), bucket, duration, emote_names)
+    finally:
+        conn.close()
     result["source_id"] = source_id
     with _activity_lock:
         for stale in [k for k in _activity_cache if k[:2] == key[:2]]:

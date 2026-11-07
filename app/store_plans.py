@@ -615,10 +615,11 @@ class ClipPlansStore:
         (их могли опубликовать) — только отвязываются. История правок и переписка
         с агентом без внешних ключей — чистим сами."""
         self.get_clip_plan(clip_plan_id, include_segments=False)
-        self.db.execute("DELETE FROM clip_plan_history WHERE clip_plan_id = ?", (clip_plan_id,))
-        self.db.execute("DELETE FROM clip_plan_redo WHERE clip_plan_id = ?", (clip_plan_id,))
-        self.db.execute("DELETE FROM clip_agent_messages WHERE clip_plan_id = ?", (clip_plan_id,))
-        self._delete_record("clip_plans", clip_plan_id)
+        with self.db.transaction():
+            self.db.execute("DELETE FROM clip_plan_history WHERE clip_plan_id = ?", (clip_plan_id,))
+            self.db.execute("DELETE FROM clip_plan_redo WHERE clip_plan_id = ?", (clip_plan_id,))
+            self.db.execute("DELETE FROM clip_agent_messages WHERE clip_plan_id = ?", (clip_plan_id,))
+            self._delete_record("clip_plans", clip_plan_id)
 
     def _segments_for_clip_plan(self, clip_plan_id: int) -> list[dict]:
         rows = self.db.query_all(

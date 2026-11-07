@@ -209,8 +209,9 @@ def delete_project(store: Any, project_id: int) -> dict:
     """Удалить проект: источники и клипы остаются (без проекта), файлы для монтажа становятся общими, правила,
     гипотезы и ручные публикации проекта уходят вместе с ним."""
     project = get_project(store, project_id)
-    store.db.execute("UPDATE sources SET project_id = NULL WHERE project_id = ?", (int(project_id),))
-    store.db.execute("DELETE FROM projects WHERE id = ?", (int(project_id),))
+    with store.db.transaction():
+        store.db.execute("UPDATE sources SET project_id = NULL WHERE project_id = ?", (int(project_id),))
+        store.db.execute("DELETE FROM projects WHERE id = ?", (int(project_id),))
     return {"deleted": True, "project": project}
 
 

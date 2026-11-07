@@ -180,7 +180,7 @@ class SettingsStore:
             raise ValueError("prompt preset label is required")
         if not prompt:
             raise ValueError("prompt preset text is required")
-        with self.db._lock, self.db.connect() as conn:
+        with self.db.transaction() as conn:
             if is_default:
                 conn.execute("UPDATE prompt_presets SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE task = ?", (task,))
             cur = conn.execute(
@@ -190,7 +190,6 @@ class SettingsStore:
                 """,
                 (task, label, prompt, int(is_default)),
             )
-            conn.commit()
             preset_id = cur.lastrowid
         return self.get_prompt_preset(preset_id)
 
@@ -209,7 +208,7 @@ class SettingsStore:
             raise ValueError("prompt preset label is required")
         if not prompt:
             raise ValueError("prompt preset text is required")
-        with self.db._lock, self.db.connect() as conn:
+        with self.db.transaction() as conn:
             if is_default:
                 conn.execute("UPDATE prompt_presets SET is_default = 0, updated_at = CURRENT_TIMESTAMP WHERE task = ?", (preset["task"],))
             conn.execute(
@@ -220,7 +219,6 @@ class SettingsStore:
                 """,
                 (label, prompt, int(is_default), preset_id),
             )
-            conn.commit()
         return self.get_prompt_preset(preset_id)
 
     def delete_prompt_preset(self, preset_id: int) -> None:

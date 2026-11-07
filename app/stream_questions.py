@@ -96,8 +96,8 @@ def forget_answer(store: Any, question_id: int) -> dict:
 
 
 def answer_question(store: Any, question_id: int, option: Any = None, text: Any = "", skip: bool = False) -> dict:
-    # Один замок с set_level: смена уровня и ответ не разъедутся в брифе.
-    with store.db._lock:
+    # Одна транзакция, как у set_level: смена уровня и ответ не разъедутся в брифе.
+    with store.db.transaction():
         return _answer_locked(store, question_id, option, text, skip)
 
 
@@ -145,7 +145,7 @@ def set_level(store: Any, question_id: int, level: Any, clip_plan_id: Any = None
     level = str(level or "")
     if level not in LEVELS:
         raise ValueError(f"level — {', '.join(LEVELS)}")
-    with store.db._lock:
+    with store.db.transaction():
         item = get_question(store, question_id)
         scope = SCOPE_OF_LEVEL[level]
         clip = item.get("clip_plan_id")

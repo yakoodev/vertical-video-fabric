@@ -144,7 +144,7 @@ def add_fact(store: Any, project_id: int, text: Any, *, origin: str = ORIGIN_OWN
     key = _key(text)
     if len(key) < 3:
         raise ValueError("нужен текст факта")
-    with store.db._lock:
+    with store.db.transaction():
         old = store.db.query_one("SELECT * FROM project_facts WHERE project_id = ? AND text_key = ?",
                                  (int(project_id), key))
         if old and old["status"] == "active":
@@ -180,7 +180,7 @@ def note_fact(store: Any, project_id: int, text: Any, *, quote: Any = "", source
     key = _key(text)
     if len(key) < 3:
         raise ValueError("нужен текст наблюдения")
-    with store.db._lock:
+    with store.db.transaction():
         old = store.db.query_one("SELECT * FROM project_facts WHERE project_id = ? AND text_key = ?",
                                  (int(project_id), key))
         if old and old["status"] not in ("active", STATUS_UNCONFIRMED):
