@@ -41,3 +41,7 @@
 - [Blotato: вредит ли публикация через API охвату](https://www.blotato.com/blog/does-api-posting-hurt-reach)
 - [TokPortal: охват и планировщики](https://www.tokportal.com/vs/tiktok-scheduler-vs-native-posting-reach)
 - [AdaptlyPost: зачем приложению одобрение](https://adaptlypost.com/de/blog/why-does-my-app-need-approval-post-tiktok)
+
+## Что уже есть в сервисе (проверено 07.11)
+
+Загрузка через `app/providers/tiktok.py`, вкладка «Авто» с интервалом, расписание, шаг публикации автопилота с карточкой одобрения, статистика, тревога «0 просмотров». На живом сервисе подключённых аккаунтов и публикаций нет. Для совы не хватает только входа в аккаунт. Риски этого пути и честное сравнение, которого ещё не было: `docs/design/publishing-review-2026-11.md`, разделы 5 и 7.
