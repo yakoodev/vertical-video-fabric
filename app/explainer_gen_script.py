@@ -105,8 +105,12 @@ def set_script(store: Any, video_id: int, data: dict, source: str = "agent") -> 
     if abs(script["est_sec"] - target) > target * 0.25:
         script["warnings"].append(f"текст ≈ {script['est_sec']:.0f} с при цели {target:.0f} с")
     # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    E.set_status(store, video_id, "scripted", None, script=script, beats=[], timeline={},
-                 title=script["title"] or P._text(video["topic"], 100), error="", approval_id=None)
+    fields = {"script": script, "beats": [], "timeline": {}, "title": script["title"] or P._text(video["topic"], 100)}
+    # Сравнить и записать: отменённый ролик остаётся отменённым, правка сохранена. Отмена могла прийти, пока
+    # писался текст, и сценарий её не перетрёт; продолжают его кнопкой «Продолжить» (resume).
+    moving = tuple(s for s in E.VIDEO_STATUSES if s != "cancelled")
+    if not E.set_status(store, video_id, "scripted", moving, **fields, error="", approval_id=None):
+        E.set_status(store, video_id, "cancelled", ("cancelled",), **fields)
     return E.get_video(store, video_id)
 
 

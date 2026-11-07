@@ -379,6 +379,21 @@ class FakePaid:
         return PR.DryRunImages().fetch(result, dest, params)
 
 
+
+def test_edits_keep_a_cancelled_video_cancelled(env):
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    X.plan_beats(store, video["id"], client=None)
+    X.cancel(store, video["id"])
+    out = X.update_beats(store, video["id"], [{"i": 2, "chip": "8 ч", "chip_word": "восемь"}])
+    assert out["status"] == "cancelled" and out["beats"][2]["chip"]["text"] == "8 ч"
+    again = X.set_script(store, video["id"], SCRIPT)
+    assert again["status"] == "cancelled" and again["script"]["text"]
+    assert X.resume(store, video["id"])["status"] != "cancelled"  # «Продолжить» по-прежнему ведёт дальше
+
+
 @pytest.fixture
 def paid(env, monkeypatch):
     fake = FakePaid()

@@ -306,5 +306,8 @@ def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
         beat["pose_title"] = pose["title"] if pose else ""
         beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
     # Клип и слова прошлой сборки остаются: новая сборка станет его версией и перенесёт правки субтитров.
-    E.set_status(store, video_id, "planned", None, beats=beats, error="", timeline={})
+    # Отменённый ролик остаётся отменённым (сравнить и записать), правка битов сохраняется.
+    moving = tuple(s for s in E.VIDEO_STATUSES if s != "cancelled")
+    if not E.set_status(store, video_id, "planned", moving, beats=beats, error="", timeline={}):
+        E.set_status(store, video_id, "cancelled", ("cancelled",), beats=beats, timeline={})
     return E.get_video(store, video_id)
