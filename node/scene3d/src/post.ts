@@ -175,6 +175,8 @@ export class PostFX {
       const u = (this.bokeh as any).uniforms;
       u.focus.value = focus;
       u.aperture.value = dof * 0.006;
+      // Сильное размытие (вставка: героиня за телефоном) — предел размытия растёт вместе с силой.
+      if (u.maxblur) u.maxblur.value = 0.012 * Math.max(1, dof / 1.5);
       this.bokeh.enabled = dof > 0;
     }
     this.grade.uniforms.time.value = t;

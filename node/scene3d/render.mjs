@@ -97,6 +97,7 @@ const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json",
   ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ktx2": "image/ktx2",
+  ".ttf": "font/ttf", ".otf": "font/otf",
 };
 
 /** Файл внутри каталога base или null (никаких «..», абсолютных путей и выхода по симлинку за каталог). */
@@ -127,6 +128,13 @@ export function serve(url, ctx) {
   const path = url.slice(ORIGIN.length).split(/[?#]/)[0];
   if (path === "/index.html") return { status: 200, body: Buffer.from(pageHtml(ctx.width, ctx.height)), mime: MIME[".html"] };
   if (path === "/engine/scene3d.js") return { status: 200, body: readFileSync(ctx.bundle), mime: MIME[".js"] };
+  if (path.startsWith("/fonts/")) {
+    // Шрифты интерфейса экранов и слоёв поверх кадра (ui.ts) — из vendor/fonts репозитория.
+    const file = safeJoin(ctx.fonts || join(ROOT, "vendor", "fonts"), path.slice("/fonts/".length));
+    const mime = file && MIME[extname(file).toLowerCase()];
+    if (!file || !mime || !mime.startsWith("font/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
+    return { status: 200, body: readFileSync(file), mime };
+  }
   if (path.startsWith("/packs/") || path.startsWith("/assets/")) {
     // /assets/ — встроенные модели движка (node/scene3d/assets), /packs/ — скачанные паки.
     const assets = path.startsWith("/assets/");

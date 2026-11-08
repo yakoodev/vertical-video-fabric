@@ -8,11 +8,14 @@
  *   coin_rubber   — резиновый пол «монетка» (кружки-пупырышки), потёртости;
  *   concrete      — бетон шахты (поры, пятна, подтёки);
  *   painted_metal — крашеный металл (потолок, рамы): мелкая «апельсиновая корка», сколы.
+ *   pixel         — «воксельный» блок: пиксельный шум тона 16×16 без размытия (pixel.ts), без рельефа;
+ *   pixel_planks  — пиксельные доски пола.
  */
 import * as THREE from "three";
 import { rng } from "./timeline.ts";
+import { pixelNoiseCanvas, pixelPlanksCanvas, pixelTexture } from "./pixel.ts";
 
-export type SurfaceKind = "brushed_steel" | "steel_panel" | "coin_rubber" | "concrete" | "painted_metal";
+export type SurfaceKind = "brushed_steel" | "steel_panel" | "coin_rubber" | "concrete" | "painted_metal" | "pixel" | "pixel_planks";
 
 export interface SurfaceSpec {
   kind: SurfaceKind;
@@ -253,8 +256,18 @@ export function surfaceMaterial(s: SurfaceSpec): THREE.MeshStandardMaterial {
   if (hit) return hit;
   const seed = s.seed ?? 17;
   const defaults: Record<SurfaceKind, string> = { brushed_steel: "#9aa0a6", steel_panel: "#8f969d", coin_rubber: "#2a2c2f",
-    concrete: "#5d5b57", painted_metal: "#c9cbc7" };
+    concrete: "#5d5b57", painted_metal: "#c9cbc7", pixel: "#8a8494", pixel_planks: "#5a4030" };
   const color = s.color || defaults[s.kind];
+  if (s.kind === "pixel" || s.kind === "pixel_planks") {
+    // Пиксели: тайл по умолчанию 0.4 м на 16 пикселей (2.5 см пиксель), без карты нормалей — грани ровные.
+    const map = pixelTexture(s.kind === "pixel" ? pixelNoiseCanvas(color, seed) : pixelPlanksCanvas(color, seed));
+    const tile = s.tile ?? (s.kind === "pixel" ? 0.4 : 0.8);
+    map.repeat.set(1 / tile, 1 / tile);
+    const pm = new THREE.MeshStandardMaterial({ map, roughness: s.roughness ?? 0.88, metalness: s.metalness ?? 0 });
+    pm.name = `surface:${s.kind}`;
+    cache.set(key, pm);
+    return pm;
+  }
   const m = s.kind === "coin_rubber" ? coinRubber(color, seed) : s.kind === "concrete" ? concrete(color, seed)
     : s.kind === "painted_metal" ? paintedMetal(color, seed) : steel(color, seed, s.kind === "steel_panel");
   const tile = s.tile ?? m.tile;

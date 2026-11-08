@@ -100,7 +100,7 @@ export function plasterTexture(color: string, size = 2, seed = 3, stripes = 0): 
 }
 
 /** Ночной вид из окна: градиент неба, звёзды, луна, силуэты домов с тёплыми окнами. */
-export function nightViewTexture(seed = 11, opts: { sky?: string[]; moon?: boolean } = {}): THREE.Texture {
+export function nightViewTexture(seed = 11, opts: { sky?: string[]; moon?: boolean; lights?: number } = {}): THREE.Texture {
   const w = 1024, h = 768;
   const [c, g] = canvas(w, h);
   const r = rng(seed);
@@ -138,7 +138,7 @@ export function nightViewTexture(seed = 11, opts: { sky?: string[]; moon?: boole
       g.fillRect(x, y, bw, bh);
       const cols = Math.floor(bw / 16), rowsN = Math.floor(bh / 20);
       for (let i = 0; i < cols; i++) for (let j = 0; j < rowsN; j++) {
-        if (r() > lit) continue;
+        if (r() > lit * (opts.lights ?? 1)) continue;
         const warm = r();
         g.fillStyle = warm < 0.75 ? `rgba(255,${190 + Math.round(r() * 40)},${110 + Math.round(r() * 50)},${layer ? 0.9 : 0.55})` : "rgba(170,200,255,0.6)";
         g.fillRect(x + 4 + i * 16, y + 6 + j * 20, 7, 10);

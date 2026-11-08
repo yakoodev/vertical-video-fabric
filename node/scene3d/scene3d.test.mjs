@@ -432,3 +432,99 @@ test("постобработка: GPU — полная, SwiftShader — обле
   assert.equal(applyPostMode(spec, "full"), spec);
   assert.equal(spec.environment.post.ao, 1, "исходная спека не меняется");
 });
+
+test("раздача файлов: шрифты интерфейса (/fonts/) — только .ttf/.otf из vendor/fonts", () => {
+  const ctx = { width: 100, height: 200, bundle: BUNDLE, packs: PACKS };
+  const font = serve("http://scene3d.local/fonts/Montserrat-Black.ttf", ctx);
+  assert.equal(font.status, 200);
+  assert.equal(font.mime, "font/ttf");
+  assert.equal(serve("http://scene3d.local/fonts/../package.json", ctx).status, 404);
+  assert.equal(serve("http://scene3d.local/fonts/%2e%2e/package.json", ctx).status, 404);
+});
+
+/* ---------- воксельный герой, экраны и карточки (без паков) ---------- */
+
+const HAVE_BROWSER = chromeOrNull() && existsSync(BUNDLE);
+
+const VOXEL = (shape) => ({
+  width: 270, height: 480, fps: 30, duration: 2,
+  environment: { background: "#07050c", fog: false },
+  lights: [{ type: "hemisphere", color: "#8a6aff", ground: "#201020", intensity: 1.2 }, { type: "point", position: [0.6, 1.6, 1], intensity: 6 }],
+  objects: [
+    { id: "stool", primitive: "box", params: { size: [0.4, 0.3, 0.4], surface: { kind: "pixel", color: "#4b3326" } }, position: [0, 0, 0] },
+    { id: "screen", primitive: "ui_screen", params: { kind: "stream", size: [0.6, 0.36], px: 400, viewers: [{ t: 0, value: 3, label: "3 зрителя" }],
+      chat: [{ t: 0, user: "a", text: "привет" }], alerts: [{ t: 1, dur: 1, amount: "$5" }] }, position: [0, 0.8, -0.8] },
+  ],
+  characters: [{ id: "hero", style: "voxel", voxel: { shape }, position: [0, 0, 0], yaw: 0, seat: 0.3,
+    actions: [{ clip: "Sleep_Desk_Loop", start: 0, end: 1 }, { clip: "Sit_Loop", start: 0.8, fade: 0.2 }],
+    faces: [{ t: 0, face: "sleep" }, { t: 1, face: "wide" }] }],
+  overlays: [{ kind: "hud", values: [{ t: 0, value: 175 }, { t: 1, value: 180 }], deltas: [{ t: 1, text: "+5", kind: "up" }] },
+    { kind: "tag", text: "ЧАСТЬ 1" }],
+  camera: { keys: [{ t: 0, position: [0.6, 1.2, 1.6], target: [0, 0.8, 0], fov: 50 }] },
+  quality: { shadows: false, antialias: false },
+});
+
+test("браузер: воксельный герой обеих форм сидит, спит головой вперёд, кадр с экраном и карточками детерминирован", { skip: !HAVE_BROWSER && "нет браузера/бандла" }, async () => {
+  const opts = { bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader", post: "off" };
+  for (const shape of ["block", "soft"]) {
+    const scene = await openScene(opts, VOXEL(shape));
+    try {
+      assert.deepEqual(scene.info.warnings, []);
+      const up = (await scene.inspect(1.9)).characters.hero;
+      assert.ok(up.headCenter[1] > 1.0 && up.headCenter[1] < 1.4, `${shape}: голова сидящего ${up.headCenter}`);
+      const asleep = (await scene.inspect(0.3)).characters.hero;
+      assert.ok(asleep.headCenter[1] < up.headCenter[1] - 0.1, `${shape}: спит — голова ниже (${asleep.headCenter[1]})`);
+      assert.ok(asleep.headCenter[2] > up.headCenter[2] + 0.2, `${shape}: спит — голова вперёд, на столе`);
+      await scene.render(1.5);
+      const a = sha(await scene.shot("png"));
+      await scene.render(0.2);
+      const st = await scene.render(1.5);
+      assert.ok(st.luma > 10, `${shape}: кадр не чёрный (${st.luma})`);
+      assert.equal(sha(await scene.shot("png")), a, `${shape}: тот же t — те же байты (экран, HUD, лицо)`);
+    } finally {
+      await scene.close();
+    }
+  }
+});
+
+/* ---------- вещи историй «Витубики»: чат-монитор, кукла, банка, планшет ---------- */
+
+const STORY_BITS = {
+  ...VOXEL("soft"),
+  objects: [
+    { id: "screen", primitive: "ui_screen", position: [0, 0.8, -0.8], params: {
+      kind: "stream", size: [0.6, 0.36], px: 400, noChat: true, avatars: [{ t: 0, kind: "fox" }, { t: 1, kind: "wolf" }],
+      mouth: [{ t: 0, m: "talk" }], modes: [{ t: 0, mode: "stream" }, { t: 1.4, mode: "rig" }], fixAt: 1.6,
+      wolf: { blinks: [1.2], wag: [{ t: 1, amp: 0.6 }], laugh: [[1.1, 1.3]], squint: [{ t: 1.4, on: true }] } } },
+    { id: "chat", primitive: "ui_screen", position: [-0.5, 0.8, -0.7], params: { kind: "chat", size: [0.3, 0.5], px: 300,
+      chat: [{ t: 0, user: "pelmen_404", text: "vtubika.store", big: true }, { t: 1, user: "mama_alina", text: "верните лису" }],
+      viewers: [{ t: 0, value: 7, label: "7 зрителей" }] } },
+    { id: "jar", primitive: "coin_jar", position: [0.4, 0.6, -0.6], params: { coins: 3, drops: [0.5, 1.0] } },
+    { id: "tablet", primitive: "tablet", position: [0, 0.6, -0.5], params: { draw: [0, 1] } },
+    { id: "stylus", primitive: "stylus", position: [0, 0.62, -0.5], attach: [{ to: "hero:hand_r", start: 0, end: 1 }] },
+  ],
+  overlays: [{ kind: "hud", label: "КОПИЛКА", prefix: "", suffix: " ₽", group: true, values: [{ t: 0, value: 3100 }, { t: 1, value: 110 }],
+    deltas: [{ t: 1, text: "−2 990 ₽", kind: "down" }] },
+    { kind: "hud", label: "ЗРИТЕЛЕЙ", prefix: "", left: 40, values: [{ t: 0, value: 7 }, { t: 1, value: 40 }] },
+    { kind: "phone", t0: 0.2, t1: 1.9, screen: "shop", store: { price: "2 990 ₽", paidAt: 1 } }],
+};
+
+test("браузер: вещи историй — экраны с куклой и чатом, банка, планшет, стилус в руке, детерминированно", { skip: !HAVE_BROWSER && "нет браузера/бандла" }, async () => {
+  const scene = await openScene({ bundle: BUNDLE, packs: PACKS, chrome: chromeOrNull(), gl: "swiftshader", post: "off" }, STORY_BITS);
+  try {
+    assert.deepEqual(scene.info.warnings, []);
+    const ins = await scene.inspect(0.6);
+    const s = ins.objects.stylus, hand = ins.characters.hero.hand_r;
+    assert.ok(Math.hypot((s.min[0] + s.max[0]) / 2 - hand[0], (s.min[2] + s.max[2]) / 2 - hand[2]) < 0.15, "стилус в руке");
+    const shots = [];
+    for (const t of [0.3, 1.25, 1.7, 0.3]) {
+      const st = await scene.render(t);
+      assert.ok(st.luma > 10, `кадр ${t} не чёрный`);
+      shots.push(sha(await scene.shot("png")));
+    }
+    assert.equal(shots[3], shots[0], "тот же t — те же байты");
+    assert.notEqual(shots[1], shots[0]);
+  } finally {
+    await scene.close();
+  }
+});

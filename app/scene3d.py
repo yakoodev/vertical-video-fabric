@@ -60,6 +60,13 @@
 из скруглённых деталей на костях модели (тело спрятано); ключ камеры ``free: true`` — кадр не прижимается к
 стенам; ``camera.fill: {intensity, color, keys}`` — мягкая заливка от камеры.
 
+Воксельный стиль (``app/voxel3d.py``): персонаж ``style: "voxel"`` без модели — герой из примитивов на своём
+скелете (``voxel: {shape: block|soft, skin, hair, top, accent, pants, shoes, headphones, glow, eyes}``, ``faces:
+[{t, face}]``, ``actions`` — процедурные клипы, ``seat``); примитив ``ui_screen`` (экран монитора/телефона:
+``params.kind`` stream|chat|phone и содержимое — чат, зрители, алерты, аватар, страницы, уведомления, счётчик), ``coin_jar``
+(банка-копилка, монеты по ``drops``), ``tablet`` (планшет с эскизом по окну ``draw``), ``stylus``; поверхности ``pixel`` и
+``pixel_planks``; ``overlays: [{kind: hud|tag|toast|phone, …}]`` — плоские карточки поверх кадра.
+
 ``render_scene(spec, out)`` — mp4; ``preview_frames(spec, [t…], dir)`` — PNG нескольких кадров без
 полного рендера; ``contact_sheet(video, out)`` — лист кадров. Командная строка:
 ``python -m app.scene3d scene.json out.mp4 [--sheet sheet.jpg] [--preview 0,2,4 --preview-dir D]``.
@@ -88,7 +95,9 @@ DURATION_MAX = 120.0
 SIDE_MAX = 2160
 MAX_FRAMES = 3600
 OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
-                     "rounded_box", "display", "button_panel"}
+                     "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus"}
+OVERLAY_KINDS = {"hud", "tag", "toast", "phone", "chat"}
+VOXEL_SHAPES = {"block", "soft"}
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}
 WALLS = {"back", "front", "left", "right"}
 TIMEOUT_SEC = 3600
@@ -225,6 +234,17 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         if not isinstance(cid, str) or not cid or cid in chars:
             raise SceneSpecError(f"characters[{i}].id: нужен уникальный id")
         chars[cid] = c
+        if c.get("style") == "voxel":
+            # Герой из примитивов (node/scene3d/src/voxel.ts): модели и клипов паков нет.
+            if (c.get("voxel") or {}).get("shape", "block") not in VOXEL_SHAPES:
+                raise SceneSpecError(f"characters[{i}].voxel.shape: одно из {sorted(VOXEL_SHAPES)}")
+            if c.get("height") is not None:
+                _num(c["height"], f"characters[{i}].height", 0.3, 3)
+            for j, a in enumerate(c.get("actions") or []):
+                _num(a.get("start"), f"characters[{i}].actions[{j}].start", 0, duration + 60)
+            if c.get("faces"):
+                _keys(c["faces"], f"characters[{i}].faces", duration)
+            continue
         item = model(c.get("model"), f"characters[{i}].model")
         if item is not None and not item.get("skinned"):
             raise SceneSpecError(f"characters[{i}].model: {c['model']} без скелета")
@@ -283,6 +303,12 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
                 raise SceneSpecError(f"объект {oid}: цикл родителей")
             seen.add(parent)
             parent = objs[parent].get("parent")
+
+    for i, o in enumerate(spec.get("overlays") or []):
+        if not isinstance(o, dict) or o.get("kind") not in OVERLAY_KINDS:
+            raise SceneSpecError(f"overlays[{i}].kind: одно из {sorted(OVERLAY_KINDS)}")
+        if o["kind"] == "hud" and not o.get("values"):
+            raise SceneSpecError(f"overlays[{i}]: у HUD нужны values [{{t, value}}]")
 
     cam = spec.get("camera")
     if not isinstance(cam, dict) or not cam.get("keys"):
