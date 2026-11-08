@@ -63,7 +63,8 @@
 Воксельный стиль (``app/voxel3d.py``): персонаж ``style: "voxel"`` без модели — герой из примитивов на своём
 скелете (``voxel: {shape: block|soft, skin, hair, top, accent, pants, shoes, headphones, glow, eyes}``, ``faces:
 [{t, face}]``, ``actions`` — процедурные клипы, ``seat``); примитив ``ui_screen`` (экран монитора/телефона:
-``params.kind`` stream|phone и содержимое — чат, зрители, алерты, уведомления, счётчик); поверхности ``pixel`` и
+``params.kind`` stream|chat|phone и содержимое — чат, зрители, алерты, аватар, страницы, уведомления, счётчик), ``coin_jar``
+(банка-копилка, монеты по ``drops``), ``tablet`` (планшет с эскизом по окну ``draw``), ``stylus``; поверхности ``pixel`` и
 ``pixel_planks``; ``overlays: [{kind: hud|tag|toast|phone, …}]`` — плоские карточки поверх кадра.
 
 ``render_scene(spec, out)`` — mp4; ``preview_frames(spec, [t…], dir)`` — PNG нескольких кадров без
@@ -94,7 +95,7 @@ DURATION_MAX = 120.0
 SIDE_MAX = 2160
 MAX_FRAMES = 3600
 OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
-                     "rounded_box", "display", "button_panel", "ui_screen"}
+                     "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus"}
 OVERLAY_KINDS = {"hud", "tag", "toast", "phone"}
 VOXEL_SHAPES = {"block", "soft"}
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}

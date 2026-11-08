@@ -20,7 +20,8 @@ export interface Opening {
   height: number;
   curtains?: { color?: string; open?: number } | false;
   door?: { color?: string; angle?: number; hinge?: "left" | "right" };
-  view?: { seed?: number; sky?: string[] };
+  /** Вид из окна: небо, луна, доля горящих окон домов (днём — мало). */
+  view?: { seed?: number; sky?: string[]; moon?: boolean; lights?: number };
 }
 
 export interface RoomSpec {
@@ -282,7 +283,7 @@ function buildWindow(frame: THREE.Group, o: Opening, u: number, y: number, th: n
   // Вид из окна: плоскость в 0.8 м за стеной, не выше стены (сверху комнаты без потолка её не видно).
   const viewH = Math.max(o.height * 1.6, 2 * Math.min(o.height * 1.4, _H - (y + o.height * 0.55) - 0.02));
   const view = new THREE.Mesh(new THREE.PlaneGeometry(o.width * 2.6, viewH),
-    new THREE.MeshBasicMaterial({ map: nightViewTexture(o.view?.seed ?? 11, { sky: o.view?.sky }), fog: false, toneMapped: true }));
+    new THREE.MeshBasicMaterial({ map: nightViewTexture(o.view?.seed ?? 11, { sky: o.view?.sky, moon: o.view?.moon, lights: o.view?.lights }), fog: false, toneMapped: true }));
   view.position.set(u, y + o.height * 0.55, -th - 0.8);
   frame.add(view);
 

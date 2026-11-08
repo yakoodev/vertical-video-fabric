@@ -10,6 +10,7 @@
  */
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
+import { drawDeclined, drawDrawApp, drawForeignShop, drawFox, drawMessenger, drawRig, drawStoreCard, drawWolf, wolfPose } from "./ui_pages.ts";
 
 export const UI_FONT = "VvfUi";
 export const UI_NUM = "VvfNum";
@@ -77,24 +78,65 @@ export interface StreamScreen {
   /** Ключи числа зрителей: [{t, value, label?}] («3 зрителя»). */
   viewers?: { t: number; value: number; label?: string }[];
   /** Сообщения чата: [{t, user, color, text}]. */
-  chat?: { t: number; user: string; color?: string; text: string }[];
+  chat?: { t: number; user: string; color?: string; text: string; big?: boolean }[];
   /** Алерты: [{t, dur, title, amount, note}] (НОВЫЙ ДОНАТ $5). */
   alerts?: { t: number; dur?: number; title?: string; amount?: string; note?: string; color?: string }[];
   /** Сколько уже идёт эфир к t = 0 (с) — часы «в эфире». */
   uptime?: number;
   title?: string;
+  /** Режим экрана по времени: stream (эфир), draw (рисовалка), shop (чужой магазин), rig (редактор модели). */
+  modes?: { t: number; mode: string }[];
+  /** Аватар в окне эфира: fox (PNGtuber), wolf (кукла), silhouette, none. */
+  avatars?: { t: number; kind: string }[];
+  /** Рот лисички: closed, open, talk (слогами). */
+  mouth?: { t: number; m: string }[];
+  /** Кукла волчонка: моргания, сила хвоста, окна смеха, «косит». */
+  wolf?: { blinks?: number[]; wag?: { t: number; amp: number }[]; laugh?: number[][]; squint?: { t: number; on: boolean }[] };
+  /** Когда всплывает «Оплата отклонена» (shop), когда глаз починен (rig), окно рисования (draw), фон окна эфира. */
+  declined?: number;
+  fixAt?: number;
+  drawWin?: number[];
+  camBg?: string[];
+  /** Чат — на отдельном вертикальном мониторе (kind "chat"): здесь окно эфира во всю ширину. */
+  noChat?: boolean;
 }
 
-/** Подпись видимого: экран перерисовывается только при её смене. */
+/** Режим экрана, аватар, рот лисички, кукла волчонка — на момент t. */
+function screenState(s: StreamScreen, t: number) {
+  const mode = stepValue<string>(s.modes, t, "mode", "stream");
+  const avatar = stepValue<string>(s.avatars, t, "kind", "silhouette");
+  const m = stepValue<string>(s.mouth, t, "m", "closed");
+  const mt = stepValue<number>(s.mouth, t, "t", 0);
+  // «talk» — рот открывается слогами (как PNGtuber на голос): детерминированно от t.
+  const open = m === "open" || (m === "talk" && Math.floor((t - mt) * 7) % 3 !== 2);
+  const wolf = wolfPose(t, s.wolf || {});
+  const anim = mode === "rig" || mode === "shop" || (mode === "stream" && avatar === "wolf") || mode === "draw";
+  return { mode, avatar, open, wolf, anim };
+}
+
+/** Подпись видимого: экран перерисовывается только при её смене (кукла и рисовалка — каждый кадр). */
 export function streamSignature(s: StreamScreen, t: number): string {
   const alert = (s.alerts || []).find((a) => t >= a.t && t < a.t + (a.dur ?? 3));
   const anim = alert ? Math.min(1, (t - alert.t) / 0.4) : 1;
-  return [(s.chat || []).filter((m) => m.t <= t).length, stepValue(s.viewers, t, "value", 0), Math.floor((s.uptime ?? 0) + t),
+  const st = screenState(s, t);
+  return [st.mode, st.avatar, st.open, st.anim ? Math.round(t * 30) : "", (s.chat || []).filter((m) => m.t <= t).length,
+    stepValue(s.viewers, t, "value", 0), Math.floor((s.uptime ?? 0) + t),
     alert ? `${alert.t}:${anim < 1 ? Math.round(anim * 30) : "x"}:${Math.floor((t - alert.t) * 4) % 2}` : ""].join("|");
 }
 
 export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
   const u = W / 1000;
+  const st = screenState(s, t);
+  if (st.mode === "draw") return drawDrawApp(g, W, H, progressAt(s, t));
+  if (st.mode === "shop") {
+    drawForeignShop(g, W, H, t, st.wolf);
+    if (s.declined !== undefined && t >= s.declined) drawDeclined(g, W, H, popIn(t, s.declined, 0.35));
+    return;
+  }
+  if (st.mode === "rig") {
+    const fix = s.fixAt === undefined ? 0 : Math.max(0, Math.min(1, (t - s.fixAt) / 0.8));
+    return drawRig(g, W, H, t, { ...st.wolf, squint: fix < 0.6 }, ease("inOutSine", fix));
+  }
   const bg = g.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#1a1030");
   bg.addColorStop(1, "#0b0814");
@@ -102,80 +144,109 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
   g.fillRect(0, 0, W, H);
   // Шапка: LIVE, время эфира, зрители.
   g.fillStyle = "#ff2d55";
-  roundRect(g, 30 * u, 26 * u, 120 * u, 50 * u, 10 * u);
+  roundRect(g, 24 * u, 22 * u, 110 * u, 46 * u, 10 * u);
   g.fill();
   g.fillStyle = "#ffffff";
-  g.font = font(900, 30 * u);
+  g.font = font(900, 28 * u);
   g.textBaseline = "middle";
   g.textAlign = "center";
-  g.fillText("LIVE", 90 * u, 52 * u);
+  g.fillText("LIVE", 79 * u, 46 * u);
   g.textAlign = "left";
   g.fillStyle = "#b9a8dc";
-  g.font = font(700, 28 * u);
-  g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, 170 * u, 52 * u);
+  g.font = font(700, 26 * u);
+  g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, 152 * u, 46 * u);
   const v = stepValue(s.viewers, t, "value", 0);
   const label = stepValue<string | undefined>(s.viewers, t, "label", undefined) ?? `${v}`;
   g.textAlign = "right";
   g.fillStyle = "#ffffff";
-  g.font = font(800, 34 * u);
-  g.fillText(label, W - 30 * u, 52 * u);
+  g.font = font(800, 32 * u);
+  g.fillText(label, W - 26 * u, 46 * u);
   const lw = g.measureText(label).width;
-  // Значок «глаз».
   g.strokeStyle = "#ff5c7a";
   g.lineWidth = 5 * u;
   g.beginPath();
-  g.ellipse(W - 30 * u - lw - 32 * u, 52 * u, 18 * u, 11 * u, 0, 0, Math.PI * 2);
+  g.ellipse(W - 26 * u - lw - 30 * u, 46 * u, 17 * u, 10 * u, 0, 0, Math.PI * 2);
   g.stroke();
   g.fillStyle = "#ff5c7a";
   g.beginPath();
-  g.arc(W - 30 * u - lw - 32 * u, 52 * u, 6 * u, 0, Math.PI * 2);
+  g.arc(W - 26 * u - lw - 30 * u, 46 * u, 6 * u, 0, Math.PI * 2);
   g.fill();
-  // Окно «камеры» стрима: тёмная сцена с силуэтом-кубиком.
-  const camY = 100 * u, camH = H * 0.36;
-  g.fillStyle = "#120b22";
-  roundRect(g, 30 * u, camY, W - 60 * u, camH, 14 * u);
+  // Слева — окно эфира с аватаром, справа — колонка чата.
+  const vx = 24 * u, vy = 86 * u, vw = s.noChat ? W - 48 * u : W * 0.6, vh = H - vy - 22 * u;
+  const cam = g.createLinearGradient(0, vy, 0, vy + vh);
+  cam.addColorStop(0, s.camBg?.[0] || "#2b1b52");
+  cam.addColorStop(1, s.camBg?.[1] || "#120b22");
+  g.fillStyle = cam;
+  roundRect(g, vx, vy, vw, vh, 14 * u);
   g.fill();
-  g.fillStyle = "#3a2470";
-  g.fillRect(W / 2 - 70 * u, camY + camH - 150 * u, 140 * u, 150 * u);
-  g.fillStyle = "#e9b896";
-  g.fillRect(W / 2 - 55 * u, camY + camH - 260 * u, 110 * u, 110 * u);
-  g.fillStyle = "#2b1d1b";
-  g.fillRect(W / 2 - 60 * u, camY + camH - 270 * u, 120 * u, 34 * u);
+  g.save();
+  roundRect(g, vx, vy, vw, vh, 14 * u);
+  g.clip();
+  const ax = vx + vw / 2, ay = vy + vh * 0.5, as = vh * 0.5;
+  if (st.avatar === "fox") drawFox(g, ax, ay, as, { mouthOpen: st.open });
+  else if (st.avatar === "wolf") drawWolf(g, ax, ay, as, st.wolf);
+  else if (st.avatar === "silhouette") {
+    g.fillStyle = "#3a2470";
+    g.fillRect(ax - 70 * u, vy + vh - 150 * u, 140 * u, 150 * u);
+    g.fillStyle = "#e9b896";
+    g.fillRect(ax - 55 * u, vy + vh - 260 * u, 110 * u, 110 * u);
+  }
   if (s.title) {
     g.fillStyle = "rgba(0,0,0,0.5)";
-    g.fillRect(30 * u, camY + camH - 46 * u, W - 60 * u, 46 * u);
+    g.fillRect(vx, vy + vh - 44 * u, vw, 44 * u);
     g.fillStyle = "#e7dcff";
-    g.font = font(700, 26 * u);
+    g.font = font(700, 24 * u);
     g.textAlign = "left";
-    g.fillText(fit(g, s.title, W - 100 * u), 46 * u, camY + camH - 23 * u);
+    g.fillText(fit(g, s.title, vw - 30 * u), vx + 14 * u, vy + vh - 22 * u);
   }
-  // Чат: последние сообщения снизу вверх.
+  g.restore();
+  if (s.noChat) {
+    const alert0 = (s.alerts || []).find((a) => t >= a.t && t < a.t + (a.dur ?? 3));
+    if (alert0) drawAlert(g, W, H, alert0, t, true);
+    return;
+  }
+  // Чат: последние сообщения снизу вверх, ник — своим цветом, ссылка vtubika.store — подчёркнута.
+  const cx = vx + vw + 18 * u, cw = W - cx - 20 * u;
+  g.fillStyle = "rgba(255,255,255,0.05)";
+  roundRect(g, cx - 8 * u, vy, cw + 16 * u, vh, 12 * u);
+  g.fill();
   const msgs = (s.chat || []).filter((m) => m.t <= t);
   g.textAlign = "left";
-  const lineH = 52 * u;
-  let y = H - 34 * u;
-  for (let i = msgs.length - 1; i >= 0 && y > camY + camH + 40 * u; i--) {
+  let y = vy + vh - 20 * u;
+  for (let i = msgs.length - 1; i >= 0 && y > vy + 30 * u; i--) {
     const m = msgs[i];
-    const appear = Math.min(1, (t - m.t) / 0.25);
-    g.globalAlpha = appear;
-    g.font = font(800, 32 * u);
+    g.globalAlpha = Math.min(1, (t - m.t) / 0.25);
+    const fresh = t - m.t < 1.2;
+    if (fresh) {
+      g.fillStyle = "rgba(170,120,255,0.22)";
+      roundRect(g, cx - 4 * u, y - 52 * u, cw + 8 * u, 72 * u, 8 * u);
+      g.fill();
+    }
+    g.font = font(800, 24 * u);
     g.fillStyle = m.color || "#7ee0ff";
-    const name = `${m.user}:`;
-    g.fillText(name, 40 * u, y);
-    const nw = g.measureText(name).width;
-    g.font = font(500, 32 * u);
-    g.fillStyle = "#efeaff";
-    g.fillText(fit(g, m.text, W - 90 * u - nw), 52 * u + nw, y);
-    y -= lineH;
+    g.fillText(fit(g, m.user, cw), cx, y - 28 * u);
+    g.font = font(m.big ? 800 : 600, (m.big ? 30 : 26) * u);
+    const text = fit(g, m.text, cw);
+    const link = /vtubika\.store/i.test(text);
+    g.fillStyle = link ? "#6fd3ff" : "#f2edff";
+    g.fillText(text, cx, y + 2 * u);
+    if (link) g.fillRect(cx, y + 18 * u, g.measureText(text).width, 3 * u);
+    y -= 84 * u;
   }
   g.globalAlpha = 1;
   const alert = (s.alerts || []).find((a) => t >= a.t && t < a.t + (a.dur ?? 3));
   if (alert) drawAlert(g, W, H, alert, t);
 }
 
+function progressAt(s: StreamScreen, t: number): number {
+  const w = s.drawWin || [0, 1];
+  return Math.max(0, Math.min(1, (t - w[0]) / Math.max(0.1, w[1] - w[0])));
+}
+
 /** Алерт доната: яркая карточка по центру, «поп» с перелётом, сумма крупно жёлтым. */
-function drawAlert(g: CanvasRenderingContext2D, W: number, H: number, a: NonNullable<StreamScreen["alerts"]>[number], t: number) {
-  const u = W / 1000;
+function drawAlert(g: CanvasRenderingContext2D, W: number, H: number, a: NonNullable<StreamScreen["alerts"]>[number], t: number,
+  narrow = false) {
+  const u = (W / 1000) * (narrow ? 0.66 : 1);
   const k = popIn(t, a.t, 0.4);
   const out = Math.max(0, Math.min(1, (a.t + (a.dur ?? 3) - t) / 0.25));
   g.save();
@@ -215,14 +286,17 @@ function drawAlert(g: CanvasRenderingContext2D, W: number, H: number, a: NonNull
 /* ---------------- телефон ---------------- */
 
 export interface PhoneScreen {
-  /** notifications — часы и стопка уведомлений; payment — перевод с галочкой. */
-  screen?: "notifications" | "payment";
+  /** notifications — часы и стопка уведомлений; payment — перевод с галочкой; shop — товар; messenger — файл. */
+  screen?: "notifications" | "payment" | "shop" | "messenger";
   clock?: string;
   date?: string;
   notifications?: { t: number; app?: string; title: string; text?: string; color?: string }[];
   /** Красный счётчик: [{t0, t1, from, to}] — число бежит от from к to. */
   counter?: { t0: number; t1: number; from: number; to: number }[];
   payment?: { title?: string; to?: string; amount: string; status?: string; ok?: boolean; t?: number };
+  /** screen "shop": карточка товара (vtubika.store), screen "messenger": файл пришёл. */
+  store?: { title?: string; price?: string; paidAt?: number };
+  message?: { from?: string; file?: string; size?: string; text?: string; at?: number };
 }
 
 export function counterValue(c: PhoneScreen["counter"], t: number): number | null {
@@ -241,11 +315,14 @@ export function phoneSignature(p: PhoneScreen, t: number): string {
   const last = n.length ? n[n.length - 1].t : -1;
   const anim = last >= 0 && t - last < 0.35 ? Math.round((t - last) * 60) : "x";
   const pay = p.payment && p.payment.t !== undefined && t - p.payment.t < 0.5 ? Math.round((t - p.payment.t) * 60) : "x";
-  return [p.screen, n.length, anim, counterValue(p.counter, t), pay].join("|");
+  const live = p.screen === "shop" || p.screen === "messenger" ? Math.round(t * 30) : "";
+  return [p.screen, n.length, anim, counterValue(p.counter, t), pay, live].join("|");
 }
 
 export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: PhoneScreen, t: number) {
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
+  if (p.screen === "shop") return drawStoreCard(g, W, H, t, p.store || {});
+  if (p.screen === "messenger") return drawMessenger(g, W, H, t, p.message || {});
   const u = W / 500;
   const bg = g.createLinearGradient(0, 0, W, H);
   bg.addColorStop(0, "#2a1450");
@@ -363,6 +440,78 @@ function drawPayment(g: CanvasRenderingContext2D, W: number, H: number, p: Phone
   g.fillText(pay.status || "Оплачено", W / 2, 660 * u);
 }
 
+/* ---------------- вертикальный монитор чата ---------------- */
+
+export function chatSignature(s: StreamScreen, t: number): string {
+  const msgs = (s.chat || []).filter((m) => m.t <= t);
+  const last = msgs.length ? msgs[msgs.length - 1].t : -9;
+  return [msgs.length, t - last < 0.3 ? Math.round((t - last) * 30) : "x", t - last < 1.4 ? "fresh" : "",
+    stepValue(s.viewers, t, "value", 0)].join("|");
+}
+
+/** Чат стрима на вертикальном мониторе: шапка с «LIVE» и зрителями, сообщения крупно, новое подсвечено. */
+export function drawChatScreen(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
+  const u = W / 600;
+  const bg = g.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, "#1d1436");
+  bg.addColorStop(1, "#0c0918");
+  g.fillStyle = bg;
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = "#ff2d55";
+  roundRect(g, 24 * u, 24 * u, 104 * u, 46 * u, 10 * u);
+  g.fill();
+  g.fillStyle = "#ffffff";
+  g.textBaseline = "middle";
+  g.textAlign = "center";
+  g.font = font(900, 28 * u);
+  g.fillText("ЧАТ", 76 * u, 48 * u);
+  const label = stepValue<string | undefined>(s.viewers, t, "label", undefined) ?? `${stepValue(s.viewers, t, "value", 0)}`;
+  g.textAlign = "right";
+  g.font = font(800, 30 * u);
+  g.fillText(label, W - 24 * u, 48 * u);
+  g.textAlign = "left";
+  const msgs = (s.chat || []).filter((m) => m.t <= t);
+  let y = H - 30 * u;
+  for (let i = msgs.length - 1; i >= 0 && y > 150 * u; i--) {
+    const m = msgs[i];
+    const big = !!m.big;
+    const size = big ? 46 : 38;
+    g.font = font(big ? 800 : 600, size * u);
+    // Перенос текста по словам в ширину колонки.
+    const lines: string[] = [];
+    let cur = "";
+    for (const word of m.text.split(" ")) {
+      const next = cur ? `${cur} ${word}` : word;
+      if (g.measureText(next).width > W - 70 * u && cur) {
+        lines.push(cur);
+        cur = word;
+      } else cur = next;
+    }
+    lines.push(cur);
+    const h = (44 + lines.length * (size + 10)) * u;
+    const k = Math.min(1, (t - m.t) / 0.3);
+    g.globalAlpha = k;
+    if (t - m.t < 1.4) {
+      g.fillStyle = "rgba(170,120,255,0.28)";
+      roundRect(g, 14 * u, y - h, W - 28 * u, h, 14 * u);
+      g.fill();
+    }
+    g.font = font(800, 30 * u);
+    g.fillStyle = m.color || "#7ee0ff";
+    g.fillText(fit(g, m.user, W - 60 * u), 32 * u, y - h + 30 * u);
+    g.font = font(big ? 800 : 600, size * u);
+    const link = /vtubika\.store/i.test(m.text);
+    g.fillStyle = link ? "#6fd3ff" : "#f4efff";
+    lines.forEach((ln, j) => {
+      const ly = y - h + (62 + j * (size + 10) + size / 2) * u;
+      g.fillText(ln, 32 * u, ly);
+      if (link) g.fillRect(32 * u, ly + size * 0.55 * u, g.measureText(ln).width, 4 * u);
+    });
+    g.globalAlpha = 1;
+    y -= h + 14 * u;
+  }
+}
+
 /* ---------------- 3D-экран ---------------- */
 
 /**
@@ -387,16 +536,19 @@ export function uiScreen(p: Record<string, any>): { object: THREE.Object3D; upda
   const grp = new THREE.Group();
   grp.add(mesh);
   const phone = p.kind === "phone";
+  const chat = p.kind === "chat";
   let sig = "";
   const base = p.glow ?? 0.92;
   return {
     object: grp,
     update: (t, state) => {
       const content = { ...p, ...(state.content || {}) };
-      const s = (phone ? phoneSignature(content, t) : streamSignature(content, t)) + `|${state.screen || ""}`;
+      const s = (phone ? phoneSignature(content, t) : chat ? chatSignature(content, t) : streamSignature(content, t))
+        + `|${state.screen || ""}`;
       if (s !== sig) {
         sig = s;
         if (phone) drawPhone(g, c.width, c.height, { ...content, screen: state.screen || content.screen }, t);
+        else if (chat) drawChatScreen(g, c.width, c.height, content, t);
         else drawStream(g, c.width, c.height, content, t);
         tex.needsUpdate = true;
       }
@@ -413,12 +565,15 @@ export interface HudSpec {
   /** Значения: [{t, value: 175, prefix: "$"}]; смена — счёт от старого к новому за 0.5 с. */
   values: { t: number; value: number }[];
   prefix?: string;
+  /** Суффикс («₽»), разряды пробелом (3 100). */
+  suffix?: string;
+  group?: boolean;
   /** Чипы изменения под плашкой: [{t, text: "+5", kind: "up"|"down", dur}]. */
   deltas?: { t: number; text: string; kind?: "up" | "down"; dur?: number }[];
 }
 
 /** Бюджет-HUD справа сверху (опорные px 1080×1920, s — масштаб): «БЮДЖЕТ $175», зелёный/красный чип. */
-export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, top: number, h: HudSpec, t: number) {
+export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, top: number, h: HudSpec, t: number, left?: number) {
   const vals = h.values || [];
   let value = vals.length ? vals[0].value : 0;
   let flash = 0;
@@ -430,7 +585,8 @@ export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, t
     flash = Math.max(0, 1 - (t - a.t) / 1.2) * Math.sign(a.value - vals[i - 1].value);
   }
   const label = (h.label || "БЮДЖЕТ").toUpperCase();
-  const text = `${h.prefix ?? "$"}${value}`;
+  const num = h.group ? String(value).replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0") : String(value);
+  const text = `${h.prefix ?? "$"}${num}${h.suffix ?? ""}`;
   g.save();
   g.textBaseline = "middle";
   g.font = font(800, 22 * s);
@@ -438,7 +594,8 @@ export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, t
   g.font = font(900, 46 * s, true);
   const vw = g.measureText(text).width;
   const w = lw + vw + 64 * s, hh = 74 * s;
-  const x = right - w, y = top;
+  const x = left !== undefined ? left : right - w, y = top;
+  if (left !== undefined) right = left + w;
   g.fillStyle = "rgba(14,10,22,0.72)";
   roundRect(g, x, y, w, hh, hh / 2);
   g.fill();

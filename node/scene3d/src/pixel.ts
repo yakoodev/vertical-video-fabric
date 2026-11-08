@@ -7,13 +7,13 @@
  *   block — пиксель-арт 16×16 во всю переднюю грань кубической головы (кожа, чёлка, брови, глаза, рот);
  *   soft  — «аниме»-наклейка 128×128 с прозрачным фоном: большие глаза с бликами, тонкие брови, румянец;
  *           кладётся поверх скруглённой головы цвета кожи.
- * Выражения: neutral, blink, sleep, wide (проснулся, глаза круглые), happy.
+ * Выражения: neutral, blink, sleep, wide (проснулся/ахнула, глаза круглые), happy, frown, laugh, talk.
  */
 import * as THREE from "three";
 import { rng } from "./timeline.ts";
 
-export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy";
-export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy"];
+export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy" | "frown" | "laugh" | "talk";
+export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk"];
 
 function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement("canvas");
@@ -88,6 +88,7 @@ export interface FacePalette {
   eyes?: string;
   mouth?: string;
   blush?: string;
+  lashes?: boolean;
 }
 
 /**
@@ -133,22 +134,41 @@ export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElem
       px(x0 + 1, 8, dark);
     }
     for (let y = 11; y < 14; y++) for (let x = 7; x < 9; x++) px(x, y, y === 12 ? "#2a0f16" : mouth);
-  } else if (face === "happy") {
+  } else if (face === "happy" || face === "laugh") {
     for (const x0 of [3, 10]) {
       px(x0, 8, dark);
       px(x0 + 1, 7, dark);
       px(x0 + 2, 8, dark);
       for (let x = 0; x < 3; x++) px(x0 + x, 5, brow);
     }
-    for (let x = 6; x < 10; x++) px(x, 12, mouth);
-    px(5, 11, mouth);
-    px(10, 11, mouth);
+    if (face === "laugh") {
+      for (let x = 5; x < 11; x++) px(x, 11, "#2a0f16");
+      for (let x = 6; x < 10; x++) px(x, 12, x === 7 || x === 8 ? "#e86f86" : "#2a0f16");
+    } else {
+      for (let x = 6; x < 10; x++) px(x, 12, mouth);
+      px(5, 11, mouth);
+      px(10, 11, mouth);
+    }
+  } else if (face === "frown") {
+    // Брови к переносице вверх («домиком»), глаза уже, рот дугой вниз.
+    for (const [x0, iris, inner] of [[3, 5, 5], [10, 10, 10]] as const) {
+      for (let x = 0; x < 3; x++) px(x0 + x, x0 + x === inner ? 5 : 6, brow);
+      for (let x = 0; x < 3; x++) px(x0 + x, 8, x0 + x === iris ? dark : white);
+    }
+    for (let x = 7; x < 9; x++) px(x, 12, mouth);
+    px(6, 13, mouth);
+    px(9, 13, mouth);
   } else {
     for (const [x0, iris] of [[3, 5], [10, 10]] as const) {
       for (let x = 0; x < 3; x++) px(x0 + x, 6, brow);
       for (let y = 7; y < 9; y++) for (let x = 0; x < 3; x++) px(x0 + x, y, x0 + x === iris ? dark : white);
     }
-    for (let x = 6; x < 10; x++) px(x, 12, mouth);
+    if (face === "talk") for (let y = 11; y < 13; y++) for (let x = 6; x < 10; x++) px(x, y, y === 12 ? "#2a0f16" : mouth);
+    else for (let x = 6; x < 10; x++) px(x, 12, mouth);
+    if (p.lashes) {
+      px(2, 6, dark);
+      px(13, 6, dark);
+    }
   }
   if (p.blush) {
     px(2, 10, p.blush);
@@ -159,45 +179,63 @@ export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElem
 
 /**
  * «Аниме»-лицо 128×128 (мягкий герой) на прозрачном фоне: большие глаза (верхнее веко, радужка с
- * градиентом, два блика), тонкие брови, маленький рот, румянец. Без кожи — под ней скруглённая голова.
+ * градиентом, два блика), тонкие брови, маленький рот, румянец; ``lashes`` — ресницы веером (героиня).
+ * Выражения: neutral, blink, sleep (закрытые глаза-дуги, рот приоткрыт), wide (круглые глаза, рот «о»),
+ * happy (^^), frown (брови домиком к переносице, рот дугой вниз), laugh (^^ и открытый смех), talk (рот открыт).
  */
 export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElement {
   const [c, g] = canvas(128, 128);
-  const ink = p.eyes ? shade(p.eyes, 0.45) : "#20152c";
+  const ink = p.eyes ? shade(p.eyes, 0.42) : "#20152c";
   const iris = p.eyes || "#7a4bd6";
   const brow = shade(p.hair, 0.85);
-  const mouth = p.mouth || "#8a3344";
+  const mouth = p.mouth || (p.lashes ? "#b2445c" : "#8a3344");
   g.lineCap = "round";
   g.lineJoin = "round";
-  // Румянец.
+  // Румянец (сильнее, когда смеётся или ахнула).
   g.fillStyle = p.blush || "rgba(240,120,140,0.35)";
   for (const x of [26, 102]) {
     g.beginPath();
-    g.ellipse(x, 84, 11, 6, 0, 0, Math.PI * 2);
+    g.ellipse(x, 84, face === "laugh" || face === "wide" ? 13 : 11, 6, 0, 0, Math.PI * 2);
     g.fill();
   }
   const eyes = [38, 90];
-  const browY = face === "wide" ? 30 : face === "sleep" ? 44 : 38;
+  const browY = face === "wide" ? 29 : face === "sleep" ? 44 : face === "frown" ? 40 : 37;
   g.strokeStyle = brow;
   g.lineWidth = 4;
   for (const x of eyes) {
     const inner = x < 64 ? 1 : -1;
     g.beginPath();
-    g.moveTo(x - 13 * inner, browY + (face === "wide" ? -2 : 1));
-    g.quadraticCurveTo(x, browY - 5, x + 12 * inner, browY + (face === "sleep" ? 3 : 0));
+    if (face === "frown") {
+      // Домиком: внутренние концы вверх-к переносице — расстроилась.
+      g.moveTo(x - 13 * inner, browY + 2);
+      g.quadraticCurveTo(x, browY - 1, x + 12 * inner, browY - 7);
+    } else {
+      g.moveTo(x - 13 * inner, browY + (face === "wide" ? -2 : 1));
+      g.quadraticCurveTo(x, browY - 5, x + 12 * inner, browY + (face === "sleep" ? 3 : 0));
+    }
     g.stroke();
   }
-  if (face === "sleep" || face === "blink") {
-    // Закрытые глаза — дуги вниз и ресницы.
-    g.strokeStyle = ink;
+  const closed = face === "sleep" || face === "blink";
+  const smiling = face === "happy" || face === "laugh";
+  g.strokeStyle = ink;
+  if (closed) {
+    // Закрытые глаза — дуги вниз, ресницы вниз.
     g.lineWidth = 5;
     for (const x of eyes) {
       g.beginPath();
-      g.arc(x, 60, 13, Math.PI * 0.12, Math.PI * 0.88);
+      g.arc(x, 58, 13, Math.PI * 0.12, Math.PI * 0.88);
       g.stroke();
+      if (p.lashes) {
+        const side = x < 64 ? -1 : 1;
+        g.lineWidth = 3;
+        g.beginPath();
+        g.moveTo(x + side * 11, 64);
+        g.lineTo(x + side * 16, 68);
+        g.stroke();
+        g.lineWidth = 5;
+      }
     }
-  } else if (face === "happy") {
-    g.strokeStyle = ink;
+  } else if (smiling) {
     g.lineWidth = 5;
     for (const x of eyes) {
       g.beginPath();
@@ -206,7 +244,7 @@ export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasEleme
     }
   } else {
     const wide = face === "wide";
-    const rx = wide ? 14 : 12, ry = wide ? 18 : 16;
+    const rx = wide ? 14 : 12, ry = wide ? 18 : face === "frown" ? 14 : 16;
     for (const x of eyes) {
       const y = 62;
       g.fillStyle = "#ffffff";
@@ -232,35 +270,53 @@ export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasEleme
       g.beginPath();
       g.arc(x + 4, y + 6, 2, 0, Math.PI * 2);
       g.fill();
-      // Верхнее веко с ресницей.
+      // Верхнее веко (при frown — опущено), ресница наружу.
       g.strokeStyle = ink;
-      g.lineWidth = 5;
+      g.lineWidth = p.lashes ? 6 : 5;
       g.beginPath();
-      g.ellipse(x, y, rx + 1, ry + 1, 0, Math.PI * 1.08, Math.PI * 1.92);
+      g.ellipse(x, y + (face === "frown" ? 3 : 0), rx + 1, ry + 1, 0, Math.PI * 1.08, Math.PI * 1.92);
       g.stroke();
+      const side = x < 64 ? -1 : 1;
       g.beginPath();
-      g.moveTo(x + (x < 64 ? -rx : rx), y - ry * 0.35);
-      g.lineTo(x + (x < 64 ? -rx - 5 : rx + 5), y - ry * 0.6);
+      g.moveTo(x + side * rx, y - ry * 0.35);
+      g.lineTo(x + side * (rx + 5), y - ry * 0.6);
+      if (p.lashes) {
+        g.moveTo(x + side * (rx - 3), y - ry * 0.7);
+        g.lineTo(x + side * (rx + 3), y - ry * 1.0);
+      }
       g.stroke();
     }
   }
   g.strokeStyle = mouth;
   g.fillStyle = mouth;
   g.lineWidth = 4;
+  g.beginPath();
   if (face === "wide") {
-    g.beginPath();
     g.ellipse(64, 98, 6, 8, 0, 0, Math.PI * 2);
     g.fill();
-  } else if (face === "happy") {
+  } else if (face === "laugh") {
+    // Открытый смех: полукруг с языком.
+    g.arc(64, 90, 13, Math.PI * 0.02, Math.PI * 0.98);
+    g.closePath();
+    g.fill();
+    g.fillStyle = "#ff8fa3";
     g.beginPath();
+    g.ellipse(64, 99, 7, 4, 0, 0, Math.PI * 2);
+    g.fill();
+  } else if (face === "happy") {
     g.arc(64, 92, 9, Math.PI * 0.1, Math.PI * 0.9);
     g.fill();
+  } else if (face === "talk") {
+    g.ellipse(64, 97, 6, 5, 0, 0, Math.PI * 2);
+    g.fill();
   } else if (face === "sleep") {
-    g.beginPath();
     g.ellipse(64, 97, 4, 3, 0, 0, Math.PI * 2);
     g.fill();
+  } else if (face === "frown") {
+    g.moveTo(57, 100);
+    g.quadraticCurveTo(64, 93, 71, 100);
+    g.stroke();
   } else {
-    g.beginPath();
     g.moveTo(58, 96);
     g.quadraticCurveTo(64, 99, 70, 96);
     g.stroke();

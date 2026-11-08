@@ -18,6 +18,7 @@ import { beamMesh, haloSprite, PostFX, type PostSpec } from "./post.ts";
 import { applySurface, type SurfaceSpec } from "./surfaces.ts";
 import { createVoxelCharacter, type VoxelCharacterSpec } from "./voxel.ts";
 import { loadUiFonts, uiScreen } from "./ui.ts";
+import { coinJar, drawingTablet, stylus } from "./voxelprops.ts";
 import { Overlays, type OverlaySpec } from "./overlay.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
@@ -387,7 +388,8 @@ class Engine {
       const kind = o.primitive || "box";
       prop = kind === "mug" ? mug(p) : kind === "robot_disc" ? robotDisc(p) : kind === "string_lights" ? stringLights(p.points || [[0, 0, 0], [1, 0, 0]], p)
         : kind === "poster" ? poster(p) : kind === "blob_shadow" ? blobShadow(p) : kind === "display" ? display(p)
-        : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p) : primitive(kind, p);
+        : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p)
+        : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p) : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
       if (p.surface) {

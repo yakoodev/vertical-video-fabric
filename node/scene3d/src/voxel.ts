@@ -21,6 +21,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { actionStates, facingYaw, samplePath, windowWeight, type Action, type Key } from "./timeline.ts";
 import { blockFaceCanvas, noiseTexture, pixelTexture, sleepZCanvas, softFaceCanvas, VOXEL_FACES } from "./pixel.ts";
 import type { Character, PoseSpec } from "./character.ts";
+import { VOXEL_CLIPS, type Rot } from "./voxelclips.ts";
 
 export interface VoxelLook {
   /** block — кубики, soft — скруглённый лоу-поли «чиби». */
@@ -37,9 +38,14 @@ export interface VoxelLook {
   /** Наушники: цвет корпуса (false — без), свечение чашек. */
   headphones?: string | false;
   glow?: string;
-  /** Радужка (soft) / глаза (block), румянец. */
+  /** Радужка (soft) / глаза (block), румянец; lashes — ресницы и мягче рот (героиня). */
   eyes?: string;
   blush?: string;
+  lashes?: boolean;
+  /** Микрофон-«удочка» на наушниках (гарнитура): микрофон на столе не загораживает мониторы в кадре. */
+  headsetMic?: boolean;
+  /** Заколка в волосах (цвет) — узнаваемая деталь героя. */
+  clip?: string | false;
 }
 
 export interface VoxelCharacterSpec {
@@ -57,66 +63,8 @@ export interface VoxelCharacterSpec {
   seat?: number;
 }
 
-type Rot = Record<string, number[]>;
 const D2R = Math.PI / 180;
-const SIT: Rot = { thigh_l: [-90, -5, 0], thigh_r: [-90, 5, 0], calf_l: [88, 0, 0], calf_r: [88, 0, 0], foot_l: [2, 0, 0], foot_r: [2, 0, 0] };
-const add = (...rs: Rot[]): Rot => {
-  const out: Rot = {};
-  for (const r of rs) for (const [k, v] of Object.entries(r)) {
-    const o = out[k] || [0, 0, 0];
-    out[k] = [o[0] + v[0], o[1] + v[1], o[2] + v[2]];
-  }
-  return out;
-};
-const sin = (x: number) => Math.sin(2 * Math.PI * x);
-const breath = (t: number, k = 1): Rot => ({ spine_03: [1.4 * k * sin(t / 4), 0, 0], Head: [-0.8 * k * sin(t / 4 + 0.1), 1.5 * k * sin(t / 9), 0] });
-
-/** Процедурные «клипы» (длительность цикла, поза от локального времени клипа). */
-export const VOXEL_CLIPS: Record<string, { dur: number; pose: (t: number) => Rot }> = {
-  Idle_Loop: { dur: 8, pose: (t) => add(breath(t), { upperarm_l: [0, 0, 4 + sin(t / 4)], upperarm_r: [0, 0, -4 - sin(t / 4)] }) },
-  Sit_Loop: {
-    dur: 8,
-    pose: (t) => add(SIT, breath(t), { upperarm_l: [-38, 0, 6], upperarm_r: [-38, 0, -6], lowerarm_l: [-48, 0, 0], lowerarm_r: [-48, 0, 0] }),
-  },
-  Typing_Loop: {
-    dur: 1,
-    pose: (t) => add(SIT, breath(t, 0.5), {
-      spine_03: [6, 0, 0], Head: [10, 0, 0],
-      upperarm_l: [-30, 0, 8], upperarm_r: [-30, 0, -8],
-      lowerarm_l: [-58 + 5 * sin(t * 3), 0, 0], lowerarm_r: [-58 + 5 * sin(t * 3 + 0.5), 0, 0],
-      hand_l: [6 * sin(t * 6), 0, 0], hand_r: [6 * sin(t * 6 + 0.3), 0, 0],
-    }),
-  },
-  // Спит за столом: корпус лёг вперёд, руки сложены на столе, щека на руках, медленное дыхание.
-  Sleep_Desk_Loop: {
-    dur: 5,
-    pose: (t) => add(SIT, {
-      spine_03: [40 + 2.2 * sin(t / 5), 0, 0], neck_01: [10, 0, 0], Head: [36 + sin(t / 5), -105, 0],
-      upperarm_l: [-95, 0, -8], upperarm_r: [-95, 0, 8],
-      lowerarm_l: [0, 0, -92], lowerarm_r: [0, 0, 92],
-    }),
-  },
-  // Проснулся рывком: откинулся назад, руки вверх, голова назад — и обратно (огибающая по времени клипа).
-  Startle: {
-    dur: 1.1,
-    pose: (t) => {
-      const k = Math.sin(Math.PI * Math.min(1, t / 1.1));
-      return add(SIT, {
-        spine_03: [-8 * k, 0, 0], Head: [-14 * k, 0, 0],
-        upperarm_l: [-40 - 70 * k, 0, 8 + 22 * k], upperarm_r: [-40 - 70 * k, 0, -8 - 22 * k],
-        lowerarm_l: [-48 + 20 * k, 0, 0], lowerarm_r: [-48 + 20 * k, 0, 0],
-      });
-    },
-  },
-  Walk_Loop: {
-    dur: 1,
-    pose: (t) => ({
-      thigh_l: [-26 * sin(t), 0, 0], thigh_r: [26 * sin(t), 0, 0],
-      calf_l: [Math.max(0, 40 * sin(t + 0.25)), 0, 0], calf_r: [Math.max(0, -40 * sin(t + 0.25)), 0, 0],
-      upperarm_l: [22 * sin(t), 0, 4], upperarm_r: [-22 * sin(t), 0, -4], spine_03: [3, 3 * sin(t), 0],
-    }),
-  },
-};
+export { VOXEL_CLIPS };
 
 /** Геометрия «кубика» с UV в пикселях (texel м): шум ложится одинаковыми квадратами на любой грани. */
 function voxBox(w: number, h: number, d: number, texel: number, keepFront = false): THREE.BoxGeometry {
@@ -283,7 +231,7 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   const headR = Math.min(hw, hh, hdp) * 0.32;
   const headMesh = box(head, [hw, hh, hdp], mat(skin), [0, hh / 2, 0], 0.32);
   headMesh.name = "voxel:head";
-  const pal = { skin, hair: hairC, eyes: look.eyes, blush: look.blush };
+  const pal = { skin, hair: hairC, eyes: look.eyes, blush: look.blush, lashes: !!look.lashes };
   const faces: Record<string, THREE.Texture> = {};
   for (const f of VOXEL_FACES) {
     if (block) faces[f] = pixelTexture(blockFaceCanvas(f, pal));
@@ -315,7 +263,25 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   decal.name = "voxel:face";
   head.add(decal);
   buildHair(head, D, look.hairStyle || "messy", hairC, block, box, mat);
+  if (look.clip) {
+    // Заколка-«лисичка» над левым виском: треугольник-ушко и бусина.
+    const cm = mat(look.clip, { rough: 0.4 });
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.03 * (block ? 1.4 : 1), 0.06, 3), cm);
+    ear.position.set(hw * 0.36, hh * (block ? 1.02 : 0.92), hdp * 0.3);
+    ear.rotation.set(0.3, 0, -0.35);
+    ear.name = "voxel:clip";
+    head.add(ear);
+  }
   if (look.headphones !== false) buildHeadphones(head, D, look.headphones || "#17131f", glowC, block, box, cyl, mat);
+  if (look.headphones !== false && look.headsetMic) {
+    // Гарнитура: тонкая «удочка» от левой чашки к уголку рта, на конце — капсула микрофона.
+    const [hw, hh, hdp] = D.head;
+    const s = block ? 1.25 : 1;
+    const boom = cyl(head, 0.007 * s, 0.007 * s, hdp * 0.62, mat("#2a2632"), [hw / 2 + 0.035 * s, hh * 0.28, hdp * 0.22], [72, 0, 12]);
+    boom.name = "voxel:mic";
+    const cap = cyl(head, 0.017 * s, 0.017 * s, 0.035 * s, mat("#2a2632", { rough: 0.6 }), [hw * 0.36, hh * 0.18, hdp * 0.5], [90, 0, 0]);
+    cap.name = "voxel:mic";
+  }
 
   // «Z» над спящим.
   const zTex = pixelTexture(sleepZCanvas());
@@ -374,8 +340,15 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
     root.updateMatrixWorld(true);
     // Лицо: последний ключ; открытые глаза моргают (детерминированно от t).
     let face = "neutral";
-    for (const f of faceKeys) if (f.t <= t + 1e-9) face = f.face;
-    if ((face === "neutral" || face === "happy") && ((t + 0.4) % 3.3) < 0.11) face = "blink";
+    let faceT = 0;
+    for (const f of faceKeys) if (f.t <= t + 1e-9) {
+      face = f.face;
+      faceT = f.t;
+    }
+    // Говорит: рот открывается и закрывается «слогами» (детерминированно от t).
+    if (face === "talk" && Math.floor((t - faceT) * 7.5) % 3 === 2) face = "neutral";
+    if (face === "blink_once") face = t - faceT < 0.16 ? "blink" : "neutral";
+    if ((face === "neutral" || face === "happy" || face === "talk" || face === "frown") && ((t + 0.4) % 3.3) < 0.11) face = "blink";
     faceMat.map = faces[face] || faces.neutral;
     // «Z»: всплывают по очереди со стороны макушки и тают.
     const sleeping = face === "sleep";
@@ -452,7 +425,16 @@ function buildHair(head: THREE.Bone, D: ReturnType<typeof dims>, style: string, 
     spike(0.05, 0.16, [s * (hw / 2 + 0.005), hh * 0.58, 0.02], [180, 0, -s * 8]);
     spike(0.05, 0.15, [s * (hw / 2 + 0.005), hh * 0.6, -0.1], [180, 0, -s * 6]);
   }
-  if (style !== "short") for (const [x, z, rz] of [[-0.05, 0.03, -30], [0.06, -0.06, 34]] as const) {
+  if (style === "long") {
+    // Длинные: волосы за спиной до лопаток и пряди вдоль щёк до плеч.
+    box(head, [hw + 0.05, hh * 0.95, 0.12], m, [0, hh * 0.05, -hd / 2 + 0.01], 0.45);
+    for (const s of [1, -1]) {
+      spike(0.055, 0.42, [s * (hw / 2 + 0.01), hh * 0.12, 0.05], [180, 0, -s * 4]);
+      spike(0.06, 0.4, [s * (hw / 2 - 0.02), hh * 0.08, -0.1], [180, 0, -s * 3]);
+      spike(0.05, 0.36, [s * hw * 0.28, hh * 0.05, -hd / 2 - 0.02], [180 + 6, 0, -s * 4]);
+    }
+  }
+  if (style !== "short" && style !== "long") for (const [x, z, rz] of [[-0.05, 0.03, -30], [0.06, -0.06, 34]] as const) {
     spike(0.035, 0.11, [x, hh * 1.1, z], [0, 0, rz]);
   }
 }

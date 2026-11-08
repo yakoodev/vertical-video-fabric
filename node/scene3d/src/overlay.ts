@@ -11,7 +11,7 @@
 import { drawHud, drawPhone, drawTag, drawToast, popIn, roundRect, type HudSpec, type PhoneScreen, type ToastSpec } from "./ui.ts";
 
 export type OverlaySpec =
-  | ({ kind: "hud"; right?: number; top?: number; start?: number; end?: number } & HudSpec)
+  | ({ kind: "hud"; right?: number; left?: number; top?: number; start?: number; end?: number } & HudSpec)
   | { kind: "tag"; text: string; x?: number; y?: number; start?: number; end?: number }
   | ({ kind: "toast"; y?: number } & ToastSpec)
   | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number } & PhoneScreen);
@@ -44,7 +44,7 @@ export class Overlays {
     for (const o of this.list) {
       const start = (o as any).start ?? -Infinity, end = (o as any).end ?? Infinity;
       if (t < start || t >= end) continue;
-      if (o.kind === "hud") drawHud(g, s, (o.right ?? 1040) * s, (o.top ?? 60) * s, o, t);
+      if (o.kind === "hud") drawHud(g, s, (o.right ?? 1040) * s, (o.top ?? 60) * s, o, t, o.left !== undefined ? o.left * s : undefined);
       else if (o.kind === "tag") drawTag(g, s, (o.x ?? 40) * s, (o.y ?? 97) * s, o.text);
       else if (o.kind === "toast") drawToast(g, s, 540 * s, (o.y ?? 300) * s, o, t);
       else if (o.kind === "phone") this.drawPhoneCard(o, t, s);
