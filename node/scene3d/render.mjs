@@ -419,7 +419,8 @@ export class FrameError extends Error {
 /**
  * Проверка одного кадра по ответу страницы render(t): lost — потери контекста GPU (WebGL/2D), presence —
  * {expect, models, meshes, cover} (VRM: сколько моделей должно быть видно, сколько загружено и в сцене, видимых
- * сеток, доля непрозрачных пикселей WebGL-холста). Возвращает текст проблемы или null.
+ * сеток, доля непрозрачных пикселей WebGL-холста; cut — самый длинный ровный край слоя героя в кадре, near —
+ * глубина ближайшей кости). Возвращает текст проблемы или null.
  */
 export function frameProblem(st) {
   if (st?.lost?.length) return `потерян контекст GPU: ${st.lost.slice(0, 3).join("; ")}`;
@@ -428,6 +429,11 @@ export function frameProblem(st) {
   if (!(p.models >= p.expect)) return `модели нет в сцене (загружено ${p.models ?? 0} из ${p.expect})`;
   if (!(p.meshes > 0)) return "у модели нет видимых сеток";
   if (!(p.cover > 0)) return "WebGL-холст пуст (персонаж не нарисован)";
+  // Персонаж разрезан ровной линией внутри кадра (край сдвинутого холста, вьюпорт) — пороги сообщает страница.
+  if (p.cut?.x?.run >= (p.cutX ?? 0.2)) return `персонаж разрезан вертикалью x=${p.cut.x.at} на ${Math.round(p.cut.x.run * 100)}% высоты кадра`;
+  if (p.cut?.y?.run >= (p.cutY ?? 0.5)) return `персонаж разрезан горизонталью y=${p.cut.y.at} на ${Math.round(p.cut.y.run * 100)}% ширины кадра`;
+  // Ближняя плоскость камеры режет тело: кость ближе near + полтолщины головы/руки.
+  if (Number.isFinite(p.near) && p.near < (p.cameraNear ?? 0) + 0.12) return `камера в теле: ближайшая кость в ${p.near} м (near ${p.cameraNear} м)`;
   return null;
 }
 

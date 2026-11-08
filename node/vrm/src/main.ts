@@ -23,6 +23,7 @@ import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
 import { addColliders, chairGap, hairGap } from "./body.ts";
 import { HandCheck } from "./handcheck.ts";
+import { straightCut, CUT_X, CUT_Y } from "./cutcheck.ts";
 import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
@@ -129,23 +130,37 @@ const hooked = new WeakSet<HTMLCanvasElement>();
 let presC: HTMLCanvasElement;
 
 /**
- * Героиня на кадре на самом деле есть: модель загружена и в сцене, видимых сеток > 0, на WebGL-холсте есть
- * непрозрачные пиксели (контекст жив и что-то нарисовал). expect — сколько моделей кадр должен показать (0 — вставка).
+ * Героиня на кадре на самом деле есть и целая: модель загружена и в сцене, видимых сеток > 0, на WebGL-холсте есть
+ * непрозрачные пиксели (контекст жив и что-то нарисовал), слой героя не разрезан прямой линией внутри кадра
+ * (cutcheck.ts), ближняя плоскость камеры не режет тело (near — наименьшая глубина костей перед камерой, м).
+ * expect — сколько моделей кадр должен показать (0 — вставка). Слой берётся так же, как его кладёт drawChar.
  */
-function presence(expect: number) {
+function presence(expect: number, off: [number, number]) {
   const models = vrm && vrm.scene.parent === scene ? 1 : 0;
   let meshes = 0;
   if (models) vrm.scene.traverseVisible((o) => void ((o as THREE.Mesh).isMesh && meshes++));
+  if (!expect) return { expect, models, meshes, cover: 0 };
+  const pc = presC.getContext("2d", { willReadFrequently: true })!;
+  const k = presC.width / W;
+  pc.clearRect(0, 0, presC.width, presC.height);
+  pc.drawImage(gl.domElement, off[0] * k, off[1] * k, presC.width, presC.height);
+  const d = pc.getImageData(0, 0, presC.width, presC.height).data;
   let cover = 0;
-  if (expect) {
-    const pc = presC.getContext("2d", { willReadFrequently: true })!;
-    pc.clearRect(0, 0, presC.width, presC.height);
-    pc.drawImage(gl.domElement, 0, 0, presC.width, presC.height);
-    const d = pc.getImageData(0, 0, presC.width, presC.height).data;
-    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) cover++;
-    cover /= d.length / 4;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) cover++;
+  cover /= d.length / 4;
+  const cut = straightCut(d, presC.width, presC.height, 4, 3);
+  cut.x.at = Math.round(cut.x.at / k);
+  cut.y.at = Math.round(cut.y.at / k);
+  // Глубина костей перед камерой: ближе near (+ полтолщины головы/руки) — плоскость отсечения режет тело.
+  const inv = camera.matrixWorldInverse;
+  let near = Infinity;
+  const v = new THREE.Vector3();
+  for (const name of Object.keys((vrm.humanoid as any).humanBones || {})) {
+    const o = rig.node(name);
+    if (o) near = Math.min(near, -o.getWorldPosition(v).applyMatrix4(inv).z);
   }
-  return { expect, models, meshes, cover: Math.round(cover * 1000) / 1000 };
+  return { expect, models, meshes, cover: Math.round(cover * 1000) / 1000, cut, near: Math.round(near * 1000) / 1000,
+    cameraNear: camera.near, cutX: CUT_X, cutY: CUT_Y };
 }
 
 function shotAt(t: number): { shot: Shot; local: number } {
@@ -240,7 +255,19 @@ function render(t: number) {
   camera.position.copy(c.pos);
   camera.up.set(Math.sin((c.roll * Math.PI) / 180), Math.cos((c.roll * Math.PI) / 180), 0);
   camera.lookAt(c.target);
-  camera.updateProjectionMatrix();
+  camera.clearViewOffset();
+  camera.updateMatrixWorld();
+  // Привязка героя к нарисованному миру (общий план, через плечо): кость попадает в точку мира set.ts. Сдвиг —
+  // окном проекции камеры (setViewOffset), а не сдвигом готовой картинки: сдвинутый холст оставлял в кадре свой
+  // край — героиня через плечо была отрезана ровной вертикалью (x≈150), слева от неё — пусто.
+  const pl = shot.plate || {};
+  if (pl.anchor) {
+    const v = rig.point(pl.anchor.bone).project(camera);
+    const sx = (v.x * 0.5 + 0.5) * W, sy = (-v.y * 0.5 + 0.5) * H;
+    const z = pl.zoom ?? 1;
+    const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
+    camera.setViewOffset(W, H, sx - tx, sy - ty, W, H);
+  }
   stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   if (!shot.plate?.insert) gl.render(scene, camera);
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -248,16 +275,7 @@ function render(t: number) {
   g.globalCompositeOperation = "source-over";
   g.filter = "none";
   backdrop.drawBack(g, shot.plate || {}, t, rig, camera);
-  // Привязка героя к нарисованному миру (общий план): кость попадает в точку мира set.ts.
-  let off: [number, number] = [0, 0];
-  const pl = shot.plate || {};
-  if (pl.anchor) {
-    const v = rig.point(pl.anchor.bone).project(camera);
-    const sx = (v.x * 0.5 + 0.5) * W, sy = (-v.y * 0.5 + 0.5) * H;
-    const z = pl.zoom ?? 1;
-    const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
-    off = [tx - sx, ty - sy];
-  }
+  const off: [number, number] = [0, 0];
   if (!pl.insert) backdrop.drawChar(g, pl, gl.domElement, off);
   backdrop.drawFront(g, shot.plate || {}, t);
   if (pl.cats) drawCats(g, W, spec.cats, t);
@@ -271,7 +289,7 @@ function render(t: number) {
   const gone = [...lost];
   if (gl.getContext().isContextLost()) gone.push("webgl героини: isContextLost");
   if ((g as any).isContextLost?.()) gone.push("2d кадра: isContextLost");
-  return { luma: sum / (d.length / 4), presence: presence(pl.insert ? 0 : 1), lost: gone };
+  return { luma: sum / (d.length / 4), presence: presence(pl.insert ? 0 : 1, off), lost: gone };
 }
 
 async function load(s: Spec) {
@@ -329,8 +347,8 @@ async function load(s: Spec) {
   lumaC.width = 16;
   lumaC.height = 28;
   presC = document.createElement("canvas");
-  presC.width = 27;
-  presC.height = 48;
+  presC.width = Math.round(W / 4);
+  presC.height = Math.round(H / 4);
   const meta: any = (vrm.meta as any) || {};
   return { warnings, meta: { name: meta.name || meta.title, authors: meta.authors || meta.author, commercial: meta.commercialUsage || meta.commercialUssageName } };
 }
