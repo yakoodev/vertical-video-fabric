@@ -6,7 +6,7 @@
  */
 import type { ArmSpec, V3 } from "./rig.ts";
 
-const KB_TOP = 1.072, KB_Z = 0.4;
+const KB_TOP = 1.072, KB_Z = 0.36;
 
 const hash = (n: number) => {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
@@ -40,15 +40,17 @@ function fingerLift(side: 1 | -1, f: number, t: number, act: number): number {
 
 export function typingArm(side: 1 | -1, t: number, seed = 0): ArmSpec {
   const act = typingActivity(t, seed);
-  const base = [0.85, 0.46, 0.48, 0.5, 0.54];
+  // Пальцы мягкой дугой (не крюком): основание почти прямое, сгиб — в среднем суставе.
+  const base = [0.85, 0.33, 0.35, 0.37, 0.41];
   const lifts = [1, 2, 3, 4].map((f) => fingerLift(side, f, t, act));
-  const curl = base.map((c, i) => (i === 0 ? c : c - 0.16 * lifts[i - 1]));
+  const curl = base.map((c, i) => (i === 0 ? c : c - 0.12 * lifts[i - 1]));
   // Кисть: к дальней клавише чуть вперёд и в сторону, лёгкое дыхание запястья.
   const reach = lifts.reduce((s, v, i) => s + v * (i - 1.5), 0);
   const target: V3 = [side * 0.088 + side * 0.004 * reach, KB_TOP + 0.03 + 0.002 * Math.sin(t * 1.7 + side), KB_Z - 0.078 + 0.003 * act];
   return {
-    target, pole: [side * 0.32, 0.85, -0.3],
-    fingers: [-side * 0.1, 0.04, 1], palm: [side * 0.1, -1, -0.04],
+    // Предплечья почти горизонтально, локти у корпуса и ниже; ладонь вниз, параллельно клавиатуре.
+    target, pole: [side * 0.2, 0.72, -0.42],
+    fingers: [-side * 0.08, 0.12, 1], palm: [side * 0.05, -1, -0.12],
     curl, spread: 0.16, thumbOut: 0.0, touch: true,
   };
 }
