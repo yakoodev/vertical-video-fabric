@@ -1,0 +1,529 @@
+{
+ "width": 1080,
+ "height": 1920,
+ "fps": 30,
+ "duration": 10,
+ "model": "VRM1_Constraint_Twist_Sample.vrm",
+ "look": {
+  "outline": 0.0034,
+  "shade": "#a28ad6",
+  "toony": 0.97,
+  "shift": -0.05,
+  "rim": "#ff8fd0",
+  "rimPower": 4,
+  "tint": {
+   "Tops": "#8e86c8"
+  }
+ },
+ "stream": {
+  "title": "ночной стрим",
+  "uptime": 11520,
+  "avatars": [
+   {
+    "t": 0,
+    "kind": "hoodie"
+   }
+  ],
+  "viewers": [
+   {
+    "t": 0,
+    "value": 3,
+    "label": "3 зрителя"
+   }
+  ],
+  "chat": [
+   {
+    "t": -9,
+    "user": "nochnoy_dozor",
+    "color": "#7ad8ff",
+    "text": "привет"
+   },
+   {
+    "t": -5,
+    "user": "kotik_mur",
+    "color": "#ff8ac8",
+    "text": "ты чего не спишь"
+   },
+   {
+    "t": 4.5,
+    "user": "pelmen_404",
+    "color": "#ffd36a",
+    "text": "ЗЕВНИ ЕЩЁ РАЗ"
+   }
+  ]
+ },
+ "strictContact": true,
+ "timeline": {
+  "clips": {
+   "sit": "cmu/clips/sit.json",
+   "typing": "cmu/clips/typing.json",
+   "stretch_yawn": "cmu/clips/stretch_yawn.json",
+   "laugh": "cmu/clips/laugh.json",
+   "wave": "cmu/clips/wave.json"
+  },
+  "tracks": [
+   {
+    "clip": "sit",
+    "start": -3,
+    "end": 11,
+    "offset": 0,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest",
+     "leftShoulder",
+     "leftUpperArm",
+     "leftLowerArm",
+     "leftHand",
+     "rightShoulder",
+     "rightUpperArm",
+     "rightLowerArm",
+     "rightHand"
+    ]
+   },
+   {
+    "clip": "sit",
+    "start": -3,
+    "end": 11,
+    "offset": 0,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "mask": "head",
+    "scale": 0.3
+   },
+   {
+    "clip": "typing",
+    "start": -3,
+    "end": 2.5,
+    "offset": 0,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest"
+    ],
+    "scale": 0.5,
+    "fadeIn": 0,
+    "fadeOut": 0.4
+   },
+   {
+    "clip": "stretch_yawn",
+    "start": 2.3,
+    "end": 4.9,
+    "offset": 0.45,
+    "speed": 0.5,
+    "mask": "upper",
+    "fadeIn": 0.5,
+    "fadeOut": 0.7
+   },
+   {
+    "clip": "laugh",
+    "start": 6.5,
+    "end": 7.9,
+    "offset": 0.3,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest"
+    ],
+    "scale": 0.45,
+    "fadeIn": 0.25,
+    "fadeOut": 0.5,
+    "speed": 0.75
+   },
+   {
+    "clip": "wave",
+    "start": 7.8,
+    "end": 10.5,
+    "offset": 0.35,
+    "speed": 0.75,
+    "mask": "right",
+    "fadeIn": 0.5,
+    "fadeOut": 0.3
+   }
+  ],
+  "arms": [
+   {
+    "t": -3,
+    "left": "typing",
+    "right": "typing"
+   },
+   {
+    "t": 2.35,
+    "dur": 0.45,
+    "left": null,
+    "right": null
+   },
+   {
+    "t": 4.7,
+    "dur": 0.6,
+    "left": "typing",
+    "right": "typing"
+   },
+   {
+    "t": 5.97,
+    "dur": 0.02,
+    "left": "rest",
+    "right": "rest"
+   },
+   {
+    "t": 7.75,
+    "dur": 0.5,
+    "left": "rest",
+    "right": null
+   }
+  ],
+  "hands": [
+   {
+    "t": -3,
+    "left": "relaxed",
+    "right": "relaxed"
+   },
+   {
+    "t": 2.4,
+    "dur": 0.4,
+    "left": "open",
+    "right": "open"
+   },
+   {
+    "t": 4.9,
+    "dur": 0.5,
+    "left": "relaxed",
+    "right": "relaxed"
+   },
+   {
+    "t": 7.8,
+    "dur": 0.35,
+    "left": "rest",
+    "right": "wave"
+   }
+  ],
+  "faces": [
+   {
+    "t": -3,
+    "expr": {
+     "relaxed": 0.3
+    }
+   },
+   {
+    "t": 2.6,
+    "dur": 0.4,
+    "expr": {
+     "aa": 0.85,
+     "blink": 1
+    }
+   },
+   {
+    "t": 4.5,
+    "dur": 0.5,
+    "expr": {
+     "relaxed": 0.35,
+     "blink": 0.25
+    }
+   },
+   {
+    "t": 6.2,
+    "dur": 0.15,
+    "expr": {
+     "surprised": 0.8
+    }
+   },
+   {
+    "t": 6.55,
+    "dur": 0.25,
+    "expr": {
+     "happy": 1,
+     "aa": 0.45
+    }
+   },
+   {
+    "t": 7.9,
+    "dur": 0.3,
+    "expr": {
+     "happy": 0.75
+    }
+   }
+  ],
+  "look": [
+   {
+    "t": -3,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.75
+   },
+   {
+    "t": 2.5,
+    "target": [
+     0,
+     1.62,
+     1.2
+    ],
+    "head": 0.65
+   },
+   {
+    "t": 5.0,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.75
+   },
+   {
+    "t": 6.12,
+    "target": [
+     -0.5,
+     1.36,
+     0.9
+    ],
+    "head": 0.9
+   },
+   {
+    "t": 7.75,
+    "target": [
+     -0.35,
+     1.3,
+     2.6
+    ],
+    "head": 0.85
+   }
+  ],
+  "speech": [
+   [
+    6.85,
+    7.6
+   ],
+   [
+    8.15,
+    9.35
+   ]
+  ],
+  "surfaces": [
+   {
+    "name": "стол",
+    "y": 1.05,
+    "x0": -0.8,
+    "x1": 0.8,
+    "z0": 0.22,
+    "z1": 0.92
+   },
+   {
+    "name": "клавиатура",
+    "y": 1.072,
+    "x0": -0.22,
+    "x1": 0.22,
+    "z0": 0.326,
+    "z1": 0.474
+   }
+  ]
+ },
+ "shots": [
+  {
+   "name": "low_chest",
+   "t0": 0,
+   "t1": 6.0,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      0.15,
+      1.42,
+      3.0
+     ],
+     "target": [
+      0,
+      1.32,
+      0.1
+     ],
+     "fov": 15.5
+    },
+    {
+     "t": 6.0,
+     "pos": [
+      0.14,
+      1.42,
+      2.9
+     ],
+     "target": [
+      0,
+      1.33,
+      0.1
+     ],
+     "fov": 14
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": 40,
+    "dy": 40,
+    "zoom": 1.1,
+    "fgMonitor": {
+     "y": 1440,
+     "x": 560
+    }
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.4
+     ]
+    },
+    "mouse": {
+     "pos": [
+      0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.88,
+      -0.2
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     0,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  },
+  {
+   "name": "close_side",
+   "t0": 6.0,
+   "t1": 10,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      -0.36,
+      1.36,
+      2.7
+     ],
+     "target": [
+      -0.2,
+      1.3,
+      0
+     ],
+     "fov": 21
+    },
+    {
+     "t": 4.0,
+     "pos": [
+      -0.35,
+      1.36,
+      2.6
+     ],
+     "target": [
+      -0.2,
+      1.31,
+      0
+     ],
+     "fov": 19.5
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": -60,
+    "dy": -20,
+    "zoom": 1.1,
+    "fgMonitor": {
+     "y": 1330,
+     "x": 640,
+     "w": 1300
+    }
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.4
+     ]
+    },
+    "mouse": {
+     "pos": [
+      0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.88,
+      -0.2
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     -0.3,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  }
+ ],
+ "captions": [
+  {
+   "t0": 0.3,
+   "t1": 1.9,
+   "text": "Третий час ночи. Трое зрителей."
+  },
+  {
+   "t0": 2.1,
+   "t1": 3.6,
+   "text": "Глаза уже слипаются…"
+  },
+  {
+   "t0": 4.5,
+   "t1": 5.8,
+   "text": "И тут в чате:"
+  },
+  {
+   "t0": 6.25,
+   "t1": 7.45,
+   "text": "Ой! Привет-привет!"
+  },
+  {
+   "t0": 8.05,
+   "t1": 9.6,
+   "text": "Спасибо, что не спите со мной!"
+  }
+ ],
+ "highlight": {
+  "ночи.": "#ff8ad8",
+  "чате:": "#6fd3ff",
+  "Привет-привет!": "#ffd36a"
+ }
+}

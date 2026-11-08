@@ -95,7 +95,7 @@ export function parseArgs(argv) {
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json",
-  ".glb": "model/gltf-binary", ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
+  ".glb": "model/gltf-binary", ".vrm": "model/gltf-binary", ".vrma": "model/gltf-binary", ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ktx2": "image/ktx2",
   ".ttf": "font/ttf", ".otf": "font/otf",
 };
@@ -344,6 +344,7 @@ export async function openScene(opts, spec, log = () => {}) {
       render: (t) => evaluate(`window.__scene3d.render(${Number(t).toFixed(6)})`),
       inspect: (t) => evaluate(`window.__scene3d.inspect(${Number(t).toFixed(6)})`),
       warnings: () => evaluate("window.__scene3d.warnings()"),
+      evaluate,
       shot: async (format = "jpeg", quality = 92) => {
         const r = await s("Page.captureScreenshot", {
           format, ...(format === "jpeg" ? { quality } : {}), fromSurface: true, captureBeyondViewport: false,

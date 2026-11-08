@@ -4,7 +4,6 @@
   "script": "D:/vvf-offload/vtubika/scripts_v1.md, раздел 1",
   "hero": "alina",
   "look": "cozy",
-  "voice": {"provider": "gemini", "voice": "Charon"},
   "music": {"file": "chill-keys.mp3", "under_db": 7.0},
   "tail": 2.6,
   "pace": {"tempo_cap": 1.0, "tempo": 0.96, "lead": 0.9},
