@@ -509,9 +509,23 @@ export function drawStoreCard(g: CanvasRenderingContext2D, W: number, H: number,
   g.textAlign = "left";
 }
 
-/** Мессенджер: шапка «Витубика», баннер «файл модели пришёл», пузырь с файлом. */
+/** Перенос текста поста по словам в ширину max. */
+function postLines(g: CanvasRenderingContext2D, text: string, max: number): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const w of text.split(" ")) {
+    const next = cur ? `${cur} ${w}` : w;
+    if (g.measureText(next).width > max && cur) {
+      out.push(cur);
+      cur = w;
+    } else cur = next;
+  }
+  return [...out, cur];
+}
+
+/** Мессенджер: шапка «Витубика», баннер «файл модели пришёл», пузырь с файлом (или пост в своём канале). */
 export function drawMessenger(g: CanvasRenderingContext2D, W: number, H: number, t: number,
-  p: { from?: string; file?: string; size?: string; text?: string; at?: number }) {
+  p: { from?: string; file?: string; size?: string; text?: string; at?: number; post?: string; typeSec?: number; status?: string }) {
   const u = W / 500;
   g.fillStyle = "#dfe8f1";
   g.fillRect(0, 0, W, H);
@@ -525,19 +539,38 @@ export function drawMessenger(g: CanvasRenderingContext2D, W: number, H: number,
   g.font = font(900, 30 * u);
   g.textAlign = "center";
   g.textBaseline = "middle";
-  g.fillText("V", 60 * u, 93 * u);
+  g.fillText(p.post ? (p.from || "В").slice(0, 1).toUpperCase() : "V", 60 * u, 93 * u);
   g.textAlign = "left";
   g.fillStyle = "#15121f";
   g.font = font(800, 26 * u);
   g.fillText(p.from || "Витубика", 104 * u, 82 * u);
   g.fillStyle = "#3aa86b";
   g.font = font(500, 20 * u);
-  g.fillText("онлайн", 104 * u, 110 * u);
+  g.fillText(p.status || "онлайн", 104 * u, 110 * u);
   const k = p.at !== undefined ? ease("outBack", Math.max(0, Math.min(1, (t - p.at) / 0.4))) : 1;
   if (k <= 0) return;
   g.save();
   g.globalAlpha = Math.min(1, k * 1.5);
   g.translate(0, (1 - Math.min(1, k)) * 60 * u);
+  if (p.post) {
+    // Пост в своём канале: текст набирается по буквам (за typeSec), пузырь справа, без файла и баннера.
+    const n = Math.round(p.post.length * Math.max(0, Math.min(1, (t - (p.at ?? 0)) / (p.typeSec ?? 1.2))));
+    g.font = font(700, 30 * u);
+    const lines = postLines(g, p.post.slice(0, n), W - 170 * u);
+    const bh = (70 + lines.length * 42) * u;
+    g.fillStyle = "#d9f7c8";
+    rr(g, 70 * u, 420 * u, W - 100 * u, bh, 24 * u);
+    g.fill();
+    g.fillStyle = "#15121f";
+    g.textAlign = "left";
+    lines.forEach((l, i) => g.fillText(l, 100 * u, (466 + i * 42) * u));
+    g.fillStyle = "#5a9a4a";
+    g.font = font(500, 18 * u);
+    g.textAlign = "right";
+    if (n >= p.post.length) g.fillText("21:04 ✓✓", W - 50 * u, 420 * u + bh - 22 * u);
+    g.restore();
+    return;
+  }
   g.fillStyle = "#ffffff";
   rr(g, 24 * u, 420 * u, W - 90 * u, 170 * u, 24 * u);
   g.fill();

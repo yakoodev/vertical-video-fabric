@@ -1,0 +1,286 @@
+{
+  "id": "trial",
+  "title": "Пробная",
+  "script": "D:/vvf-offload/vtubika/scripts_v1.md, раздел 3 (фраза «Делаешь шаг — она шагает» → «Киваешь — она кивает»: героиня сидит)",
+  "hero": "alina",
+  "look": "cozy",
+  "vrm": {"heroine": "vera", "avatars": ["trial", "vera_oc"], "positions": {"trial": -0.5, "vera_oc": 0.5}},
+  "pronounce": {"3D": "три-дэ"},
+  "music": {"file": "chill-keys.mp3", "under_db": 7.0},
+  "tail": 2.6,
+  "pace": {"tempo_cap": 1.0, "tempo": 0.96, "lead": 0.9},
+  "screen": {
+    "uptime": 0,
+    "title": "персонаж к дебюту · эскиз",
+    "camBg": ["#2a3a5c", "#141c34"],
+    "chat": [{"t": 0.0, "user": "kotletka_99", "color": "#7ee0ff", "text": "о, эфир"}]
+  },
+  "highlight": {
+    "Вера,": "#ff9a3d",
+    "3D": "#6fd3ff",
+    "дорого.": "#ff3b4e",
+    "Витубике,": "#6fd3ff",
+    "рублях,": "#2ee86f",
+    "поднимает.": "#9af0ff",
+    "кивает.": "#9af0ff",
+    "паника.": "#ff3b4e",
+    "восемь": "#2ee86f",
+    "pelmen_404": "#ffd35c",
+    "пятьдесят.": "#2ee86f",
+    "«оставь": "#ff8ad8",
+    "её».": "#ff8ad8",
+    "Твой.": "#ff9a3d",
+    "пробная?»": "#9af0ff",
+    "«жена»": "#ff8ad8",
+    "«бывшая».": "#9af0ff"
+  },
+  "sentences": [
+    {"text": "Ты Вера, художница.",
+     "pause_after": 0.4,
+     "show": ["комната Веры целиком, на мониторе — эскиз её персонажа", "Вера крупно"],
+     "shots": [{"cam": "wide", "push": 0.12}, {"cam": "face_left", "at": "художница", "push": 0.15}],
+     "do": [
+       {"act": "Sit_Loop"},
+       {"face": "neutral"},
+       {"screen": "stream"},
+       {"avatar": "sketch"},
+       {"tag": "Пробная", "dur": 3.6}
+     ],
+     "vrm": [
+       {"av_show": ["vera_oc"]}, {"av": "showcase", "who": "vera_oc"}, {"av_cam": "mid"}
+     ]},
+    {"text": "Полгода рисуешь своего персонажа для дебюта и боишься: вдруг 3D — это не твоё.",
+     "pause_after": 0.5,
+     "show": ["на планшете — эскиз её персонажа, цвет проявляется", "Вера тревожно смотрит"],
+     "shots": [{"cam": "tablet", "push": 0.15, "roll": 3, "sketch": true}, {"cam": "face", "at": "боишься", "push": 0.18, "roll": -4}],
+     "do": [
+       {"draw": true, "until": "боишься", "dt": -0.6},
+       {"face": "neutral"},
+       {"at": "боишься", "face": "frown"},
+       {"sfx": "pen", "dt": 0.3}
+     ]},
+    {"text": "Заказать свою модель — долго и дорого.",
+     "pause_after": 0.4,
+     "show": ["Вера крупно, вздыхает"],
+     "shots": [{"cam": "face_close", "push": 0.12}],
+     "do": [
+       {"face": "tired"},
+       {"at": "дорого", "face": "frown"}
+     ],
+     "vrm": [{"at": "долго", "look": "down", "dur": 1.6}]},
+    {"text": "Сначала надо попробовать.",
+     "pause_after": 0.3,
+     "show": ["Вера решается и печатает"],
+     "shots": [{"cam": "face", "push": 0.15}],
+     "do": [
+       {"act": "Typing_Loop"},
+       {"face": "neutral"},
+       {"at": "попробовать", "face": "happy"},
+       {"sfx": "keyboard", "dt": 0.2}
+     ]},
+    {"text": "Ты берёшь готовую 3D-модель на Витубике, в рублях, просто примерить.",
+     "pause_after": 1.5,
+     "show": ["телефон: vtubika.store — «Mafuyu — оригинальная 3D-модель», 5 090 ₽, «Оплатить картой РФ»", "«Оплачено»", "«Модель пришла»"],
+     "shots": [{"cam": "insert"}],
+     "do": [
+       {"phone": {"screen": "shop", "store": {"title": "Mafuyu — оригинальная 3D-модель", "price": "5 090 ₽", "preview": "live"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35, "to_next": true}, "until": "end", "dt": -0.15},
+       {"at": "рублях", "paid": true, "dt": -0.1},
+       {"at": "end", "dt": 0.1, "phone": {"screen": "messenger", "message": {"from": "Витубика", "file": "mafuyu_vrm.zip", "size": "64 МБ", "text": "Модель пришла"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35, "cut": true}, "span": 0, "dt_end": 1.2},
+       {"act": "Typing_Loop"},
+       {"face": "neutral"},
+       {"at": "end", "face": "happy", "dt": 0.3},
+       {"sfx": "click", "dt": 0.2}
+     ],
+     "vrm": [
+       {"av_show": ["trial"], "dt": -0.3}, {"av": "showcase", "who": "trial", "dt": -0.3}, {"av_cam": "mid", "dt": -0.3}
+     ]},
+    {"text": "Ставишь трекинг.",
+     "pause_after": 0.4,
+     "show": ["через плечо: на мониторе пробная модель, плашка «трекинг»"],
+     "shots": [{"cam": "ots", "push": 0.2, "roll": -3}],
+     "do": [
+       {"screen": "stream"},
+       {"avatar": "live"},
+       {"title": "трекинг · проверка"},
+       {"act": "Sit_Loop"},
+       {"face": "neutral"},
+       {"sfx": "click", "dt": 0.1}
+     ],
+     "vrm": [
+       {"av": "copy", "who": "trial"}, {"av_cam": "mid"}, {"badge": "трекинг: лицо и руки", "dur": 2.6}
+     ]},
+    {"text": "Поднимаешь руку — она поднимает.",
+     "pause_after": 0.5,
+     "show": ["Вера машет рукой", "пробная модель на экране машет так же"],
+     "shots": [{"cam": "two", "push": 0.1}, {"cam": "monitor_close", "at": "она", "push": 0.12}],
+     "do": [
+       {"face": "happy"},
+       {"screencard": {"x": 540, "y": 360, "w": 760}, "until": "она", "dt": -0.1}
+     ],
+     "vrm": [
+       {"arms": "wave", "dt": -0.15, "until": "end", "dt_end": 0.5}, {"look": "webcam", "until": "end", "dt_end": 0.5},
+       {"av_cam": "close", "dt": -0.3}
+     ]},
+    {"text": "Киваешь — она кивает.",
+     "say": "Киваешь — она кивает.",
+     "pause_after": 0.5,
+     "show": ["Вера кивает", "пробная модель кивает"],
+     "shots": [{"cam": "two", "push": 0.12}],
+     "do": [
+       {"face": "happy"},
+       {"screencard": {"x": 540, "y": 360, "w": 760}, "span": 0, "dt_end": 0.5}
+     ],
+     "vrm": [
+       {"nod": 2, "dt": 0.05, "amp": 11}, {"look": "webcam", "until": "end", "dt_end": 0.4},
+       {"av_cam": "mid", "at": "end", "dt": 0.5}
+     ]},
+    {"text": "Кот прыгает на стол — у модели ничего, а у тебя паника.",
+     "pause_after": 0.6,
+     "show": ["рыжий кот запрыгивает на стол перед Верой", "пробная модель на экране спокойна", "Вера в панике, ладонь ко рту"],
+     "shots": [{"cam": "two", "push": 0.12, "roll": 3}, {"cam": "monitor_close", "at": "модели", "push": 0.1}, {"cam": "face_close", "at": "паника", "dt": -0.15, "push": 0.18, "roll": -5}],
+     "do": [
+       {"face": "neutral"},
+       {"at": "прыгает", "face": "wide", "dt": 0.35},
+       {"at": "паника", "face": "wide"}
+     ],
+     "vrm": [
+       {"cat": {"x": 770, "y": 1745, "scale": 1.35, "color": "#f0a050"}, "at": "Кот", "dt": 0.05, "until": "end", "dt_end": 0.6},
+       {"av": "idle", "who": "trial", "at": "Кот"},
+       {"look": "down", "at": "прыгает", "dt": 0.3, "until": "end", "dt_end": 0.5},
+       {"arms": "mouth", "at": "паника", "dt": -0.45, "until": "end", "dt_end": 0.6}
+     ]},
+    {"text": "Ты пишешь в канал: «тестовый эфир, ничего интересного».",
+     "pause_after": 0.5,
+     "show": ["телефон: пост в канале «тестовый эфир, ничего интересного»"],
+     "shots": [{"cam": "insert"}],
+     "do": [
+       {"phone": {"screen": "messenger", "message": {"from": "Вера рисует", "status": "канал", "post": "тестовый эфир, ничего интересного", "typeSec": 1.8}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35}, "at": "канал", "dt": -0.3, "span": 0, "dt_end": 0.4},
+       {"act": "Typing_Loop"},
+       {"face": "neutral"},
+       {"sfx": "keyboard", "at": "тестовый"}
+     ],
+     "vrm": [{"av": "copy", "who": "trial"}]},
+    {"text": "Приходят восемь человек.",
+     "pause_after": 0.3,
+     "show": ["эфир на мониторе: пробная модель, 8 зрителей", "счётчик ЗРИТЕЛЕЙ 8"],
+     "shots": [{"cam": "ots", "push": 0.18, "roll": 3}],
+     "do": [
+       {"screen": "stream"},
+       {"avatar": "live"},
+       {"title": "тестовый эфир, ничего интересного"},
+       {"act": "Talk_Loop"},
+       {"face": "talk"},
+       {"at": "восемь", "viewers": 8, "label": "8 зрителей"},
+       {"at": "восемь", "viewers_hud": 8}
+     ]},
+    {"text": "pelmen_404 тоже.",
+     "say": "Пельмень четыреста четыре тоже.",
+     "pause_after": 0.3,
+     "show": ["в чате pelmen_404"],
+     "shots": [{"cam": "chat", "push": 0.12, "roll": 3}],
+     "do": [
+       {"chat": {"user": "pelmen_404", "text": "ПРИВЕТ ВЕРА", "big": true}, "dt": 0.1}
+     ]},
+    {"text": "Через час их пятьдесят.",
+     "pause_after": 0.4,
+     "show": ["комната целиком, эфир", "ЗРИТЕЛЕЙ 8 → 50"],
+     "shots": [{"cam": "wide", "push": 0.14}],
+     "do": [
+       {"act": "Talk_Loop"},
+       {"face": "talk"},
+       {"at": "пятьдесят", "viewers": 50, "label": "50 зрителей"},
+       {"at": "пятьдесят", "viewers_hud": 50}
+     ]},
+    {"text": "Пробная модель танцует, роняет кружку, кланяется.",
+     "pause_after": 0.8,
+     "show": ["пробная модель танцует", "роняет кружку", "кланяется — и Вера кланяется вместе с ней"],
+     "shots": [{"cam": "monitor", "push": 0.12}, {"cam": "monitor_close", "at": "роняет", "dt": -0.2, "push": 0.08}, {"cam": "two", "at": "кланяется", "push": 0.1}],
+     "do": [
+       {"act": "Sit_Loop"},
+       {"face": "happy"},
+       {"at": "кружку", "sfx": "coin2", "dt": 0.75},
+       {"at": "кланяется", "face": "laugh"},
+       {"at": "кланяется", "screencard": {"x": 540, "y": 360, "w": 760}, "span": 0, "dt_end": 0.8}
+     ],
+     "vrm": [
+       {"av": "dance", "who": "trial", "dt": -0.2}, {"av_cam": "mid", "dt": -0.4},
+       {"av": "mug", "who": "trial", "at": "роняет", "dt": -0.7, "drop": "кружку", "drop_dt": -0.1},
+       {"av_cam": "full", "at": "роняет", "dt": -0.9},
+       {"av": "bow", "who": "trial", "at": "кланяется", "dt": 0.05},
+       {"bow": 1.7, "at": "кланяется", "dt": 0.1, "deg": 14}
+     ]},
+    {"text": "Чат голосует: «оставь её».",
+     "pause_after": 0.9,
+     "show": ["в чате много «оставь её»", "Вера улыбается"],
+     "shots": [{"cam": "chat", "push": 0.14}, {"cam": "smile", "at": "end", "dt": 0.1, "push": 0.12}],
+     "do": [
+       {"at": "голосует", "chat": {"user": "kotletka_99", "text": "оставь её"}},
+       {"at": "голосует", "dt": 0.35, "chat": {"user": "lunnaya.ryba", "color": "#9dff7e", "text": "оставь её!!"}},
+       {"at": "оставь", "chat": {"user": "pelmen_404", "text": "ОСТАВЬ ЕЁ", "big": true}},
+       {"at": "её", "chat": {"user": "mur_myau", "color": "#c9a0ff", "text": "оставь её"}},
+       {"face": "happy"},
+       {"at": "end", "face": "laugh"}
+     ],
+     "vrm": [{"av": "copy", "who": "trial"}, {"av_cam": "mid"}]},
+    {"text": "Через месяц твой персонаж готов.",
+     "pause_after": 0.3,
+     "show": ["на мониторе — её персонаж в 3D, готов"],
+     "shots": [{"cam": "monitor", "push": 0.15}, {"cam": "face", "at": "готов", "push": 0.15}],
+     "do": [
+       {"title": "скоро дебют"},
+       {"face": "happy"}
+     ],
+     "vrm": [{"av_show": ["vera_oc"], "dt": -0.2}, {"av": "showcase", "who": "vera_oc"}, {"av_cam": "mid"}]},
+    {"text": "Красивый.",
+     "pause_after": 0.3,
+     "show": ["её персонаж крупно"],
+     "shots": [{"cam": "monitor_close", "push": 0.12}],
+     "do": [],
+     "vrm": [{"av_cam": "close"}]},
+    {"text": "Твой.",
+     "pause_after": 0.6,
+     "show": ["Вера улыбается"],
+     "shots": [{"cam": "smile", "push": 0.12}],
+     "do": [{"face": "happy"}]},
+    {"text": "Он выходит на дебют, а чат спрашивает: «а где пробная?»",
+     "pause_after": 0.7,
+     "show": ["дебют: её персонаж на мониторе повторяет за ней", "в чате «а где пробная?»", "Вера читает"],
+     "shots": [{"cam": "ots", "push": 0.16, "roll": -3}, {"cam": "chat", "at": "спрашивает", "push": 0.12}, {"cam": "face_left", "at": "пробная", "dt": 0.3, "push": 0.15}],
+     "do": [
+       {"title": "ДЕБЮТ"},
+       {"act": "Talk_Loop"},
+       {"face": "talk"},
+       {"at": "спрашивает", "chat": {"user": "lunnaya.ryba", "text": "а где пробная?", "big": true}},
+       {"at": "пробная", "chat": {"user": "pelmen_404", "text": "А ГДЕ ПРОБНАЯ"}},
+       {"at": "пробная", "dt": 0.3, "face": "wide"}
+     ],
+     "vrm": [{"av": "copy", "who": "vera_oc"}, {"av_cam": "mid"}]},
+    {"text": "Теперь у тебя две модели.",
+     "pause_after": 0.4,
+     "show": ["на экране обе модели рядом", "Вера машет — обе машут"],
+     "shots": [{"cam": "two", "push": 0.1}],
+     "do": [
+       {"title": "дуэт"},
+       {"face": "happy"},
+       {"screencard": {"x": 540, "y": 360, "w": 760}, "span": 0, "dt_end": 0.4}
+     ],
+     "vrm": [
+       {"av_show": ["trial", "vera_oc"], "dt": -0.2}, {"av": "copy", "who": "trial", "dt": -0.2}, {"av": "copy", "who": "vera_oc", "dt": -0.2},
+       {"av_cam": "two", "dt": -0.2},
+       {"arms": "wave", "at": "две", "dt": -0.2, "until": "end", "dt_end": 0.4}, {"look": "webcam", "until": "end", "dt_end": 0.4}
+     ]},
+    {"text": "Чат зовёт их «жена» и «бывшая».",
+     "show": ["на мониторе обе модели, над ними «жена» и «бывшая»", "в чате «жена» и «бывшая»", "Вера смеётся"],
+     "shots": [{"cam": "ots", "push": 0.14, "roll": 2}, {"cam": "smile", "at": "end", "dt": 0.15, "push": 0.1}],
+     "do": [
+       {"at": "«жена»", "chat": {"user": "kotletka_99", "text": "жена", "big": true}},
+       {"at": "«бывшая»", "chat": {"user": "pelmen_404", "text": "БЫВШАЯ", "big": true}},
+       {"act": "Laugh_Loop", "at": "end"},
+       {"face": "laugh", "at": "end"}
+     ],
+     "vrm": [
+       {"label": {"who": "vera_oc", "text": "жена", "color": "#ff8ad8"}, "at": "«жена»"},
+       {"label": {"who": "trial", "text": "бывшая", "color": "#9af0ff"}, "at": "«бывшая»"}
+     ]}
+  ]
+}

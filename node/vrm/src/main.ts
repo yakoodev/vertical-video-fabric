@@ -25,6 +25,9 @@ import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
+import { AvatarStage, type AvatarSpec } from "./avatar.ts";
+import { drawCats, type CatSpec } from "./cat.ts";
+import type { AccessorySpec } from "./props.ts";
 
 export interface CamSpec {
   /** Камера и точка, куда смотрит (пространство модели), угол обзора по вертикали (длинный объектив — 12–20°). */
@@ -67,8 +70,14 @@ export interface Spec {
   timeline?: Timeline;
   /** Слои поверх кадра (scene3d/overlay.ts): HUD копилки и зрителей, телефон-вставка, плашка, карточка чата. */
   overlays?: OverlaySpec[];
-  /** Наушники на голове героини. */
-  headphones?: boolean;
+  /** Наушники на голове героини (true — как у образца, объект — цвет, размер, подгонка). */
+  headphones?: boolean | AccessorySpec;
+  /** Ещё вещи на голове героини. */
+  accessories?: AccessorySpec[];
+  /** 3D-аватар на мониторе эфира (вторая модель, avatar.ts). */
+  avatar?: AvatarSpec;
+  /** 2D-кот на переднем плане (cat.ts). */
+  cats?: CatSpec[];
   /** Каждый кадр: пальцы над поверхностями timeline.surfaces, иначе рендер падает. */
   strictContact?: boolean;
 }
@@ -87,6 +96,7 @@ let backdrop: Backdrop;
 let props: Props;
 let lumaC: HTMLCanvasElement;
 let overlays: Overlays | null = null;
+let stage: AvatarStage | null = null;
 const warnings: string[] = [];
 
 function shotAt(t: number): { shot: Shot; local: number } {
@@ -180,6 +190,7 @@ function render(t: number) {
   camera.up.set(Math.sin((c.roll * Math.PI) / 180), Math.cos((c.roll * Math.PI) / 180), 0);
   camera.lookAt(c.target);
   camera.updateProjectionMatrix();
+  stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   if (!shot.plate?.insert) gl.render(scene, camera);
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalAlpha = 1;
@@ -198,6 +209,7 @@ function render(t: number) {
   }
   if (!pl.insert) backdrop.drawChar(g, pl, gl.domElement, off);
   backdrop.drawFront(g, shot.plate || {}, t);
+  if (pl.cats) drawCats(g, W, spec.cats, t);
   backdrop.post(g, shot.plate || {}, Math.round(t * (spec.fps || 30)));
   overlays?.draw(t);
   const lc = lumaC.getContext("2d")!;
@@ -250,7 +262,12 @@ async function load(s: Spec) {
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
-  if (s.headphones) props.headphones(rig);
+  if (s.headphones) props.headphones(rig, typeof s.headphones === "object" ? s.headphones : undefined);
+  for (const a of s.accessories || []) props.headphones(rig, a);
+  if (s.avatar) {
+    stage = new AvatarStage(s.avatar);
+    await stage.load("http://scene3d.local/packs");
+  }
   if (s.overlays?.length) overlays = new Overlays(s.overlays, W, H);
   lumaC = document.createElement("canvas");
   lumaC.width = 16;

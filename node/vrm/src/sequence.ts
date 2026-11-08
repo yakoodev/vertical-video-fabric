@@ -8,7 +8,7 @@ import type { ArmSpec, FingerSpec, PoseSpec, Surface, V3 } from "./rig.ts";
 import { mocapAt, type Clip, type Track } from "./mocap.ts";
 import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
 import { speechMouth } from "./anim.ts";
-import { chinArm, mouseArm, typingArm, waveArm } from "./typing.ts";
+import { chinArm, mouseArm, mouthArm, typingArm, waveArm } from "./typing.ts";
 import type { ChairSpec } from "./body.ts";
 
 export interface Timeline {
@@ -29,6 +29,34 @@ export interface Timeline {
   clamp?: boolean;
   /** Наклон корпуса сидя (градусы, вперёд +). */
   lean?: number;
+  /** Кивки: с t, n кивков по 0.45 с, амплитуда (градусы). */
+  nods?: { t: number; n?: number; amp?: number }[];
+  /** Поклоны сидя: с t за dur (вниз — пауза — вверх), глубина (градусы). */
+  bows?: { t: number; dur?: number; deg?: number }[];
+}
+
+/** Добавка кивков и поклонов к костям на t (градусы). */
+export function nodBow(tl: Timeline, t: number): { head: number; neck: number; spine: number; chest: number } {
+  let head = 0, neck = 0, spine = 0, chest = 0;
+  for (const k of tl.nods || []) {
+    const u = t - k.t, n = k.n ?? 2, T = 0.45;
+    if (u < 0 || u > n * T) continue;
+    const env = Math.sin((Math.PI * u) / (n * T)) ** 0.5;
+    const v = Math.max(0, Math.sin((2 * Math.PI * u) / T - Math.PI / 2) * 0.5 + 0.5) * (k.amp ?? 10) * env;
+    head += v * 0.65;
+    neck += v * 0.35;
+  }
+  for (const k of tl.bows || []) {
+    const u = t - k.t, d = k.dur ?? 1.6;
+    if (u < 0 || u > d) continue;
+    const a = Math.min(1, u / (d * 0.35)), b = Math.min(1, (d - u) / (d * 0.4));
+    const w = smooth(Math.min(a, b)) * (k.deg ?? 16);
+    spine += w * 0.45;
+    chest += w * 0.35;
+    neck += w * 0.3;
+    head += w * 0.3;
+  }
+  return { head, neck, spine, chest };
 }
 
 /** Пальцы: расслабленный каскад (мизинец согнут сильнее), открытая ладонь, кулак, у рта, на клавишах. */
@@ -75,6 +103,7 @@ function armPreset(name: string | null | undefined, side: 1 | -1, t: number): Ar
   if (name === "chin") return side < 0 ? chinArm(t) : typingArm(side, t, 0, true);
   if (name === "wave") return side < 0 ? waveArm(t) : restHand(side);
   if (name === "mouse") return side < 0 ? mouseArm(t) : typingArm(side, t);
+  if (name === "mouth") return side < 0 ? mouthArm(t) : typingArm(side, t, 0, true);
   return null;
 }
 
@@ -124,6 +153,13 @@ export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: numbe
   add("neck", [h.pitch * 0.35 * hk, h.yaw * 0.35 * hk, 0]);
   add("head", [h.pitch * 0.45 * hk, h.yaw * 0.45 * hk, 0]);
   add("chest", [0, b.yaw * 0.15, 0]);
+  const nb = nodBow(tl, t);
+  if (nb.head || nb.spine) {
+    add("head", [nb.head, 0, 0]);
+    add("neck", [nb.neck, 0, 0]);
+    add("spine", [nb.spine, 0, 0]);
+    add("chest", [nb.chest, 0, 0]);
+  }
   const mocap = mocapAt(clips, tl.tracks, t);
   // Руки: IK-пресеты с плавным весом против мокапа.
   const ak = keyAt(tl.arms, t, 0.5);
