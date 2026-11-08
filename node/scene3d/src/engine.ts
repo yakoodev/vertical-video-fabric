@@ -16,6 +16,9 @@ import { blobTexture } from "./textures.ts";
 import { facingYaw, rng, sampleAngle, sampleKeys, sampleNumber, samplePath, sampleVec, shake, windowWeight, type Key } from "./timeline.ts";
 import { beamMesh, haloSprite, PostFX, type PostSpec } from "./post.ts";
 import { applySurface, type SurfaceSpec } from "./surfaces.ts";
+import { createVoxelCharacter, type VoxelCharacterSpec } from "./voxel.ts";
+import { loadUiFonts, uiScreen } from "./ui.ts";
+import { Overlays, type OverlaySpec } from "./overlay.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
 const D2R = Math.PI / 180;
@@ -114,7 +117,10 @@ export interface SceneSpec {
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
-  characters?: CharacterSpec[];
+  /** Персонажи: модель со скелетом из паков или герой из примитивов (style "voxel", voxel.ts). */
+  characters?: (CharacterSpec | VoxelCharacterSpec)[];
+  /** Слои поверх кадра (overlay.ts): бюджет-HUD, ярлык, всплывающая карточка, телефон-карточка. */
+  overlays?: OverlaySpec[];
   camera?: { fov?: number; near?: number; far?: number; keys: CameraKey[]; margin?: number; clamp?: boolean;
     /** Заливка от камеры: слабый точечный свет, едет с камерой (без теней). */
     fill?: { color?: string; intensity?: number; distance?: number; keys?: Key[] };
@@ -145,6 +151,7 @@ class Engine {
   fx: { light: THREE.Light; spec: LightSpec; beam?: THREE.Mesh; halo?: THREE.Sprite }[] = [];
   focus = 2;
   dof = 0;
+  overlays: Overlays | null = null;
 
   load(ref: string): Promise<Loaded> {
     if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
@@ -162,6 +169,8 @@ class Engine {
 
   async init(spec: SceneSpec) {
     this.spec = spec;
+    // Шрифты интерфейса — до экранов и слоёв поверх кадра (их канвасы рисуются этими шрифтами).
+    await loadUiFonts();
     // Всё «случайное» внутри three (шум AO, uuid) — от засеянного ГПСЧ: одинаково в любом браузере и куске.
     Math.random = rng(20261102);
     const W = spec.width || 1080, H = spec.height || 1920;
@@ -206,7 +215,8 @@ class Engine {
         distance: fill.distance ?? 4, decay: 2, keys: fill.keys }, this.scene) as THREE.PointLight;
     }
     for (const c of spec.characters || []) {
-      const ch = await createCharacter(c, (r) => this.load(r), (r) => this.loadTexture(r));
+      const ch = c.style === "voxel" ? createVoxelCharacter(c as VoxelCharacterSpec)
+        : await createCharacter(c as CharacterSpec, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
       this.scene.add(ch.root);
     }
@@ -227,7 +237,7 @@ class Engine {
     if (spec.environment?.style === "lowpoly") {
       // Лоу-поли: у мебели и декораций плоские грани и матовый цвет; игрушки (toy:*) — гладкие, светящееся — как есть.
       this.scene.traverse((o: any) => {
-        if (!o.isMesh || String(o.name).startsWith("toy:")) return;
+        if (!o.isMesh || String(o.name).startsWith("toy:") || String(o.name).startsWith("voxel:")) return;
         for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
           if (!m || !("roughness" in m) || String(m.name).startsWith("surface:")) continue;
           m.flatShading = true;
@@ -259,6 +269,7 @@ class Engine {
       this.cube = { cam, rt, pmrem: new THREE.PMREMGenerator(this.renderer), env: null, sig: "" };
       this.scene.environmentIntensity = env.reflections.intensity ?? 1;
     }
+    if (spec.overlays?.length) this.overlays = new Overlays(spec.overlays, W, H);
     if (env.post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, env.post, spec.quality?.antialias === false ? 0 : 4);
     this.renderer.compile(this.scene, this.camera);
     return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
@@ -376,7 +387,7 @@ class Engine {
       const kind = o.primitive || "box";
       prop = kind === "mug" ? mug(p) : kind === "robot_disc" ? robotDisc(p) : kind === "string_lights" ? stringLights(p.points || [[0, 0, 0], [1, 0, 0]], p)
         : kind === "poster" ? poster(p) : kind === "blob_shadow" ? blobShadow(p) : kind === "display" ? display(p)
-        : kind === "button_panel" ? buttonPanel(p) : primitive(kind, p);
+        : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p) : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
       if (p.surface) {
@@ -683,6 +694,7 @@ class Engine {
     }
     if (this.post) this.post.render(this.camera, t, this.dof, this.focus);
     else this.renderer.render(this.scene, this.camera);
+    if (this.overlays) this.overlays.draw(t);
     // Средняя яркость кадра по уменьшенной копии — проверка «чёрных» кадров.
     const g = this.probe;
     g.drawImage(this.renderer.domElement, 0, 0, 27, 48);
