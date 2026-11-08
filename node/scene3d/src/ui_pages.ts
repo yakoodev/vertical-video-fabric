@@ -375,13 +375,15 @@ export function drawForeignShop(g: CanvasRenderingContext2D, W: number, H: numbe
   g.textAlign = "left";
 }
 
-/** Карточка «Оплата отклонена» поверх страницы (поп с перелётом). */
-export function drawDeclined(g: CanvasRenderingContext2D, W: number, H: number, k: number) {
+/** Карточка «Оплата отклонена» поверх страницы (поп с перелётом); dx, dy — сдвиг от центра, dim — затемнить страницу. */
+export function drawDeclined(g: CanvasRenderingContext2D, W: number, H: number, k: number, dx = 0, dy = 0, dim = true) {
   const u = W / 1000;
   g.save();
-  g.fillStyle = `rgba(10,10,20,${0.45 * Math.min(1, k)})`;
-  g.fillRect(0, 0, W, H);
-  g.translate(W / 2, H / 2);
+  if (dim) {
+    g.fillStyle = `rgba(10,10,20,${0.45 * Math.min(1, k)})`;
+    g.fillRect(0, 0, W, H);
+  }
+  g.translate(W / 2 + dx, H / 2 + dy);
   g.scale(0.5 + 0.5 * k, 0.5 + 0.5 * k);
   g.fillStyle = "#ffffff";
   rr(g, -205 * u, -150 * u, 410 * u, 290 * u, 26 * u);
@@ -451,7 +453,7 @@ export function drawRig(g: CanvasRenderingContext2D, W: number, H: number, t: nu
 
 /** Карточка товара vtubika.store: превью, название, цена в ₽, «Оплатить картой РФ» → «Оплачено». */
 export function drawStoreCard(g: CanvasRenderingContext2D, W: number, H: number, t: number,
-  p: { title?: string; price?: string; paidAt?: number }) {
+  p: { title?: string; price?: string; paidAt?: number }, preview?: (g: CanvasRenderingContext2D, cx: number, cy: number, s: number) => void) {
   const u = W / 500;
   g.fillStyle = "#ffffff";
   g.fillRect(0, 0, W, H);
@@ -466,11 +468,15 @@ export function drawStoreCard(g: CanvasRenderingContext2D, W: number, H: number,
   g.fillStyle = "#e8e3f7";
   rr(g, 30 * u, 140 * u, W - 60 * u, 400 * u, 22 * u);
   g.fill();
-  drawWolf(g, W / 2, 315 * u, 150 * u, wolfPose(t, {}));
+  if (preview) preview(g, W / 2, 315 * u, 150 * u);
+  else drawWolf(g, W / 2, 315 * u, 150 * u, wolfPose(t, {}));
   g.textAlign = "left";
   g.fillStyle = "#15121f";
-  g.font = font(800, 30 * u);
-  g.fillText(p.title || "Live2D-модель «Волчонок»", 34 * u, 585 * u);
+  const title = p.title || "Live2D-модель «Волчонок»";
+  let tsz = 30;
+  g.font = font(800, tsz * u);
+  while (tsz > 20 && g.measureText(title).width > W - 68 * u) g.font = font(800, --tsz * u);
+  g.fillText(title, 34 * u, 585 * u);
   g.fillStyle = "#6b6580";
   g.font = font(500, 22 * u);
   g.fillText("файл придёт после оплаты", 34 * u, 625 * u);

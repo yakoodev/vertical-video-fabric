@@ -143,6 +143,8 @@ def test_camera_presets_stay_inside_room():
     room = U.story_room("cozy")
     W, D, H = room["room"]["width"], room["room"]["depth"], room["room"]["height"]
     for name in U.CAMERAS:
+        if name in U.WH_CAMERAS:
+            continue  # склад — своя локация вне комнаты (test_warehouse_*)
         for act in (None, "Draw_Loop", "Frown_Loop"):
             k0, k1 = U.camera_preset(name, room, act=act, roll=-5)
             for pos in (k0["position"], k1["position"]):
@@ -164,3 +166,72 @@ def test_caption_highlight_and_checklist():
     md = P.checklist_md(plan, built, {1: "01.jpg"})
     assert "## 13. В чате pelmen_404 кидает ссылку: vtubika.store." in md
     assert "- [ ] в чате pelmen_404 пишет vtubika.store" in md and "кадр: 01.jpg" in md
+
+
+TEMA = ROOT / "tools" / "vtubika_plans" / "tema.json"
+SCRIPT_2 = ("Ты Тёма. Ночью таскаешь коробки на складе, в выходные стримишь. Без камеры. Чат пишет одно и то же: "
+            "«покажи лицо». Лицо после ночной смены лучше не показывать. Однажды ты видишь витубера: обычный парень, а на "
+            "экране нарисованный, живой, моргает. Ты ищешь модели. Всё на японском, всё в долларах, карта не проходит. "
+            "Коллега на перекуре: «Витубика. В рублях. Я так сестре брал». Ты выбираешь парня в худи. Похож на тебя, "
+            "только выспавшийся. Тысяча восемьсот девяносто. Модель приходит, пока ты доедаешь лапшу. Эфир. Ты киваешь — "
+            "он кивает. Ты зеваешь — он зевает. Чат: «ОН ЗЕВАЕТ», «это я каждое утро». Впервые тебя не просят показать "
+            "лицо. Просят ещё раз зевнуть. В конце эфира донат сто рублей: «Красиво. Смена в восемь, не проспи». "
+            "Ник — sklad_boss.")
+
+
+def test_tema_plan_text_is_the_script_and_clean():
+    plan = P.load_plan(TEMA)
+    assert P.caption_text(plan) == SCRIPT_2
+    assert "склад босс" in P.narration_text(plan) and "sklad_boss" not in P.narration_text(plan)
+    blob = TEMA.read_text("utf-8")
+    assert "pelmen_404" in blob
+    for bad in ("dimon228", "max_play", "sonya.k", "на кофе", "чтобы не уснул"):
+        assert bad not in blob
+
+
+def test_tema_build_warehouse_cast_and_phases():
+    plan = P.load_plan(TEMA)
+    built = P.build(plan, timed(plan, 55.0), 60.0)
+    spec = built["spec"]
+    validate_spec(spec, check_assets=False)
+    assert {c["id"] for c in spec["characters"]} == {"hero", "tema_wh", "kolya"}
+    hero = next(c for c in spec["characters"] if c["id"] == "hero")
+    assert hero["voxel"]["eyebags"] and hero["voxel"]["top"] == U.HEROES["tema"]["look"]["top"]
+    kolya = next(c for c in spec["characters"] if c["id"] == "kolya")
+    assert kolya["voxel"]["vest"] and kolya["path"][-1]["p"][2] > 4  # на перекуре — снаружи у двери
+    objs = {o["id"]: o for o in spec["objects"]}
+    assert "jar" not in objs and "tablet" not in objs  # вещи Алины убраны
+    assert {"noodle_cup", "webcam_sticker", "wh_pallet", "wh_exit"} <= set(objs)
+    assert objs["wh_carry_box"]["attach"][0]["to"] == "tema_wh:hand_r"
+    assert objs["fork"]["attach"][0]["to"] == "hero:hand_r"
+    # Фазы: склад (первый кадр) → комната → склад (перекур) → комната; рассеянный свет склада — только на складе.
+    phases = spec["environment"]["phases"]
+    assert phases[0]["t"] == 0 and len(phases) == 4
+    assert phases[0]["fog"]["color"] != phases[1]["fog"]["color"]
+    wh_amb = next(x for x in spec["lights"] if x["id"] == "wh_ambient")
+    room_amb = next(x for x in spec["lights"] if x["id"] == "ambient")
+    assert wh_amb["keys"][0]["intensity"] > 0 and room_amb["keys"][0]["intensity"] == 0
+    # Карточки: телефон-вставки (одна склейкой без въезда), карточка эфира, алерт доната, бюджет и зрители.
+    kinds = [o["kind"] for o in spec["overlays"]]
+    assert kinds.count("phone") == 4 and "screen" in kinds and "alert" in kinds
+    phones = [o for o in spec["overlays"] if o["kind"] == "phone"]
+    assert phones[0]["t1"] == phones[1]["t0"] and phones[1]["cut"] is True
+    assert phones[0]["store"]["preview"] == "hoodie" and phones[2]["store"].get("paidAt")
+    hud = next(o for o in spec["overlays"] if o["kind"] == "hud" and o["label"] == "БЮДЖЕТ")
+    assert [v["value"] for v in hud["values"]] == [4200, 2310] and hud["deltas"][0]["text"].replace("\u00a0", " ") == "−1 890 ₽"
+    viewers = next(o for o in spec["overlays"] if o["kind"] == "hud" and o["label"] == "ЗРИТЕЛЕЙ")
+    assert [v["value"] for v in viewers["values"]] == [3, 41]
+    screen = objs["monitor_screen"]["params"]
+    assert len(screen["declines"]) == 3 and [p["page"] for p in screen["shops"]][-1] == 2
+    assert screen["guy"]["nods"] and screen["guy"]["yawns"] and screen["vtuber"]["blinks"]
+    assert any(m["user"] == "pelmen_404" for m in screen["chat"])
+    alert = screen["alerts"][0]
+    assert alert["from"] == "sklad_boss" and alert["amount"] == "100 ₽"
+    # Звуки — только из паков: три отказа оплаты.
+    assert [s["name"] for s in built["sfx"]].count("error") == 3
+
+
+def test_warehouse_cameras_need_the_set():
+    room = U.story_room("cozy")
+    with pytest.raises(ValueError):
+        U.camera_preset("wh_door", room)

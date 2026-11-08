@@ -396,9 +396,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     t3d = time.time()
     raw_video = work / "scene.mp4"
-    info = S3.render_scene(built["spec"], raw_video, workers=1, gl=args.gl, check_assets=False)
-    report["render3d_sec"] = round(time.time() - t3d, 1)
-    report["luma_min"] = info.get("luma_min")
+    # Кэш 3D: та же сцена (хеш spec) и тот же движок (хеш сборки) — готовый scene.mp4 (перезапуск после сбоя
+    # субтитров/сведения не рендерит заново).
+    bundle = ROOT / "node" / "scene3d" / "dist" / "scene3d.js"
+    spec_key = hashlib.sha1(json.dumps(built["spec"], ensure_ascii=False, sort_keys=True).encode()
+                            + (bundle.read_bytes() if bundle.is_file() else b"")).hexdigest()
+    key_file = work / "scene.key"
+    if raw_video.is_file() and key_file.is_file() and key_file.read_text("utf-8").strip() == spec_key:
+        report["render3d_sec"] = 0.0
+        report["render3d_cached"] = True
+    else:
+        key_file.unlink(missing_ok=True)
+        info = S3.render_scene(built["spec"], raw_video, workers=1, gl=args.gl, check_assets=False)
+        key_file.write_text(spec_key, "utf-8")
+        report["render3d_sec"] = round(time.time() - t3d, 1)
+        report["luma_min"] = info.get("luma_min")
     t_cap = time.time()
     capped = work / "caps.mp4"
     burn_captions(plan, words, raw_video, capped, work, total)

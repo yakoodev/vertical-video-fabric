@@ -20,7 +20,16 @@
   ``wag`` (сила хвоста), ``wolf_laugh`` (+``dur``), ``squint`` (bool);
 * карточки: ``hud`` (копилка, ₽), ``viewers_hud``, ``phone`` (экран телефона-карточки, +``until``/``dur``),
   ``paid`` (кнопка «Оплачено» на карточке товара), ``tag``;
-* вещи и звук: ``coin`` (монета падает в банку), ``sfx`` (имя из ``app.vtubika.SFX``).
+* вещи и звук: ``coin`` (монета падает в банку), ``fork`` (вилка в руке, +``until``/``dur``), ``sfx`` (имя из
+  ``app.vtubika.SFX``);
+* «Без лица»: ``title`` (подпись эфира), ``avatar`` hoodie/vtuber/nocam, ``guy_nod``, ``guy_yawn`` (сек),
+  ``guy_talk`` (сек), ``vt_blink``, ``shop_page`` (0/1/2 — зарубежные магазины), ``decline`` (ещё одна «Оплата
+  отклонена» каскадом), ``screencard`` ({x, y, w} + ``until``/``dur``: карточка эфира поверх кадра), ``alertcard``
+  ({title, amount, from, note, y, scale} + ``dur``: алерт доната крупно);
+* каст и локации (``app/vtubika_cast.py``, ``app/vtubika_sets.py``): ``"sets": ["warehouse"]``, ``"cast": {id:
+  {hero, at}}``, события с ``"who": id`` — ``act``, ``face``, ``place``, ``walk`` (+``dur``), ``carry``. План может
+  перекрасить комнату (``"room"``: палитра) и выбрать вещи (``"props"``: story1, noodles, webcam), подпись HUD
+  (``"hud_label"``).
 
 Звуки к событиям добавляются сами (монета, чат, донат, ошибка, оплата, сообщение, перо).
 """
@@ -36,10 +45,13 @@ from typing import Any
 
 from app import voxel3d as V
 from app import vtubika as U
+from app import vtubika_cast as C
+from app import vtubika_sets as S
 
 FPS = 30
 SHOT_MIN = 0.7
-AUTO_SFX = {"coin": "coin", "alert": "donate", "declined": "error", "paid": "success", "chat": "pop", "draw": "pen"}
+AUTO_SFX = {"coin": "coin", "alert": "donate", "declined": "error", "decline": "error", "paid": "success",
+            "chat": "pop", "draw": "pen"}
 CHAT_COLORS = ["#7ee0ff", "#ffd35c", "#ff8ad8", "#9dff7e", "#c9a0ff", "#ffb07e"]
 
 
@@ -150,7 +162,12 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
     hero_cfg = U.HEROES[plan.get("hero") or "alina"]
     screen: dict[str, Any] = {"modes": [], "avatars": [], "mouth": [], "chat": [], "alerts": [], "viewers": [],
                               "wolf": {"blinks": [], "wag": [], "laugh": [], "squint": []},
+                              "guy": {"blinks": [], "nods": [], "yawns": [], "talk": []}, "vtuber": {"blinks": []},
+                              "titles": [], "shops": [], "declines": [],
                               **copy.deepcopy(plan.get("screen") or {})}  # копия: события дописываются в списки
+    props = {"story1": True, "noodles": False, "webcam": False, **(plan.get("props") or {})}
+    wh = S.warehouse() if "warehouse" in (plan.get("sets") or []) else None
+    cast = C.Cast(plan, wh["spots"] if wh else {})
     acts: list[dict] = []
     faces: list[dict] = []
     poses: list[dict] = []
@@ -159,10 +176,13 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
     phones: list[dict] = []
     drops: list[float] = []
     draw_win: list[float] | None = None
+    fork_win: list[list[float]] = []
     sfx: list[dict] = []
     tags: list[dict] = []
     shots: list[dict] = []
     chatcards: list[dict] = []
+    screencards: list[dict] = []
+    alertcards: list[dict] = []
     nick_color: dict[str, str] = {m["user"]: m.get("color") or CHAT_COLORS[0] for m in screen["chat"]}
 
     def add_sfx(name: str, t: float) -> None:
@@ -178,16 +198,27 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
             t = round(anchor(st, ev.get("at"), n) + float(ev.get("dt") or 0), 3)
             until = (anchor(st, ev["until"], n) if ev.get("until") else
                      t + float(ev["dur"]) if ev.get("dur") else None)
-            if "act" in ev:
-                acts.append({"clip": ev["act"], "t": t, "fade": float(ev.get("fade") or 0.35)})
-            if "face" in ev:
-                faces.append({"t": t, "face": ev["face"]})
+            if "span" in ev:  # до конца фразы через span фраз (+ пауза-«бит» после неё)
+                k = min(len(times) - 1, n + int(ev["span"]))
+                until = times[k][-1]["end"] + float(ev.get("dt_end") or 0)
+            who = ev.get("who") or "hero"
+            if who != "hero":
+                if not cast.has(who):
+                    raise PlanError(f"фраза {n + 1}: нет персонажа «{who}» в касте")
+                cast.event(who, ev, t, until)
+            else:
+                if "act" in ev:
+                    acts.append({"clip": ev["act"], "t": t, "fade": float(ev.get("fade") or 0.35)})
+                if "face" in ev:
+                    faces.append({"t": t, "face": ev["face"]})
             if "pose" in ev:
                 poses.append({"start": t, "end": round(until or t + 1.5, 3), "fade": 0.3, **ev["pose"]})
             if "screen" in ev:
                 screen["modes"].append({"t": t, "mode": ev["screen"]})
             if "avatar" in ev:
                 screen["avatars"].append({"t": t, "kind": ev["avatar"]})
+            if "title" in ev:
+                screen["titles"].append({"t": t, "title": ev["title"]})
             if "mouth" in ev:
                 screen["mouth"].append({"t": t, "m": ev["mouth"]})
             if "chat" in ev:
@@ -196,17 +227,31 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 screen["chat"].append({"t": t, **msg})
             if "alert" in ev:
                 screen["alerts"].append({"t": t, "dur": 1.6, **ev["alert"]})
+            if "alertcard" in ev:
+                alertcards.append({"kind": "alert", "t": t, "dur": round((until or t + 3.0) - t, 3), **ev["alertcard"]})
             if "viewers" in ev:
                 v = int(ev["viewers"])
                 screen["viewers"].append({"t": t, "value": v, "label": ev.get("label") or f"{v}"})
             if ev.get("declined"):
                 screen["declined"] = t
+            if ev.get("decline"):
+                screen["declines"].append(t)
+            if "shop_page" in ev:
+                screen["shops"].append({"t": t, "page": int(ev["shop_page"])})
             if ev.get("fix"):
                 screen["fixAt"] = t
             if "draw" in ev:
                 draw_win = [t, round(until or t + 2.0, 3)]
             if ev.get("wolf_blink"):
                 screen["wolf"]["blinks"].append(t)
+            if ev.get("vt_blink"):
+                screen["vtuber"]["blinks"].append(t)
+            if ev.get("guy_nod"):
+                screen["guy"]["nods"].append(t)
+            if "guy_yawn" in ev:
+                screen["guy"]["yawns"].append([t, round(t + float(ev["guy_yawn"]), 3)])
+            if "guy_talk" in ev:
+                screen["guy"]["talk"].append([t, round(t + float(ev["guy_talk"]), 3)])
             if "wag" in ev:
                 screen["wolf"]["wag"].append({"t": t, "amp": float(ev["wag"])})
             if "wolf_laugh" in ev:
@@ -226,8 +271,12 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 phones[-1].setdefault("store", {})["paidAt"] = t
             if ev.get("coin"):
                 drops.append(t)
+            if ev.get("fork"):
+                fork_win.append([t, round(until or t + 3.0, 3)])
             if ev.get("chatcard"):
                 chatcards.append({"start": t, "end": round(until or total, 3)})
+            if "screencard" in ev:
+                screencards.append({"start": t, "end": round(until or total, 3), **(ev["screencard"] or {})})
             if "tag" in ev:
                 tags.append({"kind": "tag", "text": ev["tag"], "start": t, "end": round(until or total, 3)})
             for key, name in AUTO_SFX.items():
@@ -253,10 +302,16 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
     for i, sh in enumerate(merged):
         sh["t1"] = merged[i + 1]["t0"] if i + 1 < len(merged) else round(total, 3)
 
-    room = U.story_room(look, screen=screen)
+    room = U.story_room(look, palette=plan.get("room"), screen=screen)
+    if not props["story1"]:
+        S.strip_story1_props(room)
+    room["objects"] += S.room_extras(room, noodles=bool(props["noodles"]), webcam=bool(props["webcam"]))
+    if wh:
+        S.merge(room, wh)
     objs = {o["id"]: o for o in room["objects"]}
-    objs["jar"]["params"]["drops"] = drops
-    if draw_win:
+    if "jar" in objs:
+        objs["jar"]["params"]["drops"] = drops
+    if draw_win and "tablet" in objs:
         objs["tablet"]["params"]["draw"] = draw_win
         screen["drawWin"] = draw_win
         # Стилус: лежит на планшете, на время рисования — в правой руке.
@@ -264,30 +319,16 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                                 "position": [U.TABLET[0] + 0.12, room["desk_top"] + 0.012, U.TABLET[1]],
                                 "attach": [{"to": "hero:hand_r", "start": draw_win[0], "end": draw_win[1] + 0.3,
                                             "fadeIn": 0.25, "fadeOut": 0.25, "offset": [0, -0.06, 0.02]}]})
+    if fork_win and "fork" in objs:
+        objs["fork"]["attach"] = [{"to": "hero:hand_r", "start": a, "end": b, "fadeIn": 0.25, "fadeOut": 0.25,
+                                   "offset": [0.0, -0.07, 0.05]} for a, b in fork_win]
+    if wh:
+        cast.carry_attach(wh["carry"], room["objects"])
     objs["monitor_screen"]["params"].update(screen)
-    # Действия героини: петля — до следующей петли (+ наплыв); одноразовое — поверх, потом снова прошлая петля.
-    actions: list[dict] = []
-    acts.sort(key=lambda a: a["t"])
-    loops = [a for a in acts if a["clip"].endswith("_Loop")]
-    if not loops or loops[0]["t"] > 0:
-        loops.insert(0, {"clip": "Sit_Loop", "t": 0.0, "fade": 0.3})
-    for i, a in enumerate(loops):
-        end = loops[i + 1]["t"] + loops[i + 1]["fade"] if i + 1 < len(loops) else total + 0.5
-        actions.append({"clip": a["clip"], "start": round(a["t"], 3), "end": round(end, 3), "fade": a["fade"],
-                        "offset": round((i * 0.37) % 1.0, 2)})
-    for a in acts:
-        if a["clip"].endswith("_Loop"):
-            continue
-        dur = V.VOXEL_CLIPS[a["clip"]]
-        actions.append({"clip": a["clip"], "start": a["t"], "end": round(a["t"] + dur, 3), "fade": 0.2})
-        prev = next((x for x in reversed(loops) if x["t"] <= a["t"]), loops[0])
-        actions.append({"clip": prev["clip"], "start": round(a["t"] + dur - 0.35, 3),
-                        "end": round(min(total + 0.5, next((x["t"] + x["fade"] for x in loops if x["t"] > a["t"]), total + 0.5)), 3),
-                        "fade": 0.35})
-    actions.sort(key=lambda a: a["start"])
-    look_hero = hero_cfg["look"]
-    hero = V.voxel_hero("hero", shape=hero_cfg["shape"], look=look_hero, position=[U.HERO_X, 0, U.HERO_Z], yaw=180.0,
-                        seat=room["seat"], actions=actions, poses=poses, faces=faces or [{"t": 0, "face": "neutral"}])
+    # Действия героя: петля — до следующей петли (+ наплыв); одноразовое — поверх, потом снова прошлая петля.
+    actions, loops = C.actions_for(acts, total, "Sit_Loop")
+    hero = V.voxel_hero("hero", shape=hero_cfg["shape"], look=hero_cfg["look"], position=[U.HERO_X, 0, U.HERO_Z], yaw=180.0,
+                        seat=room["seat"], actions=actions, poses=poses, faces=C.from_start(faces))
 
     def act_at(t: float) -> str:
         cur = "Sit_Loop"
@@ -307,12 +348,15 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         cam_keys += [a, {"t": sh["t1"], **k1, "ease": "inOutSine"}]
     overlays: list[dict] = [*tags]
     if hud:
-        overlays.append(V.hud_overlay(hud, label="КОПИЛКА", prefix="", suffix=" ₽", group=True, chip_sec=2.6,
-                                      start=hud[0][0]))
+        overlays.append(V.hud_overlay(hud, label=plan.get("hud_label") or "КОПИЛКА", prefix="", suffix=" ₽", group=True,
+                                      chip_sec=2.6, start=hud[0][0]))
     if vhud:
         vh = V.hud_overlay(vhud, label="ЗРИТЕЛЕЙ", prefix="", chip_sec=2.2, top=60, start=vhud[0][0])
         vh["left"] = 40.0  # слева сверху: справа — копилка со своими чипами
         overlays.append(vh)
+    for i, ph in enumerate(phones):
+        if ph.pop("to_next", False) and i + 1 < len(phones):
+            ph["t1"] = phones[i + 1]["t0"]  # склейка: следующий телефон сменяет этот без зазора
     for ph in phones:
         t0, t1 = ph.pop("t0"), ph.pop("t1")
         kind = ph.pop("screen", "notifications")
@@ -321,9 +365,18 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         # Карточка чата: те же сообщения и зрители, что на мониторе чата (рисует только пришедшие к t).
         overlays.append({"kind": "chat", **cc, "x": 290, "y": 470, "w": 480, "h": 560, "chat": screen["chat"],
                          "viewers": screen["viewers"]})
+    for sc in screencards:
+        # Карточка эфира: то же, что на мониторе (аватар повторяет за героем в кадре одновременно).
+        overlays.append({"kind": "screen", **{k: v for k, v in screen.items()}, "noChat": True, **sc})
+    overlays += alertcards
+    environment = room["environment"]
+    phase_list = C.phases(merged, environment, room["lights"], wh)
+    if phase_list:
+        environment = {**environment, "phases": phase_list}
+    characters = [hero, *cast.characters(total)]
     spec = {"version": 1, "width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3),
-            "environment": room["environment"], "room": room["room"], "lights": room["lights"], "objects": room["objects"],
-            "characters": [hero], "overlays": overlays,
+            "environment": environment, "room": room["room"], "lights": room["lights"], "objects": room["objects"],
+            "characters": characters, "overlays": overlays,
             "camera": {"fov": 40, "keys": cam_keys, "clamp": False, "fill": room["fill"]},
             "quality": {"shadows": True, "shadowSize": 1024, "antialias": True}}
     sent_out = [{"n": n + 1, "text": s["text"], "t0": times[n][0]["start"], "t1": times[n][-1]["end"],

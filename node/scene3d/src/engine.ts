@@ -114,7 +114,9 @@ export interface SceneSpec {
     /** Постобработка кадра (post.ts): AO, bloom, цветокоррекция, зерно, виньетка, глубина резкости. */
     post?: PostSpec;
     /** Живые отражения: кубическая карта сцены из точки position каждый кадр (без персонажей и эффектов). */
-    reflections?: { position: number[]; size?: number; intensity?: number } };
+    reflections?: { position: number[]; size?: number; intensity?: number };
+    /** Фазы окружения по времени (другая локация после склейки): с t — свой фон, туман, экспозиция, цветокоррекция. */
+    phases?: EnvPhase[] };
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
@@ -130,6 +132,10 @@ export interface SceneSpec {
 }
 
 type Loaded = { scene: THREE.Group; animations: THREE.AnimationClip[] };
+
+/** Фаза окружения: действует с t до следующей (до первой — само environment). */
+export interface EnvPhase { t: number; background?: string; fog?: { color?: string; near?: number; far?: number }; exposure?: number;
+  grade?: PostSpec["grade"]; vignette?: number; bloom?: number }
 
 class Engine {
   renderer!: THREE.WebGLRenderer;
@@ -428,8 +434,29 @@ class Engine {
     this.objects.push({ spec: o, node, inner, prop, light });
   }
 
+  /** Фаза окружения на t: фон, туман, экспозиция, цветокоррекция (до первой фазы — исходное окружение). */
+  applyPhase(t: number) {
+    const env = this.spec.environment || {};
+    const list = env.phases || [];
+    if (!list.length) return;
+    let ph: EnvPhase | null = null;
+    for (const p of list) if (p.t <= t + 1e-9) ph = p;
+    const base = { background: env.background, fog: env.fog || undefined, exposure: env.exposure, grade: env.post?.grade,
+      vignette: env.post?.vignette, bloom: env.post?.bloom ? env.post.bloom.strength : undefined };
+    const cur = { ...base, ...(ph || {}) };
+    (this.scene.background as THREE.Color).set(cur.background || "#151821");
+    if (this.scene.fog instanceof THREE.Fog && cur.fog) {
+      this.scene.fog.color.set(cur.fog.color || cur.background || "#151821");
+      this.scene.fog.near = cur.fog.near ?? 7;
+      this.scene.fog.far = cur.fog.far ?? 22;
+    }
+    this.renderer.toneMappingExposure = cur.exposure ?? 1;
+    if (this.post) this.post.setLook({ grade: cur.grade, vignette: cur.vignette, bloom: cur.bloom !== undefined ? { strength: cur.bloom } : false });
+  }
+
   /** Поставить всё на момент t (детерминированно). */
   update(t: number) {
+    this.applyPhase(t);
     for (const ch of Object.values(this.characters)) ch.update(t);
     for (const l of this.lights) {
       let k = 1;

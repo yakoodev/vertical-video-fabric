@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from app import voxel3d as V
+from app.vtubika_sets import NOODLES, WH_CAMERAS
 
 VTUBIKA_DIR = Path(os.environ.get("VTUBIKA_DIR", r"D:\vvf-offload\vtubika"))
 
@@ -94,15 +95,31 @@ HEROES: dict[str, dict] = {
         "skin": "#f1c7a8", "hair": "#5a2a1f", "hairStyle": "long", "top": "#b9a3e3", "accent": "#ff8a3d",
         "pants": "#3a3f5c", "shoes": "#f4f0fa", "headphones": "#f2eef8", "glow": "#ff8ad8", "eyes": "#9a5a2a",
         "blush": "rgba(255,130,150,0.42)", "lashes": True, "clip": "#ff8a3d", "headsetMic": True}},
+    # Тёма (Артём), ~25: ночные смены на складе — круги под глазами, лохматые короткие тёмные волосы, серое худи,
+    # тёмные наушники с гарнитурой (стримит без камеры).
+    "tema": {"shape": "soft", "look": {
+        "skin": "#eec3a2", "hair": "#3b2a24", "hairStyle": "short", "top": "#7c838e", "accent": "#555b66",
+        "pants": "#2e3340", "shoes": "#d9d9de", "headphones": "#1d1d24", "glow": "#6f86a8", "eyes": "#55708f",
+        "blush": "rgba(230,120,130,0.22)", "eyebags": "rgba(105,62,98,0.55)", "headsetMic": True}},
+    # Тёма на складе: то же худи, без наушников.
+    "tema_work": {"shape": "soft", "look": {
+        "skin": "#eec3a2", "hair": "#3b2a24", "hairStyle": "short", "top": "#7c838e", "accent": "#555b66",
+        "pants": "#2e3340", "shoes": "#d9d9de", "headphones": False, "eyes": "#55708f",
+        "blush": "rgba(230,120,130,0.22)", "eyebags": "rgba(105,62,98,0.55)"}},
+    # Коллега со склада: тёмная кофта, оранжевый рабочий жилет, светлые короткие волосы.
+    "kolya": {"shape": "soft", "look": {
+        "skin": "#e4b18f", "hair": "#b08a5a", "hairStyle": "short", "top": "#3c4250", "accent": "#2b303b",
+        "pants": "#2b2f3a", "shoes": "#3a3a40", "headphones": False, "eyes": "#4f6a3f", "vest": "#ff7a1a",
+        "blush": "rgba(230,120,130,0.2)"}},
 }
 
 
-def story_room(look: str = "cozy", **content: Any) -> dict:
+def story_room(look: str = "cozy", palette: dict | None = None, **content: Any) -> dict:
     """Комната истории: стример-рум в образе ``look`` с расстановкой ``STORY_LAYOUT`` + банка-копилка, планшет,
     стилус. ``content`` — то же, что у ``voxel3d.streamer_room`` (chat, viewers, alerts, phone, screen)."""
     if look not in LOOKS:
         raise ValueError(f"образ комнаты: один из {', '.join(LOOKS)}")
-    room = V.streamer_room(palette=LOOKS[look], layout=STORY_LAYOUT, **content)
+    room = V.streamer_room(palette={**LOOKS[look], **(palette or {})}, layout=STORY_LAYOUT, **content)
     top = room["desk_top"]
     room["objects"] += [
         {"id": "jar", "primitive": "coin_jar", "params": {"coins": 10, "drops": [], "max": 60}, "position": [JAR[0], top, JAR[1]]},
@@ -132,9 +149,9 @@ HEAD_SHIFT = {"Draw_Loop": [0.0, -0.08, -0.1], "Frown_Loop": [0.0, -0.04, -0.09]
 # Вертикальный кадр: монитор 16:9 целиком не влезает — экран снимается по центру (там аватар и карточки), чат —
 # на вертикальном мониторе (ракурс chat). Лица — средним планом с широким углом: камера стоит между столом и героиней.
 CAMERAS = ("face", "face_left", "face_close", "ots", "monitor", "monitor_close", "chat", "tablet", "jar", "wide", "low",
-           "two", "insert", "smile")
+           "two", "insert", "smile", "webcam", "noodles", "face_card", *WH_CAMERAS)
 # Крупные планы: голова целиком с запасом сверху, лицо — 45–60 % ширины кадра; наезд у них короткий.
-FACE_SHOTS = ("face", "face_left", "face_close", "insert", "smile")
+FACE_SHOTS = ("face", "face_left", "face_close", "insert", "smile", "noodles", "face_card", "wh_face", "wh_kolya", "wh_tema")
 FACE_PUSH_MAX = 0.08
 
 
@@ -179,7 +196,17 @@ def camera_preset(name: str, room: dict, *, act: str | None = None, push: float 
         "wide": ([1.45, 1.55, -0.2], [-0.22, 0.88, -1.0], 58, 0.25),
         "low": (_add(H, [0.32, -0.34, -0.62]), _add(H, [0, 0.02, 0]), 46, 0.8),
         "two": ([0.8, 1.3, -1.3], [-0.1, 0.96, -0.85], 52, 0.5),
+        # Веб-камера на мониторе, заклеенная стикером (крупно, сверху-справа).
+        "webcam": ([0.45, 1.25, -0.62], _add(M, [0.0, 0.1, 0.0]), 42, 0.6),
+        # Ест лапшу: лицо и стаканчик в одном кадре.
+        "noodles": (_add(H, [0.72, 0.1, -0.98]), [(H[0] + NOODLES[0]) / 2, H[1] - 0.22, (H[2] + NOODLES[1]) / 2], 60, 0.7),
+        # Лицо ниже середины кадра — сверху место под карточку эфира (аватар повторяет за героем).
+        "face_card": (_add(H, [0.62, 0.18, -0.98]), _add(H, [0.04, -0.12, 0.0]), 70, 0.6),
     }
+    for k, v in (room.get("cams") or {}).items():
+        table[k] = (list(v[0]), list(v[1]), float(v[2]), float(v[3]))
+    if name not in table:
+        raise ValueError(f"ракурс {name}: локации нет в сцене (план: \"sets\")")
     pos, tgt, f, blur = table[name]
     if name in FACE_SHOTS:
         push = min(push, FACE_PUSH_MAX)
