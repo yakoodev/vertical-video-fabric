@@ -3,7 +3,7 @@
 Тёмный фон с мягкими пятнами цветов бренда и частицами, значок магазина (``assets/brand/vtubika/logo.svg``, с сайта
 владельца) выпрыгивает с отскоком, ниже — надпись «vtubika» (Inter SemiBold, оранжевая точка над «k», как в
 og-картинке сайта), «vtubika.store» и слоган сайта «Купить VTuber-модель / с оплатой в рублях». Никаких других
-обещаний. Звук — мягкий «стинг» из паков (только записи kenney), музыка истории затихает под карточкой.
+обещаний. Звук — мягкий «стинг» (звуки паков или свои записи бренда, CC0), музыка истории затихает под карточкой.
 
 * ``settings(plan)`` — настройки карточки (``app.vtubika.END_CARD`` + поле плана ``end_card``; ``false`` — без неё).
 * ``card_svg(cfg)`` — SVG с CSS-анимацией (чистая функция, тестируется без браузера).
@@ -11,7 +11,9 @@ og-картинке сайта), «vtubika.store» и слоган сайта «
   webm в кэше ``work`` (по хешу SVG).
 * ``append(video, card, out)`` — ролик + карточка одним mp4 (BT.709, как кадры сцены).
 * ``sting(cfg)`` / ``card_sfx(cfg, t0)`` — звук карточки (``END_CARD["sting"]`` из ``END_CARD_STINGS``) на общей
-  шкале ролика.
+  шкале ролика. Звук стинга — ``ref`` (звук пака, ``sfx:…``) или ``path`` (свой файл бренда от корня репозитория,
+  ``assets/brand/vtubika/sfx/…``, см. ``sound_path``); ``cue`` — время ``at`` от события анимации (``cue()``:
+  «logo» — значок выпрыгнул, «dot» — точка села на «k»), а не от начала карточки.
 """
 
 from __future__ import annotations
@@ -34,6 +36,28 @@ FONT_WEIGHT = 600
 # Палитра бренда (комментарий logo.svg): оранжевый, персиковый, мятный, лавандовый, графит.
 ORANGE, PEACH, MINT, LAVENDER, SLATE = "#FF8A4C", "#FFD7BF", "#8EDFD1", "#BDA7F7", "#2B2F36"
 INK = "#F3F4F8"
+
+# Анимации, под которые ставится звук (с от начала карточки; CSS собирается из них же).
+LOGO_POP = {"delay": 0.12, "dur": 0.7, "peak": 0.55}  # значок: пик отскока (scale 1.12) на 55 % анимации
+DOT_DROP = {"delay": 0.95, "dur": 0.5, "land": 0.45}  # точка над «k»: касание (сплющивание) на 45 %
+
+
+def cue(name: str) -> float:
+    """Время события карточки по кадрам (ближайший кадр сетки ``FPS``): «logo» — значок выпрыгнул (кадр пика
+    отскока, 0.5 с), «dot» — точка приземлилась на «k» (кадр касания, ≈1.167 с)."""
+    if name == "logo":
+        t = LOGO_POP["delay"] + LOGO_POP["dur"] * LOGO_POP["peak"]
+    elif name == "dot":
+        t = DOT_DROP["delay"] + DOT_DROP["dur"] * DOT_DROP["land"]
+    else:
+        raise ValueError(f"нет события карточки {name!r}: logo, dot")
+    return round(round(t * FPS) / FPS, 4)
+
+
+def _css_s(v: float) -> str:
+    """Секунды для CSS как в исходной разметке: 0.7 → «.7» (хеш карточки и кэш webm не меняются)."""
+    text = f"{v:g}"
+    return text[1:] if text.startswith("0.") else text
 
 
 def settings(plan: dict | None) -> dict | None:
@@ -130,9 +154,9 @@ def card_svg(cfg: dict) -> str:
         f"{_esc(line)}</text>" for i, line in enumerate(slogan))
     css = f"""
 .in{{animation:fadeup .45s cubic-bezier(.2,.8,.2,1) both;transform-box:fill-box;transform-origin:center}}
-.logo{{animation:pop .7s linear .12s both;transform-box:fill-box;transform-origin:center}}
+.logo{{animation:pop {_css_s(LOGO_POP["dur"])}s linear {_css_s(LOGO_POP["delay"])}s both;transform-box:fill-box;transform-origin:center}}
 .halo{{animation:halo 1.1s ease-out .3s both;transform-box:fill-box;transform-origin:center}}
-.dot{{animation:drop .5s linear .95s both;transform-box:fill-box;transform-origin:50% 100%}}
+.dot{{animation:drop {_css_s(DOT_DROP["dur"])}s linear {_css_s(DOT_DROP["delay"])}s both;transform-box:fill-box;transform-origin:50% 100%}}
 .spark{{animation:spark .9s ease-in-out both;transform-box:fill-box;transform-origin:center}}
 .blob1{{animation:drift1 {dur:.2f}s ease-in-out both}}
 .blob2{{animation:drift2 {dur:.2f}s ease-in-out both}}
@@ -140,10 +164,10 @@ def card_svg(cfg: dict) -> str:
 @keyframes rise{{from{{transform:translateY(0);opacity:0}}15%{{opacity:var(--op)}}to{{transform:translateY(var(--rise));opacity:var(--op)}}}}
 @keyframes twinkle{{from{{fill-opacity:.35}}to{{fill-opacity:1}}}}
 @keyframes fadeup{{from{{opacity:0;transform:translateY(36px)}}to{{opacity:1;transform:translateY(0)}}}}
-@keyframes pop{{0%{{opacity:0;transform:scale(.2) rotate(-12deg)}}30%{{opacity:1}}55%{{transform:scale(1.12) rotate(3deg)}}
+@keyframes pop{{0%{{opacity:0;transform:scale(.2) rotate(-12deg)}}30%{{opacity:1}}{LOGO_POP["peak"] * 100:g}%{{transform:scale(1.12) rotate(3deg)}}
 75%{{transform:scale(.95) rotate(-1deg)}}90%{{transform:scale(1.02) rotate(0)}}100%{{opacity:1;transform:scale(1) rotate(0)}}}}
 @keyframes halo{{from{{opacity:0;transform:scale(.6)}}40%{{opacity:.9}}to{{opacity:.55;transform:scale(1.05)}}}}
-@keyframes drop{{0%{{opacity:0;transform:translateY(-140px) scale(.6)}}45%{{opacity:1;transform:translateY(0) scale(1.15,.82)}}
+@keyframes drop{{0%{{opacity:0;transform:translateY(-140px) scale(.6)}}{DOT_DROP["land"] * 100:g}%{{opacity:1;transform:translateY(0) scale(1.15,.82)}}
 65%{{transform:translateY(-22px) scale(.95,1.06)}}85%{{transform:translateY(0) scale(1.04,.96)}}100%{{opacity:1;transform:translateY(0) scale(1)}}}}
 @keyframes spark{{0%{{opacity:0;transform:scale(.2) rotate(0)}}50%{{opacity:.85;transform:scale(1) rotate(45deg)}}100%{{opacity:0;transform:scale(.3) rotate(90deg)}}}}
 @keyframes drift1{{from{{transform:translate(0,0)}}to{{transform:translate(-60px,40px)}}}}
@@ -251,6 +275,30 @@ def sting(cfg: dict) -> list[dict[str, Any]]:
 
 
 def card_sfx(cfg: dict, t0: float) -> list[dict[str, Any]]:
-    """Звуки карточки ({ref, t, volume}) от начала карточки ``t0`` (``at`` < 0 — ещё под концом истории)."""
-    return [{"ref": s["ref"], "t": round(max(0.0, t0 + float(s["at"])), 3), "volume": float(s["volume"])}
-            for s in sting(cfg)]
+    """Звуки карточки ({ref | path, t, volume}) от начала карточки ``t0`` (``at`` < 0 — ещё под концом истории;
+    с ``cue`` — от события анимации)."""
+    out = []
+    for s in sting(cfg):
+        if not (s.get("ref") or s.get("path")):
+            raise ValueError(f"у звука концовки нет ни ref, ни path: {s!r}")
+        at = float(s.get("at", 0.0)) + (cue(s["cue"]) if s.get("cue") else 0.0)
+        src = {"path": str(s["path"])} if s.get("path") else {"ref": s["ref"]}
+        out.append({**src, "t": round(max(0.0, t0 + at), 3), "volume": float(s["volume"])})
+    return out
+
+
+def sound_path(s: dict) -> Path | None:
+    """Файл звука: ``path`` — свой файл от корня репозитория (только внутри него, например
+    ``assets/brand/vtubika/sfx/kalimba_chord.ogg``), ``ref`` — звук пака (``app.motion_assets.resolve_pack_ref``).
+    None — файла нет или путь ведёт за пределы репозитория."""
+    if s.get("path"):
+        p = Path(str(s["path"]))
+        p = (p if p.is_absolute() else ROOT / p).resolve()
+        if not p.is_relative_to(ROOT.resolve()) or not p.is_file():
+            return None
+        return p
+    if s.get("ref"):
+        from app.motion_assets import resolve_pack_ref
+
+        return resolve_pack_ref(str(s["ref"]))
+    return None
