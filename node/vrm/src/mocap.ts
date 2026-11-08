@@ -28,6 +28,8 @@ export interface Track {
   weight?: number;
   scale?: number;
   mirror?: boolean;
+  /** Сглаживание (с): среднее поворотов в окне ±smooth — убирает мелкую дрожь и быстрые взмахи исполнителя. */
+  smooth?: number;
   /** Повтор куска клипа «туда-обратно»: [a, b, n] — n полупроходов (нечётное: потом клип идёт дальше от b). */
   pingpong?: [number, number, number];
 }
@@ -109,6 +111,16 @@ export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number)
     for (const b of mask) {
       let q = sampleBone(c, b, time, !!tr.loop, !!tr.mirror);
       if (!q) continue;
+      if (tr.smooth) {
+        // Среднее 7 отсчётов (знак кватерниона — к центральному, чтобы не усреднять q и −q).
+        const acc4 = [0, 0, 0, 0];
+        for (let i = -3; i <= 3; i++) {
+          const s = sampleBone(c, b, time + (i / 3) * tr.smooth, !!tr.loop, !!tr.mirror)!;
+          const sg = s.x * q.x + s.y * q.y + s.z * q.z + s.w * q.w < 0 ? -1 : 1;
+          acc4[0] += s.x * sg; acc4[1] += s.y * sg; acc4[2] += s.z * sg; acc4[3] += s.w * sg;
+        }
+        q = new THREE.Quaternion(acc4[0], acc4[1], acc4[2], acc4[3]).normalize();
+      }
       if (tr.scale !== undefined && tr.scale !== 1) q = ID.clone().slerp(q, tr.scale);
       acc[b] = acc[b] ? acc[b].slerp(q, w) : ID.clone().slerp(q, w);
     }

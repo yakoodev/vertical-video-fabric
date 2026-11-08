@@ -72,7 +72,7 @@ def narrated(spec: dict, raw: Path, out: Path, duration: float) -> None:
     script = [w for sent in times for w in sent]
     with tempfile.TemporaryDirectory() as tmp:
         capped = Path(tmp) / "caps.mp4"
-        burn_captions(plan, script, raw, capped, Path(tmp), duration)
+        burn_captions(plan, script, raw, capped, Path(tmp), duration, nar.get("caption_y"))
         mix(plan, capped, paced, [], duration, out, Path(tmp), {}, lead)
 
 

@@ -6,6 +6,7 @@
  */
 import * as THREE from "three";
 import type { VRM, VRMHumanBoneName } from "@pixiv/three-vrm";
+import { chairGap, type ChairSpec } from "./body.ts";
 
 export type V3 = [number, number, number];
 
@@ -64,6 +65,8 @@ export interface PoseSpec {
   mocap?: Record<string, number[]>;
   /** Пальцы кистей, которые ведёт мокап (у рук с IK пальцы — в ArmSpec). */
   hands?: { left?: FingerSpec; right?: FingerSpec };
+  /** Кресло: корпус откидывается не дальше спинки (упирается в неё). */
+  chair?: ChairSpec;
   /** Поверхности, сквозь которые нельзя пальцам (стол, клавиатура): кисть приподнимается. */
   surfaces?: Surface[];
 }
@@ -162,6 +165,7 @@ export class Rig {
     }
     for (const [name, deg] of Object.entries(p.bones || {})) this.euler(name, deg);
     this.update();
+    if (p.chair) this.restOnChair(p.chair);
     if (p.left) this.arm(1, p.left);
     if (p.right) this.arm(-1, p.right);
     if (p.hands?.left) this.fingers(1, p.hands.left as ArmSpec);
@@ -314,6 +318,23 @@ export class Rig {
     if (t2) t2.quaternion.copy(e(0, side * k * 40, 0));
     if (t3) t3.quaternion.copy(e(0, side * k * 50, 0));
     this.update();
+  }
+
+  /**
+   * Спина упирается в спинку кресла: если корпус (мокап откинулся назад) заходит за спинку, позвоночник
+   * доворачивается вперёд ровно настолько, чтобы спина легла на спинку (3 мм зазора).
+   */
+  restOnChair(chair: ChairSpec) {
+    for (let i = 0; i < 6; i++) {
+      const g = chairGap(this.vrm, chair);
+      if (g.gap >= 0.003 || !/спинка/.test(g.point)) return;
+      const ang = Math.min(0.25, (0.003 - g.gap) / 0.45 + 0.004);
+      for (const [b, k] of [["spine", 0.4], ["chest", 0.35], ["upperChest", 0.25]] as const) {
+        const o = this.node(b);
+        if (o) o.quaternion.premultiply(this.conj(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), ang * k)));
+      }
+      this.update();
+    }
   }
 
   /** Точки пальцев кисти: суставы и кончики (кончик — продолжение последней фаланги). */

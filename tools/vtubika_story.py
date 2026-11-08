@@ -206,7 +206,8 @@ def pace_beats(plan: dict, narration: Path, words: list[dict], work: Path, repor
     return out, paced
 
 
-def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float) -> None:
+def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float,
+                  y: float | None = None) -> None:
     from app import vtubika_plan as P
     from app.motion_render_comp import build_compositor_args, write_comp
     from app.stories_3d import _captions
@@ -216,7 +217,7 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
     comp_words, marks = P.caption_words(words, plan.get("highlight") or {})
     props["highlightWords"] = marks
     layer = {"id": "caps", "type": "captions", "start": 0.0, "end": round(total, 3), "x": 0.5,
-             "y": float(DEFAULT_CAPTIONS["y"]), "props": props}
+             "y": float(DEFAULT_CAPTIONS["y"] if y is None else y), "props": props}
     comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[layer], camera=[],
                       words=comp_words)
     (work / "assets.json").write_text("{}", "utf-8")

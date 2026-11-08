@@ -1,0 +1,684 @@
+{
+ "width": 1080,
+ "height": 1920,
+ "fps": 30,
+ "model": "VRM1_Constraint_Twist_Sample.vrm",
+ "look": {
+  "outline": 0.0034,
+  "shade": "#a28ad6",
+  "toony": 0.97,
+  "shift": -0.05,
+  "rim": "#ff8fd0",
+  "rimPower": 4,
+  "tint": {
+   "Tops": "#8e86c8"
+  }
+ },
+ "stream": {
+  "title": "ночной стрим",
+  "uptime": 11520,
+  "avatars": [
+   {
+    "t": 0,
+    "kind": "hoodie"
+   }
+  ],
+  "viewers": [
+   {
+    "t": 0,
+    "value": 3,
+    "label": "3 зрителя"
+   }
+  ],
+  "chat": [
+   {
+    "t": -9,
+    "user": "nochnoy_dozor",
+    "color": "#7ad8ff",
+    "text": "привет"
+   },
+   {
+    "t": -5,
+    "user": "kotik_mur",
+    "color": "#ff8ac8",
+    "text": "ты чего не спишь"
+   },
+   {
+    "t": 7.6,
+    "user": "pelmen_404",
+    "color": "#ffd36a",
+    "text": "ЗЕВНИ ЕЩЁ РАЗ",
+    "big": true
+   }
+  ]
+ },
+ "strictContact": true,
+ "narration": {
+  "plan": "tools/vtubika_plans/fox.json",
+  "work": "D:/vvf-offload/vtubika/story1_vrm/work",
+  "lead": 0.9,
+  "sentences": 4,
+  "caption_y": 0.86
+ },
+ "duration": 11.1,
+ "timeline": {
+  "clips": {
+   "sit": "cmu/clips/sit.json",
+   "typing": "cmu/clips/typing.json",
+   "stretch_yawn": "cmu/clips/stretch_yawn.json",
+   "laugh": "cmu/clips/laugh.json",
+   "wave": "cmu/clips/wave.json"
+  },
+  "chair": {
+   "pos": [
+    0,
+    0.79,
+    -0.24
+   ],
+   "h": 0.56,
+   "w": 0.6
+  },
+  "tracks": [
+   {
+    "clip": "sit",
+    "start": -2,
+    "end": 12,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "smooth": 0.15,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest",
+     "leftShoulder",
+     "leftUpperArm",
+     "leftLowerArm",
+     "leftHand",
+     "rightShoulder",
+     "rightUpperArm",
+     "rightLowerArm",
+     "rightHand"
+    ],
+    "offset": 1.0,
+    "speed": 0.5
+   },
+   {
+    "clip": "sit",
+    "start": -2,
+    "end": 12,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "mask": "head",
+    "scale": 0.3,
+    "smooth": 0.2,
+    "offset": 1.0,
+    "speed": 0.5
+   },
+   {
+    "clip": "typing",
+    "start": -3,
+    "end": 4.8,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest"
+    ],
+    "scale": 0.45,
+    "fadeIn": 0,
+    "fadeOut": 0.6,
+    "smooth": 0.15
+   },
+   {
+    "clip": "stretch_yawn",
+    "start": 4.5,
+    "end": 7.5,
+    "offset": 0.45,
+    "speed": 0.3,
+    "smooth": 0.2,
+    "mask": "arms",
+    "fadeIn": 0.9,
+    "fadeOut": 1.1
+   },
+   {
+    "clip": "laugh",
+    "start": 7.9,
+    "end": 9.0,
+    "offset": 0.3,
+    "speed": 0.6,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest"
+    ],
+    "scale": 0.35,
+    "fadeIn": 0.4,
+    "fadeOut": 0.6,
+    "smooth": 0.15
+   },
+   {
+    "clip": "wave",
+    "start": 8.6,
+    "end": 11.6,
+    "offset": 0.0,
+    "speed": 0.65,
+    "smooth": 0.25,
+    "mask": "right",
+    "fadeIn": 0.8,
+    "fadeOut": 0.8
+   },
+   {
+    "clip": "stretch_yawn",
+    "start": 4.5,
+    "end": 7.5,
+    "offset": 0.45,
+    "speed": 0.3,
+    "smooth": 0.2,
+    "mask": "torso",
+    "fadeIn": 0.9,
+    "fadeOut": 1.1,
+    "scale": 0.35
+   }
+  ],
+  "arms": [
+   {
+    "t": -3,
+    "left": "keys",
+    "right": "keys"
+   },
+   {
+    "t": 1.9,
+    "dur": 0.8,
+    "left": "keys",
+    "right": "mouse"
+   },
+   {
+    "t": 3.3,
+    "dur": 0.8,
+    "left": "keys",
+    "right": "keys"
+   },
+   {
+    "t": 4.55,
+    "dur": 0.9,
+    "left": null,
+    "right": null
+   },
+   {
+    "t": 6.6,
+    "dur": 1.0,
+    "left": "keys",
+    "right": "keys"
+   },
+   {
+    "t": 7.57,
+    "dur": 0.02,
+    "left": "keys",
+    "right": "keys"
+   },
+   {
+    "t": 8.8,
+    "dur": 0.9,
+    "left": "keys",
+    "right": "wave"
+   }
+  ],
+  "hands": [
+   {
+    "t": -3,
+    "left": "relaxed",
+    "right": "relaxed"
+   },
+   {
+    "t": 4.6,
+    "dur": 0.7,
+    "left": "open",
+    "right": "open"
+   },
+   {
+    "t": 6.4,
+    "dur": 0.7,
+    "left": "relaxed",
+    "right": "relaxed"
+   },
+   {
+    "t": 8.7,
+    "dur": 0.6,
+    "left": "rest",
+    "right": "wave"
+   }
+  ],
+  "faces": [
+   {
+    "t": -3,
+    "expr": {
+     "relaxed": 0.25
+    }
+   },
+   {
+    "t": 4.9,
+    "dur": 0.6,
+    "expr": {
+     "aa": 0.85,
+     "blink": 1
+    }
+   },
+   {
+    "t": 6.6,
+    "dur": 0.6,
+    "expr": {
+     "relaxed": 0.35,
+     "blink": 0.25
+    }
+   },
+   {
+    "t": 7.7,
+    "dur": 0.25,
+    "expr": {
+     "surprised": 0.75
+    }
+   },
+   {
+    "t": 8.1,
+    "dur": 0.35,
+    "expr": {
+     "happy": 1,
+     "aa": 0.4
+    }
+   },
+   {
+    "t": 9.0,
+    "dur": 0.4,
+    "expr": {
+     "happy": 0.75
+    }
+   }
+  ],
+  "look": [
+   {
+    "t": -3,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.6
+   },
+   {
+    "t": 2.0,
+    "target": [
+     -0.3,
+     1.1,
+     0.5
+    ],
+    "head": 0.35
+   },
+   {
+    "t": 2.9,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.6
+   },
+   {
+    "t": 4.8,
+    "target": [
+     0,
+     1.62,
+     1.2
+    ],
+    "head": 0.5
+   },
+   {
+    "t": 6.6,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.6
+   },
+   {
+    "t": 7.65,
+    "target": [
+     -0.5,
+     1.36,
+     0.9
+    ],
+    "head": 0.8
+   },
+   {
+    "t": 8.75,
+    "target": [
+     -0.35,
+     1.3,
+     2.6
+    ],
+    "head": 0.7
+   }
+  ],
+  "speech": [
+   [
+    8.2,
+    8.9
+   ],
+   [
+    9.3,
+    10.6
+   ]
+  ],
+  "surfaces": [
+   {
+    "name": "стол",
+    "y": 1.05,
+    "x0": -0.8,
+    "x1": 0.8,
+    "z0": 0.22,
+    "z1": 0.92
+   },
+   {
+    "name": "клавиатура",
+    "y": 1.072,
+    "x0": -0.22,
+    "x1": 0.22,
+    "z0": 0.326,
+    "z1": 0.474
+   },
+   {
+    "name": "мышь",
+    "y": 1.082,
+    "x0": -0.39,
+    "x1": -0.33,
+    "z0": 0.375,
+    "z1": 0.465
+   }
+  ]
+ },
+ "shots": [
+  {
+   "name": "typing_medium",
+   "t0": 0,
+   "t1": 4.4,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      0.3,
+      1.7,
+      2.6
+     ],
+     "target": [
+      -0.04,
+      1.24,
+      0.28
+     ],
+     "fov": 21.5
+    },
+    {
+     "t": 4.4,
+     "pos": [
+      0.29,
+      1.69,
+      2.5
+     ],
+     "target": [
+      -0.04,
+      1.25,
+      0.28
+     ],
+     "fov": 20
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": 40,
+    "dy": -40,
+    "zoom": 1.05
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.4
+     ]
+    },
+    "mouse": {
+     "pos": [
+      -0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.79,
+      -0.24
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     0,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  },
+  {
+   "name": "stretch_chest",
+   "t0": 4.4,
+   "t1": 7.6,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      0.12,
+      1.48,
+      3.0
+     ],
+     "target": [
+      0,
+      1.37,
+      0.1
+     ],
+     "fov": 13
+    },
+    {
+     "t": 1.0,
+     "pos": [
+      0.12,
+      1.5,
+      3.0
+     ],
+     "target": [
+      0,
+      1.44,
+      0.1
+     ],
+     "fov": 18.5
+    },
+    {
+     "t": 2.6,
+     "pos": [
+      0.12,
+      1.5,
+      3.0
+     ],
+     "target": [
+      0,
+      1.44,
+      0.1
+     ],
+     "fov": 18.5
+    },
+    {
+     "t": 3.2,
+     "pos": [
+      0.12,
+      1.49,
+      2.95
+     ],
+     "target": [
+      0,
+      1.4,
+      0.1
+     ],
+     "fov": 16
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": 40,
+    "dy": 20,
+    "zoom": 1.25,
+    "fgDesk": {
+     "y": 1665
+    }
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.4
+     ]
+    },
+    "mouse": {
+     "pos": [
+      -0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.79,
+      -0.24
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     0,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  },
+  {
+   "name": "side_wave",
+   "t0": 7.6,
+   "t1": 11.1,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      -0.38,
+      1.32,
+      2.75
+     ],
+     "target": [
+      -0.2,
+      1.44,
+      0
+     ],
+     "fov": 21
+    },
+    {
+     "t": 3.5,
+     "pos": [
+      -0.37,
+      1.32,
+      2.65
+     ],
+     "target": [
+      -0.2,
+      1.45,
+      0
+     ],
+     "fov": 20
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": -60,
+    "dy": -20,
+    "zoom": 1.1,
+    "fgDesk": {
+     "y": 1665,
+     "cup": false
+    },
+    "sideChat": {
+     "x": 150,
+     "y": 980,
+     "w": 280,
+     "rot": -3
+    }
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.4
+     ]
+    },
+    "mouse": {
+     "pos": [
+      -0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.79,
+      -0.24
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     -0.3,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  }
+ ]
+}

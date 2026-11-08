@@ -20,6 +20,7 @@ import { poseByName } from "./poses.ts";
 import { camAt, merge, poseAt, speechMouth, type CamKey, type PoseKey } from "./anim.ts";
 import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
+import { addColliders, chairGap, hairGap } from "./body.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
@@ -95,7 +96,8 @@ function shotAt(t: number): { shot: Shot; local: number } {
 /** Поза на время: ролик — по ключам spec.poses (+ рот в окнах речи), стопкадр — поза плана. */
 let clips: Record<string, Clip> = {};
 /** Самый малый зазор пальцев над поверхностями за все отрисованные кадры. */
-const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0 };
+const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0,
+  chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "" } };
 
 function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
   if (spec.timeline) return sequencePose(spec.timeline, clips, time);
@@ -145,6 +147,13 @@ function render(t: number) {
         throw new Error(`пальцы сквозь «${c.surface}»: t=${t.toFixed(3)} ${c.point} на ${((0.004 - c.gap) * 1000).toFixed(1)} мм ниже допуска`);
       }
     }
+  }
+  const chair = spec.timeline?.chair;
+  if (chair) {
+    const b = chairGap(vrm, chair), h = hairGap(vrm, chair);
+    if (b.gap < contact.chair.min) contact.chair = { min: b.gap, at: t, point: b.point };
+    if (h.gap < contact.hair.min) contact.hair = { min: h.gap, at: t, point: h.point };
+    if (spec.strictContact && b.gap < 0) throw new Error(`тело в кресле: t=${t.toFixed(3)} ${b.point} на ${(-b.gap * 1000).toFixed(1)} мм`);
   }
   const L = shot.light || {};
   key.position.set(...(L.key || [0.3, 0.6, 1]));
@@ -226,6 +235,7 @@ async function load(s: Spec) {
   scene.add(vrm.scene);
   rig = new Rig(vrm);
   if (s.timeline) clips = await loadClips("http://scene3d.local/packs", s.timeline.clips);
+  if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
   lumaC = document.createElement("canvas");

@@ -8,6 +8,8 @@ import type { ArmSpec, FingerSpec, PoseSpec, Surface, V3 } from "./rig.ts";
 import { mocapAt, type Clip, type Track } from "./mocap.ts";
 import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
 import { speechMouth } from "./anim.ts";
+import { mouseArm, typingArm, waveArm } from "./typing.ts";
+import type { ChairSpec } from "./body.ts";
 
 export interface Timeline {
   clips: Record<string, string>;
@@ -21,6 +23,8 @@ export interface Timeline {
   look?: { t: number; target: V3; head?: number }[];
   speech?: number[][];
   surfaces?: Surface[];
+  /** Кресло (одно на весь ролик): коллайдер волос и проверка «тело перед спинкой». */
+  chair?: ChairSpec;
   /** false — не поднимать кисти над поверхностями (только чтобы показать, что проверка касаний ловит). */
   clamp?: boolean;
   /** Наклон корпуса сидя (градусы, вперёд +). */
@@ -66,6 +70,9 @@ export function lookPoint(keys: Timeline["look"], t: number, tau: number): V3 {
 function armPreset(name: string | null | undefined, side: 1 | -1, t: number): ArmSpec | null {
   if (name === "typing") return typingHand(side, t);
   if (name === "rest") return restHand(side);
+  if (name === "keys") return typingArm(side, t);
+  if (name === "wave") return side < 0 ? waveArm(t) : restHand(side);
+  if (name === "mouse") return side < 0 ? mouseArm(t) : typingArm(side, t);
   return null;
 }
 
@@ -149,5 +156,6 @@ export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: numbe
     left: left || undefined, right: right || undefined,
     hands: { left: handFingers(left, fing("left")), right: handFingers(right, fing("right")) },
     surfaces: tl.clamp === false ? undefined : tl.surfaces,
+    chair: tl.chair,
   };
 }

@@ -30,7 +30,9 @@ try {
 } finally {
   await scene.close();
 }
-const ok = c.frames === n && c.min >= MIN_GAP;
-process.stdout.write(JSON.stringify({ ok, frames: c.frames, min_gap_mm: Math.round(c.min * 10000) / 10, at: c.at, point: c.point,
-  surface: c.surface }) + "\n");
+const mm = (v) => (Number.isFinite(v) ? Math.round(v * 10000) / 10 : null);
+const ok = c.frames === n && c.min >= MIN_GAP && !(c.chair.min < 0);
+process.stdout.write(JSON.stringify({ ok, frames: c.frames, fingers: { min_gap_mm: mm(c.min), at: c.at, point: c.point, surface: c.surface },
+  chair: { min_gap_mm: mm(c.chair.min), at: c.chair.at, point: c.chair.point },
+  hair: { min_gap_mm: mm(c.hair.min), at: c.hair.at, point: c.hair.point } }) + "\n");
 process.exit(ok ? 0 : 1);
