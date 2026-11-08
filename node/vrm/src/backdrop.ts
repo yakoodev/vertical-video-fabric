@@ -38,6 +38,8 @@ export interface PlateSpec {
   insert?: InsertSpec;
   /** Край стола на переднем плане, мягкий фокус: клавиатура, стакан, микрофон на стойке. y — верх полосы. */
   fgDesk?: { y: number; cup?: boolean; mic?: boolean };
+  /** Средний план: рисовать 2D-кота (cat.ts) на краю стола. */
+  cats?: boolean;
   /** Монитор с чатом сбоку на среднем плане (чуть размыт): x, y, ширина, поворот (градусы). */
   sideChat?: { x: number; y: number; w: number; rot?: number };
 }

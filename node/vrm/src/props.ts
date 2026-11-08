@@ -22,6 +22,87 @@ export interface PropsSpec {
 
 type G = CanvasRenderingContext2D;
 
+/** Вещь на голове модели: наушники, звериные ушки, звезда-заколка. Сдвиги — в осях модели (м), scale — размер
+ * головы относительно образца pixiv, lift/fwd — подгонка по высоте и вперёд. */
+export interface AccessorySpec {
+  kind: "headphones" | "ears" | "star";
+  color?: string;
+  accent?: string;
+  scale?: number;
+  lift?: number;
+  fwd?: number;
+  side?: 1 | -1;
+  /** Наушники: радиус кольца на чашке (м). */
+  ring?: number;
+}
+
+/** Держатель на кости головы в осях модели (у VRM0 оси кости повёрнуты на пол-оборота). */
+function holder(rig: Rig, o: AccessorySpec): THREE.Group | null {
+  const head = rig.node("head");
+  if (!head) return null;
+  const g = new THREE.Group();
+  g.quaternion.copy(rig.restInverse);
+  const inner = new THREE.Group();
+  inner.scale.setScalar(o.scale ?? 1);
+  inner.position.set(0, o.lift ?? 0, o.fwd ?? 0);
+  g.add(inner);
+  head.add(g);
+  return inner;
+}
+
+export function accessory(rig: Rig, o: AccessorySpec) {
+  const g = holder(rig, o);
+  if (!g) return;
+  const dark = flat(o.color ?? "#26203a");
+  if (o.kind === "headphones") {
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.112, 0.011, 8, 40, Math.PI), dark);
+    band.position.set(0, 0.05, -0.012);
+    hull(band, 0.05);
+    g.add(band);
+    for (const side of [1, -1]) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.034, 28), dark);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.set(side * 0.1, 0.045, -0.012);
+      hull(cup, 0.08);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(o.ring ?? 0.03, 0.0035, 6, 28), flat(o.accent ?? "#d23d92"));
+      ring.rotation.y = Math.PI / 2;
+      ring.position.set(side * 0.118, 0.045, -0.012);
+      g.add(cup, ring);
+    }
+  } else if (o.kind === "ears") {
+    // Пушистые звериные ушки: конус наружу-вверх, внутри светлая вставка.
+    for (const side of [1, -1]) {
+      const ear = new THREE.Group();
+      const outer = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.09, 4, 1), flat(o.color ?? "#e8f4f2"));
+      outer.scale.set(1, 1, 0.45);
+      outer.rotation.y = Math.PI / 4;
+      hull(outer, 0.08);
+      const inn = new THREE.Mesh(new THREE.ConeGeometry(0.024, 0.06, 4, 1), flat(o.accent ?? "#ff9ac8"));
+      inn.scale.set(1, 1, 0.3);
+      inn.rotation.y = Math.PI / 4;
+      inn.position.set(0, -0.008, 0.012);
+      ear.add(outer, inn);
+      ear.position.set(side * 0.075, 0.2, -0.005);
+      ear.rotation.z = -side * 0.42;
+      g.add(ear);
+    }
+  } else if (o.kind === "star") {
+    // Звезда-заколка сбоку на волосах.
+    const shape = new THREE.Shape();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.PI / 2, r = i % 2 ? 0.014 : 0.034;
+      if (i) shape.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+      else shape.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    const star = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: 0.008, bevelEnabled: false }), flat(o.color ?? "#ffd36a"));
+    hull(star, 0.12);
+    const side = o.side ?? 1;
+    star.position.set(side * 0.095, 0.15, 0.03);
+    star.rotation.y = side * 0.9;
+    g.add(star);
+  }
+}
+
 function tex(c: HTMLCanvasElement): THREE.CanvasTexture {
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
@@ -203,26 +284,8 @@ export class Props {
   }
 
   /** Наушники: дуга над головой и чашки у ушей с розовым кольцом (на кости головы). */
-  headphones(rig: Rig) {
-    const head = rig.node("head");
-    if (!head) return;
-    const g = new THREE.Group();
-    const dark = flat("#26203a");
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.112, 0.011, 8, 40, Math.PI), dark);
-    band.position.set(0, 0.05, -0.012);
-    hull(band, 0.05);
-    g.add(band);
-    for (const side of [1, -1]) {
-      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.034, 28), dark);
-      cup.rotation.z = Math.PI / 2;
-      cup.position.set(side * 0.1, 0.045, -0.012);
-      hull(cup, 0.08);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.0035, 6, 28), flat("#d23d92"));
-      ring.rotation.y = Math.PI / 2;
-      ring.position.set(side * 0.118, 0.045, -0.012);
-      g.add(cup, ring);
-    }
-    head.add(g);
+  headphones(rig: Rig, o: AccessorySpec = { kind: "headphones" }) {
+    accessory(rig, o);
   }
 
   update(spec: PropsSpec | undefined, rig: Rig, t: number, _stream: any) {

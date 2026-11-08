@@ -14,6 +14,51 @@ import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_gu
 import { drawDeclined, drawDrawApp, drawForeignShop, drawFox, drawMessenger, drawRig, drawStoreCard, drawWolf, wolfPose } from "./ui_pages.ts";
 
 export const UI_FONT = "VvfUi";
+
+/**
+ * Живые картинки, которые движок кадра рисует сам каждый кадр (node/vrm: 3D-аватар на мониторе, превью модели в
+ * карточке магазина): аватар эфира ``live`` и превью ``live`` берут ``liveImages.avatar`` (или ``.card``).
+ */
+export const liveImages: Record<string, HTMLCanvasElement | undefined> = {};
+
+/** Нейтральное превью 3D-товара (без персонажа): плитка в цветах магазина, объёмный куб и подпись VRM. */
+export function drawVrmTile(g: CanvasRenderingContext2D, cx: number, cy: number, s: number, t: number) {
+  const bg = g.createLinearGradient(cx - s * 1.4, cy - s, cx + s * 1.4, cy + s);
+  bg.addColorStop(0, "#6b4dff");
+  bg.addColorStop(1, "#ff7ac8");
+  g.fillStyle = bg;
+  roundRect(g, cx - s * 1.4, cy - s * 1.12, s * 2.8, s * 2.24, s * 0.12);
+  g.fill();
+  // Куб в изометрии: три грани разной яркости, медленно покачивается.
+  const a = 0.5 + 0.06 * Math.sin(t * 1.2), r = s * 0.5, y0 = cy - s * 0.22;
+  const top: [number, number][] = [[0, -r], [r * Math.cos(a) * 1.15, -r * 0.45], [0, r * 0.1], [-r * Math.cos(a) * 1.15, -r * 0.45]];
+  const faces: [string, [number, number][]][] = [
+    ["rgba(255,255,255,0.95)", top],
+    ["rgba(255,255,255,0.62)", [top[3], top[2], [0, r * 1.1], [top[3][0], r * 0.55]]],
+    ["rgba(255,255,255,0.38)", [top[2], top[1], [top[1][0], r * 0.55], [0, r * 1.1]]],
+  ];
+  for (const [col, pts] of faces) {
+    g.fillStyle = col;
+    g.beginPath();
+    pts.forEach(([x, y], i) => (i ? g.lineTo(cx + x, y0 + y) : g.moveTo(cx + x, y0 + y)));
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = "#ffffff";
+  g.font = font(900, s * 0.36);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText("VRM", cx, cy + s * 0.78);
+  g.textAlign = "left";
+}
+
+/** Живая картинка с заполнением прямоугольника по высоте (по центру, лишнее по бокам обрезается). */
+export function drawLive(g: CanvasRenderingContext2D, img: HTMLCanvasElement | undefined, x: number, y: number, w: number, h: number) {
+  if (!img) return;
+  const k = Math.max(w / img.width, h / img.height);
+  const sw = w / k, sh = h / k;
+  g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
+}
 export const UI_NUM = "VvfNum";
 
 let fontsLoading: Promise<void> | null = null;
@@ -122,7 +167,7 @@ function screenState(s: StreamScreen, t: number) {
   const open = m === "open" || (m === "talk" && Math.floor((t - mt) * 7) % 3 !== 2);
   const wolf = wolfPose(t, s.wolf || {});
   const anim = mode === "rig" || mode === "shop" || mode === "shops" || mode === "draw"
-    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber"));
+    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch"));
   return { mode, avatar, open, wolf, anim };
 }
 
@@ -203,6 +248,17 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
   else if (st.avatar === "hoodie") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, s.guy, "hoodie"));
   else if (st.avatar === "vtuber") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, s.vtuber, "vtuber"));
   else if (st.avatar === "nocam") drawNoCam(g, vx, vy, vw, vh, u);
+  else if (st.avatar === "live") drawLive(g, liveImages.avatar, vx, vy, vw, vh);
+  else if (st.avatar === "sketch") {
+    // Эскиз персонажа на бумаге (та же живая картинка, карандашом).
+    g.fillStyle = "#f2ede4";
+    g.fillRect(vx, vy, vw, vh);
+    g.save();
+    g.filter = "grayscale(1) contrast(1.8) brightness(1.25)";
+    g.globalCompositeOperation = "multiply";
+    drawLive(g, liveImages.avatar, vx, vy, vw, vh);
+    g.restore();
+  }
   else if (st.avatar === "silhouette") {
     g.fillStyle = "#3a2470";
     g.fillRect(ax - 70 * u, vy + vh - 150 * u, 140 * u, 150 * u);
@@ -339,7 +395,8 @@ export interface PhoneScreen {
   payment?: { title?: string; to?: string; amount: string; status?: string; ok?: boolean; t?: number };
   /** screen "shop": карточка товара (vtubika.store), screen "messenger": файл пришёл. */
   store?: { title?: string; price?: string; paidAt?: number };
-  message?: { from?: string; file?: string; size?: string; text?: string; at?: number };
+  /** post — пост в своём канале (набирается за typeSec), status — подпись под именем канала. */
+  message?: { from?: string; file?: string; size?: string; text?: string; at?: number; post?: string; typeSec?: number; status?: string };
 }
 
 export function counterValue(c: PhoneScreen["counter"], t: number): number | null {
@@ -366,6 +423,11 @@ export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: 
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
   if (p.screen === "shop") {
     const pv = (p.store as any)?.preview;
+    if (pv === "vrm") return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawVrmTile(gg, cx, cy, sz, t));
+    if (pv === "live") {
+      return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawLive(gg, liveImages.card || liveImages.avatar,
+        cx - sz * 1.45, cy - sz * 1.15, sz * 2.9, sz * 2.3));
+    }
     return drawStoreCard(g, W, H, t, p.store || {}, pv && pv !== "wolf"
       ? (gg, cx, cy, sz) => drawGuy(gg, cx, cy - sz * 0.1, sz * 0.95, guyPose(t, {}, pv)) : undefined);
   }

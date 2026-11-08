@@ -100,6 +100,16 @@ export class Rig {
     this.R0i = this.R0.clone().invert();
   }
 
+  /** Локальный поворот нормализованной кости → поворот в осях модели (обратное conj). */
+  toModel(q: THREE.Quaternion): THREE.Quaternion {
+    return this.R0.clone().multiply(q).multiply(this.R0i);
+  }
+
+  /** Поворот покоя, обратный: дочерний объект кости с этим поворотом живёт в осях модели (VRM0 — пол-оборота). */
+  get restInverse(): THREE.Quaternion {
+    return this.R0i.clone();
+  }
+
   /** Поворот в осях модели → локальный поворот нормализованной кости. */
   conj(q: THREE.Quaternion): THREE.Quaternion {
     return this.R0i.clone().multiply(q).multiply(this.R0);
@@ -177,7 +187,11 @@ export class Rig {
     const em = this.vrm.expressionManager;
     if (em) {
       for (const e of em.expressions) em.setValue(e.expressionName, 0);
-      for (const [k, v] of Object.entries(p.expr || {})) if (em.getExpression(k)) em.setValue(k, v);
+      for (const [k, v] of Object.entries(p.expr || {})) {
+        // VRM0: не-пресетные выражения — со своим именем («Surprised»).
+        const name = em.getExpression(k) ? k : em.getExpression(k[0].toUpperCase() + k.slice(1)) ? k[0].toUpperCase() + k.slice(1) : null;
+        if (name) em.setValue(name, Math.max(em.getValue(name) ?? 0, v));
+      }
     }
   }
 

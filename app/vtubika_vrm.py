@@ -32,6 +32,9 @@ CAMS: dict[str, dict] = {
     "face_left": {"pos": [-0.42, 1.42, 2.5], "target": [0.02, 1.36, 0], "fov": 13, "plate": {"dx": -80, "dy": -40, "zoom": 1.15}},
     "face_close": {"pos": [0.15, 1.42, 2.6], "target": [0, 1.39, 0], "fov": 9.5, "plate": {"dx": 0, "dy": -60, "zoom": 1.25}},
     "smile": {"pos": [0.25, 1.4, 2.6], "target": [-0.02, 1.35, 0], "fov": 11.5, "plate": {"dx": 30, "dy": -50, "zoom": 1.2}},
+    # Средний план «оба на экране»: героиня ниже центра (сверху — карточка эфира с аватаром), руки на клавиатуре и
+    # машущая рука в кадре.
+    "two": {"pos": [-0.04, 1.43, 2.5], "target": [-0.05, 1.42, 0.05], "fov": 24, "plate": {"dx": 20, "dy": -30, "zoom": 1.1}},
     "insert": {"pos": [0.26, 1.46, 2.45], "target": [-0.02, 1.25, 0.2], "fov": 19, "plate": {"dx": 40, "dy": -40, "zoom": 1.05}},
     "typing": {"pos": [0.26, 1.46, 2.45], "target": [-0.02, 1.22, 0.25], "fov": 20.5, "plate": {"dx": 40, "dy": -40, "zoom": 1.05}},
     "ots": {"pos": [-0.85, 1.85, -0.9], "target": [0.25, 1.24, 0.42], "fov": 28,
@@ -58,7 +61,8 @@ def _cam(name: str, t0: float, t1: float, push: float, roll: float) -> dict:
             {"t": round(t1 - t0, 3), "pos": c["pos"], "target": c["target"], "fov": round(end_fov, 3), "roll": roll}]
     plate = {"kind": "front", **c["plate"]}
     if plate["kind"] == "front":
-        plate["fgDesk"] = {"y": 1690, "cup": name in ("typing", "insert"), "mic": name != "face_close"}
+        plate["fgDesk"] = {"y": 1690, "cup": name in ("typing", "insert"), "mic": name not in ("face_close", "two")}
+        plate["cats"] = name in ("two", "typing", "insert")  # кот на краю стола — только там, где виден стол
     return {"camKeys": keys, "plate": plate}
 
 
@@ -67,7 +71,14 @@ def _act_windows(actions: list[dict]) -> list[tuple[float, float, str]]:
 
 
 def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps: int = 30) -> dict:
-    """Собранная сцена истории → спека node/vrm (тот же экран, оверлеи и кадры)."""
+    """Собранная сцена истории → спека node/vrm (тот же экран, оверлеи и кадры). Героиня, аватар на мониторе,
+    кот, кивки и жесты — ``app.vtubika_vrm_stage`` (поле ``vrm`` плана)."""
+    from app import vtubika_vrm_stage as VS
+
+    her = VS.heroine(plan)
+    chair = {**CHAIR, "pos": [CHAIR["pos"][0], her["chair_y"], CHAIR["pos"][2]]}
+    props = {**PROPS, "chair": chair}
+    extra = VS.stage(plan, words, total)
     spec = built["spec"]
     objs = {o["id"]: o for o in spec["objects"]}
     stream = {k: v for k, v in objs["monitor_screen"]["params"].items() if k not in ("kind", "size", "px")}
@@ -92,8 +103,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             ins = {"kind": cam, "t0": t0, "t1": t1, "push": push, "roll": roll}
             if cam == "jar":
                 ins.update({"drops": jar.get("drops", []), "coins": jar.get("coins", 10)})
+            if sh.get("sketch"):
+                ins["sketch"] = True
             shots.append({"name": f"{i:02d}_{cam}", "t0": t0, "t1": t1, "cam": CAMS["face"],
-                          "plate": {"kind": "front", "insert": ins}, "props": PROPS, "light": LIGHT})
+                          "plate": {"kind": "front", "insert": ins}, "props": props, "light": LIGHT})
             continue
         name = cam if cam in CAMS else "face"
         if name == "ots" and acts_mid(t0, t1) != "Typing_Loop":
@@ -101,7 +114,7 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
         if name in ("face", "face_left") and acts_mid(t0, t1) == "Typing_Loop":
             name = "typing"  # печать — средним планом: руки на клавиатуре видны
         shots.append({"name": f"{i:02d}_{name}", "t0": t0, "t1": t1, **_cam(name, t0, t1, push, roll),
-                      "props": PROPS, "light": LIGHT})
+                      "props": props, "light": LIGHT})
 
     # Руки: по действиям; по умолчанию — лежат на клавишах без набора.
     arms = [{"t": -3, "left": "idle", "right": "idle"}]
@@ -120,6 +133,8 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             look.append({"t": round(float(m["t"]) + 0.1, 3), "target": CHAT, "head": 0.8})
             look.append({"t": round(float(m["t"]) + 1.6, 3), "target": MON, "head": 0.6})
     look.sort(key=lambda k: k["t"])
+    arms = VS.merge_arms(arms, extra["arms"])
+    look = VS.merge_look(look, extra["looks"])
     # Мокап: сидя (вертикальный кусок клипа «туда-обратно»), печать — корпус, смех — корпус слегка.
     tracks: list[dict] = [
         {"clip": "sit", "start": -2, "end": total + 1, "offset": 1.0, "speed": 0.5, "pingpong": [1.0, 7.5, 21], "smooth": 0.15,
@@ -153,9 +168,12 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             talk.append((float(f["t"]), end))
     speech = [[round(w["start"], 3), round(w["end"], 3)] for w in words
               if any(a <= w["start"] < b for a, b in talk)]
-    timeline = {"clips": {n: f"cmu/clips/{n}.json" for n in ("sit", "typing", "laugh")}, "chair": CHAIR, "tracks": tracks,
+    timeline = {"clips": {n: f"cmu/clips/{n}.json" for n in ("sit", "typing", "laugh")}, "chair": chair, "tracks": tracks,
                 "arms": arms, "hands": [{"t": -3, "left": "relaxed", "right": "relaxed"}], "faces": fk, "look": look,
-                "speech": speech, "surfaces": SURFACES}
-    return {"width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3), "model": MODEL, "look": LOOK,
-            "stream": stream, "overlays": spec.get("overlays") or [], "headphones": True, "strictContact": True,
-            "timeline": timeline, "shots": shots}
+                "speech": speech, "surfaces": SURFACES, "nods": extra["nods"], "bows": extra["bows"]}
+    out = {"width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3), "model": her["model"], "look": her["look"],
+           "stream": stream, "overlays": spec.get("overlays") or [], "headphones": her["headphones"], "strictContact": True,
+           "timeline": timeline, "shots": shots, "cats": extra["cats"]}
+    if extra.get("avatar"):
+        out["avatar"] = extra["avatar"]
+    return out

@@ -62,6 +62,7 @@ SFX = {
     "click": ("sfx:kenney-interface/click_002.ogg", 0.5),
     "pen": ("sfx:kenney-interface/scratch_002.ogg", 0.35),
     "notify": ("sfx:kenney-interface/maximize_004.ogg", 0.5),
+    "paws": ("sfx:kenney-impact/footstep_carpet_001.ogg", 0.55),  # кот мягко приземляется на стол
 }
 
 # Концовка каждой истории (app/vtubika_endcard.py): значок, «vtubika», сайт и слоган сайта — без других обещаний.

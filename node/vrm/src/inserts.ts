@@ -3,7 +3,7 @@
  * с волчонком, «Оплата отклонена», редактор модели), монитор крупно на аватаре, чат крупно, планшет с эскизом
  * лисички (рисуется по ходу окна рисования), банка-копилка с падающими монетами. Наезд и наклон — по ходу плана.
  */
-import { drawChatScreen, drawStream, type StreamScreen } from "../../scene3d/src/ui.ts";
+import { drawChatScreen, drawLive, drawStream, liveImages, type StreamScreen } from "../../scene3d/src/ui.ts";
 import { drawDrawApp } from "../../scene3d/src/ui_pages.ts";
 import { glow, layer, rgba } from "./plate/draw.ts";
 import type { Room } from "./plate/room.ts";
@@ -20,6 +20,47 @@ export interface InsertSpec {
   /** Банка: моменты падения монет и сколько монет было до первой. */
   drops?: number[];
   coins?: number;
+  /** Планшет: вместо эскиза лисички — свой персонаж (живая картинка аватара карандашом, цвет проявляется). */
+  sketch?: boolean;
+}
+
+const sk = layer(1200, 800);
+
+/** Эскиз персонажа: аватар в оттенках серого «карандашом» на бумаге, слева направо проявляется цвет. */
+function drawSketch(g: CanvasRenderingContext2D, W: number, H: number, p: number) {
+  g.fillStyle = "#f4efe6";
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = "rgba(120,110,150,0.12)";
+  g.lineWidth = 2;
+  for (let y = 40; y < H; y += 40) {
+    g.beginPath();
+    g.moveTo(0, y);
+    g.lineTo(W, y);
+    g.stroke();
+  }
+  const img = liveImages.avatar;
+  if (!img) return;
+  g.save();
+  g.filter = "grayscale(1) contrast(1.8) brightness(1.25)";
+  g.globalCompositeOperation = "multiply";
+  drawLive(g, img, 0, 0, W, H);
+  g.restore();
+  g.save();
+  g.beginPath();
+  g.rect(0, 0, W * Math.max(0, Math.min(1, p * 1.3 - 0.25)), H);
+  g.clip();
+  g.globalAlpha = 0.85;
+  drawLive(g, img, 0, 0, W, H);
+  g.restore();
+  // Панель кистей сверху.
+  g.fillStyle = "#2a2440";
+  g.fillRect(0, 0, W, 54);
+  ["#ff6fb5", "#ffd36a", "#7ee0ff", "#9dff7e", "#c9a0ff"].forEach((c, i) => {
+    g.fillStyle = c;
+    g.beginPath();
+    g.arc(40 + i * 54, 27, 16, 0, Math.PI * 2);
+    g.fill();
+  });
 }
 
 const scr = layer(1600, 900);
@@ -96,7 +137,8 @@ function tablet(g: G, W: number, H: number, s: InsertSpec, t: number, stream: St
   g.fillStyle = gr;
   g.fillRect(0, 0, W, H);
   glow(g, W * 0.5, H * 0.35, W * 0.9, H * 0.5, "#8fb8ff", 0.18);
-  drawDrawApp(tab.getContext("2d")!, tab.width, tab.height, p);
+  if (s.sketch) drawSketch(sk.getContext("2d")!, sk.width, sk.height, p);
+  else drawDrawApp(tab.getContext("2d")!, tab.width, tab.height, p);
   g.save();
   camera(g, W, H, s, t, W / 2, H * 0.5, 1.0);
   g.translate(W / 2, H * 0.5);
@@ -109,7 +151,7 @@ function tablet(g: G, W: number, H: number, s: InsertSpec, t: number, stream: St
   g.strokeStyle = "rgba(255,120,200,0.5)";
   g.lineWidth = 4;
   g.stroke();
-  g.drawImage(tab, -w / 2, -h / 2, w, h);
+  g.drawImage(s.sketch ? sk : tab, -w / 2, -h / 2, w, h);
   // Стилус: кончик ходит по контуру эскиза.
   const a = t * 5.2, px = Math.cos(a) * 150 + Math.sin(a * 0.7) * 40, py = Math.sin(a * 1.3) * 110 - 10;
   g.save();

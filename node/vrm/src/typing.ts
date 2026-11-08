@@ -84,3 +84,13 @@ export function mouseArm(t: number): ArmSpec {
     curl: [0.22, 0.32, 0.36, 0.42, 0.48], spread: 0.1, thumbOut: 0.25, touch: true,
   };
 }
+
+/** Ладонь к губам (испуг, «ой»): правая рука, запястье под подбородком, пальцы вверх, ладонь к лицу. Точки — в
+ * пространстве модели (как у chinArm: пресеты смешиваются по точкам). */
+export function mouthArm(t: number): ArmSpec {
+  return {
+    target: [-0.045, 1.235 + 0.003 * Math.sin(t * 2.1), 0.005], pole: [-0.55, 0.7, 0.25],
+    maxFlex: 150, fingers: [0.3, 1, 0.12], palm: [0.15, 0.0, -1],
+    curl: [0.35, 0.22, 0.26, 0.3, 0.36], spread: 0.08, thumbOut: 0.2,
+  };
+}

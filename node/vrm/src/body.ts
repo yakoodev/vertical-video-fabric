@@ -34,19 +34,25 @@ const COLLIDERS: [string, [number, number, number], number, [number, number, num
   ["rightShoulder", [-0.03, 0.01, 0], 0.07, [-0.1, 0.0, 0]],
   ["leftUpperArm", [0, 0, 0], 0.06, [0.2, 0, 0]],
   ["rightUpperArm", [0, 0, 0], 0.06, [-0.2, 0, 0]],
+  // Предплечья: поднятая (машущая) рука — волосы ложатся поверх, а не сквозь.
+  ["leftLowerArm", [0, 0, 0], 0.045, [0.21, 0, 0]],
+  ["rightLowerArm", [0, 0, 0], 0.045, [-0.21, 0, 0]],
 ];
 
 export function addColliders(vrm: VRM, chair: ChairSpec | undefined, tune = { drag: 0.6, gravity: 0.25, hit: 0.02 }) {
   const mgr = vrm.springBoneManager;
   if (!mgr) return;
   const body: VRMSpringBoneCollider[] = [];
+  vrm.scene.updateMatrixWorld(true);
   for (const [bone, off, r, tail] of COLLIDERS) {
     const node = vrm.humanoid.getRawBoneNode(bone as VRMHumanBoneName);
     if (!node) continue;
-    // Сдвиги — в осях модели; кости VRM1 в покое не повёрнуты относительно модели.
+    // Сдвиги — в осях модели → в оси кости в покое (у VRM1 они совпадают, у VRM0 после rotateVRM0 — пол-оборота).
+    const qi = node.getWorldQuaternion(new THREE.Quaternion()).invert();
+    const loc = (v: [number, number, number]) => new THREE.Vector3(...v).applyQuaternion(qi);
     const shape = tail
-      ? new VRMSpringBoneColliderShapeCapsule({ offset: new THREE.Vector3(...off), tail: new THREE.Vector3(off[0] + tail[0], off[1] + tail[1], off[2] + tail[2]), radius: r })
-      : new VRMSpringBoneColliderShapeSphere({ offset: new THREE.Vector3(...off), radius: r });
+      ? new VRMSpringBoneColliderShapeCapsule({ offset: loc(off), tail: loc([off[0] + tail[0], off[1] + tail[1], off[2] + tail[2]]), radius: r })
+      : new VRMSpringBoneColliderShapeSphere({ offset: loc(off), radius: r });
     const c = new VRMSpringBoneCollider(shape);
     node.add(c);
     body.push(c);
@@ -77,10 +83,12 @@ const tmp = new THREE.Vector3();
 
 function bodyPoints(vrm: VRM): { name: string; p: THREE.Vector3; r: number }[] {
   const out: { name: string; p: THREE.Vector3; r: number }[] = [];
+  // Сдвиги — в осях кости относительно покоя (у VRM0 корень нормализованных костей повёрнут на пол-оборота).
+  const r0i = vrm.humanoid.normalizedHumanBonesRoot.getWorldQuaternion(new THREE.Quaternion()).invert();
   for (const [bone, off, r] of BODY) {
     const n = vrm.humanoid.getNormalizedBoneNode(bone as VRMHumanBoneName);
     if (!n) continue;
-    const q = n.getWorldQuaternion(new THREE.Quaternion());
+    const q = n.getWorldQuaternion(new THREE.Quaternion()).multiply(r0i);
     out.push({ name: bone, p: n.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(...off).applyQuaternion(q)), r });
   }
   // Бёдра — к сиденью: середина бедра и колено.

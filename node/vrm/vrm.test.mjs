@@ -12,7 +12,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS } from "./src/sequence.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow } from "./src/sequence.ts";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -59,4 +59,14 @@ test("пресеты пальцев: сгиб 0..1, каскад — мизин�
     for (const c of f.curl) assert.ok(c >= 0 && c <= 1, name);
     assert.ok(f.curl[4] >= f.curl[1] - 1e-9, name);
   }
+});
+
+test("кивки и поклон: только в своём окне, поклон доходит до глубины и возвращается", () => {
+  const tl = { clips: {}, tracks: [], nods: [{ t: 1, n: 2, amp: 10 }], bows: [{ t: 3, dur: 2, deg: 16 }] };
+  assert.equal(M.nodBow(tl, 0.9).head, 0);
+  assert.ok(M.nodBow(tl, 1.225).head > 4); // низ первого кивка — середина периода 0.45 с
+  assert.equal(M.nodBow(tl, 2.0).head, 0);
+  const mid = M.nodBow(tl, 4.0);
+  assert.ok(Math.abs(mid.spine + mid.chest + mid.neck + mid.head - 16 * 1.4) < 0.5);
+  assert.equal(M.nodBow(tl, 5.01).spine, 0);
 });
