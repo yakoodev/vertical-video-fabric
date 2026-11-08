@@ -32,11 +32,11 @@ const COLLIDERS: [string, [number, number, number], number, [number, number, num
   ["head", [0, 0.085, 0], 0.115, null],
   ["leftShoulder", [0.03, 0.01, 0], 0.07, [0.1, 0.0, 0]],
   ["rightShoulder", [-0.03, 0.01, 0], 0.07, [-0.1, 0.0, 0]],
-  ["leftUpperArm", [0, 0, 0], 0.06, [0.2, 0, 0]],
-  ["rightUpperArm", [0, 0, 0], 0.06, [-0.2, 0, 0]],
+  ["leftUpperArm", [0, 0, 0], 0.066, [0.2, 0, 0]],
+  ["rightUpperArm", [0, 0, 0], 0.066, [-0.2, 0, 0]],
   // Предплечья: поднятая (машущая) рука — волосы ложатся поверх, а не сквозь.
-  ["leftLowerArm", [0, 0, 0], 0.045, [0.21, 0, 0]],
-  ["rightLowerArm", [0, 0, 0], 0.045, [-0.21, 0, 0]],
+  ["leftLowerArm", [0, 0, 0], 0.056, [0.21, 0, 0]],
+  ["rightLowerArm", [0, 0, 0], 0.056, [-0.21, 0, 0]],
 ];
 
 export function addColliders(vrm: VRM, chair: ChairSpec | undefined, tune = { drag: 0.6, gravity: 0.25, hit: 0.02 }) {

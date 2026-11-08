@@ -176,4 +176,11 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
            "timeline": timeline, "shots": shots, "cats": extra["cats"]}
     if extra.get("avatar"):
         out["avatar"] = extra["avatar"]
+    # Настоящие скриншоты сайта во вставке покупки (если сняты): телефон «shop» → «site».
+    from app import vtubika_site as SITE
+
+    site = SITE.apply(out["overlays"], plan)
+    if site:
+        out["siteShots"] = [site["catalog"]["url"], site["product"]["url"]]
+        out["siteDir"] = site["dir"]
     return out

@@ -9,6 +9,9 @@
   "music": {"file": "chill-keys.mp3", "under_db": 7.0},
   "tail": 2.6,
   "pace": {"tempo_cap": 1.0, "tempo": 0.96, "lead": 0.9},
+  "site_shots": {"dir": "D:/vvf-offload/vtubika/site/2026-11-08",
+                 "catalog": {"file": "catalog_3d.png", "from": 1500, "scroll": 2662, "tap": [288, 3030]},
+                 "product": {"file": "product_mafuyu.png", "scroll": 800, "tap": [195, 1505], "button": [16, 1479, 358, 52]}},
   "screen": {
     "uptime": 0,
     "title": "персонаж к дебюту · эскиз",
@@ -42,12 +45,12 @@
      "do": [
        {"act": "Sit_Loop"},
        {"face": "neutral"},
-       {"screen": "stream"},
-       {"avatar": "sketch"},
+       {"screen": "stream", "dt": -0.94},
+       {"avatar": "sketch", "dt": -0.94},
        {"tag": "Пробная", "dur": 3.6}
      ],
      "vrm": [
-       {"av_show": ["vera_oc"]}, {"av": "showcase", "who": "vera_oc"}, {"av_cam": "mid"}
+       {"av_show": ["vera_oc"], "dt": -0.94}, {"av": "showcase", "who": "vera_oc", "dt": -0.94}, {"av_cam": "mid", "dt": -0.94}
      ]},
     {"text": "Полгода рисуешь своего персонажа для дебюта и боишься: вдруг 3D — это не твоё.",
      "pause_after": 0.5,
@@ -80,16 +83,17 @@
      ]},
     {"text": "Ты берёшь готовую 3D-модель на Витубике, в рублях, просто примерить.",
      "pause_after": 1.5,
-     "show": ["телефон: vtubika.store — «Mafuyu — оригинальная 3D-модель», 5 090 ₽, «Оплатить картой РФ»", "«Оплачено»", "«Модель пришла»"],
+     "show": ["телефон: настоящий сайт vtubika.store — раздел 3D листается до «Mafuyu — оригинальная 3D-модель»", "страница товара: 5 090 ₽, касание «Оформить сразу»", "«Оплачено» и «Модель пришла» в стиле сайта"],
      "shots": [{"cam": "insert"}],
      "do": [
-       {"phone": {"screen": "shop", "store": {"title": "Mafuyu — оригинальная 3D-модель", "price": "5 090 ₽", "preview": "vrm"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35, "to_next": true}, "until": "end", "dt": -0.15},
-       {"at": "рублях", "paid": true, "dt": -0.1},
-       {"at": "end", "dt": 0.1, "phone": {"screen": "messenger", "message": {"from": "Витубика", "file": "model_vrm.zip", "size": "64 МБ", "text": "Модель пришла"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35, "cut": true}, "span": 0, "dt_end": 1.2},
+       {"phone": {"screen": "shop", "store": {"title": "Mafuyu — оригинальная 3D-модель", "price": "5 090 ₽", "preview": "vrm"}, "message": {"file": "model_vrm.zip", "size": "64 МБ"}, "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "span": 0, "dt": -0.15, "dt_end": 1.3},
+       {"at": "Витубике", "site_step": "product", "dt": -0.5},
+       {"at": "рублях", "site_step": "tap", "dt": -0.15},
+       {"at": "рублях", "paid": true, "dt": 0.25},
+       {"at": "end", "dt": 0.25, "site_step": "delivered"},
        {"act": "Typing_Loop"},
        {"face": "neutral"},
-       {"at": "end", "face": "happy", "dt": 0.3},
-       {"sfx": "click", "dt": 0.2}
+       {"at": "end", "face": "happy", "dt": 0.3}
      ],
      "vrm": [
        {"av_show": ["trial"], "dt": -0.3}, {"av": "showcase", "who": "trial", "dt": -0.3}, {"av_cam": "mid", "dt": -0.3}
@@ -118,7 +122,7 @@
        {"screencard": {"x": 540, "y": 360, "w": 760}, "until": "она", "dt": -0.1}
      ],
      "vrm": [
-       {"arms": "wave", "dt": -0.15, "until": "end", "dt_end": 0.5}, {"look": "webcam", "until": "end", "dt_end": 0.5},
+       {"arms": "wave", "dt": -0.15, "until": "end", "dt_end": -0.4}, {"look": "webcam", "until": "end", "dt_end": 0.5},
        {"av_cam": "close", "dt": -0.3}
      ]},
     {"text": "Киваешь — она кивает.",
@@ -145,7 +149,7 @@
        {"at": "паника", "face": "wide"}
      ],
      "vrm": [
-       {"cat": {"x": 770, "y": 1745, "scale": 1.35, "color": "#f0a050"}, "at": "Кот", "dt": 0.05, "until": "end", "dt_end": 0.6},
+       {"cat": {"x": 930, "y": 1745, "scale": 1.35, "color": "#f0a050"}, "at": "Кот", "dt": 0.05, "until": "end", "dt_end": 0.6},
        {"av": "idle", "who": "trial", "at": "Кот"},
        {"look": "down", "at": "прыгает", "dt": 0.3, "until": "end", "dt_end": 0.5},
        {"arms": "mouth", "at": "паника", "dt": -0.45, "until": "end", "dt_end": 0.6}
@@ -155,7 +159,7 @@
      "show": ["телефон: пост в канале «тестовый эфир, ничего интересного»"],
      "shots": [{"cam": "insert"}],
      "do": [
-       {"phone": {"screen": "messenger", "message": {"from": "Вера рисует", "status": "канал", "post": "тестовый эфир, ничего интересного", "typeSec": 1.8}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35}, "at": "канал", "dt": -0.3, "span": 0, "dt_end": 0.4},
+       {"phone": {"screen": "messenger", "message": {"from": "Вера рисует", "status": "канал", "post": "тестовый эфир, ничего интересного", "typeSec": 1.8}, "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "at": "канал", "dt": -0.3, "span": 0, "dt_end": 0.4},
        {"act": "Typing_Loop"},
        {"face": "neutral"},
        {"sfx": "keyboard", "at": "тестовый"}

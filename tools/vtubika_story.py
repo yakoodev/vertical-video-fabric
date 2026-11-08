@@ -42,6 +42,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
 
 POLZA_CAP_RUB = 100.0
 TARGET_LUFS = -14.0
@@ -300,10 +301,12 @@ def end_card(plan: dict, video: Path, work: Path, total: float, report: dict) ->
         return video, total, [], None
     card = E.render(cfg, work)
     out = video.with_name(f"{video.stem}_card.mp4")
-    E.append(video, card, out)
+    xf = float(cfg.get("crossfade") or 0.0)
+    E.append(video, card, out, total, xf)
     dur = float(cfg["duration"])
-    report["end_card"] = {"start": round(total, 3), "duration": dur, "webm": str(card)}
-    return out, round(total + dur, 3), E.card_sfx(cfg, total), float(cfg.get("music_fade", dur))
+    start = round(total - xf, 3)  # с наплывом карточка начинается чуть раньше конца истории
+    report["end_card"] = {"start": start, "duration": dur, "crossfade": xf, "sting": cfg.get("sting"), "webm": str(card)}
+    return out, round(start + dur, 3), E.card_sfx(cfg, start), float(cfg.get("music_fade", dur))
 
 
 def end_card_sheet(video: Path, report: dict, out: Path) -> None:
@@ -381,7 +384,8 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     spec_path = work / "scene_vrm.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
     render = ["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(spec_path), "--bundle",
-              str(ROOT / "node" / "vrm" / "dist" / "vrm.js"), "--packs", args.vrm_packs, "--gl", args.gl, "--workers", "1"]
+              str(ROOT / "node" / "vrm" / "dist" / "vrm.js"), "--packs", args.vrm_packs, "--gl", args.gl, "--workers", "1",
+              *(["--site", spec["siteDir"]] if spec.get("siteDir") else [])]
     subprocess.run(["npm", "run", "build:vrm"], cwd=ROOT, check=True, shell=sys.platform == "win32",
                    stdin=subprocess.DEVNULL)
     if args.preview:
@@ -420,6 +424,18 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
+    if args.endcard_sounds and report.get("end_card"):
+        # Сравнение стингов концовки: то же сведение, другой звук карточки; крупный номер на каждой.
+        from app import vtubika as U
+        from app import vtubika_endcard as E
+        from vtubika_endcard_sounds import compare
+
+        cfg, ec = E.settings(plan), report["end_card"]
+        names = [n for n in U.END_CARD_STINGS if n != "kenney_classic"]
+        report["endcard_sounds"] = {"video": str(Path(args.endcard_sounds)), "levels": compare(
+            names, lambda name, path: mix(plan, capped, narration, built["sfx"] + E.card_sfx({**cfg, "sting": name}, ec["start"]),
+                                          full, path, work, {}, lead, music_fade),
+            ec["start"], ec["duration"], work, Path(args.endcard_sounds))}
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
@@ -451,6 +467,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--engine", default="voxel", choices=["voxel", "vrm"],
                     help="vrm — героиня VRM «под 2D-аниме» (node/vrm, app/vtubika_vrm.py)")
     ap.add_argument("--vrm-packs", default=r"D:\vvf-offload\vtubika\vrm\vendor", help="модель VRM и клипы мокапа")
+    ap.add_argument("--endcard-sounds", help="VRM: ещё и сравнение стингов концовки (mp4 с номерами вариантов)")
     args = ap.parse_args(argv)
     if Path(args.env).is_file():
         load_env(Path(args.env))

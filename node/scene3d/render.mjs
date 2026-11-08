@@ -13,7 +13,7 @@
  * node node/scene3d/render.mjs --spec scene.json --out out.mp4 [--packs vendor/packs] [--workers 3]
  *   [--fps 30] [--duration 9] [--frames A:B] [--preview 0,2.5,5 --preview-dir DIR] [--inspect T]
  *   [--gl swiftshader|gpu] [--format jpeg|png] [--quality 92] [--crf 18] [--chrome PATH] [--ffmpeg ffmpeg]
- *   [--timeout 1800]
+ *   [--timeout 1800] [--site DIR — скриншоты сайта для телефона «site», отдаются как /site/…]
  *
  * stdout — одна строка JSON {ok, frames, fps, duration, width, height, segments, black_frames,
  * luma_min, seconds, warnings} (превью: {ok, previews: [...]}, inspect: {ok, inspect}).
@@ -72,6 +72,7 @@ export function parseArgs(argv) {
     spec: resolve(out.spec),
     output: out.out ? resolve(out.out) : null,
     packs: resolve(out.packs || process.env.MOTION_PACKS_DIR || join(ROOT, "vendor", "packs")),
+    site: out.site ? resolve(out.site) : null,
     bundle: resolve(out.bundle || join(HERE, "dist", "scene3d.js")),
     workers: Math.round(num("workers", Math.max(1, Math.min(4, Math.floor(cpus().length / 4))), 1, 16)),
     fps: out.fps !== undefined ? Math.round(num("fps", 30, 1, 60)) : null,
@@ -135,6 +136,13 @@ export function serve(url, ctx) {
     if (!file || !mime || !mime.startsWith("font/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
     return { status: 200, body: readFileSync(file), mime };
   }
+  if (path.startsWith("/site/")) {
+    // Скриншоты сайта (телефон «site»): только картинки из каталога --site.
+    const file = ctx.site && safeJoin(ctx.site, path.slice("/site/".length));
+    const mime = file && MIME[extname(file).toLowerCase()];
+    if (!file || !mime || !mime.startsWith("image/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
+    return { status: 200, body: readFileSync(file), mime };
+  }
   if (path.startsWith("/packs/") || path.startsWith("/assets/")) {
     // /assets/ — встроенные модели движка (node/scene3d/assets), /packs/ — скачанные паки.
     const assets = path.startsWith("/assets/");
@@ -165,7 +173,7 @@ export function findChrome(explicit) {
   return hit;
 }
 
-class Cdp {
+export class Cdp {
   constructor(proc) {
     this.proc = proc;
     this.seq = 0;
@@ -270,7 +278,7 @@ export async function openScene(opts, spec, log = () => {}) {
     chromeErr = (chromeErr + d.toString()).slice(-3000);
   });
   const cdp = new Cdp(chrome);
-  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs };
+  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs, site: opts.site };
   const consoleLines = [];
   const close = async () => {
     try {

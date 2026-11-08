@@ -205,7 +205,7 @@ export class Rig {
    * Сгиб локтя ограничен maxFlex (сильнее — кожа сминается): кисть тогда не дотягивается, и позу правят
    * наклоном корпуса/головы к руке.
    */
-  arm(side: 1 | -1, a: ArmSpec) {
+  arm(side: 1 | -1, a: ArmSpec, depth = 0, aim?: THREE.Vector3) {
     const pre = side > 0 ? "left" : "right";
     const up = this.node(`${pre}UpperArm`)!, lo = this.node(`${pre}LowerArm`)!, hand = this.node(`${pre}Hand`)!;
     const shNode = this.node(`${pre}Shoulder`);
@@ -283,6 +283,23 @@ export class Rig {
     this.setWorld(lo, best.loQ);
     const handRest = basis(new THREE.Vector3(side, 0, 0), new THREE.Vector3(0, -1, 0));
     this.setWorld(hand, basis(fingers || best.loDir, palm).multiply(handRest.invert()));
+    // Кости руки в покое этой модели лежат не строго по оси X: решение выше ставит запястье мимо цели на 1–2 см
+    // (и подъём кисти над клавиатурой, повторяя IK от фактического запястья, уводил кисти внутрь — руки
+    // заходили одна на другую). Досчитываем: цель сдвигается на промах, 2–3 прохода — запястье в цели (< 0.5 мм).
+    if (!before && depth < 4 && dist <= L1 + L2 - 2e-3 && dist >= dMin) {
+      const goal = aim ?? W;
+      const miss = goal.clone().sub(this.pos(`${pre}Hand`));
+      if (miss.length() > 5e-4) {
+        const T2 = W.clone().add(miss);
+        this.arm(side, { ...a, target: T2.toArray() as V3, noShoulder: true, autoPole: false,
+          pole: best.E.clone().add(best.E.clone().sub(S)).toArray() as V3 }, depth + 1, goal);
+        if (depth === 0) {
+          this.hands[pre] = { pos: W.clone(), fingers: (fingers || best.loDir).clone(), palm: palm.clone() };
+          this.resolved[pre] = { T: T.toArray() as V3, P: P.toArray() as V3 };
+        }
+        return;
+      }
+    }
     this.hands[pre] = { pos: W.clone(), fingers: (fingers || best.loDir).clone(), palm: palm.clone() };
     this.resolved[pre] = { T: T.toArray() as V3, P: P.toArray() as V3 };
     if (before) {

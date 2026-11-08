@@ -21,10 +21,12 @@ import { camAt, merge, poseAt, speechMouth, type CamKey, type PoseKey } from "./
 import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
 import { addColliders, chairGap, hairGap } from "./body.ts";
+import { HandCheck } from "./handcheck.ts";
 import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
+import { loadSite } from "../../scene3d/src/ui_site.ts";
 import { AvatarStage, type AvatarSpec } from "./avatar.ts";
 import { drawCats, type CatSpec } from "./cat.ts";
 import type { AccessorySpec } from "./props.ts";
@@ -80,6 +82,10 @@ export interface Spec {
   cats?: CatSpec[];
   /** Каждый кадр: пальцы над поверхностями timeline.surfaces, иначе рендер падает. */
   strictContact?: boolean;
+  /** Скриншоты сайта для телефона «site» (URL /site/…, render.mjs --site DIR) — загрузить до первого кадра. */
+  siteShots?: string[];
+  /** Проверка рук против тела (handcheck.ts) на каждом кадре; false — выключить. */
+  handCheck?: boolean;
 }
 
 let spec: Spec;
@@ -97,6 +103,7 @@ let props: Props;
 let lumaC: HTMLCanvasElement;
 let overlays: Overlays | null = null;
 let stage: AvatarStage | null = null;
+let hands: HandCheck | null = null;
 const warnings: string[] = [];
 
 function shotAt(t: number): { shot: Shot; local: number } {
@@ -176,6 +183,8 @@ function render(t: number) {
     if (h.gap < contact.hair.min) contact.hair = { min: h.gap, at: t, point: h.point };
     if (spec.strictContact && b.gap < 0) throw new Error(`тело в кресле: t=${t.toFixed(3)} ${b.point} на ${(-b.gap * 1000).toFixed(1)} мм`);
   }
+  // Руки против лица, головы, корпуса, ног и другой руки — без допуска (handcheck.ts).
+  if (hands && spec.handCheck !== false) hands.frame(t);
   const L = shot.light || {};
   key.position.set(...(L.key || [0.3, 0.6, 1]));
   key.color.set(L.keyColor || "#dfe6ff");
@@ -227,6 +236,7 @@ async function load(s: Spec) {
   const c = document.getElementById("c") as HTMLCanvasElement;
   g = c.getContext("2d")!;
   await loadUiFonts();
+  if (s.siteShots?.length) await loadSite(s.siteShots);
   const glc = document.createElement("canvas");
   glc.width = W;
   glc.height = H;
@@ -260,6 +270,7 @@ async function load(s: Spec) {
   rig = new Rig(vrm);
   if (s.timeline) clips = await loadClips("http://scene3d.local/packs", s.timeline.clips);
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
+  if (s.timeline && s.handCheck !== false) hands = new HandCheck(vrm, rig);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
   if (s.headphones) props.headphones(rig, typeof s.headphones === "object" ? s.headphones : undefined);
@@ -283,8 +294,10 @@ async function load(s: Spec) {
     const { shot, local } = shotAt(t);
     simT = NaN;
     settle(t, shot, local);
-    return { t, arms: rig.info, bones: rig.dump(), expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
+    // hands — куда целилась IK (запястье), resolved — цели и полюса рук: сверка «цель ↔ кость» при отладке поз.
+    return { t, arms: rig.info, hands: rig.hands, resolved: rig.resolved, bones: rig.dump(),
+      expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
   },
   warnings: () => warnings,
-  contact: () => contact,
+  contact: () => ({ ...contact, hands: hands ? { frames: hands.frames, gaps: hands.gaps, groups: hands.counts(), bad: hands.bad } : null }),
 };

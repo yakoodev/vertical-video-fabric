@@ -85,8 +85,15 @@ def test_mid_phrases_mostly_show_vera():
     assert with_vera >= len(built["sentences"]) * 0.75
 
 
-def test_real_product_card_has_neutral_picture():
-    """Карточка с настоящим товаром сайта — без нашей модели на превью (иначе реклама выдаёт её за этот товар)."""
-    *_, spec = _story()
+def test_real_product_card_has_neutral_picture_without_site_shots():
+    """Без скриншотов сайта карточка с настоящим товаром — без нашей модели на превью (иначе реклама выдаёт её за
+    этот товар): нейтральная плитка. Со снимками — настоящая страница (tests/test_vtubika_site.py)."""
+    plan = P.load_plan(ROOT / "tools" / "vtubika_plans" / "trial.json")
+    plan.pop("site_shots", None)
+    toks = P.tokens(P.caption_text(plan))
+    words = [{"word": w, "start": round(0.9 + i * 0.4, 3), "end": round(0.9 + i * 0.4 + 0.35, 3)} for i, w in enumerate(toks)]
+    total = round(words[-1]["end"] + 2.6, 3)
+    spec = to_vrm_spec(plan, P.build(plan, words, total), words, total)
     cards = [o for o in spec["overlays"] if o["kind"] == "phone" and o.get("screen") == "shop"]
     assert cards and all(c["store"]["preview"] == "vrm" for c in cards)
+    assert "siteShots" not in spec

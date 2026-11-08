@@ -64,7 +64,8 @@ function drawSketch(g: CanvasRenderingContext2D, W: number, H: number, p: number
 }
 
 const scr = layer(1600, 900);
-const chat = layer(600, 1000);
+// Чат крупно: холст в 2× (рисунок масштабируется сам, u = W / 600) — буквы не «лесенкой» при наезде и крене.
+const chat = layer(1200, 2000);
 const tab = layer(1200, 800);
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * x));
 
@@ -123,6 +124,8 @@ function chatInsert(g: G, W: number, H: number, s: InsertSpec, t: number, stream
   g.beginPath();
   g.roundRect(x - 20, y - 20, w + 40, h + 40, 22);
   g.fill();
+  g.imageSmoothingEnabled = true;
+  g.imageSmoothingQuality = "high";
   g.drawImage(chat, x, y, w, h);
   g.restore();
 }

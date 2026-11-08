@@ -7,12 +7,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { spans } from "./handspans.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow } from "./src/sequence.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -69,4 +70,35 @@ test("кивки и поклон: только в своём окне, покл�
   const mid = M.nodBow(tl, 4.0);
   assert.ok(Math.abs(mid.spine + mid.chest + mid.neck + mid.head - 16 * 1.4) < 0.5);
   assert.equal(M.nodBow(tl, 5.01).spine, 0);
+});
+
+test("руки: новый ключ посреди перехода не дёргает кисть (цепочка), дальний переход — дугой вперёд", () => {
+  const keys = [{ t: -3, left: "idle", right: "idle" }, { t: 1, dur: 0.8, left: "idle", right: "mouth" },
+    { t: 2.5, dur: 0.8, left: "idle", right: "idle" }, { t: 2.9, dur: 0.8, left: "keys", right: "keys" }];
+  let prev = null, maxStep = 0;
+  for (let t = 0.5; t < 4.5; t += 1 / 120) {
+    const p = M.armChain(keys, -1, t).target;
+    if (prev) maxStep = Math.max(maxStep, Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]));
+    prev = p;
+  }
+  assert.ok(maxStep < 0.01, `скачок цели ${maxStep.toFixed(4)} м за 1/120 с`);
+  // Середина перехода «клавиатура → рот» — впереди прямой между ними (мимо груди).
+  const a = M.armChain(keys, -1, 0.9).target, b = M.armChain(keys, -1, 2.4).target, mid = M.armChain(keys, -1, 1.4).target;
+  assert.ok(mid[2] > (a[2] + b[2]) / 2 + 0.03, `дуга ${mid[2]}`);
+});
+
+test("касание клавиш выключено, пока кисть едет издалека", () => {
+  const keys = [{ t: -3, left: "idle", right: "wave" }, { t: 1, dur: 0.8, left: "idle", right: "idle" }];
+  assert.equal(!!M.armChain(keys, -1, 1.4).touch, false);
+  assert.equal(!!M.armChain(keys, -1, 2.0).touch, true);
+});
+
+test("отрезки проникновений рук: подряд идущие кадры одной группы, худший зазор", () => {
+  const bad = [{ t: 1, key: "torso", gap: -0.002, point: "a", against: "torso" }, { t: 1 + 1 / 30, key: "torso", gap: -0.005, point: "b", against: "torso" },
+    { t: 3, key: "torso", gap: -0.001, point: "c", against: "torso" }, { t: 1, key: "head", gap: -0.0004, point: "d", against: "head" }];
+  const s = spans(bad, 30);
+  assert.equal(s.length, 3);
+  const t = s.find((x) => x.key === "torso" && x.t0 === 1);
+  assert.equal(t.gap_mm, -5);
+  assert.equal(t.point, "b");
 });

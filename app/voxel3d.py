@@ -378,7 +378,7 @@ def toast_overlay(t0: float, t1: float, title: str, *, text: str = "", icon: str
     return out
 
 
-PHONE_SCREENS = ("notifications", "payment", "shop", "messenger")
+PHONE_SCREENS = ("notifications", "payment", "shop", "messenger", "site")
 
 
 def phone_overlay(t0: float, t1: float, *, screen: str = "notifications", x: float = 540, y: float = 860,
