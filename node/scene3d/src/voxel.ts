@@ -348,7 +348,8 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
     // Говорит: рот открывается и закрывается «слогами» (детерминированно от t).
     if (face === "talk" && Math.floor((t - faceT) * 7.5) % 3 === 2) face = "neutral";
     if (face === "blink_once") face = t - faceT < 0.16 ? "blink" : "neutral";
-    if ((face === "neutral" || face === "happy" || face === "talk" || face === "frown") && ((t + 0.4) % 3.3) < 0.11) face = "blink";
+    // Авто-моргание — только у нейтрального лица и когда говорит: выражение (радость, хмурится) глаза не закрывает.
+    if ((face === "neutral" || face === "talk") && ((t + 0.4) % 3.3) < 0.11) face = "blink";
     faceMat.map = faces[face] || faces.neutral;
     // «Z»: всплывают по очереди со стороны макушки и тают.
     const sleeping = face === "sleep";
@@ -407,8 +408,24 @@ function buildHair(head: THREE.Bone, D: ReturnType<typeof dims>, style: string, 
     }
     return;
   }
+  if (style === "long") {
+    // Девичья стрижка: гладкая «шапочка» (полусфера, наклонена назад — лоб открыт до бровей), чёлка тремя мягкими
+    // прядями, волосы за спиной до лопаток и длинные пряди вдоль щёк. Без шипов.
+    // Шапочка — скруглённая коробка чуть больше головы (закрывает углы), наклонена назад: спереди открыт лоб.
+    box(head, [hw + 0.036, hh * 0.5, hd + 0.036], m, [0, hh * 0.86, -0.012], 0.46, [-12, 0, 0]);
+    for (const [x, rz, w, h] of [[-0.135, -14, 0.11, 0.07], [-0.045, -4, 0.12, 0.085], [0.05, 6, 0.12, 0.08],
+      [0.14, 16, 0.1, 0.065]] as const) {
+      box(head, [w, h, 0.034], m, [x, hh * 0.8, hd / 2 + 0.0], 0.48, [16, 0, rz]);
+    }
+    box(head, [hw + 0.05, hh * 1.25, 0.12], m, [0, hh * 0.12, -hd / 2 + 0.005], 0.45);
+    for (const s of [1, -1]) {
+      box(head, [0.07, hh * 1.05, 0.08], m, [s * (hw / 2 + 0.012), hh * 0.22, 0.04], 0.45, [0, 0, s * 4]);
+      box(head, [0.07, hh * 1.15, 0.09], m, [s * (hw / 2 + 0.01), hh * 0.18, -0.07], 0.45, [0, 0, s * 3]);
+    }
+    return;
+  }
   box(head, [hw + 0.04, hh * 0.42, hd + 0.04], m, [0, hh * 0.86, -0.01], 0.45);
-  box(head, [hw + 0.03, style === "long" ? hh * 1.0 : hh * 0.7, 0.1], m, [0, style === "long" ? hh * 0.45 : hh * 0.6, -hd / 2 + 0.02], 0.45);
+  box(head, [hw + 0.03, hh * 0.7, 0.1], m, [0, hh * 0.6, -hd / 2 + 0.02], 0.45);
   // Пряди — гранёные конусы остриём вниз («аниме»-чёлка веером), виски и пара вихров на макушке.
   const spike = (r: number, len: number, pos: number[], rot: number[]) => {
     const s = new THREE.Mesh(new THREE.ConeGeometry(r, len, 6), m);
@@ -425,16 +442,7 @@ function buildHair(head: THREE.Bone, D: ReturnType<typeof dims>, style: string, 
     spike(0.05, 0.16, [s * (hw / 2 + 0.005), hh * 0.58, 0.02], [180, 0, -s * 8]);
     spike(0.05, 0.15, [s * (hw / 2 + 0.005), hh * 0.6, -0.1], [180, 0, -s * 6]);
   }
-  if (style === "long") {
-    // Длинные: волосы за спиной до лопаток и пряди вдоль щёк до плеч.
-    box(head, [hw + 0.05, hh * 0.95, 0.12], m, [0, hh * 0.05, -hd / 2 + 0.01], 0.45);
-    for (const s of [1, -1]) {
-      spike(0.055, 0.42, [s * (hw / 2 + 0.01), hh * 0.12, 0.05], [180, 0, -s * 4]);
-      spike(0.06, 0.4, [s * (hw / 2 - 0.02), hh * 0.08, -0.1], [180, 0, -s * 3]);
-      spike(0.05, 0.36, [s * hw * 0.28, hh * 0.05, -hd / 2 - 0.02], [180 + 6, 0, -s * 4]);
-    }
-  }
-  if (style !== "short" && style !== "long") for (const [x, z, rz] of [[-0.05, 0.03, -30], [0.06, -0.06, 34]] as const) {
+  if (style !== "short") for (const [x, z, rz] of [[-0.05, 0.03, -30], [0.06, -0.06, 34]] as const) {
     spike(0.035, 0.11, [x, hh * 1.1, z], [0, 0, rz]);
   }
 }

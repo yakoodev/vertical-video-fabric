@@ -104,7 +104,11 @@ def test_build_puts_events_on_words():
     assert [p["screen"] for p in phones] == ["shop", "messenger"]
     assert phones[0]["store"]["price"] == "2 990 ₽" and phones[0]["store"]["paidAt"] > phones[0]["t0"]
     assert phones[1]["message"]["text"] == "Файл модели пришёл"
-    assert "tag" in kinds
+    # Телефон — крупной вставкой (≈65 % ширины кадра) поверх затемнённой размытой сцены; финал — с карточкой чата.
+    assert all(p["scale"] >= 1.5 and p["dim"] > 0 for p in phones)
+    assert "tag" in kinds and kinds["chat"]["chat"][-1]["user"] == "mama_alina"
+    inserts = [k for k in spec["camera"]["keys"] if k.get("focus")]
+    assert inserts and all(k["dof"] >= 3 for k in inserts)
     # Героиня: soft, длинные волосы, ресницы; действия на словах — рисует, монетка, смех, хмурится, ахнула.
     hero = spec["characters"][0]
     assert hero["voxel"]["shape"] == "soft" and hero["voxel"]["hairStyle"] == "long" and hero["voxel"]["lashes"]

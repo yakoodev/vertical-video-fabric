@@ -96,7 +96,7 @@ SIDE_MAX = 2160
 MAX_FRAMES = 3600
 OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
                      "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus"}
-OVERLAY_KINDS = {"hud", "tag", "toast", "phone"}
+OVERLAY_KINDS = {"hud", "tag", "toast", "phone", "chat"}
 VOXEL_SHAPES = {"block", "soft"}
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}
 WALLS = {"back", "front", "left", "right"}

@@ -62,7 +62,9 @@ NEON = {
 # Расстановка: x монитора, лампы, микрофона, клавиатуры, телефона (тест — монитор по центру); chat_monitor —
 # второй, вертикальный монитор с чатом [x, z, поворот°] (в вертикальном кадре читается целиком), None — чат на основном.
 LAYOUT = {"monitor_x": 0.0, "lamp_x": 0.6, "mic_x": -0.46, "keyboard_x": -0.08, "phone": [0.5, -1.0, -14],
-          "chat_monitor": None}
+          "chat_monitor": None, "floor_lamp": None}
+# floor_lamp — торшер [x, z] в углу комнаты: тёплый свет и узнаваемая вещь в общих планах (настольная лампа тогда только
+# светит — её корпус не стоит на пути камеры крупных планов).
 
 # Постобработка по умолчанию (неон); палитра подменяет grade/bloom/vignette.
 POST = {"ao": 0.8, "aoRadius": 0.25, "aoScale": 0.5, "bloom": {"strength": 0.55, "radius": 0.55, "threshold": 1.0},
@@ -176,12 +178,13 @@ def streamer_room(*, chat: list[dict] | None = None, viewers: list[dict] | None 
             _vbox("mic", [mic, desk_top + 0.3, -1.1], [0.07, 0.17, 0.07], "#25212e", seed=13),
             _vbox("mic_grill", [mic, desk_top + 0.4, -1.1], [0.075, 0.06, 0.075], "#4a4458", seed=14)]),
         *(_chat_monitor(chat_mon, desk_top, stream, metal) if chat_mon else []),
+        *(_floor_lamp(L["floor_lamp"], P["lamp"][0]) if L.get("floor_lamp") else []),
         # Настольная лампа: основание, стойка, плафон со светящимся низом.
-        _vbox("lamp_base", [lx + 0.08, desk_top, -1.38], [0.13, 0.025, 0.13], "#2a2430"),
+        *([] if L.get("floor_lamp") else [_vbox("lamp_base", [lx + 0.08, desk_top, -1.38], [0.13, 0.025, 0.13], "#2a2430"),
         _vbox("lamp_pole", [lx + 0.08, desk_top + 0.02, -1.38], [0.025, 0.42, 0.025], "#2a2430"),
         _vbox("lamp_head", [lx, desk_top + 0.42, -1.3], [0.18, 0.07, 0.12], "#2a2430", rot=[0, 0, 18 if lx > 0 else -18]),
         _glow("lamp_bulb", [lx, desk_top + 0.405, -1.3], [0.14, 0.01, 0.09], P["lamp"][0], 4.0,
-              rot=[0, 0, 18 if lx > 0 else -18]),
+              rot=[0, 0, 18 if lx > 0 else -18])]),
         # Табурет, ковёр.
         _vbox("stool_seat", [0, seat - 0.06, -0.5], [0.42, 0.06, 0.42], "#4b3326", seed=15),
         *[_vbox(f"stool_leg{n}", [x, 0, z], [0.05, seat - 0.06, 0.05], "#3b281e", seed=16 + n) for n, (x, z) in
@@ -230,6 +233,9 @@ def streamer_room(*, chat: list[dict] | None = None, viewers: list[dict] | None 
         {"type": "spot", "id": "key", "color": key[0], "intensity": key[1], "position": [0.55, 2.05, -1.35],
          "target": [0.1, 1.0, -0.55], "angle": 34, "penumbra": 0.9, "decay": 1.6, "castShadow": True,
          "shadow": {"size": 1024, "bias": -0.0008, "normalBias": 0.02, "radius": 6}},
+        *([{"type": "point", "id": "floor_lamp", "color": lamp[0], "intensity": round(lamp[1] * 1.4, 2),
+            "position": [L["floor_lamp"][0], 1.42, L["floor_lamp"][1]], "decay": 2, "distance": 5,
+            "halo": {"size": 0.3, "opacity": 0.25}}] if L.get("floor_lamp") else []),
         # Контровой из угла и свет из окна.
         {"type": "point", "id": "rim", "color": rim[0], "intensity": rim[1], "position": [1.2, 2.1, 0.9], "decay": 2},
         {"type": "directional", "id": "moon", "color": moon[0], "intensity": moon[1], "position": [-4, 2.6, -0.6],
@@ -267,6 +273,17 @@ def streamer_room(*, chat: list[dict] | None = None, viewers: list[dict] | None 
 
 
 CHAT_SIZE = [0.3, 0.5]  # экран вертикального монитора, м
+
+
+def _floor_lamp(pos: list, color: str) -> list[dict]:
+    """Торшер: тяжёлое основание, стойка, абажур со светящимся низом."""
+    x, z = pos
+    return [
+        _cyl("floor_lamp_base", [x, 0.015, z], 0.3, 0.03, "#2a2228", segments=16),
+        _cyl("floor_lamp_pole", [x, 0.75, z], 0.03, 1.45, "#3a3036", metal=0.4, segments=8),
+        _cyl("floor_lamp_shade", [x, 1.52, z], 0.36, 0.26, "#f3d9b0", rough=0.9, segments=18),
+        _glow("floor_lamp_bulb", [x, 1.385, z], [0.24, 0.012, 0.24], color, 3.0),
+    ]
 
 
 def _mic_stand(x: float, desk_top: float, metal: str) -> list[dict]:

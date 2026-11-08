@@ -162,6 +162,7 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
     sfx: list[dict] = []
     tags: list[dict] = []
     shots: list[dict] = []
+    chatcards: list[dict] = []
     nick_color: dict[str, str] = {m["user"]: m.get("color") or CHAT_COLORS[0] for m in screen["chat"]}
 
     def add_sfx(name: str, t: float) -> None:
@@ -225,6 +226,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 phones[-1].setdefault("store", {})["paidAt"] = t
             if ev.get("coin"):
                 drops.append(t)
+            if ev.get("chatcard"):
+                chatcards.append({"start": t, "end": round(until or total, 3)})
             if "tag" in ev:
                 tags.append({"kind": "tag", "text": ev["tag"], "start": t, "end": round(until or total, 3)})
             for key, name in AUTO_SFX.items():
@@ -237,6 +240,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         if n == len(plan["sentences"]) - 1:
             shots_end = t_end
     shots.sort(key=lambda x: x["t0"])
+    if shots:
+        shots[0]["t0"] = 0.0  # первый кадр — с начала ролика (вступление), иначе короткий первый слился бы со вторым
     # Кадры: от своего якоря до следующего (последний — до конца ролика); слишком короткие сливаются.
     merged: list[dict] = []
     for sh in shots:
@@ -312,6 +317,10 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         t0, t1 = ph.pop("t0"), ph.pop("t1")
         kind = ph.pop("screen", "notifications")
         overlays.append(V.phone_overlay(t0, t1, screen=kind, y=ph.pop("y", 900), scale=ph.pop("scale", 0.95), **ph))
+    for cc in chatcards:
+        # Карточка чата: те же сообщения и зрители, что на мониторе чата (рисует только пришедшие к t).
+        overlays.append({"kind": "chat", **cc, "x": 290, "y": 470, "w": 480, "h": 560, "chat": screen["chat"],
+                         "viewers": screen["viewers"]})
     spec = {"version": 1, "width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3),
             "environment": room["environment"], "room": room["room"], "lights": room["lights"], "objects": room["objects"],
             "characters": [hero], "overlays": overlays,

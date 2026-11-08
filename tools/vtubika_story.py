@@ -320,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("plan")
     ap.add_argument("out_dir")
     ap.add_argument("--name", default="story1")
+    ap.add_argument("--sheet", default="sheet.jpg", help="имя листа кадров (12 кадров)")
     ap.add_argument("--look")
     ap.add_argument("--gl", default=os.environ.get("SCENE3D_GL", "gpu"), choices=["gpu", "swiftshader"])
     ap.add_argument("--env", default=str(ROOT.parent.parent.parent / ".env") if ".claude" in str(ROOT) else str(ROOT / ".env"))
@@ -404,13 +405,13 @@ def main(argv: list[str] | None = None) -> int:
     report["captions_sec"] = round(time.time() - t_cap, 1)
     final = out_dir / f"{args.name}.mp4"
     mix(plan, capped, narration, built["sfx"], total, final, work, report, lead)
-    S3.contact_sheet(final, out_dir / "sheet.jpg", count=12, cols=4, width=360)
+    S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
     frames = sentence_frames(final, built, out_dir / "check")
     tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6,
          [f"{n}" for n in sorted(frames)])
     (out_dir / "check.md").write_text(P.checklist_md(plan, built, {n: Path(p).name for n, p in frames.items()}), "utf-8")
     shutil.copyfile(narration, work / "narration_used.mp3")
-    report.update({"video": str(final), "sheet": str(out_dir / "sheet.jpg"), "check": str(out_dir / "check.md"),
+    report.update({"video": str(final), "sheet": str(out_dir / args.sheet), "check": str(out_dir / "check.md"),
                    "total_sec": round(time.time() - started, 1)})
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))

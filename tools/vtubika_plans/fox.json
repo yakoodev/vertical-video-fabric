@@ -33,7 +33,7 @@
     {"text": "Тебя зовут Алина, тебе девятнадцать, и твой аватар — две картинки.",
      "pause_after": 0.5,
      "show": ["Алина крупно, говорит в эфир", "на мониторе — лисичка-PNGtuber, рот открывается на речь"],
-     "shots": [{"cam": "wide", "push": 0.15}, {"cam": "face", "at": "Алина", "push": 0.22}, {"cam": "monitor", "at": "аватар", "push": 0.25}],
+     "shots": [{"cam": "wide", "push": 0.12}, {"cam": "face", "at": "тебе"}, {"cam": "monitor", "at": "аватар", "push": 0.25}],
      "do": [
        {"act": "Talk_Loop"},
        {"face": "talk"},
@@ -61,7 +61,7 @@
     {"text": "Лисичку ты нарисовала сама за один вечер.",
      "pause_after": 0.5,
      "show": ["Алина рисует стилусом на планшете", "на планшете проявляется эскиз лисички"],
-     "shots": [{"cam": "tablet", "push": 0.2, "roll": 6}, {"cam": "face_left", "at": "вечер", "push": 0.15}],
+     "shots": [{"cam": "tablet", "push": 0.15, "roll": 3}, {"cam": "face_left", "at": "вечер", "push": 0.15}],
      "do": [
        {"act": "Draw_Loop"},
        {"draw": true, "until": "end", "dt": 0.0},
@@ -157,9 +157,9 @@
      ]},
     {"text": "Та же модель, в рублях.",
      "show": ["телефон: карточка vtubika.store — Live2D-модель «Волчонок», 2 990 ₽, «Оплатить картой РФ»"],
-     "shots": [{"cam": "face_left", "push": 0.12, "shift": [0.14, 0, 0.05]}],
+     "shots": [{"cam": "insert"}],
      "do": [
-       {"phone": {"screen": "shop", "store": {"title": "Live2D-модель «Волчонок»", "price": "2 990 ₽"}, "y": 1010, "x": 300, "scale": 0.72}, "dur": 5.4, "dt": -0.15},
+       {"phone": {"screen": "shop", "store": {"title": "Live2D-модель «Волчонок»", "price": "2 990 ₽"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35}, "dur": 5.2, "dt": -0.15},
        {"face": "wide"},
        {"act": "Typing_Loop"},
        {"sfx": "click", "dt": 0.2}
@@ -175,17 +175,17 @@
     {"text": "Через две минуты файл уже в телеграме.",
      "pause_after": 0.7,
      "show": ["телефон: мессенджер «Файл модели пришёл», volchonok_live2d.zip", "Алина ахнула"],
-     "shots": [{"cam": "face", "push": 0.18, "roll": 5, "shift": [0.14, 0, 0.05]}],
+     "shots": [{"cam": "insert"}, {"cam": "face", "at": "end", "roll": 5}],
      "do": [
-       {"at": "файл", "phone": {"screen": "messenger", "message": {"from": "Витубика", "file": "volchonok_live2d.zip", "size": "18 МБ", "text": "Файл модели пришёл"}, "y": 1010, "x": 300, "scale": 0.72}, "dur": 2.8, "dt": -0.3},
-       {"at": "файл", "act": "Gasp"},
-       {"at": "файл", "face": "wide"},
-       {"at": "телеграме", "face": "happy"},
-       {"act": "Sit_Loop"}
+       {"at": "Через", "phone": {"screen": "messenger", "message": {"from": "Витубика", "file": "volchonok_live2d.zip", "size": "18 МБ", "text": "Файл модели пришёл"}, "x": 540, "y": 900, "scale": 1.55, "dim": 0.35}, "until": "end", "dt": -0.1},
+       {"act": "Sit_Loop"},
+       {"at": "end", "act": "Gasp", "dt": -0.1},
+       {"at": "end", "face": "wide", "dt": -0.1},
+       {"at": "end", "face": "happy", "dt": 0.5}
      ]},
     {"text": "Час ты настраиваешь, у волчонка косит левый глаз.",
      "show": ["на мониторе редактор модели", "у волчонка косит левый глаз", "Алина печатает, хмурится"],
-     "shots": [{"cam": "ots", "push": 0.18}, {"cam": "monitor_close", "at": "косит", "push": 0.15, "roll": -4}],
+     "shots": [{"cam": "ots", "push": 0.18}, {"cam": "monitor", "at": "косит", "push": 0.12, "roll": -4}],
      "do": [
        {"screen": "rig"},
        {"squint": true},
@@ -260,8 +260,9 @@
     {"text": "Ник — mama_alina.",
      "say": "Ник — мама Алина.",
      "show": ["ник mama_alina", "Алина смеётся"],
-     "shots": [{"cam": "chat", "push": 0.08}, {"cam": "face_close", "at": "end", "push": 0.16}],
+     "shots": [{"cam": "smile", "push": 0.12}],
      "do": [
+       {"chatcard": true, "dt": -0.2},
        {"at": "end", "act": "Laugh_Loop", "dt": 0.05},
        {"at": "end", "face": "laugh", "dt": 0.05}
      ]}

@@ -35,7 +35,7 @@ export function drawFox(g: CanvasRenderingContext2D, cx: number, cy: number, s: 
   g.save();
   g.lineJoin = "round";
   g.lineCap = "round";
-  g.lineWidth = s * 0.035;
+  g.lineWidth = s * (o.sketch ? 0.05 : 0.035);
   g.strokeStyle = line;
   // Плечи.
   if (p > 0.15) {
@@ -424,7 +424,7 @@ export function drawRig(g: CanvasRenderingContext2D, W: number, H: number, t: nu
   g.textBaseline = "middle";
   g.textAlign = "center";
   g.fillText("Live2D Viewer — volchonok.model3", W / 2, 28 * u);
-  const cx = W / 2, colW = 460 * u;
+  const cx = W / 2, colW = 380 * u;
   g.fillStyle = "#2c303c";
   rr(g, cx - colW / 2, 70 * u, colW, H * 0.56, 12 * u);
   g.fill();

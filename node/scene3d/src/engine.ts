@@ -573,7 +573,9 @@ class Engine {
     this.camera.position.set(pos[0] + sx, pos[1] + sy, pos[2]);
     this.camera.up.set(0, 1, 0);
     this.camera.lookAt(tgt[0] + sx, tgt[1] + sy, tgt[2]);
-    this.focus = Math.max(0.2, new THREE.Vector3(tgt[0], tgt[1], tgt[2]).distanceTo(this.camera.position));
+    // Фокус — на цели кадра; ключ focus (м) переносит его (вставка-«телефон»: героиня за ним размыта).
+    const focusKey = sampleNumber(keys, t, "focus");
+    this.focus = Math.max(0.05, focusKey ?? new THREE.Vector3(tgt[0], tgt[1], tgt[2]).distanceTo(this.camera.position));
     if (roll) this.camera.rotateZ(roll * D2R);
     if (this.camera.fov !== fov) {
       this.camera.fov = fov;
