@@ -165,7 +165,7 @@ function render(t: number) {
   g.globalAlpha = 1;
   g.globalCompositeOperation = "source-over";
   g.filter = "none";
-  backdrop.drawBack(g, shot.plate || {}, local, rig, camera);
+  backdrop.drawBack(g, shot.plate || {}, t, rig, camera);
   // Привязка героя к нарисованному миру (общий план): кость попадает в точку мира set.ts.
   let off: [number, number] = [0, 0];
   const pl = shot.plate || {};
@@ -177,7 +177,7 @@ function render(t: number) {
     off = [tx - sx, ty - sy];
   }
   backdrop.drawChar(g, pl, gl.domElement, off);
-  backdrop.drawFront(g, shot.plate || {}, local);
+  backdrop.drawFront(g, shot.plate || {}, t);
   backdrop.post(g, shot.plate || {}, Math.round(t * (spec.fps || 30)));
   const lc = lumaC.getContext("2d")!;
   lc.drawImage(g.canvas, 0, 0, 16, 28);

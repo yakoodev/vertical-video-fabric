@@ -33,6 +33,10 @@ export interface PlateSpec {
   /** Монитор на переднем плане (спиной к нам, размыт): верх его корпуса — y кадра, x — центр. Прячет руки на
    * клавиатуре, как в настоящих эфирах: в кадре лицо и плечи, руки — за монитором. */
   fgMonitor?: { y: number; x?: number; w?: number };
+  /** Край стола на переднем плане, мягкий фокус: клавиатура, стакан, микрофон на стойке. y — верх полосы. */
+  fgDesk?: { y: number; cup?: boolean; mic?: boolean };
+  /** Монитор с чатом сбоку на среднем плане (чуть размыт): x, y, ширина, поворот (градусы). */
+  sideChat?: { x: number; y: number; w: number; rot?: number };
 }
 
 type G = CanvasRenderingContext2D;
@@ -86,7 +90,12 @@ export class Backdrop {
     g.translate(-(p.cx ?? 720), -(p.cy ?? 1200));
   }
 
-  drawBack(g: G, p: PlateSpec, t: number, _rig: Rig, _cam: THREE.Camera) {
+  drawBack(g: G, p: PlateSpec, t: number, rig: Rig, cam: THREE.Camera) {
+    this.drawBackPlate(g, p, t, rig, cam);
+    if (p.sideChat) this.sideMonitor(g, p.sideChat, t);
+  }
+
+  private drawBackPlate(g: G, p: PlateSpec, t: number, _rig: Rig, _cam: THREE.Camera) {
     const { W, H } = this;
     g.fillStyle = p.color || "#0c0a1e";
     g.fillRect(0, 0, W, H);
@@ -122,6 +131,7 @@ export class Backdrop {
     const { W, H } = this;
     if (p.kind === "flat") return;
     if (p.fgMonitor) this.monitorBack(g, p.fgMonitor, t);
+    if (p.fgDesk) this.deskEdge(g, p.fgDesk, t);
     if (p.cup) {
       const [x, y, k] = p.cup;
       g.save();
@@ -133,6 +143,80 @@ export class Backdrop {
     }
     if (p.kind !== "wide") drawShafts(g, W, H, t + 3, 0.3);
     drawDust(g, this.room, W, H, t);
+  }
+
+  /** Чат на мониторе сбоку (позади героини): корпус, экран чата, свечение. */
+  sideMonitor(g: G, s: { x: number; y: number; w: number; rot?: number }, t: number) {
+    const h = s.w * 1.75;
+    drawChatScreen(this.chat.getContext("2d")!, this.chat.width, this.chat.height, this.stream, t);
+    g.save();
+    g.translate(s.x, s.y);
+    g.rotate(((s.rot ?? 0) * Math.PI) / 180);
+    g.filter = "blur(2.5px)";
+    g.globalCompositeOperation = "lighter";
+    glow(g, 0, 0, s.w * 1.1, h * 0.8, "#c9a0ff", 0.22);
+    g.globalCompositeOperation = "source-over";
+    g.fillStyle = "#0d0b18";
+    g.beginPath();
+    g.roundRect(-s.w / 2 - 14, -h / 2 - 14, s.w + 28, h + 28, 18);
+    g.fill();
+    g.drawImage(this.chat, -s.w / 2, -h / 2, s.w, h);
+    g.restore();
+  }
+
+  /** Край стола на переднем плане: клавиатура в расфокусе с подсветкой, стакан лапши, микрофон на стойке. */
+  private deskEdge(g: G, d: { y: number; cup?: boolean; mic?: boolean }, t: number) {
+    const { W, H } = this;
+    const y = d.y;
+    g.save();
+    g.filter = "blur(6px)";
+    if (d.mic !== false) {
+      // Стойка микрофона входит слева снизу, капсула с ветрозащитой — у края кадра.
+      g.strokeStyle = "#151222";
+      g.lineWidth = 26;
+      g.lineCap = "round";
+      g.beginPath();
+      g.moveTo(-40, H + 40);
+      g.lineTo(120, y - 40);
+      g.lineTo(250, y - 210);
+      g.stroke();
+      g.fillStyle = "#1c1830";
+      g.beginPath();
+      g.roundRect(170, y - 380, 120, 230, 50);
+      g.fill();
+      g.fillStyle = "rgba(160,140,220,0.25)";
+      for (let i = 0; i < 6; i++) g.fillRect(186, y - 350 + i * 30, 88, 6);
+    }
+    const gr = g.createLinearGradient(0, y, 0, H);
+    gr.addColorStop(0, "#2a2048");
+    gr.addColorStop(0.3, "#161126");
+    gr.addColorStop(1, "#0b0916");
+    g.fillStyle = gr;
+    g.fillRect(-20, y, W + 40, H - y + 20);
+    // Клавиатура: тёмная панель, ряды клавиш с радужной подсветкой (переливается).
+    const kx = W * 0.2, kw = W * 0.72, ky = y + 26, kh = 120;
+    g.fillStyle = "#0f0c1a";
+    g.beginPath();
+    g.roundRect(kx, ky, kw, kh, 20);
+    g.fill();
+    for (let r = 0; r < 3; r++) {
+      for (let k = 0; k < 14; k++) {
+        const hue = ((k / 14) * 300 + t * 40) % 360;
+        g.fillStyle = `hsla(${hue},95%,62%,0.55)`;
+        g.fillRect(kx + 18 + k * (kw - 36) / 14, ky + 14 + r * 34, (kw - 36) / 14 - 8, 24);
+      }
+    }
+    g.fillStyle = "rgba(255,255,255,0.18)";
+    g.fillRect(-20, y, W + 40, 4);
+    g.restore();
+    if (d.cup !== false) {
+      g.save();
+      g.filter = "blur(5px)";
+      g.drawImage(this.room.cup, W - 300, y - 250, 336, 448);
+      g.filter = "none";
+      drawSteam(g, W - 132, y - 210, 0.8, t);
+      g.restore();
+    }
   }
 
   /** Спина монитора крупно на переднем плане: тёмный корпус с закруглением, контровой свет экрана по краю. */

@@ -55,6 +55,27 @@ def sheet(video: Path, out: Path, duration: float, n: int = 12, cols: int = 4) -
                         f"xstack=inputs={n}:layout={layout}", "-frames:v", "1", "-q:v", "3", str(out)], check=True)
 
 
+def narrated(spec: dict, raw: Path, out: Path, duration: float) -> None:
+    """Голос истории (кэш озвучки vtubika_story: озвучка с паузами и слова) на первые N фраз: субтитры по
+    настоящим временам слов (текст сценария), голос со вступлением lead, музыка истории под голосом."""
+    from app import vtubika_plan as P
+    from vtubika_story import burn_captions, mix
+
+    nar = spec["narration"]
+    plan = P.load_plan(ROOT / nar["plan"])
+    work = Path(nar["work"])
+    paced = sorted(work.glob("narration_paced_*.mp3"))[-1]
+    lead = float(nar.get("lead", 0.0))
+    words = [{**w, "start": w["start"] + lead, "end": w["end"] + lead}
+             for w in json.loads(paced.with_suffix(".json").read_text("utf-8"))]
+    times = P.token_times(plan, words)[: int(nar.get("sentences", 1))]
+    script = [w for sent in times for w in sent]
+    with tempfile.TemporaryDirectory() as tmp:
+        capped = Path(tmp) / "caps.mp4"
+        burn_captions(plan, script, raw, capped, Path(tmp), duration)
+        mix(plan, capped, paced, [], duration, out, Path(tmp), {}, lead)
+
+
 def render(a: argparse.Namespace, spec: dict, raw: Path, duration: float) -> int:
     subprocess.run(["npm", "run", "build:vrm"], cwd=ROOT, check=True, shell=sys.platform == "win32")
     r = subprocess.run(["node", str(ROOT / "node/scene3d/render.mjs"), "--spec", str(a.spec.resolve()), "--out", str(raw),
@@ -86,6 +107,14 @@ def main(argv: list[str] | None = None) -> int:
         rc = render(a, spec, raw, duration)
         if rc:
             return rc
+    if spec.get("narration"):
+        os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+        narrated(spec, raw, out, duration)
+        if not a.keep_raw:
+            raw.unlink()
+        sheet(out, out.with_name(out.stem.replace("_test", "") + "_sheet.jpg"), duration)
+        print(out)
+        return 0
     caps = spec.get("captions") or []
     if caps:
         # Компоновщик (node + @napi-rs/canvas) на Windows падает 0xC0000409, если унаследованный stdin

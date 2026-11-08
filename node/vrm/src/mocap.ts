@@ -28,6 +28,19 @@ export interface Track {
   weight?: number;
   scale?: number;
   mirror?: boolean;
+  /** Повтор куска клипа «туда-обратно»: [a, b, n] — n полупроходов (нечётное: потом клип идёт дальше от b). */
+  pingpong?: [number, number, number];
+}
+
+/** Время клипа для дорожки: смещение, скорость, повтор «туда-обратно». */
+export function clipTime(tr: Track, t: number): number {
+  const u = (tr.offset ?? 0) + (t - tr.start) * (tr.speed ?? 1);
+  if (!tr.pingpong) return u;
+  const [a, b, n] = tr.pingpong, L = b - a;
+  if (u <= a || L <= 0) return u;
+  const d = u - a, k = Math.floor(d / L);
+  if (k < n) return k % 2 === 0 ? a + (d - k * L) : b - (d - k * L);
+  return (n % 2 ? b : a) + (d - n * L);
 }
 
 const TORSO = ["spine", "chest", "upperChest", "neck", "head"];
@@ -91,7 +104,7 @@ export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number)
     if (w <= 0) continue;
     const c = clips[tr.clip];
     if (!c) continue;
-    const time = (tr.offset ?? 0) + (t - tr.start) * (tr.speed ?? 1);
+    const time = clipTime(tr, t);
     const mask = Array.isArray(tr.mask) ? tr.mask : MASKS[tr.mask || "upper"] || MASKS.upper;
     for (const b of mask) {
       let q = sampleBone(c, b, time, !!tr.loop, !!tr.mirror);
