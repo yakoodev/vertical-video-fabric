@@ -76,8 +76,15 @@ def narrate(plan: dict, work: Path, report: dict) -> Path:
         report["tts"] = json.loads(meta.read_text("utf-8"))
         return raw
     info: dict = {"provider": voice["provider"], "voice": voice["voice"], "chars": len(text), "cost_rub": 0.0}
+    if voice["provider"] == "polza":
+        # Платный голос — только явным разрешением в плане и под потолком.
+        if not voice.get("paid_ok"):
+            raise RuntimeError("голос Polza платный: нужен \"paid_ok\": true в плане (по команде владельца)")
+        paid = get_tts_provider("polza", model=voice.get("model"), voice=voice["voice"])
+        if paid.price_rub_per_char() * len(text) > POLZA_CAP_RUB:
+            raise RuntimeError(f"Polza TTS: оценка выше потолка {POLZA_CAP_RUB} ₽")
     try:
-        tts = get_tts_provider(voice["provider"], voice=voice["voice"], style=voice.get("style"))
+        tts = get_tts_provider(voice["provider"], model=voice.get("model"), voice=voice["voice"], style=voice.get("style"))
         speech = tts.synthesize(text, raw)
         info.update({"model": tts.model, "cost_rub": float(speech.cost_rub or 0.0), "usage": speech.raw_usage})
     except Exception as exc:  # noqa: BLE001 - Gemini недоступен: платный запасной — только если разрешён планом

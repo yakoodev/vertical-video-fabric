@@ -2,8 +2,8 @@
 герои, ракурсы камеры. Одна история — план ``tools/vtubika_plans/<история>.json`` (фразы сценария, кадры и события
 на словах, ``app/vtubika_plan.py``), собирает её ``tools/vtubika_story.py``.
 
-* **Рассказчик** (``NARRATOR``) — один мужской голос на всю вселенную: бесплатный Gemini TTS (``app/dubbing.py``),
-  голос и подача записаны здесь и в плане истории.
+* **Рассказчик** (``NARRATOR``) — один женский голос на всю вселенную (Gemini «Aoede», бесплатно, ``app/dubbing.py``);
+  план истории может заменить голос полем ``voice`` (см. ``NARRATOR_ALTERNATIVES``).
 * **Образы** (``LOOKS``) — палитра комнаты стримера (``app/voxel3d.streamer_room``): ``cozy`` — тёплый вечер,
   ``neon`` — фиолетовый неон, ``pastel`` — мягкий дневной пастельный. В каждом есть нейтральный ключ на лицо.
 * **Герои** (``HEROES``) — внешность героя из примитивов (``voxel3d.voxel_hero``, форма ``soft``).
@@ -25,9 +25,17 @@ from app.vtubika_sets import NOODLES, WH_CAMERAS
 VTUBIKA_DIR = Path(os.environ.get("VTUBIKA_DIR", r"D:\vvf-offload\vtubika"))
 
 # Рассказчик всей вселенной: на «ты», спокойно, с иронией, без пафоса (бриф проекта 9).
-NARRATOR = {"provider": "gemini", "voice": "Charon",
-            # Без указания к подаче: модель 3.8 читает его вслух (проверено Whisper-ом 08.11), голос Charon и так ровный.
+NARRATOR = {"provider": "gemini", "voice": "Aoede",
+            # Без указания к подаче: модель 3.8 читает его вслух (проверено Whisper-ом 08.11).
             "style": ""}
+
+# Чем заменить в плане (``"voice": {...}``). Polza платная: только с ``paid_ok: true`` по команде владельца,
+# потолок — tools/vtubika_story.POLZA_CAP_RUB (eleven-v4 ≈ 0.8 ₽ за 200 символов по замеру).
+NARRATOR_ALTERNATIVES = {
+    "charon": {"provider": "gemini", "voice": "Charon", "style": ""},
+    "fenrir": {"provider": "gemini", "voice": "Fenrir", "style": ""},
+    "lily": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": False},
+}
 
 # Фон — CC0-треки freesound (tools/fetch_music.py, те же файлы, что дорожки сервиса); тише голоса на under_db.
 MUSIC = {"file": "chill-keys.mp3", "under_db": 7.0, "fade_in": 1.0, "fade_out": 2.5}

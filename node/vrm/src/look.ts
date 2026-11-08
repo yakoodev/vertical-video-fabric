@@ -72,7 +72,8 @@ export function applyLook(vrm: VRM, spec: LookSpec = {}) {
       m.shadeColorFactor = mul(m.color, SKIN.test(m.name) ? new THREE.Color(spec.skinShade ?? "#d9909e") : shade);
       if (m.shadeMultiplyTexture == null && (m as any).map) m.shadeMultiplyTexture = (m as any).map;
       m.giEqualizationFactor = 0.9;
-      m.parametricRimColorFactor = face ? new THREE.Color(0, 0, 0) : rim.clone();
+      // На коже ободок слабее: в ракурсе «локоть на зрителя» сильный розовый ободок светится пятном.
+      m.parametricRimColorFactor = face ? new THREE.Color(0, 0, 0) : rim.clone().multiplyScalar(SKIN.test(m.name) ? 0.4 : 1);
       m.parametricRimFresnelPowerFactor = spec.rimPower ?? 5;
       m.parametricRimLiftFactor = spec.rimLift ?? 0.0;
       m.rimLightingMixFactor = 1;

@@ -6,6 +6,7 @@
 import * as THREE from "three";
 import type { Rig, V3 } from "./rig.ts";
 import { blob, glow, layer, rgba } from "./plate/draw.ts";
+import { drawPhone, phoneSignature, type PhoneScreen } from "../../scene3d/src/ui.ts";
 
 export interface PropsSpec {
   /** Стол: высота столешницы, ближний край (z), ширина, глубина. */
@@ -15,6 +16,8 @@ export interface PropsSpec {
   mouse?: { pos: V3 };
   /** Спинка кресла за спиной: центр низа спинки, ширина, высота. */
   chair?: { pos: V3; w?: number; h?: number };
+  /** Телефон в руке (left/right): экран — PhoneScreen из scene3d/ui.ts. */
+  phone?: { hand?: "left" | "right"; screen?: PhoneScreen; along?: number };
 }
 
 type G = CanvasRenderingContext2D;
@@ -150,6 +153,10 @@ export class Props {
   keyboard: THREE.Mesh;
   mouse: THREE.Mesh;
   chair: THREE.Group;
+  phone: THREE.Mesh;
+  phoneC = layer(360, 760);
+  phoneTex: THREE.CanvasTexture;
+  phoneSig = "";
   constructor(scene: THREE.Scene) {
     scene.add(this.root);
     const deskTop = painted(paintDesk(2048, 900));
@@ -185,18 +192,42 @@ export class Props {
       base.add(leg);
     }
     this.chair.add(back, seat, lift, base);
+    // Телефон: корпус, экран спереди (+Z корпуса), контур.
+    this.phoneTex = tex(this.phoneC);
+    const body = flat("#9a7fd8");
+    const scr = new THREE.MeshBasicMaterial({ map: this.phoneTex, toneMapped: false });
+    this.phone = new THREE.Mesh(new THREE.BoxGeometry(0.068, 0.142, 0.008), [body, body, body, body, scr, body]);
+    hull(this.phone, 0.05);
+    this.root.add(this.phone);
     this.root.add(this.apron, this.desk, this.keyboard, this.mouse, this.chair);
   }
 
-  update(spec: PropsSpec | undefined, _rig: Rig, _t: number, _stream: any) {
+  update(spec: PropsSpec | undefined, rig: Rig, t: number, _stream: any) {
     const s = spec || {};
+    const ph = s.phone && rig.hands[s.phone.hand || "right"];
+    this.phone.visible = !!ph;
+    if (s.phone && ph) {
+      // Лежит в ладони: тыльной стороной к ладони, экран — туда же, куда смотрит ладонь, длинная ось вдоль пальцев.
+      const y = ph.fingers.clone().normalize();
+      const z = ph.palm.clone().sub(y.clone().multiplyScalar(ph.palm.dot(y))).normalize();
+      const x = new THREE.Vector3().crossVectors(y, z);
+      this.phone.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
+      this.phone.position.copy(ph.pos).addScaledVector(y, s.phone.along ?? 0.07).addScaledVector(z, 0.016);
+      const scr = s.phone.screen || { screen: "notifications", clock: "03:12", notifications: [] };
+      const sig = phoneSignature(scr, t);
+      if (sig !== this.phoneSig) {
+        this.phoneSig = sig;
+        drawPhone(this.phoneC.getContext("2d")!, this.phoneC.width, this.phoneC.height, scr, t);
+        this.phoneTex.needsUpdate = true;
+      }
+    }
     this.desk.visible = this.apron.visible = !!s.desk;
     if (s.desk) {
       const w = s.desk.w ?? 1.6, d = s.desk.d ?? 0.7, th = 0.05;
       this.desk.scale.set(w, th, d);
       this.desk.position.set(s.desk.x ?? 0, s.desk.y - th / 2, s.desk.z + d / 2);
-      this.apron.scale.set(w * 0.96, 0.32, 1);
-      this.apron.position.set(s.desk.x ?? 0, s.desk.y - th - 0.16, s.desk.z + 0.12);
+      this.apron.scale.set(w * 0.96, 0.62, 1);
+      this.apron.position.set(s.desk.x ?? 0, s.desk.y - th - 0.31, s.desk.z + d - 0.06);
     }
     this.keyboard.visible = !!s.keyboard;
     if (s.keyboard) {

@@ -7,7 +7,7 @@ import type { ArmSpec, PoseSpec, V3 } from "./rig.ts";
 
 const sin = Math.sin;
 
-export const DESK_Y = 0.99;
+export const DESK_Y = 1.05;
 export const KB: V3 = [0, DESK_Y + 0.011, 0.4];
 export const MON: V3 = [0, 1.43, 1.15];
 
@@ -35,7 +35,7 @@ function typingHand(side: 1 | -1, t: number, tap = 1): ArmSpec {
   const k = (i: number) => 0.38 + 0.22 * tap * Math.max(0, sin(t * 11 + ph + i * 1.9));
   return {
     target: [KB[0] + side * 0.095, KB[1] + 0.045, KB[2] - 0.035],
-    pole: [side * 0.55, 0.85, -0.25],
+    pole: [side * 0.3, 0.8, -0.35],
     fingers: [-side * 0.12, -0.42, 1],
     palm: [side * 0.12, -1, 0.35],
     curl: [0.7, k(0), k(1), k(2), k(3) + 0.05],
@@ -45,10 +45,10 @@ function typingHand(side: 1 | -1, t: number, tap = 1): ArmSpec {
 }
 
 /** Кисть лежит на столе расслабленно (у клавиатуры). */
-function restHand(side: 1 | -1, x = 0.2, z = 0.36): ArmSpec {
+function restHand(side: 1 | -1, x = 0.17, z = 0.3): ArmSpec {
   return {
     target: [side * x, DESK_Y + 0.035, z],
-    pole: [side * 0.6, 0.9, -0.2],
+    pole: [side * 0.45, 0.75, -0.35],
     fingers: [-side * 0.8, -0.05, 0.6],
     palm: [0, -1, 0.1],
     curl: [0.3, 0.5, 0.58, 0.64, 0.7],
@@ -76,10 +76,11 @@ export const POSES: Record<string, (t: number) => PoseSpec> = {
 
   /** Устал: подбородок на кулаке, голова набок, глаза полузакрыты, смотрит в монитор. */
   tired: (t) => ({
-    bones: { ...seated(t, 8), neck: [4, -4, -3], head: [2, -6, -7], rightShoulder: [0, 0, -4] },
+    bones: { ...seated(t, 20), neck: [8, -4, -3], head: [-6, -6, -8] },
     left: restHand(1, 0.18, 0.42),
     right: {
-      target: { bone: "head", off: [-0.035, -0.09, 0.08] },
+      target: { bone: "head", off: [-0.03, -0.115, 0.075] },
+      maxFlex: 150,
       pole: [-0.5, 0.7, 0.35],
       fingers: [0.15, 1, 0.1],
       palm: [0.1, 0.05, -1],
@@ -96,6 +97,7 @@ export const POSES: Record<string, (t: number) => PoseSpec> = {
     left: restHand(1),
     right: {
       target: { bone: "head", off: [-0.065, -0.068, 0.125] },
+      maxFlex: 150,
       pole: [-0.6, 0.6, 0.2],
       fingers: [1, 0.15, 0.05],
       palm: [0.0, -0.1, -1],
@@ -112,8 +114,9 @@ export const POSES: Record<string, (t: number) => PoseSpec> = {
     bones: { ...seated(t, -2), neck: [0, 0, 4], head: [-2, -4, 6] },
     left: restHand(1),
     right: {
-      target: { bone: "rightUpperArm", add: [-0.15 + sin(t * 8) * 0.03, 0.14, 0.17] },
-      pole: [-0.8, 0.9, -0.2],
+      target: { bone: "rightUpperArm", add: [-0.11 + sin(t * 8) * 0.03, 0.1, 0.15] },
+      pole: [-0.7, 0.75, 0.1],
+      autoPole: false,
       fingers: [-0.15 + sin(t * 8) * 0.25, 1, 0.1],
       palm: [0, 0, 1],
       curl: [0, 0.05, 0.05, 0.08, 0.1],
@@ -122,6 +125,15 @@ export const POSES: Record<string, (t: number) => PoseSpec> = {
     },
     expr: { happy: 1 },
     look: null,
+  }),
+
+  /** Говорит в эфир: сидит ровно, голова покачивается в такт, смотрит в камеру-вебку. */
+  talk: (t) => ({
+    bones: { ...seated(t, 2), neck: [-2, sin(t * 1.1) * 3, sin(t * 0.9) * 3], head: [sin(t * 2.3) * 2, sin(t * 1.3) * 4, 3 + sin(t * 0.7) * 2] },
+    left: restHand(1, 0.16, 0.33),
+    right: restHand(-1, 0.16, 0.33),
+    expr: { happy: 0.55, blink: blinkAt(t, 3.1, 0.2) * 0.45 },
+    look: [0.3, 1.38, 2.6],
   }),
 
   /** Потягивается: руки вверх, пальцы в замок над головой (приблизительно), глаза закрыты. */
@@ -138,12 +150,13 @@ export const POSES: Record<string, (t: number) => PoseSpec> = {
     bones: { ...seated(t, 8), neck: [14, 0, 0], head: [12, 0, 0] },
     left: restHand(1),
     right: {
-      target: { bone: "chest", add: [-0.02, 0.06, 0.28] },
-      pole: [-0.5, 0.6, -0.2],
-      fingers: [0.3, 0.75, 0.4],
-      palm: [0.1, -0.45, -0.9],
-      curl: [0.2, 0.55, 0.6, 0.65, 0.7],
-      thumbOut: 0.3,
+      target: { bone: "chest", add: [-0.05, 0.07, 0.2] },
+      pole: [-0.25, 0.7, -0.35],
+      poleWeight: 3,
+      fingers: [0.55, 0.65, 0.5],
+      palm: [0.05, 0.6, -0.8],
+      curl: [0.35, 0.62, 0.68, 0.72, 0.78],
+      thumbOut: 0.5,
     },
     expr: { blink: blinkAt(t), relaxed: 0.2 },
     look: { bone: "chest", add: [-0.02, 0.1, 0.3] },

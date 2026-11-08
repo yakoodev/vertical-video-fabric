@@ -1,0 +1,339 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "model": "VRM1_Constraint_Twist_Sample.vrm",
+  "look": {
+    "outline": 0.0034,
+    "shade": "#a28ad6",
+    "toony": 0.97,
+    "shift": -0.05,
+    "rim": "#ff8fd0",
+    "rimPower": 4,
+    "tint": {
+      "Tops": "#8e86c8"
+    }
+  },
+  "stream": {
+    "title": "ночной стрим",
+    "uptime": 11520,
+    "avatars": [
+      {
+        "t": 0,
+        "kind": "hoodie"
+      }
+    ],
+    "viewers": [
+      {
+        "t": 0,
+        "value": 3,
+        "label": "3 зрителя"
+      }
+    ],
+    "chat": [
+      {
+        "t": -9,
+        "user": "nochnoy_dozor",
+        "color": "#7ad8ff",
+        "text": "привет"
+      },
+      {
+        "t": -7,
+        "user": "pelmen_404",
+        "color": "#ffd36a",
+        "text": "го катку"
+      },
+      {
+        "t": -5,
+        "user": "kotik_mur",
+        "color": "#ff8ac8",
+        "text": "ты чего не спишь"
+      },
+      {
+        "t": -3,
+        "user": "lapsha_v_3_nochi",
+        "color": "#8dffb0",
+        "text": "это я каждое утро"
+      }
+    ]
+  },
+  "shots": [
+    {
+      "name": "a1_chin",
+      "pose": "tired",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.25,
+            -0.05,
+            3.6
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.25,
+            0
+          ]
+        },
+        "fov": 17
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 1.05,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0.2,
+          0.6,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fill": "#7a64b8",
+        "fillPower": 0.75
+      }
+    },
+    {
+      "name": "a2_yawn",
+      "pose": "yawn",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.25,
+            -0.05,
+            3.6
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.25,
+            0
+          ]
+        },
+        "fov": 17
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 1.05,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0.2,
+          0.6,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fill": "#7a64b8",
+        "fillPower": 0.75
+      }
+    },
+    {
+      "name": "a3_wave",
+      "pose": "wave",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.25,
+            -0.05,
+            3.6
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.25,
+            0
+          ]
+        },
+        "fov": 17
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 1.05,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0.2,
+          0.6,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fill": "#7a64b8",
+        "fillPower": 0.75
+      }
+    },
+    {
+      "name": "a4_phone",
+      "pose": "phone",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.25,
+            -0.05,
+            3.6
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.25,
+            0
+          ]
+        },
+        "fov": 17
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 1.05,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        },
+        "phone": {
+          "hand": "right"
+        }
+      },
+      "light": {
+        "key": [
+          0.2,
+          0.6,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fill": "#7a64b8",
+        "fillPower": 0.75
+      }
+    },
+    {
+      "name": "a5_stretch",
+      "pose": "stretch",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.25,
+            0,
+            3.9
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.1,
+            0
+          ]
+        },
+        "fov": 19
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 1.05,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0.2,
+          0.6,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fill": "#7a64b8",
+        "fillPower": 0.75
+      }
+    }
+  ]
+}

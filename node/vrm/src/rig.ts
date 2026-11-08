@@ -25,6 +25,14 @@ export interface ArmSpec {
   spread?: number;
   /** Большой палец: отвод от ладони 0..1 (0 — прижат вдоль). */
   thumbOut?: number;
+  /** Предел сгиба локтя (градусы, по умолчанию 135). */
+  maxFlex?: number;
+  /** Подбирать положение локтя по скрутке кисти (по умолчанию да). */
+  autoPole?: boolean;
+  /** Насколько держаться полюса против уменьшения скрутки кисти (по умолчанию 0.9). */
+  poleWeight?: number;
+  /** Дополнительный подъём ключицы (градусы). */
+  shrug?: number;
 }
 
 export interface PoseSpec {
@@ -114,6 +122,8 @@ export class Rig {
 
   apply(p: PoseSpec) {
     this.reset();
+    this.hands = {};
+    this.resolved = {};
     const hips = this.node("hips");
     if (hips && p.hips) hips.position.add(new THREE.Vector3(...p.hips));
     for (const [name, deg] of Object.entries(p.bones || {})) this.euler(name, deg);
@@ -128,15 +138,39 @@ export class Rig {
   }
 
   /** Рука: side 1 — левая (+X), -1 — правая. */
+  /**
+   * Рука по правилам скиннинга модели: локоть — чистый сгиб вокруг своей оси (кость-помощник J_Roll_Elbow
+   * берёт половину сгиба и держит объём), пронация — в кисти (её скрутку модель раскладывает по костям
+   * предплечья), плечо (ключица) приподнимается, когда рука выше плеча. Локоть ставится не строго к
+   * полюсу: из окружности возможных положений выбирается то, где кисти меньше всего нужно крутиться
+   * относительно предплечья (большая скрутка = «конфета» на запястье), с мягкой тягой к полюсу.
+   * Сгиб локтя ограничен maxFlex (сильнее — кожа сминается): кисть тогда не дотягивается, и позу правят
+   * наклоном корпуса/головы к руке.
+   */
   arm(side: 1 | -1, a: ArmSpec) {
     const pre = side > 0 ? "left" : "right";
     const up = this.node(`${pre}UpperArm`)!, lo = this.node(`${pre}LowerArm`)!, hand = this.node(`${pre}Hand`)!;
+    const T = this.point(a.target);
+    // Ключица: подъём на треть от возвышения руки выше 15°, до 16°.
+    const sh = this.node(`${pre}Shoulder`);
+    if (sh) {
+      const S0 = this.pos(`${pre}UpperArm`);
+      const v = T.clone().sub(S0);
+      const elev = Math.atan2(v.y, Math.hypot(v.x, v.z)) / D;
+      const lift = Math.max(0, Math.min(16, (elev - 15) * 0.33)) + (a.shrug ?? 0);
+      if (lift) {
+        sh.quaternion.multiply(this.conj(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, side * lift * D))));
+        this.update();
+      }
+    }
     const S = this.pos(`${pre}UpperArm`), E0 = this.pos(`${pre}LowerArm`), W0 = this.pos(`${pre}Hand`);
     const L1 = E0.distanceTo(S), L2 = W0.distanceTo(E0);
-    const T = this.point(a.target);
     const P = a.pole ? this.point(a.pole) : S.clone().add(new THREE.Vector3(side * 0.3, -0.4, -0.25));
     const toT = T.clone().sub(S);
-    const d = Math.min(Math.max(toT.length(), Math.abs(L1 - L2) + 1e-3), L1 + L2 - 1e-4);
+    const dist = toT.length();
+    const maxFlex = (a.maxFlex ?? 135) * D;
+    const dMin = Math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * Math.cos(maxFlex));
+    const d = Math.min(Math.max(toT.length(), dMin), L1 + L2 - 1e-4);
     const dir = toT.normalize();
     const along = (L1 * L1 - L2 * L2 + d * d) / (2 * d);
     const h = Math.sqrt(Math.max(0, L1 * L1 - along * along));
@@ -144,30 +178,65 @@ export class Rig {
     pd.sub(dir.clone().multiplyScalar(pd.dot(dir)));
     if (pd.lengthSq() < 1e-8) pd.set(0, -1, 0);
     pd.normalize();
-    const E = S.clone().add(dir.clone().multiplyScalar(along)).add(pd.clone().multiplyScalar(h));
     const W = S.clone().add(dir.clone().multiplyScalar(d));
-    const upDir = E.clone().sub(S).normalize(), loDir = W.clone().sub(E).normalize();
-    // Ось сгиба локтя: в покое (рука в сторону, ладонь вниз) предплечье сгибается вперёд (+Z).
-    const restDir = new THREE.Vector3(side, 0, 0);
-    const restHinge = new THREE.Vector3().crossVectors(restDir, new THREE.Vector3(0, 0, 1));
-    let hinge = new THREE.Vector3().crossVectors(upDir, loDir);
-    if (hinge.lengthSq() < 1e-6) hinge = new THREE.Vector3().crossVectors(upDir, pd).negate();
-    hinge.normalize();
-    // Ось сгиба указывает так же, как в покое: сгиб «вперёд» = к полюсу с противоположной стороны.
-    const restQ = basis(restDir, restHinge);
-    this.setWorld(up, basis(upDir, hinge).multiply(restQ.clone().invert()));
-    // Предплечье закручено к ладони (поворот кисти — от предплечья, а не в запястье: иначе кости-скрутки
-    // модели выворачивают запястье). Ладонь вдоль предплечья — закрутка по оси сгиба локтя.
-    const fingers = a.fingers ? new THREE.Vector3(...a.fingers).normalize() : loDir.clone();
+    const fingers = a.fingers ? new THREE.Vector3(...a.fingers).normalize() : null;
     const palm = a.palm ? new THREE.Vector3(...a.palm).normalize() : new THREE.Vector3(0, -1, 0);
-    const palmPerp = palm.clone().sub(loDir.clone().multiplyScalar(palm.dot(loDir)));
-    const loRest = basis(restDir, new THREE.Vector3(0, -1, 0));
-    if (palmPerp.lengthSq() > 0.05) this.setWorld(lo, basis(loDir, palmPerp).multiply(loRest.invert()));
-    else this.setWorld(lo, basis(loDir, hinge).multiply(restQ.clone().invert()));
+    const restDir = new THREE.Vector3(side, 0, 0);
+    // Ось сгиба локтя: в покое (рука в сторону, ладонь вниз) предплечье сгибается вперёд (+Z).
+    const restHinge = new THREE.Vector3().crossVectors(restDir, new THREE.Vector3(0, 0, 1));
+    const restQ = basis(restDir, restHinge);
+    const restQi = restQ.clone().invert();
+    const solve = (ang: number) => {
+      const pdA = pd.clone().applyAxisAngle(dir, ang);
+      const E = S.clone().add(dir.clone().multiplyScalar(along)).add(pdA.clone().multiplyScalar(h));
+      const upDir = E.clone().sub(S).normalize(), loDir = W.clone().sub(E).normalize();
+      let hinge = new THREE.Vector3().crossVectors(upDir, loDir);
+      if (hinge.lengthSq() < 1e-6) hinge = new THREE.Vector3().crossVectors(upDir, pdA).negate();
+      hinge.normalize();
+      const loQ = basis(loDir, hinge).multiply(restQi);
+      // Скрутка кисти относительно предплечья: «ладонь вниз» предплечья против нужной ладони.
+      const ref = new THREE.Vector3(0, -1, 0).applyQuaternion(loQ);
+      const want = palm.clone().sub(loDir.clone().multiplyScalar(palm.dot(loDir)));
+      const roll = want.lengthSq() < 1e-4 ? 0 : Math.atan2(new THREE.Vector3().crossVectors(ref, want).dot(loDir), ref.dot(want.normalize()));
+      const inside = Math.max(0, 0.05 - side * E.x) * 25;
+      return { E, upDir, loDir, hinge, loQ, roll, cost: roll * roll + (a.poleWeight ?? 0.9) * ang * ang + inside * inside };
+    };
+    let best = solve(0);
+    if (a.autoPole !== false) {
+      // Перебор по 5°, затем уточнение параболой по соседям — угол непрерывен от кадра к кадру (без ступенек).
+      const step = Math.PI / 36;
+      let bi = 0;
+      for (let i = 1; i < 72; i++) {
+        const ang = (i < 36 ? i : i - 72) * step;
+        const c = solve(ang);
+        if (c.cost < best.cost) {
+          best = c;
+          bi = i < 36 ? i : i - 72;
+        }
+      }
+      const c0 = solve((bi - 1) * step).cost, c1 = best.cost, c2 = solve((bi + 1) * step).cost;
+      const den = c0 - 2 * c1 + c2;
+      if (den > 1e-9) best = solve((bi + Math.max(-0.5, Math.min(0.5, (0.5 * (c0 - c2)) / den))) * step);
+    }
+    this.setWorld(up, basis(best.upDir, best.hinge).multiply(restQi));
+    this.setWorld(lo, best.loQ);
     const handRest = basis(new THREE.Vector3(side, 0, 0), new THREE.Vector3(0, -1, 0));
-    this.setWorld(hand, basis(fingers, palm).multiply(handRest.invert()));
+    this.setWorld(hand, basis(fingers || best.loDir, palm).multiply(handRest.invert()));
+    this.hands[pre] = { pos: W.clone(), fingers: (fingers || best.loDir).clone(), palm: palm.clone() };
+    this.resolved[pre] = { T: T.toArray() as V3, P: P.toArray() as V3 };
     this.fingers(side, a);
+    const flex = Math.acos(Math.max(-1, Math.min(1, best.upDir.dot(best.loDir))));
+    this.info[pre] = { flex: Math.round(flex / D), roll: Math.round(best.roll / D), short: Math.round(Math.max(0, dMin - dist) * 1000) };
   }
+
+  /** Куда целилась рука (точки в пространстве модели) — для смешивания поз. */
+  resolved: Record<string, { T: V3; P: V3 }> = {};
+
+  /** Кисти после позы: запястье, куда пальцы, нормаль ладони — для предметов в руке. */
+  hands: Record<string, { pos: THREE.Vector3; fingers: THREE.Vector3; palm: THREE.Vector3 }> = {};
+
+  /** Отладка: сгиб локтя и скрутка кисти по рукам (градусы), недотяг кисти (мм). */
+  info: Record<string, { flex: number; roll: number; short: number }> = {};
 
   fingers(side: 1 | -1, a: ArmSpec) {
     const pre = side > 0 ? "left" : "right";

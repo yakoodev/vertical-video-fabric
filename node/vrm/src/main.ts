@@ -17,6 +17,7 @@ import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
 import { applyLook, type LookSpec } from "./look.ts";
 import { Rig, type PoseSpec, type V3, type Point } from "./rig.ts";
 import { poseByName } from "./poses.ts";
+import { camAt, merge, poseAt, speechMouth, type CamKey, type PoseKey } from "./anim.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
@@ -33,8 +34,11 @@ export interface Shot {
   name?: string;
   t0?: number;
   t1?: number;
-  cam: CamSpec;
-  pose: string | PoseSpec;
+  cam?: CamSpec;
+  /** Камера по ключам (время — от начала плана): плавный наезд, панорама. */
+  camKeys?: CamKey[];
+  /** Поза плана (стопкадры); в ролике поза — из spec.poses. */
+  pose?: string | PoseSpec;
   /** Правки поверх именованной позы. */
   over?: PoseSpec;
   plate?: PlateSpec;
@@ -51,6 +55,10 @@ export interface Spec {
   look?: LookSpec;
   shots: Shot[];
   stream?: any;
+  /** Ролик: ключи поз героя (время ролика), переходы между ними. */
+  poses?: PoseKey[];
+  /** Окна речи [[t0, t1], ...] — рот слогами только в них. */
+  speech?: number[][];
 }
 
 let spec: Spec;
@@ -78,41 +86,44 @@ function shotAt(t: number): { shot: Shot; local: number } {
   return { shot: s, local: t - (s.t0 ?? 0) };
 }
 
-function merge(a: PoseSpec, b?: PoseSpec): PoseSpec {
-  if (!b) return a;
-  return {
-    ...a, ...b,
-    bones: { ...(a.bones || {}), ...(b.bones || {}) },
-    expr: b.expr ? b.expr : a.expr,
-    left: b.left ? { ...(a.left || {}), ...b.left } as any : a.left,
-    right: b.right ? { ...(a.right || {}), ...b.right } as any : a.right,
-  };
-}
-
-function poseOf(shot: Shot, t: number): PoseSpec {
-  const base = typeof shot.pose === "string" ? poseByName(shot.pose, t) : shot.pose;
+/** Поза на время: ролик — по ключам spec.poses (+ рот в окнах речи), стопкадр — поза плана. */
+function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
+  if (spec.poses?.length) {
+    const p = poseAt(rig, spec.poses, time);
+    const mouth = speechMouth(spec.speech, time);
+    return Object.keys(mouth).length ? { ...p, expr: { ...(p.expr || {}), aa: 0, oh: 0, ee: 0, ih: 0, ou: 0, ...mouth } } : p;
+  }
+  const base = typeof shot.pose === "string" ? poseByName(shot.pose, local) : shot.pose || {};
   return merge(base, shot.over);
 }
 
-/** Поза + пружинные кости (волосы, одежда): прогон физики с покоя, детерминированно от t. */
-function settle(p: PoseSpec, t: number, shot: Shot) {
-  rig.apply(p);
-  rig.lookTarget(p.look ?? null, lookObj);
-  vrm.springBoneManager?.reset();
-  const steps = 45;
-  for (let i = 0; i < steps; i++) {
-    if (typeof shot.pose === "string") rig.apply(merge(poseByName(shot.pose, t - (steps - i) / 30), shot.over));
-    vrm.update(1 / 30);
+let simT = NaN;
+/**
+ * Поза + пружинные кости (волосы, одежда) с постоянным шагом dt. Следующий кадр подряд — один шаг физики;
+ * иначе (первый кадр, кусок с середины, стопкадр) — прогрев с покоя за 2 с по позам этих моментов.
+ */
+function settle(t: number, shot: Shot, local: number) {
+  const dt = 1 / (spec.fps || 30);
+  const at = (k: number) => {
+    const p = poseAtTime(t - k * dt, shot, local - k * dt);
+    rig.apply(p);
+    rig.lookTarget(p.look ?? null, lookObj);
+  };
+  if (!(spec.poses?.length && Math.abs(t - simT - dt) < 1e-6)) {
+    vrm.springBoneManager?.reset();
+    for (let k = 60; k >= 1; k--) {
+      at(k);
+      vrm.update(dt);
+    }
   }
-  rig.apply(p);
-  rig.lookTarget(p.look ?? null, lookObj);
-  vrm.update(1 / 30);
+  at(0);
+  vrm.update(dt);
+  simT = t;
 }
 
 function render(t: number) {
   const { shot, local } = shotAt(t);
-  const p = poseOf(shot, local);
-  settle(p, local, shot);
+  settle(t, shot, local);
   const L = shot.light || {};
   key.position.set(...(L.key || [0.3, 0.6, 1]));
   key.color.set(L.keyColor || "#dfe6ff");
@@ -120,11 +131,12 @@ function render(t: number) {
   fill.color.set(L.fill || "#6a58b0");
   fill.intensity = L.fillPower ?? 1.1;
   props.update(shot.props, rig, local, spec.stream);
-  const c = shot.cam;
-  camera.fov = c.fov ?? 18;
-  camera.position.copy(rig.point(c.pos));
-  camera.up.set(Math.sin((c.roll ?? 0) * Math.PI / 180), Math.cos((c.roll ?? 0) * Math.PI / 180), 0);
-  camera.lookAt(rig.point(c.target));
+  const c = shot.camKeys?.length ? camAt(rig, shot.camKeys, local)
+    : { pos: rig.point(shot.cam!.pos), target: rig.point(shot.cam!.target), fov: shot.cam!.fov ?? 18, roll: shot.cam!.roll ?? 0 };
+  camera.fov = c.fov;
+  camera.position.copy(c.pos);
+  camera.up.set(Math.sin((c.roll * Math.PI) / 180), Math.cos((c.roll * Math.PI) / 180), 0);
+  camera.lookAt(c.target);
   camera.updateProjectionMatrix();
   gl.render(scene, camera);
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -205,8 +217,9 @@ async function load(s: Spec) {
   render: (t: number) => render(t),
   inspect: (t: number) => {
     const { shot, local } = shotAt(t);
-    settle(poseOf(shot, local), local, shot);
-    return { t, bones: rig.dump(), expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
+    simT = NaN;
+    settle(t, shot, local);
+    return { t, arms: rig.info, bones: rig.dump(), expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
   },
   warnings: () => warnings,
 };
