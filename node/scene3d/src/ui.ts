@@ -10,6 +10,7 @@
  */
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
+import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
 import { drawDeclined, drawDrawApp, drawForeignShop, drawFox, drawMessenger, drawRig, drawStoreCard, drawWolf, wolfPose } from "./ui_pages.ts";
 
 export const UI_FONT = "VvfUi";
@@ -80,7 +81,7 @@ export interface StreamScreen {
   /** Сообщения чата: [{t, user, color, text}]. */
   chat?: { t: number; user: string; color?: string; text: string; big?: boolean }[];
   /** Алерты: [{t, dur, title, amount, note}] (НОВЫЙ ДОНАТ $5). */
-  alerts?: { t: number; dur?: number; title?: string; amount?: string; note?: string; color?: string }[];
+  alerts?: { t: number; dur?: number; title?: string; amount?: string; note?: string; color?: string; from?: string }[];
   /** Сколько уже идёт эфир к t = 0 (с) — часы «в эфире». */
   uptime?: number;
   title?: string;
@@ -99,6 +100,16 @@ export interface StreamScreen {
   camBg?: string[];
   /** Чат — на отдельном вертикальном мониторе (kind "chat"): здесь окно эфира во всю ширину. */
   noChat?: boolean;
+  /** Подпись эфира по времени (чужой эфир — своя подпись): [{t, title}]. */
+  titles?: { t: number; title: string }[];
+  /** Нарисованный парень (аватар hoodie) и чужой витубер (vtuber): моргания, кивки, окна зевков. */
+  guy?: GuyKeys;
+  vtuber?: GuyKeys;
+  /** Режим shops: какая страница магазина с t (0 — японский, 1 — в долларах, 2 — оплата), моменты «Оплата отклонена». */
+  shops?: { t: number; page: number }[];
+  declines?: number[];
+  /** Шапка эфира — в средней половине ширины (монитор снимается по центру). */
+  centerHeader?: boolean;
 }
 
 /** Режим экрана, аватар, рот лисички, кукла волчонка — на момент t. */
@@ -110,7 +121,8 @@ function screenState(s: StreamScreen, t: number) {
   // «talk» — рот открывается слогами (как PNGtuber на голос): детерминированно от t.
   const open = m === "open" || (m === "talk" && Math.floor((t - mt) * 7) % 3 !== 2);
   const wolf = wolfPose(t, s.wolf || {});
-  const anim = mode === "rig" || mode === "shop" || (mode === "stream" && avatar === "wolf") || mode === "draw";
+  const anim = mode === "rig" || mode === "shop" || mode === "shops" || mode === "draw"
+    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber"));
   return { mode, avatar, open, wolf, anim };
 }
 
@@ -133,6 +145,7 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
     if (s.declined !== undefined && t >= s.declined) drawDeclined(g, W, H, popIn(t, s.declined, 0.35));
     return;
   }
+  if (st.mode === "shops") return drawShopPage(g, W, H, t, stepValue(s.shops, t, "page", 0), s.declines || []);
   if (st.mode === "rig") {
     const fix = s.fixAt === undefined ? 0 : Math.max(0, Math.min(1, (t - s.fixAt) / 0.8));
     return drawRig(g, W, H, t, { ...st.wolf, squint: fix < 0.6 }, ease("inOutSine", fix));
@@ -142,34 +155,36 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
   bg.addColorStop(1, "#0b0814");
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
-  // Шапка: LIVE, время эфира, зрители.
+  // Шапка: LIVE, время эфира, зрители (centerHeader — только LIVE и зрители в средней трети ширины: в вертикальном
+  // кадре монитор снимается по центру, и шапка целиком в кадре).
+  const hx = s.centerHeader ? W * 0.33 - 24 * u : 0, hr = s.centerHeader ? W * 0.33 - 26 * u : 0;
   g.fillStyle = "#ff2d55";
-  roundRect(g, 24 * u, 22 * u, 110 * u, 46 * u, 10 * u);
+  roundRect(g, hx + 24 * u, 22 * u, 110 * u, 46 * u, 10 * u);
   g.fill();
   g.fillStyle = "#ffffff";
   g.font = font(900, 28 * u);
   g.textBaseline = "middle";
   g.textAlign = "center";
-  g.fillText("LIVE", 79 * u, 46 * u);
+  g.fillText("LIVE", hx + 79 * u, 46 * u);
   g.textAlign = "left";
   g.fillStyle = "#b9a8dc";
   g.font = font(700, 26 * u);
-  g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, 152 * u, 46 * u);
+  if (!s.centerHeader) g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, hx + 152 * u, 46 * u);
   const v = stepValue(s.viewers, t, "value", 0);
   const label = stepValue<string | undefined>(s.viewers, t, "label", undefined) ?? `${v}`;
   g.textAlign = "right";
   g.fillStyle = "#ffffff";
   g.font = font(800, 32 * u);
-  g.fillText(label, W - 26 * u, 46 * u);
+  g.fillText(label, W - hr - 26 * u, 46 * u);
   const lw = g.measureText(label).width;
   g.strokeStyle = "#ff5c7a";
   g.lineWidth = 5 * u;
   g.beginPath();
-  g.ellipse(W - 26 * u - lw - 30 * u, 46 * u, 17 * u, 10 * u, 0, 0, Math.PI * 2);
+  g.ellipse(W - hr - 26 * u - lw - 30 * u, 46 * u, 17 * u, 10 * u, 0, 0, Math.PI * 2);
   g.stroke();
   g.fillStyle = "#ff5c7a";
   g.beginPath();
-  g.arc(W - 26 * u - lw - 30 * u, 46 * u, 6 * u, 0, Math.PI * 2);
+  g.arc(W - hr - 26 * u - lw - 30 * u, 46 * u, 6 * u, 0, Math.PI * 2);
   g.fill();
   // Слева — окно эфира с аватаром, справа — колонка чата.
   const vx = 24 * u, vy = 86 * u, vw = s.noChat ? W - 48 * u : W * 0.6, vh = H - vy - 22 * u;
@@ -185,19 +200,23 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
   const ax = vx + vw / 2, ay = vy + vh * 0.5, as = vh * 0.5;
   if (st.avatar === "fox") drawFox(g, ax, ay, as, { mouthOpen: st.open });
   else if (st.avatar === "wolf") drawWolf(g, ax, ay, as, st.wolf);
+  else if (st.avatar === "hoodie") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, s.guy, "hoodie"));
+  else if (st.avatar === "vtuber") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, s.vtuber, "vtuber"));
+  else if (st.avatar === "nocam") drawNoCam(g, vx, vy, vw, vh, u);
   else if (st.avatar === "silhouette") {
     g.fillStyle = "#3a2470";
     g.fillRect(ax - 70 * u, vy + vh - 150 * u, 140 * u, 150 * u);
     g.fillStyle = "#e9b896";
     g.fillRect(ax - 55 * u, vy + vh - 260 * u, 110 * u, 110 * u);
   }
-  if (s.title) {
+  const title = stepValue<string | undefined>(s.titles, t, "title", s.title);
+  if (title) {
     g.fillStyle = "rgba(0,0,0,0.5)";
     g.fillRect(vx, vy + vh - 44 * u, vw, 44 * u);
     g.fillStyle = "#e7dcff";
     g.font = font(700, 24 * u);
     g.textAlign = "left";
-    g.fillText(fit(g, s.title, vw - 30 * u), vx + 14 * u, vy + vh - 22 * u);
+    g.fillText(fit(g, title, vw - 30 * u), vx + 14 * u, vy + vh - 22 * u);
   }
   g.restore();
   if (s.noChat) {
@@ -243,18 +262,35 @@ function progressAt(s: StreamScreen, t: number): number {
   return Math.max(0, Math.min(1, (t - w[0]) / Math.max(0.1, w[1] - w[0])));
 }
 
-/** Алерт доната: яркая карточка по центру, «поп» с перелётом, сумма крупно жёлтым. */
-function drawAlert(g: CanvasRenderingContext2D, W: number, H: number, a: NonNullable<StreamScreen["alerts"]>[number], t: number,
-  narrow = false) {
+/** Перенос по словам в ширину max (не больше lines строк, последняя — с «…»). */
+function wrap(g: CanvasRenderingContext2D, text: string, max: number, lines = 2): string[] {
+  const out: string[] = [];
+  let cur = "";
+  for (const word of text.split(" ")) {
+    const next = cur ? `${cur} ${word}` : word;
+    if (g.measureText(next).width > max && cur) {
+      out.push(cur);
+      cur = word;
+    } else cur = next;
+  }
+  out.push(cur);
+  if (out.length > lines) return [...out.slice(0, lines - 1), fit(g, out.slice(lines - 1).join(" "), max)];
+  return out;
+}
+
+/** Алерт доната: яркая карточка, «поп» с перелётом, сумма крупно жёлтым; from — «от ника», note — в две строки.
+ * cy — центр по высоте (по умолчанию середина). */
+export function drawAlert(g: CanvasRenderingContext2D, W: number, H: number,
+  a: NonNullable<StreamScreen["alerts"]>[number] & { from?: string }, t: number, narrow = false, cy?: number) {
   const u = (W / 1000) * (narrow ? 0.66 : 1);
   const k = popIn(t, a.t, 0.4);
   const out = Math.max(0, Math.min(1, (a.t + (a.dur ?? 3) - t) / 0.25));
   g.save();
   g.globalAlpha = Math.min(1, k * 1.5) * out;
-  g.translate(W / 2, H * 0.5);
+  g.translate(W / 2, cy ?? H * 0.5);
   g.scale(0.4 + 0.6 * k, 0.4 + 0.6 * k);
   g.rotate(-0.035);
-  const w = 820 * u, h = 400 * u;
+  const w = 820 * u, h = (a.from ? 500 : 400) * u;
   g.shadowColor = "rgba(255,60,200,0.8)";
   g.shadowBlur = 50 * u;
   const grad = g.createLinearGradient(-w / 2, -h / 2, w / 2, h / 2);
@@ -273,12 +309,19 @@ function drawAlert(g: CanvasRenderingContext2D, W: number, H: number, a: NonNull
   g.font = font(900, 150 * u * blink, true);
   g.strokeStyle = "#5a1070";
   g.lineWidth = 12 * u;
-  g.strokeText(a.amount || "$5", 0, 40 * u);
-  g.fillText(a.amount || "$5", 0, 40 * u);
+  const ay = a.from ? -h / 2 + 200 * u : 40 * u;
+  g.strokeText(a.amount || "$5", 0, ay);
+  g.fillText(a.amount || "$5", 0, ay);
+  if (a.from) {
+    g.fillStyle = "#ffffff";
+    g.font = font(800, 40 * u);
+    g.fillText(`от ${a.from}`, 0, ay + 76 * u);
+  }
   if (a.note) {
     g.fillStyle = "#ffffff";
     g.font = `italic ${font(700, 36 * u)}`;
-    g.fillText(fit(g, `«${a.note}»`, w - 60 * u), 0, h / 2 - 50 * u);
+    const lines = a.from ? wrap(g, `«${a.note}»`, w - 70 * u) : [fit(g, `«${a.note}»`, w - 60 * u)];
+    lines.forEach((ln, i) => g.fillText(ln, 0, h / 2 - (50 + (lines.length - 1 - i) * 46) * u));
   }
   g.restore();
 }
@@ -321,7 +364,11 @@ export function phoneSignature(p: PhoneScreen, t: number): string {
 
 export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: PhoneScreen, t: number) {
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
-  if (p.screen === "shop") return drawStoreCard(g, W, H, t, p.store || {});
+  if (p.screen === "shop") {
+    const pv = (p.store as any)?.preview;
+    return drawStoreCard(g, W, H, t, p.store || {}, pv && pv !== "wolf"
+      ? (gg, cx, cy, sz) => drawGuy(gg, cx, cy - sz * 0.1, sz * 0.95, guyPose(t, {}, pv)) : undefined);
+  }
   if (p.screen === "messenger") return drawMessenger(g, W, H, t, p.message || {});
   const u = W / 500;
   const bg = g.createLinearGradient(0, 0, W, H);

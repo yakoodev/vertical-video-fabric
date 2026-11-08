@@ -112,6 +112,7 @@ export class PostFX {
   grade: ShaderPass;
   bokeh: BokehPass | null = null;
   gtao: GTAOPass | null = null;
+  bloom: UnrealBloomPass | null = null;
   depthCam: THREE.PerspectiveCamera;
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, W: number, H: number, spec: PostSpec, samples = 4) {
@@ -139,14 +140,24 @@ export class PostFX {
     }
     if (spec.bloom !== false) {
       const b = spec.bloom || {};
-      this.composer.addPass(new UnrealBloomPass(new THREE.Vector2(W / 2, H / 2), b.strength ?? 0.6, b.radius ?? 0.55, b.threshold ?? 0.85));
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(W / 2, H / 2), b.strength ?? 0.6, b.radius ?? 0.55, b.threshold ?? 0.85);
+      this.composer.addPass(this.bloom);
     }
     this.composer.addPass(new OutputPass());
     this.grade = new ShaderPass(GradeShader);
     const u = this.grade.uniforms;
+    u.resolution.value.set(W, H);
+    this.setLook(spec);
+    u.grain.value = spec.grain ?? 0.05;
+    u.ca.value = spec.ca ?? 1.2;
+    this.composer.addPass(this.grade);
+  }
+
+  /** Цветокоррекция, виньетка и сила свечения — сменить на лету (фаза окружения: другая локация после склейки). */
+  setLook(spec: { grade?: GradeSpec; vignette?: number; bloom?: { strength?: number } | false }) {
+    const u = this.grade.uniforms;
     const gr = spec.grade || {};
     const v3 = (a: number[] | undefined, d: number) => new THREE.Vector3(a?.[0] ?? d, a?.[1] ?? d, a?.[2] ?? d);
-    u.resolution.value.set(W, H);
     u.lift.value = v3(gr.lift, 0);
     u.gamma.value = v3(gr.gamma, 1);
     u.gain.value = v3(gr.gain, 1);
@@ -156,9 +167,7 @@ export class PostFX {
     u.contrast.value = gr.contrast ?? 1;
     u.saturation.value = gr.saturation ?? 1;
     u.vignette.value = spec.vignette ?? 0.35;
-    u.grain.value = spec.grain ?? 0.05;
-    u.ca.value = spec.ca ?? 1.2;
-    this.composer.addPass(this.grade);
+    if (this.bloom && spec.bloom && spec.bloom.strength !== undefined) this.bloom.strength = spec.bloom.strength;
   }
 
   /** Кадр t: камера проходов глубины повторяет основную; dof — сила размытия (0 — выкл.), focus — дистанция (м). */

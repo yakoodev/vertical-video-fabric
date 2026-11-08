@@ -37,9 +37,10 @@ VOXEL_LOOK = {"skin": "#eab795", "hair": "#2a1c1a", "hairStyle": "messy", "top":
 # Процедурные клипы героя (voxelclips.ts): имя → длительность цикла, с.
 VOXEL_CLIPS = {"Idle_Loop": 8.0, "Sit_Loop": 8.0, "Typing_Loop": 1.0, "Talk_Loop": 2.4, "Draw_Loop": 2.4,
                "Coin_Drop": 1.6, "Chin_Rest_Loop": 6.0, "Frown_Loop": 3.0, "Gasp": 1.6, "Laugh_Loop": 0.42,
-               "Sleep_Desk_Loop": 5.0, "Startle": 1.1, "Walk_Loop": 1.0}
+               "Sleep_Desk_Loop": 5.0, "Startle": 1.1, "Walk_Loop": 1.0, "Nod": 1.0, "Yawn": 2.2, "Eat_Loop": 2.0,
+               "Carry_Loop": 1.1, "Hold_Box_Loop": 6.0, "Stand_Talk_Loop": 2.4, "Hold_Cup_Loop": 4.0}
 # Выражения (pixel.ts); blink_once — моргнуть один раз в момент ключа (синхронно с куклой на мониторе).
-VOXEL_FACES = ("neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk", "blink_once")
+VOXEL_FACES = ("neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk", "blink_once", "tired", "yawn")
 
 PURPLE, MAGENTA, WARM = "#8c3cff", "#ff4fd8", "#ffb066"
 

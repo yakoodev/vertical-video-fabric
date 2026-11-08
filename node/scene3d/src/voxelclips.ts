@@ -127,6 +127,76 @@ export const VOXEL_CLIPS: Record<string, { dur: number; pose: (t: number) => Rot
       });
     },
   },
+  // Кивает (сидя): два коротких кивка и обратно.
+  Nod: {
+    dur: 1.0,
+    pose: (t) => {
+      const k = bump(t, 1.0, 0.1, 0.25);
+      return add(SIT, breath(t, 0.5), DESK, { Head: [18 * k * Math.max(0, sin(t / 0.5)), 0, 0], spine_03: [3 * k, 0, 0] });
+    },
+  },
+  // Зевает (сидя): потягивается — руки вверх, голова назад; рот — выражение лица yawn.
+  Yawn: {
+    dur: 2.2,
+    pose: (t) => {
+      const k = bump(t, 2.2, 0.55, 0.6);
+      return add(SIT, DESK, {
+        spine_03: [-8 * k, 0, 0], neck_01: [-6 * k, 0, 0], Head: [-16 * k, 0, 3 * k],
+        upperarm_l: [-112 * k, 0, 22 * k], upperarm_r: [-112 * k, 0, -22 * k],
+        lowerarm_l: [10 * k, 0, -22 * k], lowerarm_r: [10 * k, 0, 22 * k],
+      });
+    },
+  },
+  // Ест лапшу (сидя): правая рука с вилкой от стаканчика ко рту, голова навстречу.
+  Eat_Loop: {
+    dur: 2.0,
+    pose: (t) => {
+      const a = 0.5 - 0.5 * Math.cos(2 * Math.PI * t);
+      return add(SIT, breath(t, 0.5), {
+        spine_03: [8 + 4 * a, 0, 0], Head: [6 + 6 * a, 0, 0],
+        upperarm_l: [-38, 0, 6], lowerarm_l: [-48, 0, 0],
+        upperarm_r: [-40 - 18 * a, 0, -10 + 4 * a], lowerarm_r: [-60 - 62 * a, 0, 16 * a], hand_r: [10 - 20 * a, 0, 0],
+      });
+    },
+  },
+  // Несёт коробку: шаг, обе руки вперёд под коробкой, корпус чуть назад.
+  Carry_Loop: {
+    dur: 1.1,
+    pose: (t) => ({
+      thigh_l: [-22 * sin(t), 0, 0], thigh_r: [22 * sin(t), 0, 0],
+      calf_l: [Math.max(0, 34 * sin(t + 0.25)), 0, 0], calf_r: [Math.max(0, -34 * sin(t + 0.25)), 0, 0],
+      spine_03: [-4, 2 * sin(t), 0], Head: [4, 0, 0],
+      upperarm_l: [-42, 0, 14], upperarm_r: [-42, 0, -14], lowerarm_l: [-52, 0, -12], lowerarm_r: [-52, 0, 12],
+    }),
+  },
+  // Стоит, держит коробку перед собой (то же, что Carry_Loop, без шага).
+  Hold_Box_Loop: {
+    dur: 6,
+    pose: (t) => add(breath(t), {
+      spine_03: [-4, 0, 0], Head: [6, 0, 0],
+      upperarm_l: [-42, 0, 14], upperarm_r: [-42, 0, -14], lowerarm_l: [-52, 0, -12], lowerarm_r: [-52, 0, 12],
+    }),
+  },
+  // Стоит и рассказывает: правая рука жестикулирует, голова кивает в такт.
+  Stand_Talk_Loop: {
+    dur: 2.4,
+    pose: (t) => add(breath(t), {
+      Head: [4 * sin(t / 1.2), 8 * sin(t / 2.4 + 0.3), 3 * sin(t / 1.6)], spine_03: [2, 4 * sin(t / 4.8), 0],
+      upperarm_l: [0, 0, 6], upperarm_r: [-34 - 14 * Math.max(0, sin(t / 2.4)), 0, -12], lowerarm_r: [-70 - 20 * Math.max(0, sin(t / 1.2)), 0, 0],
+      hand_r: [0, 0, 14 * sin(t / 1.2)],
+    }),
+  },
+  // Стоит со стаканчиком в правой руке у груди, изредка отпивает.
+  Hold_Cup_Loop: {
+    dur: 4,
+    pose: (t) => {
+      const sip = Math.max(0, Math.sin(Math.PI * Math.min(1, Math.max(0, (t - 2.6) / 1.0))));
+      return add(breath(t), {
+        Head: [-8 * sip + 2, 0, 0],
+        upperarm_l: [0, 0, 6], upperarm_r: [-24 - 26 * sip, 0, -10], lowerarm_r: [-96 - 22 * sip, 0, 0],
+      });
+    },
+  },
   Walk_Loop: {
     dur: 1,
     pose: (t) => ({

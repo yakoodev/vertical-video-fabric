@@ -46,6 +46,10 @@ export interface VoxelLook {
   headsetMic?: boolean;
   /** Заколка в волосах (цвет) — узнаваемая деталь героя. */
   clip?: string | false;
+  /** Круги под глазами (цвет; мягкое лицо) — не выспался. */
+  eyebags?: string;
+  /** Рабочий жилет поверх худи (цвет; мягкая форма): полы спереди, светоотражающие полосы. */
+  vest?: string | false;
 }
 
 export interface VoxelCharacterSpec {
@@ -191,6 +195,19 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
     for (const s of [1, -1]) cyl(spine, 0.006, 0.006, 0.12, mat("#f1ecf7"), [s * 0.04, torsoY0 + th - 0.1, td / 2 + 0.012]);
     box(spine, [0.06, 0.06, 0.012], mat(accent, { emissive: accent, glow: 0.6 }), [0.08, torsoY0 + th - 0.12, td / 2 + 0.006], 0.3);
     cyl(neck, 0.05, 0.055, D.neck + 0.03, mat(skin), [0, D.neck / 2, 0]);
+    if (look.vest) {
+      // Жилет: спинка и две полы спереди (между ними видно худи), две светоотражающие полосы.
+      const vm = mat(look.vest, { rough: 0.6 });
+      const stripe = mat("#e8eef2", { emissive: "#c9d2d8", glow: 0.35, rough: 0.3 });
+      const vy = torsoY0 + th * 0.48, vh = th * 0.9;
+      box(spine, [tw + 0.03, vh, 0.05], vm, [0, vy, -td / 2 + 0.01], 0.3);
+      for (const s of [1, -1]) {
+        box(spine, [0.05, vh, td + 0.02], vm, [s * (tw / 2 + 0.005), vy, 0], 0.3);
+        box(spine, [tw * 0.3, vh, 0.04], vm, [s * tw * 0.33, vy, td / 2 + 0.006], 0.3);
+        for (const y of [0.32, 0.6]) box(spine, [tw * 0.31, 0.03, 0.045], stripe, [s * tw * 0.33, torsoY0 + th * y, td / 2 + 0.01], 0.3);
+      }
+      for (const y of [0.32, 0.6]) box(spine, [tw + 0.035, 0.03, 0.055], stripe, [0, torsoY0 + th * y, -td / 2 + 0.005], 0.3);
+    }
   }
   // Руки: рукав — цвет худи, манжета-акцент, кисть — кожа.
   for (const s of [1, -1]) {
@@ -231,7 +248,7 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   const headR = Math.min(hw, hh, hdp) * 0.32;
   const headMesh = box(head, [hw, hh, hdp], mat(skin), [0, hh / 2, 0], 0.32);
   headMesh.name = "voxel:head";
-  const pal = { skin, hair: hairC, eyes: look.eyes, blush: look.blush, lashes: !!look.lashes };
+  const pal = { skin, hair: hairC, eyes: look.eyes, blush: look.blush, lashes: !!look.lashes, eyebags: look.eyebags };
   const faces: Record<string, THREE.Texture> = {};
   for (const f of VOXEL_FACES) {
     if (block) faces[f] = pixelTexture(blockFaceCanvas(f, pal));

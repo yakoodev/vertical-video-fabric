@@ -9,22 +9,30 @@
  *   {kind: "phone", t0, t1, x?, y?, scale?, dim?, …PhoneScreen} — телефон-карточка въезжает снизу; dim — затемнить кадр
  *     под ней (вставка: большой телефон поверх размытой сцены)
  *   {kind: "chat", start, end, x?, y?, w?, h?, chat, viewers} — карточка чата стрима (как на мониторе), «поп» на входе
+ *   {kind: "screen", start, end, x?, y?, w?, …StreamScreen} — карточка эфира (то же, что на мониторе: аватар кивает
+ *     одновременно с героем в кадре)
+ *   {kind: "alert", t, dur, title, amount, from, note, y?, scale?} — алерт доната крупно поверх кадра
+ *   phone ``cut: true`` — без въезда и ухода (склейка: телефон переставлен на месте)
  */
-import { drawChatScreen, drawHud, drawPhone, drawTag, drawToast, popIn, roundRect, type HudSpec, type PhoneScreen, type StreamScreen,
+import { drawAlert, drawChatScreen, drawHud, drawPhone, drawStream, drawTag, drawToast, popIn, roundRect, type HudSpec, type PhoneScreen, type StreamScreen,
   type ToastSpec } from "./ui.ts";
 
 export type OverlaySpec =
   | ({ kind: "hud"; right?: number; left?: number; top?: number; start?: number; end?: number } & HudSpec)
   | { kind: "tag"; text: string; x?: number; y?: number; start?: number; end?: number }
   | ({ kind: "toast"; y?: number } & ToastSpec)
-  | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number; dim?: number } & PhoneScreen)
-  | ({ kind: "chat"; start: number; end: number; x?: number; y?: number; w?: number; h?: number } & StreamScreen);
+  | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number; dim?: number; cut?: boolean } & PhoneScreen)
+  | ({ kind: "chat"; start: number; end: number; x?: number; y?: number; w?: number; h?: number } & StreamScreen)
+  | ({ kind: "screen"; start: number; end: number; x?: number; y?: number; w?: number } & StreamScreen)
+  | { kind: "alert"; t: number; dur?: number; title?: string; amount?: string; from?: string; note?: string; color?: string;
+      y?: number; scale?: number };
 
 export class Overlays {
   canvas: HTMLCanvasElement;
   g: CanvasRenderingContext2D;
   phone: HTMLCanvasElement;
   chat: HTMLCanvasElement;
+  screen: HTMLCanvasElement;
 
   constructor(public list: OverlaySpec[], public W: number, public H: number) {
     let c = document.getElementById("ov") as HTMLCanvasElement | null;
@@ -43,6 +51,9 @@ export class Overlays {
     this.phone.width = 1000;
     this.phone.height = 2000;
     this.chat = document.createElement("canvas");
+    this.screen = document.createElement("canvas");
+    this.screen.width = 1000;
+    this.screen.height = Math.round(1000 * 0.38 / 0.64);
   }
 
   draw(t: number) {
@@ -56,14 +67,24 @@ export class Overlays {
       else if (o.kind === "toast") drawToast(g, s, 540 * s, (o.y ?? 300) * s, o, t);
       else if (o.kind === "phone") this.drawPhoneCard(o, t, s);
       else if (o.kind === "chat") this.drawChatCard(o, t, s);
+      else if (o.kind === "screen") this.drawScreenCard(o, t, s);
+      else if (o.kind === "alert") {
+        if (t < o.t || t > o.t + (o.dur ?? 3)) continue;
+        // Алерт в опорной ширине 1080 · scale, центр — y (опорные px).
+        const sc = o.scale ?? 1;
+        g.save();
+        g.translate(540 * s * (1 - sc), 0);
+        drawAlert(g, this.W * sc, this.H, o, t, false, (o.y ?? 760) * s);
+        g.restore();
+      }
     }
   }
 
   /** Телефон-карточка: корпус со скруглением, экран — тот же рисунок, что у телефона в 3D. */
   drawPhoneCard(o: Extract<OverlaySpec, { kind: "phone" }>, t: number, s: number) {
     if (t < o.t0 || t > o.t1) return;
-    const k = popIn(t, o.t0, 0.45);
-    const out = Math.max(0, Math.min(1, (o.t1 - t) / 0.3));
+    const k = o.cut ? 1 : popIn(t, o.t0, 0.45);
+    const out = o.cut ? 1 : Math.max(0, Math.min(1, (o.t1 - t) / 0.3));
     const sc = (o.scale ?? 1) * s;
     const w = 440 * sc, h = 880 * sc;
     const cx = (o.x ?? 540) * s, cy = (o.y ?? 860) * s + (1 - Math.min(1, k)) * 700 * s + (1 - out) * 120 * s;
@@ -89,6 +110,29 @@ export class Overlays {
     g.fillStyle = "#0c0a10";
     roundRect(g, -60 * sc, -h / 2 + 14 * sc, 120 * sc, 30 * sc, 15 * sc);
     g.fill();
+    g.restore();
+  }
+
+  /** Карточка эфира поверх кадра: тот же рисунок, что на мониторе (16:9.5), скруглённая, с тенью и рамкой. */
+  drawScreenCard(o: Extract<OverlaySpec, { kind: "screen" }>, t: number, s: number) {
+    drawStream(this.screen.getContext("2d")!, this.screen.width, this.screen.height, o, t);
+    const w = (o.w ?? 640) * s, h = w * this.screen.height / this.screen.width;
+    const k = popIn(t, o.start, 0.4);
+    const out = Math.max(0, Math.min(1, (o.end - t) / 0.3));
+    const g = this.g;
+    g.save();
+    g.globalAlpha = Math.min(1, k * 1.4) * out;
+    g.translate((o.x ?? 540) * s, (o.y ?? 420) * s);
+    g.scale(0.85 + 0.15 * Math.min(1, k), 0.85 + 0.15 * Math.min(1, k));
+    g.shadowColor = "rgba(0,0,0,0.55)";
+    g.shadowBlur = 30 * s;
+    roundRect(g, -w / 2 - 10 * s, -h / 2 - 10 * s, w + 20 * s, h + 20 * s, 26 * s);
+    g.fillStyle = "#0c0a12";
+    g.fill();
+    g.shadowBlur = 0;
+    roundRect(g, -w / 2, -h / 2, w, h, 18 * s);
+    g.clip();
+    g.drawImage(this.screen, -w / 2, -h / 2, w, h);
     g.restore();
   }
 

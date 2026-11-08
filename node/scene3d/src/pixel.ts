@@ -12,8 +12,8 @@
 import * as THREE from "three";
 import { rng } from "./timeline.ts";
 
-export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy" | "frown" | "laugh" | "talk";
-export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk"];
+export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy" | "frown" | "laugh" | "talk" | "tired" | "yawn";
+export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk", "tired", "yawn"];
 
 function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement("canvas");
@@ -89,6 +89,8 @@ export interface FacePalette {
   mouth?: string;
   blush?: string;
   lashes?: boolean;
+  /** Круги под глазами (не выспался): цвет полумесяцев под нижним веком (мягкое лицо). */
+  eyebags?: string;
 }
 
 /**
@@ -199,7 +201,21 @@ export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasEleme
     g.fill();
   }
   const eyes = [38, 90];
-  const browY = face === "wide" ? 29 : face === "sleep" ? 44 : face === "frown" ? 40 : 37;
+  if (p.eyebags && face !== "laugh" && face !== "happy") {
+    // Круги под глазами: мягкие тёмные полумесяцы под нижним веком.
+    g.strokeStyle = p.eyebags;
+    for (const x of eyes) {
+      g.lineWidth = 5;
+      g.beginPath();
+      g.arc(x, 66, 15, Math.PI * 0.2, Math.PI * 0.8);
+      g.stroke();
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.arc(x, 70, 14, Math.PI * 0.28, Math.PI * 0.72);
+      g.stroke();
+    }
+  }
+  const browY = face === "wide" ? 29 : face === "sleep" ? 44 : face === "frown" ? 40 : face === "yawn" ? 31 : face === "tired" ? 40 : 37;
   g.strokeStyle = brow;
   g.lineWidth = 4;
   for (const x of eyes) {
@@ -218,7 +234,39 @@ export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasEleme
   const closed = face === "sleep" || face === "blink";
   const smiling = face === "happy" || face === "laugh";
   g.strokeStyle = ink;
-  if (closed) {
+  if (face === "yawn") {
+    // Зевает: глаза зажмурены «><»-дугами.
+    g.lineWidth = 5;
+    for (const x of eyes) {
+      const side = x < 64 ? -1 : 1;
+      g.beginPath();
+      g.moveTo(x - 11 * side, 54);
+      g.quadraticCurveTo(x + 2 * side, 60, x - 11 * side, 66);
+      g.stroke();
+    }
+  } else if (face === "tired") {
+    // Не выспался: веки опущены до середины глаза, взгляд вниз.
+    for (const x of eyes) {
+      const y = 64;
+      g.fillStyle = "#ffffff";
+      g.beginPath();
+      g.ellipse(x, y, 12, 9, 0, 0, Math.PI);
+      g.fill();
+      g.fillStyle = shade(iris, 0.8);
+      g.beginPath();
+      g.ellipse(x, y + 1, 9, 7, 0, 0, Math.PI);
+      g.fill();
+      g.fillStyle = ink;
+      g.beginPath();
+      g.ellipse(x, y + 1, 4.5, 4, 0, 0, Math.PI);
+      g.fill();
+      g.lineWidth = 5;
+      g.beginPath();
+      g.moveTo(x - 13, y);
+      g.quadraticCurveTo(x, y - 3, x + 13, y);
+      g.stroke();
+    }
+  } else if (closed) {
     // Закрытые глаза — дуги вниз, ресницы вниз.
     g.lineWidth = 5;
     for (const x of eyes) {
@@ -294,6 +342,19 @@ export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasEleme
   if (face === "wide") {
     g.ellipse(64, 98, 6, 8, 0, 0, Math.PI * 2);
     g.fill();
+  } else if (face === "yawn") {
+    // Зевок: рот высоким овалом, тёмный, с языком.
+    g.fillStyle = "#4a1420";
+    g.ellipse(64, 100, 11, 15, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = "#e0707f";
+    g.beginPath();
+    g.ellipse(64, 109, 7, 4.5, 0, 0, Math.PI * 2);
+    g.fill();
+  } else if (face === "tired") {
+    g.moveTo(58, 98);
+    g.lineTo(70, 98);
+    g.stroke();
   } else if (face === "laugh") {
     // Открытый смех: полукруг с языком.
     g.arc(64, 90, 13, Math.PI * 0.02, Math.PI * 0.98);
