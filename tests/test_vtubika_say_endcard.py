@@ -140,8 +140,11 @@ def test_end_card_sfx_come_from_packs_and_follow_card_start():
     cfg = E.settings({})
     sfx = E.card_sfx(cfg, 60.0)
     assert sfx and all(s["t"] >= 60.0 and 0 < s["volume"] <= 0.6 for s in sfx)
-    for s in sfx:
-        assert re.fullmatch(r"sfx:(kenney-[a-z]+|freesound)/[\w-]+\.ogg", s["ref"]), s["ref"]
+    for s in sfx:  # звук паков или файл бренда в репозитории (выбор владельца — калимба из assets/brand)
+        if "ref" in s:
+            assert re.fullmatch(r"sfx:(kenney-[a-z]+|freesound)/[\w-]+\.ogg", s["ref"]), s["ref"]
+        else:
+            assert re.fullmatch(r"assets/brand/vtubika/sfx/[\w-]+\.ogg", s["path"]), s["path"]
     assert cfg["music_fade"] >= cfg["duration"]
 
 

@@ -110,7 +110,7 @@ END_CARD = {
     "duration": 2.8,
     "site": "vtubika.store",
     "slogan": ["Купить VTuber-модель", "с оплатой в рублях"],
-    "sting": "kenney_classic",  # выбор владельца — одна строка: chime_whoosh / … / kalimba_a / kalimba_b / kalimba_c
+    "sting": "kalimba_a",  # выбор владельца 08.11: аккорд калимбы на логотипе + нота на точке (A). Другие — END_CARD_STINGS
     "music_fade": 3.2,  # музыка затихает с ~0.4 с до карточки и до её конца
     "crossfade": 0.3,  # последний кадр истории растворяется в карточке (без чёрного кадра между ними)
 }
