@@ -1,0 +1,9 @@
+{
+ "id": "abc123", "comment_count": 4,
+ "comments": [
+  {"id": "Ugw1", "text": "Пусть разведёт костёр", "like_count": 25, "author": "@ogonek", "author_id": "UC1", "parent": "root", "timestamp": 1762601000, "author_is_uploader": false},
+  {"id": "Ugw2", "text": "Пусть разведёт костёр", "like_count": 3, "author": "@ogonek", "author_id": "UC1", "parent": "root", "timestamp": 1762601100, "author_is_uploader": false},
+  {"id": "Ugw1.r1", "text": "да", "like_count": 99, "author": "@x", "parent": "Ugw1", "timestamp": 1762601200},
+  {"id": "Ugw3", "text": "пусть посмотрит на звёзды", "like_count": 25, "author": "@zvezda", "parent": "root", "timestamp": 1762600900, "author_is_uploader": false}
+ ]
+}

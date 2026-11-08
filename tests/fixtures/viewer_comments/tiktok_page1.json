@@ -1,0 +1,17 @@
+{
+ "status_code": 0, "has_more": 1, "cursor": 6, "total": 9,
+ "comments": [
+  {"cid": "7400000000000000001", "text": "пусть посадит дерево!!", "digg_count": 41, "create_time": 1762600000, "reply_id": "0",
+   "user": {"unique_id": "les_nik", "nickname": "Лесник", "uid": "111", "sec_uid": "MS4w-secret"}, "is_author_digged": true},
+  {"cid": "7400000000000000002", "text": "ПУСТЬ посадит дерево", "digg_count": 12, "create_time": 1762600100, "reply_id": "0",
+   "user": {"unique_id": "derevo_fan", "nickname": "Дерево", "uid": "112"}},
+  {"cid": "7400000000000000003", "text": "раздень её", "digg_count": 90, "create_time": 1762600050, "reply_id": "0",
+   "user": {"unique_id": "bad1", "nickname": "x", "uid": "113"}},
+  {"cid": "7400000000000000004", "text": "заходи ко мне в тг t.me/spamchannel", "digg_count": 70, "create_time": 1762600060, "reply_id": "0",
+   "user": {"unique_id": "spam_bot", "nickname": "spam", "uid": "114"}},
+  {"cid": "7400000000000000005", "text": "да, дерево!", "digg_count": 300, "create_time": 1762600200, "reply_id": "7400000000000000001",
+   "user": {"unique_id": "replyer", "nickname": "r", "uid": "115"}},
+  {"cid": "7400000000000000006", "text": "спасибо что смотрите", "digg_count": 500, "create_time": 1762600001, "reply_id": "0",
+   "is_author": true, "user": {"unique_id": "our_channel", "nickname": "Мы", "uid": "1"}}
+ ]
+}

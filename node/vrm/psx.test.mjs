@@ -16,6 +16,9 @@ await build({
     contents: `export { q5, DITHER4, ditherQuantize, hardAlpha, clusterDecimate } from "./src/psx/psx.ts";
 export { orbitAt, orbitParams, presence } from "./src/psx/orbit.ts";
 export { standPose } from "./src/psx/idle.ts";
+export { sitWeight, sitBones, sitHips } from "./src/psx/sit.ts";
+export { spawnScale } from "./src/psx/things.ts";
+export { typed } from "./src/psx/captions.ts";
 export * as THREE from "three";`,
     resolveDir: HERE, loader: "ts",
   },
@@ -118,4 +121,27 @@ test("стойка: руки у бёдер по бокам, вес перено�
     assert.ok(p.left.target[1] < 0.8 && p.left.target[1] > 0.55);
   }
   assert.ok(Math.sign(b.hips[0]) === -Math.sign(c.hips[0]) && Math.abs(b.hips[0]) > 0.01, "таз уходит в разные стороны");
+});
+
+test("сесть: вес растёт за время перехода и держится; встать — обратно", () => {
+  const keys = [{ id: "sit", t: 2, dur: 1 }, { id: "stand", t: 6, dur: 1 }];
+  assert.equal(M.sitWeight(keys, 1).k, 0);
+  const mid = M.sitWeight(keys, 2.5);
+  assert.ok(mid.k > 0.3 && mid.k < 0.7 && mid.phase > 0);
+  assert.equal(M.sitWeight(keys, 4).k, 1);
+  assert.equal(M.sitWeight(keys, 4).phase, 0);
+  assert.equal(M.sitWeight(keys, 8).k, 0);
+  const b = M.sitBones({ spine: [1, 0, 0] }, 1, 0);
+  assert.ok(b.leftUpperLeg[0] < -90 && b.leftLowerLeg[0] > 90, "бедро вперёд-вверх, колено согнуто");
+  assert.deepEqual(M.sitBones({ spine: [1, 0, 0] }, 0, 0), { spine: [1, 0, 0] });
+  assert.ok(M.sitHips([0.02, 0, 0], 1)[2] < -0.2, "таз назад");
+});
+
+test("предметы появляются ступеньками с перелётом; набор текста по буквам", () => {
+  assert.equal(M.spawnScale(1, undefined), 1);
+  assert.equal(M.spawnScale(0.9, 1), 0);
+  const steps = [1.1, 1.2, 1.3, 1.4, 1.5].map((t) => M.spawnScale(t, 1));
+  assert.ok(Math.max(...steps) > 1.05 && M.spawnScale(2, 1) === 1);
+  assert.equal(M.typed("привет", 0.1, 30), "при");
+  assert.equal(M.typed("привет", -1), "");
 });
