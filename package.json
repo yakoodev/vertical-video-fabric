@@ -9,7 +9,8 @@
     "test:youtube": "node --test node/youtube-upload.test.mjs",
     "build:scene3d": "esbuild node/scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/scene3d/dist/scene3d.js --log-level=warning",
     "test:scene3d": "npm run build:scene3d && node --test node/scene3d/scene3d.test.mjs",
-    "build:vrm": "esbuild node/vrm/src/main.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/vrm/dist/vrm.js --log-level=warning"
+    "build:vrm": "esbuild node/vrm/src/main.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/vrm/dist/vrm.js --log-level=warning",
+    "build:psx": "esbuild node/vrm/src/psx/world.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/vrm/dist/psx.js --log-level=warning"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.10",
