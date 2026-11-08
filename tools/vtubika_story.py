@@ -16,7 +16,14 @@
    слова цветом из плана.
 6. **Звук** — голос + музыка-подложка (CC0, на ``under_db`` тише голоса) + звуки паков на событиях, сведение
    ``app.motion_render.build_audio_layers_args``, затем громкость −14 LUFS.
-7. **Проверка** — лист кадров (12), кадр на каждую фразу и список «фраза → что в кадре» (check.md).
+7. **Концовка** — карточка бренда (``app.vtubika_endcard``: значок, «vtubika», сайт, слоган сайта) ~2.8 с после
+   ролика, мягкий стинг паков, музыка затихает под ней; ``"end_card": false`` в плане — без неё.
+8. **Проверка** — лист кадров (12), лист концовки (endcard_sheet.jpg), кадр на каждую фразу и список «фраза → что в
+   кадре» (check.md).
+
+Озвучка читает термины по словарю произношения (``app.vtubika_say``, ``app.vtubika.PRONOUNCE`` + ``pronounce``
+плана): «Live2D» → «лайв-два-дэ» только в тексте TTS; субтитры — как в сценарии, слова Whisper сливаются обратно в
+термин (``heard_as_script``).
 
 ``--looks`` — тот же отрезок ``--segment`` в нескольких образах комнаты → ``looks_sheet.jpg`` (строка на образ).
 """
@@ -147,7 +154,11 @@ def timed_words(plan: dict, raw: Path, work: Path, report: dict) -> tuple[Path, 
         data = json.loads(cache.read_text("utf-8"))
         report["voice_fit"] = data["fit"]
         return fitted, data["words"]
-    heard = transcribe_words(raw)
+    from app import vtubika_say as SAY
+
+    # Термины словаря произношения: услышанное «лайв два дэ» → «Live2D» сценария (на том же времени).
+    heard_raw = transcribe_words(raw)
+    heard = SAY.heard_as_script(heard_raw, SAY.pronounce_map(plan))
     text = P.caption_text(plan)
     share = heard_share(text, heard)
     if share < 0.6:
@@ -157,7 +168,7 @@ def timed_words(plan: dict, raw: Path, work: Path, report: dict) -> tuple[Path, 
     fit = VF.fit_narration(raw, fitted, sentences, words, tempo_cap=cap)
     info = {k: fit[k] for k in ("tempo", "audio_sec", "source_sec", "wps_before", "wps_after", "speech_end")}
     info["heard_share"] = share
-    cache.write_text(json.dumps({"words": fit["words"], "fit": info}, ensure_ascii=False), "utf-8")
+    cache.write_text(json.dumps({"words": fit["words"], "fit": info, "heard": heard_raw}, ensure_ascii=False), "utf-8")
     report["voice_fit"] = info
     return fitted, fit["words"]
 
@@ -231,8 +242,9 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
 
 
 def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float, out: Path, work: Path,
-        report: dict, lead: float = 0.0) -> None:
-    """Голос, музыка на under_db тише голоса, звуки паков → громкость −14 LUFS."""
+        report: dict, lead: float = 0.0, music_fade: float | None = None) -> None:
+    """Голос, музыка на under_db тише голоса, звуки паков → громкость −14 LUFS. ``music_fade`` — затухание музыки
+    в конце (под концовкой), иначе ``fade_out`` плана."""
     from app import vtubika as U
     from app.audio_mix_model import ebur128
     from app.motion import asset_key
@@ -253,7 +265,8 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
         assets[asset_key(9002)] = str(music_path)
         layers.append({"id": "music", "type": "audio", "start": 0.0, "end": round(total, 3),
                        "props": {"asset_id": 9002, "mode": "track", "volume": 1.0, "gain_db": gain, "role": "music",
-                                 "fadeIn": music.get("fade_in", 1.0), "fadeOut": music.get("fade_out", 2.5)}})
+                                 "fadeIn": music.get("fade_in", 1.0),
+                                 "fadeOut": music_fade if music_fade is not None else music.get("fade_out", 2.5)}})
         report["music"] = {"file": music_path.name, "lufs": m_lufs, "voice_lufs": voice_db, "gain_db": gain,
                            "under_db": music["under_db"]}
     else:
@@ -275,6 +288,39 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
           "-movflags", "+faststart", str(out)], "громкость")
     report["mix_notes"] = notes
     report["sfx"] = len([x for x in layers if x["id"].startswith("sfx")])
+
+
+def end_card(plan: dict, video: Path, work: Path, total: float, report: dict) -> tuple[Path, float, list[dict], float | None]:
+    """Концовка бренда (``app.vtubika_endcard``) после ролика с субтитрами: (ролик, новая длина, звуки карточки,
+    затухание музыки). ``"end_card": false`` в плане — ролик как есть."""
+    from app import vtubika_endcard as E
+
+    cfg = E.settings(plan)
+    if not cfg:
+        return video, total, [], None
+    card = E.render(cfg, work)
+    out = video.with_name(f"{video.stem}_card.mp4")
+    E.append(video, card, out)
+    dur = float(cfg["duration"])
+    report["end_card"] = {"start": round(total, 3), "duration": dur, "webm": str(card)}
+    return out, round(total + dur, 3), E.card_sfx(cfg, total), float(cfg.get("music_fade", dur))
+
+
+def end_card_sheet(video: Path, report: dict, out: Path) -> None:
+    """Лист кадров концовки (6 кадров) — проверка карточки бренда."""
+    info = report.get("end_card")
+    if not info:
+        return
+    frames = []
+    for k, dt in enumerate((0.15, 0.45, 0.8, 1.15, 1.6, info["duration"] - 0.1)):
+        f = out.with_name(f"{out.stem}_{k}.jpg")
+        _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{info['start'] + dt:.3f}", "-i", str(video), "-frames:v", "1",
+              "-q:v", "3", str(f)], "кадр концовки")
+        frames.append(f)
+    tile(frames, out, 6, [f"+{dt:.2f}s" for dt in (0.15, 0.45, 0.8, 1.15, 1.6, info["duration"] - 0.1)])
+    for f in frames:
+        f.unlink(missing_ok=True)
+    report["end_card_sheet"] = str(out)
 
 
 def sentence_frames(video: Path, built: dict, out_dir: Path) -> dict[int, str]:
@@ -371,9 +417,11 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
     burn_captions(plan, script, raw_video, capped, work, total, y=0.8)
+    capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
-    mix(plan, capped, narration, built["sfx"], total, final, work, report, lead)
+    mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
+    end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
     tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6, [f"{n}" for n in sorted(frames)])
     (out_dir / "check.md").write_text(P.checklist_md(plan, built, {n: Path(p).name for n, p in frames.items()}), "utf-8")
@@ -492,9 +540,11 @@ def main(argv: list[str] | None = None) -> int:
     capped = work / "caps.mp4"
     burn_captions(plan, words, raw_video, capped, work, total)
     report["captions_sec"] = round(time.time() - t_cap, 1)
+    capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
-    mix(plan, capped, narration, built["sfx"], total, final, work, report, lead)
+    mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
+    end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
     tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6,
          [f"{n}" for n in sorted(frames)])

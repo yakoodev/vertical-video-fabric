@@ -95,8 +95,12 @@ def validate_plan(plan: dict) -> None:
 
 
 def narration_text(plan: dict) -> str:
-    """Текст для TTS: ``say`` фразы (как читать), иначе её текст."""
-    return " ".join(str(s.get("say") or s["text"]).strip() for s in plan["sentences"])
+    """Текст для TTS: ``say`` фразы (как читать), иначе её текст; термины — по словарю произношения
+    (``app.vtubika_say``: «Live2D» → «лайв-два-дэ»; субтитры этого не видят)."""
+    from app import vtubika_say as SAY
+
+    mapping = SAY.pronounce_map(plan)
+    return " ".join(SAY.apply(str(s.get("say") or s["text"]).strip(), mapping) for s in plan["sentences"])
 
 
 def caption_text(plan: dict) -> str:
