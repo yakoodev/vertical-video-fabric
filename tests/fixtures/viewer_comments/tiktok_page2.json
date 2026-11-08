@@ -1,0 +1,11 @@
+{
+ "status_code": 0, "has_more": 0, "cursor": 9,
+ "comments": [
+  {"cid": "7400000000000000007", "text": "пусть потанцует", "digg_count": 41, "create_time": 1762600500, "reply_id": "0",
+   "user": {"unique_id": "dancer", "nickname": "D", "uid": "116"}},
+  {"cid": "7400000000000000008", "text": "пусть построит ракету и улетит на луну", "digg_count": 35, "create_time": 1762600600, "reply_id": "0",
+   "user": {"unique_id": "kosmos", "nickname": "K", "uid": "117"}},
+  {"cid": "7400000000000000009", "text": "мой номер +7 999 123 45 67 позвони", "digg_count": 60, "create_time": 1762600700, "reply_id": "0",
+   "user": {"unique_id": "phone", "nickname": "P", "uid": "118"}}
+ ]
+}
