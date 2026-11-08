@@ -202,6 +202,29 @@ export class Props {
     this.root.add(this.apron, this.desk, this.keyboard, this.mouse, this.chair);
   }
 
+  /** Наушники: дуга над головой и чашки у ушей с розовым кольцом (на кости головы). */
+  headphones(rig: Rig) {
+    const head = rig.node("head");
+    if (!head) return;
+    const g = new THREE.Group();
+    const dark = flat("#26203a");
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.112, 0.011, 8, 40, Math.PI), dark);
+    band.position.set(0, 0.05, -0.012);
+    hull(band, 0.05);
+    g.add(band);
+    for (const side of [1, -1]) {
+      const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.034, 28), dark);
+      cup.rotation.z = Math.PI / 2;
+      cup.position.set(side * 0.1, 0.045, -0.012);
+      hull(cup, 0.08);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.0035, 6, 28), flat("#d23d92"));
+      ring.rotation.y = Math.PI / 2;
+      ring.position.set(side * 0.118, 0.045, -0.012);
+      g.add(cup, ring);
+    }
+    head.add(g);
+  }
+
   update(spec: PropsSpec | undefined, rig: Rig, t: number, _stream: any) {
     const s = spec || {};
     const ph = s.phone && rig.hands[s.phone.hand || "right"];
@@ -232,7 +255,8 @@ export class Props {
     this.keyboard.visible = !!s.keyboard;
     if (s.keyboard) {
       this.keyboard.position.set(...s.keyboard.pos);
-      this.keyboard.rotation.set(0.04, s.keyboard.yaw ?? 0, 0);
+      // Текстура верхней грани лежит рядом цифр к героине — разворот на 180°: пробел ближе к ней.
+      this.keyboard.rotation.set(-0.04, (s.keyboard.yaw ?? 0) + Math.PI, 0);
     }
     this.mouse.visible = !!s.mouse;
     if (s.mouse) this.mouse.position.set(...s.mouse.pos);

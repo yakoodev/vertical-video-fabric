@@ -8,7 +8,7 @@ import type { ArmSpec, FingerSpec, PoseSpec, Surface, V3 } from "./rig.ts";
 import { mocapAt, type Clip, type Track } from "./mocap.ts";
 import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
 import { speechMouth } from "./anim.ts";
-import { mouseArm, typingArm, waveArm } from "./typing.ts";
+import { chinArm, mouseArm, typingArm, waveArm } from "./typing.ts";
 import type { ChairSpec } from "./body.ts";
 
 export interface Timeline {
@@ -71,6 +71,8 @@ function armPreset(name: string | null | undefined, side: 1 | -1, t: number): Ar
   if (name === "typing") return typingHand(side, t);
   if (name === "rest") return restHand(side);
   if (name === "keys") return typingArm(side, t);
+  if (name === "idle") return typingArm(side, t, 0, true);
+  if (name === "chin") return side < 0 ? chinArm(t) : typingArm(side, t, 0, true);
   if (name === "wave") return side < 0 ? waveArm(t) : restHand(side);
   if (name === "mouse") return side < 0 ? mouseArm(t) : typingArm(side, t);
   return null;

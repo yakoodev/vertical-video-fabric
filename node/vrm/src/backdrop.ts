@@ -12,6 +12,7 @@ import { BH, buildRoom, BW, drawBokeh, drawDust, drawShafts, drawSteam, type Roo
 import { buildSet, SCREEN_CHAT, SCREEN_MAIN } from "./plate/set.ts";
 import { glow, layer, rng } from "./plate/draw.ts";
 import { drawChatScreen, drawStream, type StreamScreen } from "../../scene3d/src/ui.ts";
+import { drawInsert, type InsertSpec } from "./inserts.ts";
 
 export interface PlateSpec {
   kind?: "front" | "ots" | "wide" | "flat";
@@ -33,6 +34,8 @@ export interface PlateSpec {
   /** Монитор на переднем плане (спиной к нам, размыт): верх его корпуса — y кадра, x — центр. Прячет руки на
    * клавиатуре, как в настоящих эфирах: в кадре лицо и плечи, руки — за монитором. */
   fgMonitor?: { y: number; x?: number; w?: number };
+  /** Вставка без героини во весь кадр (монитор, чат, планшет, банка) — героиня не рисуется. */
+  insert?: InsertSpec;
   /** Край стола на переднем плане, мягкий фокус: клавиатура, стакан, микрофон на стойке. y — верх полосы. */
   fgDesk?: { y: number; cup?: boolean; mic?: boolean };
   /** Монитор с чатом сбоку на среднем плане (чуть размыт): x, y, ширина, поворот (градусы). */
@@ -91,6 +94,12 @@ export class Backdrop {
   }
 
   drawBack(g: G, p: PlateSpec, t: number, rig: Rig, cam: THREE.Camera) {
+    if (p.insert) {
+      g.fillStyle = "#0c0a1e";
+      g.fillRect(0, 0, this.W, this.H);
+      drawInsert(g, this.W, this.H, p.insert, t, this.stream, this.room);
+      return;
+    }
     this.drawBackPlate(g, p, t, rig, cam);
     if (p.sideChat) this.sideMonitor(g, p.sideChat, t);
   }

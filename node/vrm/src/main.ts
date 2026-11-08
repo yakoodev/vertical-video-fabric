@@ -21,6 +21,7 @@ import { camAt, merge, poseAt, speechMouth, type CamKey, type PoseKey } from "./
 import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
 import { addColliders, chairGap, hairGap } from "./body.ts";
+import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
@@ -64,6 +65,10 @@ export interface Spec {
   speech?: number[][];
   /** Ролик на мокапе (sequence.ts) — вместо poses. */
   timeline?: Timeline;
+  /** Слои поверх кадра (scene3d/overlay.ts): HUD копилки и зрителей, телефон-вставка, плашка, карточка чата. */
+  overlays?: OverlaySpec[];
+  /** Наушники на голове героини. */
+  headphones?: boolean;
   /** Каждый кадр: пальцы над поверхностями timeline.surfaces, иначе рендер падает. */
   strictContact?: boolean;
 }
@@ -81,6 +86,7 @@ let lookObj: THREE.Object3D;
 let backdrop: Backdrop;
 let props: Props;
 let lumaC: HTMLCanvasElement;
+let overlays: Overlays | null = null;
 const warnings: string[] = [];
 
 function shotAt(t: number): { shot: Shot; local: number } {
@@ -122,15 +128,20 @@ function settle(t: number, shot: Shot, local: number) {
     rig.apply(p);
     rig.lookTarget(p.look ?? null, lookObj);
   };
+  // Пружины волос — двумя полушагами на кадр: меньше «проскоков» сквозь коллайдеры при быстрых поворотах.
+  const step = () => {
+    vrm.update(dt / 2);
+    vrm.update(dt / 2);
+  };
   if (!((spec.poses?.length || spec.timeline) && Math.abs(t - simT - dt) < 1e-6)) {
     vrm.springBoneManager?.reset();
     for (let k = 60; k >= 1; k--) {
       at(k);
-      vrm.update(dt);
+      step();
     }
   }
   at(0);
-  vrm.update(dt);
+  step();
   simT = t;
 }
 
@@ -169,7 +180,7 @@ function render(t: number) {
   camera.up.set(Math.sin((c.roll * Math.PI) / 180), Math.cos((c.roll * Math.PI) / 180), 0);
   camera.lookAt(c.target);
   camera.updateProjectionMatrix();
-  gl.render(scene, camera);
+  if (!shot.plate?.insert) gl.render(scene, camera);
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalAlpha = 1;
   g.globalCompositeOperation = "source-over";
@@ -185,9 +196,10 @@ function render(t: number) {
     const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
     off = [tx - sx, ty - sy];
   }
-  backdrop.drawChar(g, pl, gl.domElement, off);
+  if (!pl.insert) backdrop.drawChar(g, pl, gl.domElement, off);
   backdrop.drawFront(g, shot.plate || {}, t);
   backdrop.post(g, shot.plate || {}, Math.round(t * (spec.fps || 30)));
+  overlays?.draw(t);
   const lc = lumaC.getContext("2d")!;
   lc.drawImage(g.canvas, 0, 0, 16, 28);
   const d = lc.getImageData(0, 0, 16, 28).data;
@@ -238,6 +250,8 @@ async function load(s: Spec) {
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
+  if (s.headphones) props.headphones(rig);
+  if (s.overlays?.length) overlays = new Overlays(s.overlays, W, H);
   lumaC = document.createElement("canvas");
   lumaC.width = 16;
   lumaC.height = 28;

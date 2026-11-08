@@ -38,8 +38,8 @@ function fingerLift(side: 1 | -1, f: number, t: number, act: number): number {
   return lift;
 }
 
-export function typingArm(side: 1 | -1, t: number, seed = 0): ArmSpec {
-  const act = typingActivity(t, seed);
+export function typingArm(side: 1 | -1, t: number, seed = 0, idle = false): ArmSpec {
+  const act = idle ? 0 : typingActivity(t, seed);
   // Пальцы мягкой дугой (не крюком): основание почти прямое, сгиб — в среднем суставе.
   const base = [0.85, 0.33, 0.35, 0.37, 0.41];
   const lifts = [1, 2, 3, 4].map((f) => fingerLift(side, f, t, act));
@@ -52,6 +52,14 @@ export function typingArm(side: 1 | -1, t: number, seed = 0): ArmSpec {
     target, pole: [side * 0.2, 0.72, -0.42],
     fingers: [-side * 0.08, 0.12, 1], palm: [side * 0.05, -1, -0.12],
     curl, spread: 0.16, thumbOut: 0.0, touch: true,
+  };
+}
+
+/** Подбородок на кулаке (правая рука): точка — в пространстве модели у подбородка сидящей героини. */
+export function chinArm(t: number): ArmSpec {
+  return {
+    target: [-0.03, 1.27 + 0.003 * Math.sin(t * 1.3), 0.06], pole: [-0.5, 0.7, 0.35], maxFlex: 150,
+    fingers: [0.15, 1, 0.1], palm: [0.1, 0.05, -1], curl: [0.6, 0.85, 0.95, 1, 1], thumbOut: 0.1,
   };
 }
 

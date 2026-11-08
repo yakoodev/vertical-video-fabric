@@ -323,6 +323,67 @@ def render_segment(spec: dict, out: Path, frames: tuple[int, int], gl: str) -> d
         return S3._result(S3._run(args, S3.TIMEOUT_SEC))
 
 
+def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narration: Path, lead: float,
+            out_dir: Path, work: Path, report: dict, started: float) -> int:
+    """Та же история на VRM-героине: спека node/vrm, рендер одним браузером, проверки касаний/кресла/волос,
+    субтитры, сведение, лист, «фраза → что в кадре»."""
+    from app import scene3d as S3
+    from app import vtubika_plan as P
+    from app.vtubika_vrm import to_vrm_spec
+
+    spec = to_vrm_spec(plan, built, words, total)
+    spec_path = work / "scene_vrm.json"
+    spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
+    render = ["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(spec_path), "--bundle",
+              str(ROOT / "node" / "vrm" / "dist" / "vrm.js"), "--packs", args.vrm_packs, "--gl", args.gl, "--workers", "1"]
+    subprocess.run(["npm", "run", "build:vrm"], cwd=ROOT, check=True, shell=sys.platform == "win32",
+                   stdin=subprocess.DEVNULL)
+    if args.preview:
+        times = ([round((s["t0"] + s["t1"]) / 2, 2) for s in built["sentences"]] if args.preview == "mids"
+                 else [float(x) for x in args.preview.split(",")])
+        prev_dir = work / "preview_vrm"
+        shutil.rmtree(prev_dir, ignore_errors=True)
+        r = subprocess.run([*render, "--preview", ",".join(f"{t:.2f}" for t in times), "--preview-dir", str(prev_dir)],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise RuntimeError(f"превью VRM: {r.stderr.strip()[-800:]}")
+        report["preview"] = str(prev_dir)
+        print(json.dumps(report, ensure_ascii=False, indent=1))
+        return 0
+    raw_video = work / "scene_vrm.mp4"
+    bundle = ROOT / "node" / "vrm" / "dist" / "vrm.js"
+    key = hashlib.sha1(spec_path.read_bytes() + bundle.read_bytes()).hexdigest()
+    key_file = work / "scene_vrm.key"
+    t3d = time.time()
+    if not (raw_video.is_file() and key_file.is_file() and key_file.read_text("utf-8").strip() == key):
+        r = subprocess.run([*render, "--out", str(raw_video)], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", stdin=subprocess.DEVNULL)
+        if r.returncode != 0:
+            raise RuntimeError(f"рендер VRM: {r.stderr.strip()[-1200:]}")
+        key_file.write_text(key, "utf-8")
+        report["render_vrm"] = json.loads(r.stdout.strip().splitlines()[-1])
+    report["render3d_sec"] = round(time.time() - t3d, 1)
+    chk = subprocess.run(["node", str(ROOT / "node" / "vrm" / "contact.mjs"), "--spec", str(spec_path), "--packs", args.vrm_packs,
+                          "--gl", args.gl], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         stdin=subprocess.DEVNULL)
+    report["checks"] = json.loads(chk.stdout.strip().splitlines()[-1]) if chk.stdout.strip() else {"error": chk.stderr[-400:]}
+    capped = work / "caps_vrm.mp4"
+    # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
+    script = [w for sent in P.token_times(plan, words) for w in sent]
+    burn_captions(plan, script, raw_video, capped, work, total, y=0.8)
+    final = out_dir / f"{args.name}.mp4"
+    mix(plan, capped, narration, built["sfx"], total, final, work, report, lead)
+    S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
+    frames = sentence_frames(final, built, out_dir / "check")
+    tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6, [f"{n}" for n in sorted(frames)])
+    (out_dir / "check.md").write_text(P.checklist_md(plan, built, {n: Path(p).name for n, p in frames.items()}), "utf-8")
+    report.update({"video": str(final), "sheet": str(out_dir / args.sheet), "check": str(out_dir / "check.md"),
+                   "engine": "vrm", "total_sec": round(time.time() - started, 1)})
+    (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
+    print(json.dumps(report, ensure_ascii=False, indent=1))
+    return 0 if report["checks"].get("ok") else 3
+
+
 # --------------------------------------------------------------------------- main
 
 
@@ -339,6 +400,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--looks", help="образы для сравнения отрезка: cozy,neon,pastel")
     ap.add_argument("--segment", default="24:34", help="отрезок для --looks, секунды A:B")
     ap.add_argument("--skip-render", action="store_true", help="только озвучка, слова и сцена (scene.json)")
+    ap.add_argument("--engine", default="voxel", choices=["voxel", "vrm"],
+                    help="vrm — героиня VRM «под 2D-аниме» (node/vrm, app/vtubika_vrm.py)")
+    ap.add_argument("--vrm-packs", default=r"D:\vvf-offload\vtubika\vrm\vendor", help="модель VRM и клипы мокапа")
     args = ap.parse_args(argv)
     if Path(args.env).is_file():
         load_env(Path(args.env))
@@ -370,6 +434,8 @@ def main(argv: list[str] | None = None) -> int:
     total = round(speech_end + float(plan.get("tail") or 1.8), 3)
     built = P.build(plan, words, total, look=args.look)
     (work / "scene.json").write_text(json.dumps(built["spec"], ensure_ascii=False), "utf-8")
+    if args.engine == "vrm":
+        return run_vrm(args, plan, built, words, total, narration, lead, out_dir, work, report, started)
     report.update({"duration": total, "speech_end": speech_end, "look": built["look"], "shots": len(built["shots"])})
     if args.preview:
         # «mids» — середина каждой фразы (проверка «фраза → что в кадре» без полного рендера).
