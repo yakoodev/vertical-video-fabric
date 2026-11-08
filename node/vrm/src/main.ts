@@ -4,7 +4,8 @@
  * (WebGL на отдельном холсте, прозрачный фон, MToon) → 2D-передний план и пост (свечение, виньетка, зерно).
  *
  * window.__scene3d = { load(spec), render(t), inspect(t), warnings() } — тот же контракт, что у scene3d; render(t)
- * ещё отдаёт presence {expect, models, meshes, cover} и lost (потери контекста GPU) — их проверяет render.mjs.
+ * ещё отдаёт presence {expect, models, meshes, cover, cut, near} и lost (потери контекста GPU) — их проверяет
+ * render.mjs (frameProblem).
  * Кадр — из spec.shots: кадр i показывает план shots[i] (стопкадры), либо план по t0/t1 (ролик).
  *
  * Модель (не в репозитории, D:/vvf-offload/vtubika/vrm/vendor): VRM1_Constraint_Twist_Sample.vrm из
