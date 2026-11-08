@@ -21,6 +21,37 @@ export const UI_FONT = "VvfUi";
  */
 export const liveImages: Record<string, HTMLCanvasElement | undefined> = {};
 
+/** Нейтральное превью 3D-товара (без персонажа): плитка в цветах магазина, объёмный куб и подпись VRM. */
+export function drawVrmTile(g: CanvasRenderingContext2D, cx: number, cy: number, s: number, t: number) {
+  const bg = g.createLinearGradient(cx - s * 1.4, cy - s, cx + s * 1.4, cy + s);
+  bg.addColorStop(0, "#6b4dff");
+  bg.addColorStop(1, "#ff7ac8");
+  g.fillStyle = bg;
+  roundRect(g, cx - s * 1.4, cy - s * 1.12, s * 2.8, s * 2.24, s * 0.12);
+  g.fill();
+  // Куб в изометрии: три грани разной яркости, медленно покачивается.
+  const a = 0.5 + 0.06 * Math.sin(t * 1.2), r = s * 0.5, y0 = cy - s * 0.22;
+  const top: [number, number][] = [[0, -r], [r * Math.cos(a) * 1.15, -r * 0.45], [0, r * 0.1], [-r * Math.cos(a) * 1.15, -r * 0.45]];
+  const faces: [string, [number, number][]][] = [
+    ["rgba(255,255,255,0.95)", top],
+    ["rgba(255,255,255,0.62)", [top[3], top[2], [0, r * 1.1], [top[3][0], r * 0.55]]],
+    ["rgba(255,255,255,0.38)", [top[2], top[1], [top[1][0], r * 0.55], [0, r * 1.1]]],
+  ];
+  for (const [col, pts] of faces) {
+    g.fillStyle = col;
+    g.beginPath();
+    pts.forEach(([x, y], i) => (i ? g.lineTo(cx + x, y0 + y) : g.moveTo(cx + x, y0 + y)));
+    g.closePath();
+    g.fill();
+  }
+  g.fillStyle = "#ffffff";
+  g.font = font(900, s * 0.36);
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  g.fillText("VRM", cx, cy + s * 0.78);
+  g.textAlign = "left";
+}
+
 /** Живая картинка с заполнением прямоугольника по высоте (по центру, лишнее по бокам обрезается). */
 export function drawLive(g: CanvasRenderingContext2D, img: HTMLCanvasElement | undefined, x: number, y: number, w: number, h: number) {
   if (!img) return;
@@ -392,6 +423,7 @@ export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: 
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
   if (p.screen === "shop") {
     const pv = (p.store as any)?.preview;
+    if (pv === "vrm") return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawVrmTile(gg, cx, cy, sz, t));
     if (pv === "live") {
       return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawLive(gg, liveImages.card || liveImages.avatar,
         cx - sz * 1.45, cy - sz * 1.15, sz * 2.9, sz * 2.3));

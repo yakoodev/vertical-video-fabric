@@ -32,6 +32,8 @@ export interface AccessorySpec {
   lift?: number;
   fwd?: number;
   side?: 1 | -1;
+  /** Наушники: радиус кольца на чашке (м). */
+  ring?: number;
 }
 
 /** Держатель на кости головы в осях модели (у VRM0 оси кости повёрнуты на пол-оборота). */
@@ -62,7 +64,7 @@ export function accessory(rig: Rig, o: AccessorySpec) {
       cup.rotation.z = Math.PI / 2;
       cup.position.set(side * 0.1, 0.045, -0.012);
       hull(cup, 0.08);
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.0035, 6, 28), flat(o.accent ?? "#d23d92"));
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(o.ring ?? 0.03, 0.0035, 6, 28), flat(o.accent ?? "#d23d92"));
       ring.rotation.y = Math.PI / 2;
       ring.position.set(side * 0.118, 0.045, -0.012);
       g.add(cup, ring);

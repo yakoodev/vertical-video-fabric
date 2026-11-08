@@ -83,3 +83,10 @@ def test_mid_phrases_mostly_show_vera():
         names = {sh["name"].split("_", 1)[1] for sh in spec["shots"] if sh["t0"] < s["t1"] and sh["t1"] > s["t0"]}
         with_vera += bool(names & hero_shots)
     assert with_vera >= len(built["sentences"]) * 0.75
+
+
+def test_real_product_card_has_neutral_picture():
+    """Карточка с настоящим товаром сайта — без нашей модели на превью (иначе реклама выдаёт её за этот товар)."""
+    *_, spec = _story()
+    cards = [o for o in spec["overlays"] if o["kind"] == "phone" and o.get("screen") == "shop"]
+    assert cards and all(c["store"]["preview"] == "vrm" for c in cards)

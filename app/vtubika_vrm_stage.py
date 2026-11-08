@@ -29,7 +29,7 @@ HEROINES: dict[str, dict[str, Any]] = {
                        "tint": {"Tops": "#8e86c8"}}},
     # Вера, художница 20–25: тёмно-каштановые волосы, горчичная кофта в пятнах краски, кремовые наушники.
     "vera": {"model": GIRL, "chair_y": 0.775,
-             "headphones": {"kind": "headphones", "color": "#2c2436", "accent": "#c8662e", "scale": 1.06, "lift": 0.035},
+             "headphones": {"kind": "headphones", "color": "#2c2436", "accent": "#8a4a2a", "ring": 0.02, "scale": 1.06, "lift": 0.035},
              "look": {"outline": 0.0034, "shade": "#a690c8", "toony": 0.97, "shift": -0.05, "rim": "#ffb08a", "rimPower": 4,
                       "skin": "^(face|body)", "skinShade": "#e0a0a0",
                       "repaint": {"Hair": ["#140c10", "#7a4a3a"], "Tops": ["#4a3010", "#e8b44a"]},
