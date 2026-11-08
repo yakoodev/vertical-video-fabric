@@ -13,7 +13,8 @@
 * ``Dust`` — пылинки и боке в свете монитора; ``twinkle_layer`` — мерцание гирлянды на фоне;
 * мелочи: ``ease``/``smooth``/``env`` (огибающие), ``over`` (наложение), ``blur``.
 
-Пример — tools/vtubika_ai2d.py (история «Без лица», тест AI-картинок).
+Запуск по пресету — tools/anime2d_run.py (пример: tools/anime2d_presets/tema_yawn.json),
+инструкция — docs/workflows/ai-anime-2d.md.
 """
 
 from __future__ import annotations
