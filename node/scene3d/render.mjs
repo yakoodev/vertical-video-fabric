@@ -16,8 +16,9 @@
  *   [--timeout 1800] [--site DIR — скриншоты сайта для телефона «site», отдаются как /site/…]
  *
  * stdout — одна строка JSON {ok, frames, fps, duration, width, height, segments, black_frames,
- * luma_min, seconds, warnings} (превью: {ok, previews: [...]}, inspect: {ok, inspect}).
- * Код выхода 0 — готово, 2 — ошибка аргументов, 3 — чёрные кадры, 1 — прочие.
+ * luma_min, seconds, warnings, presence?, retried} (превью: {ok, previews: [...]}, inspect: {ok, inspect}).
+ * Код выхода 0 — готово, 2 — ошибка аргументов, 3 — чёрные кадры, 4 — кадр без модели или потерян контекст GPU
+ * (кусок уже переснят один раз, см. frameProblem), 1 — прочие.
  */
 import { spawn } from "node:child_process";
 import { cpus } from "node:os";
@@ -406,7 +407,48 @@ function write(stream, buf) {
   });
 }
 
-/** Один кусок кадров [a, b) → сегмент mp4. Возвращает яркость каждого кадра. */
+/** Кадр отрисован не тем, что заказано (потерян контекст GPU, модели нет в кадре): кусок переснимается один раз,
+ * потом рендер падает (код выхода 4) — никаких «тихих» кадров без персонажа. */
+export class FrameError extends Error {
+  constructor(msg) {
+    super(msg);
+    this.code = "SCENE_FRAME";
+  }
+}
+
+/**
+ * Проверка одного кадра по ответу страницы render(t): lost — потери контекста GPU (WebGL/2D), presence —
+ * {expect, models, meshes, cover} (VRM: сколько моделей должно быть видно, сколько загружено и в сцене, видимых
+ * сеток, доля непрозрачных пикселей WebGL-холста; cut — самый длинный ровный край слоя героя в кадре, near —
+ * глубина ближайшей кости). Возвращает текст проблемы или null.
+ */
+export function frameProblem(st) {
+  if (st?.lost?.length) return `потерян контекст GPU: ${st.lost.slice(0, 3).join("; ")}`;
+  const p = st?.presence;
+  if (!p || !(p.expect > 0)) return null;
+  if (!(p.models >= p.expect)) return `модели нет в сцене (загружено ${p.models ?? 0} из ${p.expect})`;
+  if (!(p.meshes > 0)) return "у модели нет видимых сеток";
+  if (!(p.cover > 0)) return "WebGL-холст пуст (персонаж не нарисован)";
+  // Персонаж разрезан ровной линией внутри кадра (край сдвинутого холста, вьюпорт) — пороги сообщает страница.
+  if (p.cut?.x?.run >= (p.cutX ?? 0.2)) return `персонаж разрезан вертикалью x=${p.cut.x.at} на ${Math.round(p.cut.x.run * 100)}% высоты кадра`;
+  if (p.cut?.y?.run >= (p.cutY ?? 0.5)) return `персонаж разрезан горизонталью y=${p.cut.y.at} на ${Math.round(p.cut.y.run * 100)}% ширины кадра`;
+  // Ближняя плоскость камеры режет тело: кость ближе near + полтолщины головы/руки.
+  if (Number.isFinite(p.near) && p.near < (p.cameraNear ?? 0) + 0.12) return `камера в теле: ближайшая кость в ${p.near} м (near ${p.cameraNear} м)`;
+  return null;
+}
+
+/** Итог проверки присутствия по кадрам кусков: null — движок присутствие не сообщает (scene3d), иначе
+ * {frames, expected, missing, first_missing}. */
+export function presenceSummary(results) {
+  const all = results.flatMap((r) => r.presence || []);
+  if (!all.length) return null;
+  const miss = all.filter((p) => p.problem);
+  return { frames: all.length, expected: all.filter((p) => p.expect > 0).length, missing: miss.length,
+    first_missing: miss.slice(0, 5).map((p) => ({ frame: p.frame, problem: p.problem })) };
+}
+
+/** Один кусок кадров [a, b) → сегмент mp4. Возвращает яркость каждого кадра (и присутствие модели, если движок его
+ * сообщает). Плохой кадр (frameProblem) — FrameError сразу, без дорисовки остатка куска. */
 export async function renderChunk(opts, spec, fps, [a, b], segPath, log = () => {}) {
   const scene = await openScene(opts, spec, log);
   const ff = spawn(opts.ffmpeg, segmentArgs(fps, opts.crf, opts.format, segPath), { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
@@ -415,20 +457,42 @@ export async function renderChunk(opts, spec, fps, [a, b], segPath, log = () => 
   ff.on("error", (e) => (ffErr += String(e.message || e)));
   const ffDone = new Promise((resolve) => ff.on("close", resolve));
   const luma = [];
+  const presence = [];
+  let code;
   try {
     for (let i = a; i < b; i++) {
       const st = await scene.render(i / fps);
+      const problem = frameProblem(st);
+      if (problem) throw new FrameError(`кадр ${i} (t=${(i / fps).toFixed(3)}): ${problem}`);
       luma.push(st.luma);
+      if (st?.presence) presence.push({ frame: i, ...st.presence, problem: null });
       await write(ff.stdin, await scene.shot(opts.format, opts.quality));
       if ((i - a + 1) % 30 === 0 || i + 1 === b) log(`кусок ${a}-${b}: ${i - a + 1}/${b - a}`);
     }
   } finally {
     ff.stdin.end();
     await scene.close();
+    // Дождаться ffmpeg и при ошибке: повтор куска пишет тот же сегмент (на Windows файл занят до выхода).
+    code = await ffDone;
   }
-  const code = await ffDone;
   if (code !== 0) throw new Error(`ffmpeg: ${ffErr.trim() || `код ${code}`}`);
-  return { luma, warnings: scene.info?.warnings || [] };
+  return { luma, presence, warnings: scene.info?.warnings || [] };
+}
+
+/** Кусок с одной пересъёмкой после FrameError (сбой GPU под нагрузкой); вторая подряд — ошибка рендера. */
+export async function renderChunkRetry(opts, spec, fps, range, segPath, log = () => {}, render = renderChunk) {
+  try {
+    return { ...(await render(opts, spec, fps, range, segPath, log)), retried: null };
+  } catch (err) {
+    if (!(err instanceof FrameError)) throw err;
+    log(`кусок ${range[0]}-${range[1]}: ${err.message} — переснимаю кусок заново`);
+    try {
+      return { ...(await render(opts, spec, fps, range, segPath, log)), retried: err.message };
+    } catch (err2) {
+      if (err2 instanceof FrameError) throw new FrameError(`${err2.message} (и после пересъёмки куска; первый раз: ${err.message})`);
+      throw err2;
+    }
+  }
 }
 
 export function splitFrames(total, parts, minChunk = 30) {
@@ -458,14 +522,15 @@ export async function renderVideo(opts, spec, log = () => {}) {
   try {
     log(`${to - from} кадров ${spec.width || 1080}×${spec.height || 1920} @${fps}, кусков: ${chunks.length}, GL: ${opts.gl}`);
     const segs = chunks.map((_, i) => join(work, `seg_${String(i).padStart(3, "0")}.mp4`));
-    const results = await Promise.all(chunks.map((c, i) => renderChunk(opts, spec, fps, c, segs[i], log)));
+    const results = await Promise.all(chunks.map((c, i) => renderChunkRetry(opts, spec, fps, c, segs[i], log)));
     const list = join(work, "list.txt");
     writeFileSync(list, segs.map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`).join("\n") + "\n");
     await run(opts.ffmpeg, concatArgs(list, opts.output));
     const luma = results.flatMap((r) => r.luma);
     const black = luma.map((v, i) => [i + from, v]).filter(([, v]) => v < BLACK_LUMA).map(([i]) => i);
+    const presence = presenceSummary(results);
     return {
-      ok: black.length === 0,
+      ok: black.length === 0 && !(presence?.missing > 0),
       frames: to - from,
       fps,
       duration: Math.round(((to - from) / fps) * 1000) / 1000,
@@ -477,6 +542,8 @@ export async function renderVideo(opts, spec, log = () => {}) {
       luma_mean: Math.round((luma.reduce((s, v) => s + v, 0) / luma.length) * 10) / 10,
       seconds: Math.round((Date.now() - started) / 100) / 10,
       warnings: [...new Set(results.flatMap((r) => r.warnings))],
+      ...(presence ? { presence } : {}),
+      retried: results.map((r) => r.retried).filter(Boolean),
     };
   } finally {
     clearTimeout(timer);
@@ -529,7 +596,7 @@ async function main() {
     if (res.black_frames && res.black_frames.length) process.exit(3);
   } catch (err) {
     process.stderr.write(`scene3d: ${err.message}\n`);
-    process.exit(1);
+    process.exit(err instanceof FrameError ? 4 : 1);
   }
 }
 

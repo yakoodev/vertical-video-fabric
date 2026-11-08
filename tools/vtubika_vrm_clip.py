@@ -85,7 +85,15 @@ def render(a: argparse.Namespace, spec: dict, raw: Path, duration: float) -> int
     if r.returncode != 0:
         print(r.stderr[-2000:], file=sys.stderr)
         return r.returncode or 1
-    print(r.stdout.strip().splitlines()[-1])
+    from app.vtubika_vrm import render_problems
+
+    line = r.stdout.strip().splitlines()[-1]
+    print(line)
+    # Кадры без героини (потерян контекст GPU и т. п.) — ошибка, а не ролик.
+    probs = render_problems(json.loads(line), {**spec, "duration": duration})
+    if probs:
+        print("VRM-рендер забракован: " + "; ".join(probs), file=sys.stderr)
+        return 4
     return 0
 
 

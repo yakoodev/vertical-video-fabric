@@ -3,7 +3,9 @@
  * рисует кадр как функцию времени. Слои: нарисованный 2D-фон (backdrop.ts) → 3D-персонаж и предметы
  * (WebGL на отдельном холсте, прозрачный фон, MToon) → 2D-передний план и пост (свечение, виньетка, зерно).
  *
- * window.__scene3d = { load(spec), render(t), inspect(t), warnings() } — тот же контракт, что у scene3d.
+ * window.__scene3d = { load(spec), render(t), inspect(t), warnings() } — тот же контракт, что у scene3d; render(t)
+ * ещё отдаёт presence {expect, models, meshes, cover, cut, near} и lost (потери контекста GPU) — их проверяет
+ * render.mjs (frameProblem).
  * Кадр — из spec.shots: кадр i показывает план shots[i] (стопкадры), либо план по t0/t1 (ролик).
  *
  * Модель (не в репозитории, D:/vvf-offload/vtubika/vrm/vendor): VRM1_Constraint_Twist_Sample.vrm из
@@ -22,6 +24,7 @@ import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
 import { addColliders, chairGap, hairGap } from "./body.ts";
 import { HandCheck } from "./handcheck.ts";
+import { straightCut, CUT_X, CUT_Y } from "./cutcheck.ts";
 import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
@@ -105,6 +108,61 @@ let overlays: Overlays | null = null;
 let stage: AvatarStage | null = null;
 let hands: HandCheck | null = null;
 const warnings: string[] = [];
+
+/**
+ * Потеря контекста GPU (WebGL и ускоренный 2D): three.js после webglcontextlost молча пропускает gl.render, а
+ * холсты 2D теряют закешированное содержимое (комната, экраны) — кадры дальше идут без героини и комнаты, но
+ * без ошибки. Каждый холст страницы, получивший контекст, слушает потерю; render() отдаёт счётчик, render.mjs
+ * по нему валит (и один раз переснимает) кусок.
+ */
+const lost: string[] = [];
+const getCtx = HTMLCanvasElement.prototype.getContext as any;
+const hooked = new WeakSet<HTMLCanvasElement>();
+(HTMLCanvasElement.prototype as any).getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+  const ctx = getCtx.call(this, kind, ...rest);
+  if (ctx && !hooked.has(this)) {
+    hooked.add(this);
+    const note = (what: string) => () => lost.push(`${what} ${this.width}×${this.height}`);
+    this.addEventListener("webglcontextlost", note("webgl"));
+    this.addEventListener("contextlost", note("2d"));
+  }
+  return ctx;
+};
+let presC: HTMLCanvasElement;
+
+/**
+ * Героиня на кадре на самом деле есть и целая: модель загружена и в сцене, видимых сеток > 0, на WebGL-холсте есть
+ * непрозрачные пиксели (контекст жив и что-то нарисовал), слой героя не разрезан прямой линией внутри кадра
+ * (cutcheck.ts), ближняя плоскость камеры не режет тело (near — наименьшая глубина костей перед камерой, м).
+ * expect — сколько моделей кадр должен показать (0 — вставка). Слой берётся так же, как его кладёт drawChar.
+ */
+function presence(expect: number, off: [number, number]) {
+  const models = vrm && vrm.scene.parent === scene ? 1 : 0;
+  let meshes = 0;
+  if (models) vrm.scene.traverseVisible((o) => void ((o as THREE.Mesh).isMesh && meshes++));
+  if (!expect) return { expect, models, meshes, cover: 0 };
+  const pc = presC.getContext("2d", { willReadFrequently: true })!;
+  const k = presC.width / W;
+  pc.clearRect(0, 0, presC.width, presC.height);
+  pc.drawImage(gl.domElement, off[0] * k, off[1] * k, presC.width, presC.height);
+  const d = pc.getImageData(0, 0, presC.width, presC.height).data;
+  let cover = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 0) cover++;
+  cover /= d.length / 4;
+  const cut = straightCut(d, presC.width, presC.height, 4, 3);
+  cut.x.at = Math.round(cut.x.at / k);
+  cut.y.at = Math.round(cut.y.at / k);
+  // Глубина костей перед камерой: ближе near (+ полтолщины головы/руки) — плоскость отсечения режет тело.
+  const inv = camera.matrixWorldInverse;
+  let near = Infinity;
+  const v = new THREE.Vector3();
+  for (const name of Object.keys((vrm.humanoid as any).humanBones || {})) {
+    const o = rig.node(name);
+    if (o) near = Math.min(near, -o.getWorldPosition(v).applyMatrix4(inv).z);
+  }
+  return { expect, models, meshes, cover: Math.round(cover * 1000) / 1000, cut, near: Math.round(near * 1000) / 1000,
+    cameraNear: camera.near, cutX: CUT_X, cutY: CUT_Y };
+}
 
 function shotAt(t: number): { shot: Shot; local: number } {
   const timed = spec.shots.some((s) => s.t0 !== undefined);
@@ -198,7 +256,19 @@ function render(t: number) {
   camera.position.copy(c.pos);
   camera.up.set(Math.sin((c.roll * Math.PI) / 180), Math.cos((c.roll * Math.PI) / 180), 0);
   camera.lookAt(c.target);
-  camera.updateProjectionMatrix();
+  camera.clearViewOffset();
+  camera.updateMatrixWorld();
+  // Привязка героя к нарисованному миру (общий план, через плечо): кость попадает в точку мира set.ts. Сдвиг —
+  // окном проекции камеры (setViewOffset), а не сдвигом готовой картинки: сдвинутый холст оставлял в кадре свой
+  // край — героиня через плечо была отрезана ровной вертикалью (x≈150), слева от неё — пусто.
+  const pl = shot.plate || {};
+  if (pl.anchor) {
+    const v = rig.point(pl.anchor.bone).project(camera);
+    const sx = (v.x * 0.5 + 0.5) * W, sy = (-v.y * 0.5 + 0.5) * H;
+    const z = pl.zoom ?? 1;
+    const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
+    camera.setViewOffset(W, H, sx - tx, sy - ty, W, H);
+  }
   stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   if (!shot.plate?.insert) gl.render(scene, camera);
   g.setTransform(1, 0, 0, 1, 0, 0);
@@ -206,16 +276,7 @@ function render(t: number) {
   g.globalCompositeOperation = "source-over";
   g.filter = "none";
   backdrop.drawBack(g, shot.plate || {}, t, rig, camera);
-  // Привязка героя к нарисованному миру (общий план): кость попадает в точку мира set.ts.
-  let off: [number, number] = [0, 0];
-  const pl = shot.plate || {};
-  if (pl.anchor) {
-    const v = rig.point(pl.anchor.bone).project(camera);
-    const sx = (v.x * 0.5 + 0.5) * W, sy = (-v.y * 0.5 + 0.5) * H;
-    const z = pl.zoom ?? 1;
-    const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
-    off = [tx - sx, ty - sy];
-  }
+  const off: [number, number] = [0, 0];
   if (!pl.insert) backdrop.drawChar(g, pl, gl.domElement, off);
   backdrop.drawFront(g, shot.plate || {}, t);
   if (pl.cats) drawCats(g, W, spec.cats, t);
@@ -226,7 +287,10 @@ function render(t: number) {
   const d = lc.getImageData(0, 0, 16, 28).data;
   let sum = 0;
   for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-  return { luma: sum / (d.length / 4) };
+  const gone = [...lost];
+  if (gl.getContext().isContextLost()) gone.push("webgl героини: isContextLost");
+  if ((g as any).isContextLost?.()) gone.push("2d кадра: isContextLost");
+  return { luma: sum / (d.length / 4), presence: presence(pl.insert ? 0 : 1, off), lost: gone };
 }
 
 async function load(s: Spec) {
@@ -283,6 +347,9 @@ async function load(s: Spec) {
   lumaC = document.createElement("canvas");
   lumaC.width = 16;
   lumaC.height = 28;
+  presC = document.createElement("canvas");
+  presC.width = Math.round(W / 4);
+  presC.height = Math.round(H / 4);
   const meta: any = (vrm.meta as any) || {};
   return { warnings, meta: { name: meta.name || meta.title, authors: meta.authors || meta.author, commercial: meta.commercialUsage || meta.commercialUssageName } };
 }
@@ -299,5 +366,7 @@ async function load(s: Spec) {
       expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
   },
   warnings: () => warnings,
+  /** Отладка проверки присутствия: потерять контекст WebGL, как при сбое GPU (render() дальше сообщит lost). */
+  loseGpu: () => gl.forceContextLoss(),
   contact: () => ({ ...contact, hands: hands ? { frames: hands.frames, gaps: hands.gaps, groups: hands.counts(), bad: hands.bad } : null }),
 };

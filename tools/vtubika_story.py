@@ -416,6 +416,7 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     субтитры, сведение, лист, «фраза → что в кадре»."""
     from app import scene3d as S3
     from app import vtubika_plan as P
+    from app import vtubika_vrm as VRM
     from app.vtubika_vrm import to_vrm_spec
 
     if args.endcard_sounds_only:
@@ -446,17 +447,21 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     key_file = work / "scene_vrm.key"
     t3d = time.time()
     if not (raw_video.is_file() and key_file.is_file() and key_file.read_text("utf-8").strip() == key):
+        # Ключ — только у проверенного ролика: старый ключ при упавшем рендере принял бы испорченный файл за кэш.
+        key_file.unlink(missing_ok=True)
         r = subprocess.run([*render, "--out", str(raw_video)], capture_output=True, text=True, encoding="utf-8",
                            errors="replace", stdin=subprocess.DEVNULL)
         if r.returncode != 0:
-            raise RuntimeError(f"рендер VRM: {r.stderr.strip()[-1200:]}")
-        key_file.write_text(key, "utf-8")
+            raise RuntimeError(f"рендер VRM (код {r.returncode}): {r.stderr.strip()[-1200:]}")
         report["render_vrm"] = json.loads(r.stdout.strip().splitlines()[-1])
+        VRM.require_render(report["render_vrm"], spec)
+        key_file.write_text(key, "utf-8")
     report["render3d_sec"] = round(time.time() - t3d, 1)
     chk = subprocess.run(["node", str(ROOT / "node" / "vrm" / "contact.mjs"), "--spec", str(spec_path), "--packs", args.vrm_packs,
                           "--gl", args.gl], capture_output=True, text=True, encoding="utf-8", errors="replace",
                          stdin=subprocess.DEVNULL)
     report["checks"] = json.loads(chk.stdout.strip().splitlines()[-1]) if chk.stdout.strip() else {"error": chk.stderr[-400:]}
+    VRM.require_checks(report["checks"], spec)
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]

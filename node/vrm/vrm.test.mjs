@@ -8,12 +8,14 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spans } from "./handspans.mjs";
+import { emptyChecks } from "./checks.mjs";
+import { FrameError, frameProblem, presenceSummary, renderChunkRetry } from "../scene3d/render.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -101,4 +103,86 @@ test("отрезки проникновений рук: подряд идущи�
   const t = s.find((x) => x.key === "torso" && x.t0 === 1);
   assert.equal(t.gap_mm, -5);
   assert.equal(t.point, "b");
+});
+
+test("кадр без героини: потерян контекст GPU, модели нет, сеток нет, холст пуст — проблема; вставка — нет", () => {
+  const ok = { luma: 40, presence: { expect: 1, models: 1, meshes: 12, cover: 0.31 }, lost: [] };
+  assert.equal(frameProblem(ok), null);
+  assert.match(frameProblem({ ...ok, lost: ["webgl 1080×1920"] }), /контекст GPU/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, models: 0 } }), /модели нет/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, meshes: 0 } }), /сеток/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, cover: 0 } }), /холст пуст/);
+  assert.equal(frameProblem({ luma: 40, presence: { expect: 0, models: 1, meshes: 12, cover: 0 }, lost: [] }), null);
+  assert.equal(frameProblem({ luma: 40 }), null); // движок scene3d присутствие не сообщает
+  const sum = presenceSummary([{ presence: [{ frame: 0, expect: 1 }, { frame: 1, expect: 0 }] }, { presence: [{ frame: 2, expect: 1 }] }]);
+  assert.deepEqual([sum.frames, sum.expected, sum.missing], [3, 2, 0]);
+  assert.equal(presenceSummary([{ luma: [1] }]), null);
+});
+
+test("кусок с потерей контекста переснимается один раз; вторая потеря — ошибка", async () => {
+  let n = 0;
+  const flaky = async () => {
+    if (n++ === 0) throw new FrameError("кадр 270: потерян контекст GPU");
+    return { luma: [40], presence: [], warnings: [] };
+  };
+  const r = await renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, flaky);
+  assert.equal(n, 2);
+  assert.match(r.retried, /контекст GPU/);
+  const dead = async () => {
+    throw new FrameError("кадр 270: модели нет в сцене");
+  };
+  await assert.rejects(renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, dead), (e) => e instanceof FrameError && /после пересъёмки/.test(e.message));
+  // Другие ошибки (ffmpeg, браузер) не переснимаются.
+  let m = 0;
+  const other = async () => {
+    m++;
+    throw new Error("ffmpeg: код 1");
+  };
+  await assert.rejects(renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, other), /ffmpeg/);
+  assert.equal(m, 1);
+});
+
+test("пустые проверки касаний — причина, а не «ок»", () => {
+  const spec = { timeline: { surfaces: [{ name: "стол" }], chair: { pos: [0, 0.8, 0] } } };
+  const good = { frames: 100, min: 0.008, chair: { min: 0.003 }, hair: { min: 0.005 }, hands: { frames: 100, gaps: { torso: { min: 0.02 } } } };
+  assert.deepEqual(emptyChecks(good, spec, 80), []);
+  assert.deepEqual(emptyChecks(good, { ...spec, timeline: undefined }, 80), []);
+  const empty = { frames: 0, min: Infinity, chair: { min: Infinity }, hair: { min: Infinity }, hands: { frames: 0, gaps: {} } };
+  const why = emptyChecks(empty, spec, 80).join("; ");
+  for (const w of ["пальцы", "кресло", "волосы", "руки"]) assert.match(why, new RegExp(w));
+  assert.match(emptyChecks({ ...good, hands: { frames: 100, gaps: {} } }, spec, 80).join(), /руки: нет ни одного/);
+  assert.match(emptyChecks({ ...good, hands: null }, spec, 80).join(), /не запускалась/);
+  assert.match(emptyChecks(good, spec, 80, ["кадр 5: модели нет в сцене"]).join(), /модели нет на 1 кадрах/);
+});
+
+test("разрез персонажа: край сдвинутого холста — ровная вертикаль; живой силуэт и край кадра — нет", () => {
+  const w = 270, h = 480;
+  const mask = (inside) => {
+    const a = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) a[y * w + x] = inside(x, y) ? 255 : 0;
+    return a;
+  };
+  // Голова и плечи через плечо (эллипс у левого края), холст сдвинут вправо на 37 px: слева от x=37 — пусто.
+  const head = (x, y) => ((x - 20) / 110) ** 2 + ((y - 380) / 230) ** 2 < 1;
+  const cut = M.straightCut(mask((x, y) => x >= 37 && head(x, y)), w, h);
+  assert.ok(cut.x.run >= M.CUT_X, `разрез ${JSON.stringify(cut)}`);
+  assert.ok(Math.abs(cut.x.at - 37) <= 1);
+  // Тот же силуэт целиком (уходит за левый край кадра) — разреза нет.
+  assert.ok(M.straightCut(mask(head), w, h).x.run < M.CUT_X);
+  // Волнистая прядь (почти вертикальная) — не разрез.
+  assert.ok(M.straightCut(mask((x, y) => x > 120 + 6 * Math.sin(y / 9) && x < 200 + 5 * Math.cos(y / 7)), w, h).x.run < M.CUT_X);
+  // RGBA с шагом 4 (альфа — четвёртый байт), горизонтальный разрез снизу.
+  const rgba = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (y < 300 && x > 20 && x < 250) rgba[(y * w + x) * 4 + 3] = 255;
+  const c2 = M.straightCut(rgba, w, h, 4, 3);
+  assert.ok(c2.y.run >= M.CUT_Y && Math.abs(c2.y.at - 300) <= 1, JSON.stringify(c2));
+});
+
+test("кадр: разрез и камера в теле — проблема", () => {
+  const p = { expect: 1, models: 1, meshes: 25, cover: 0.5, near: 1.2, cameraNear: 0.05, cutX: 0.2, cutY: 0.5,
+    cut: { x: { at: 120, run: 0.09 }, y: { at: 900, run: 0.3 } } };
+  assert.equal(frameProblem({ presence: p, lost: [] }), null);
+  assert.match(frameProblem({ presence: { ...p, cut: { ...p.cut, x: { at: 148, run: 0.5 } } }, lost: [] }), /вертикалью x=148/);
+  assert.match(frameProblem({ presence: { ...p, cut: { ...p.cut, y: { at: 1500, run: 0.7 } } }, lost: [] }), /горизонталью/);
+  assert.match(frameProblem({ presence: { ...p, near: 0.1 }, lost: [] }), /камера в теле/);
 });
