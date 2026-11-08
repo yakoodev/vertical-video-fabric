@@ -113,11 +113,34 @@ function mixArm(a: ArmSpec | null, b: ArmSpec | null, w: number): ArmSpec | null
   if (!b) return { ...a, weight: 1 - w };
   const v = (x: V3, y: V3): V3 => [lerp(x[0], y[0], w), lerp(x[1], y[1], w), lerp(x[2], y[2], w)];
   const ca = a.curl as number[], cb = b.curl as number[];
+  // Переход между далёкими точками (клавиатура ↔ рот, ↔ взмах) — дугой вперёд, перед грудью и лицом, а не по
+  // прямой сквозь корпус: выгиб — половина пути (до 14 см), наибольший в середине перехода.
+  const ta = a.target as V3, tb = b.target as V3;
+  const far = Math.hypot(ta[0] - tb[0], ta[1] - tb[1], ta[2] - tb[2]);
+  const target = v(ta, tb);
+  // Дуга вперёд и вверх (до 10 см): к клавиатуре кисть опускается сверху, не въезжает в клавиши и остаётся в
+  // досягаемости (дальше — рука выпрямляется, запястье не попадает в цель).
+  // Вперёд — только к центру тела (ладонь ко рту: предплечье перед грудью); к взмаху и от него — вверх и в
+  // сторону, без выноса к камере (крупная кисть на переднем плане на этой модели смотрится плохо).
+  const arc = Math.min(0.1, 0.5 * far) * Math.sin(Math.PI * w);
+  const toCenter = Math.min(Math.abs(ta[0]), Math.abs(tb[0])) < 0.06;
+  target[2] += (toCenter ? 0.75 : 0) * arc;
+  target[1] += 0.65 * arc;
+  target[0] += Math.sign(tb[0] || ta[0]) * (toCenter ? 0.5 : 0.8) * arc; // и наружу: мимо лица, а не перед ним
+  // Локоть на переходе — в сторону (полюс наружу): предплечье не чиркает по боку и груди.
+  const pole = v(a.pole as V3, b.pole as V3);
+  pole[0] += Math.sign(tb[0] || ta[0]) * Math.min(0.3, far) * Math.sin(Math.PI * w);
   return {
-    ...b, target: v(a.target as V3, b.target as V3), pole: v(a.pole as V3, b.pole as V3),
+    ...b, target, pole,
     fingers: v(a.fingers as V3, b.fingers as V3), palm: v(a.palm as V3, b.palm as V3),
-    curl: ca.map((c, i) => lerp(c, cb[i], w)), spread: lerp(a.spread ?? 0.1, b.spread ?? 0.1, w),
+    // Пальцы: раскрываются в первой половине перехода, сжимаются — во второй (на середине пути не «когти»).
+    curl: ca.map((c, i) => lerp(c, cb[i], cb[i] < c ? smooth(Math.min(1, w * 6)) : smooth(Math.max(0, w * 2.2 - 1.2)))),
+    spread: lerp(a.spread ?? 0.1, b.spread ?? 0.1, w),
     thumbOut: lerp(a.thumbOut ?? 0.3, b.thumbOut ?? 0.3, w),
+    // Тяга к полюсу и предел сгиба — тоже плавно (иначе в первом кадре перехода локоть прыгает).
+    poleWeight: lerp(a.poleWeight ?? 0.9, b.poleWeight ?? 0.9, w), maxFlex: lerp(a.maxFlex ?? 135, b.maxFlex ?? 135, w),
+    // Касание клавиш — только когда кисть пришла (на переходе «касание» тянуло её вниз сквозь клавиши).
+    touch: !!b.touch && (w > 0.97 || (!!a.touch && far < 0.05)),
   };
 }
 
@@ -133,6 +156,30 @@ function handFingers(arm: ArmSpec | null, preset: FingerSpec | undefined): Finge
   const w = arm.weight ?? 1;
   if (w >= 0.999) return undefined;
   return mixFingers({ curl: arm.curl as number[], spread: arm.spread, thumbOut: arm.thumbOut }, preset, 1 - w);
+}
+
+/**
+ * Рука на время t по ключам arms: переход к ключу i идёт от того, что было в момент начала перехода, — если
+ * прошлый переход ещё не закончился, от его смеси (цепочкой), а не от «чистой» прошлой позы: иначе в момент
+ * нового ключа рука прыгала.
+ */
+export function armChain(keys: Timeline["arms"], side: 1 | -1, t: number): ArmSpec | null {
+  if (!keys?.length) return null;
+  const n = side > 0 ? "left" : "right";
+  let i = -1;
+  while (i + 1 < keys.length && keys[i + 1].t <= t) i++;
+  if (i < 0) return armPreset((keys[0] as any)[n], side, t);
+  const at = (k: number, depth: number): ArmSpec | null => {
+    const cur = armPreset((keys[k] as any)[n], side, t);
+    if (k === 0 || depth > 4) return cur;
+    const w = smooth((t - keys[k].t) / (keys[k].dur ?? 0.5));
+    if (w >= 1) return cur;
+    // Откуда: прошлый ключ — с его собственным незаконченным переходом (на момент начала этого).
+    const prevDone = keys[k].t - keys[k - 1].t >= (keys[k - 1].dur ?? 0.5);
+    const from = prevDone || k - 1 === 0 ? armPreset((keys[k - 1] as any)[n], side, t) : at(k - 1, depth + 1);
+    return mixArm(from, cur, w);
+  };
+  return at(i, 0);
 }
 
 const HEAD: V3 = [0, 1.39, -0.02];
@@ -162,13 +209,7 @@ export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: numbe
   }
   const mocap = mocapAt(clips, tl.tracks, t);
   // Руки: IK-пресеты с плавным весом против мокапа.
-  const ak = keyAt(tl.arms, t, 0.5);
-  const arm = (side: 1 | -1) => {
-    const n = side > 0 ? "left" : "right";
-    const pa = ak.a ? armPreset((ak.a as any)[n], side, t) : null;
-    const pb = ak.b ? armPreset((ak.b as any)[n], side, t) : null;
-    return ak.a ? mixArm(pa, pb, ak.w) : pb;
-  };
+  const arm = (side: 1 | -1) => armChain(tl.arms, side, t);
   const left = arm(1), right = arm(-1);
   const hk2 = keyAt(tl.hands, t, 0.35);
   const fing = (n: "left" | "right") => {

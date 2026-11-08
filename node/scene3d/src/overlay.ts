@@ -12,7 +12,8 @@
  *   {kind: "screen", start, end, x?, y?, w?, …StreamScreen} — карточка эфира (то же, что на мониторе: аватар кивает
  *     одновременно с героем в кадре)
  *   {kind: "alert", t, dur, title, amount, from, note, y?, scale?} — алерт доната крупно поверх кадра
- *   phone ``cut: true`` — без въезда и ухода (склейка: телефон переставлен на месте)
+ *   phone ``cut: true`` — без въезда и ухода (склейка: телефон переставлен на месте); ``cutIn`` / ``cutOut`` — только
+ *     без въезда / только без ухода (два телефона подряд: первый не уезжает, второй не въезжает — экран сменяется)
  */
 import { drawAlert, drawChatScreen, drawHud, drawPhone, drawStream, drawTag, drawToast, popIn, roundRect, type HudSpec, type PhoneScreen, type StreamScreen,
   type ToastSpec } from "./ui.ts";
@@ -21,7 +22,8 @@ export type OverlaySpec =
   | ({ kind: "hud"; right?: number; left?: number; top?: number; start?: number; end?: number } & HudSpec)
   | { kind: "tag"; text: string; x?: number; y?: number; start?: number; end?: number }
   | ({ kind: "toast"; y?: number } & ToastSpec)
-  | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number; dim?: number; cut?: boolean } & PhoneScreen)
+  | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number; dim?: number; cut?: boolean; cutIn?: boolean;
+      cutOut?: boolean } & PhoneScreen)
   | ({ kind: "chat"; start: number; end: number; x?: number; y?: number; w?: number; h?: number } & StreamScreen)
   | ({ kind: "screen"; start: number; end: number; x?: number; y?: number; w?: number } & StreamScreen)
   | { kind: "alert"; t: number; dur?: number; title?: string; amount?: string; from?: string; note?: string; color?: string;
@@ -83,11 +85,14 @@ export class Overlays {
   /** Телефон-карточка: корпус со скруглением, экран — тот же рисунок, что у телефона в 3D. */
   drawPhoneCard(o: Extract<OverlaySpec, { kind: "phone" }>, t: number, s: number) {
     if (t < o.t0 || t > o.t1) return;
-    const k = o.cut ? 1 : popIn(t, o.t0, 0.45);
-    const out = o.cut ? 1 : Math.max(0, Math.min(1, (o.t1 - t) / 0.3));
+    const k = o.cut || o.cutIn ? 1 : popIn(t, o.t0, 0.45);
+    const out = o.cut || o.cutOut ? 1 : Math.max(0, Math.min(1, (o.t1 - t) / 0.3));
     const sc = (o.scale ?? 1) * s;
     const w = 440 * sc, h = 880 * sc;
-    const cx = (o.x ?? 540) * s, cy = (o.y ?? 860) * s + (1 - Math.min(1, k)) * 700 * s + (1 - out) * 120 * s;
+    // Уход — вниз за кадр с разгоном, прозрачность только в последних кадрах (без «призрака» поверх сцены).
+    const drop = 1 - out;
+    const cy = (o.y ?? 860) * s + (1 - Math.min(1, k)) * 700 * s + drop * drop * 1500 * s;
+    const cx = (o.x ?? 540) * s;
     drawPhone(this.phone.getContext("2d")!, this.phone.width, this.phone.height, o, t);
     const g = this.g;
     if (o.dim) {
@@ -95,7 +100,7 @@ export class Overlays {
       g.fillRect(0, 0, this.W, this.H);
     }
     g.save();
-    g.globalAlpha = out;
+    g.globalAlpha = Math.min(1, out * 4);
     g.translate(cx, cy);
     g.rotate(0.03 * (1 - out));
     g.shadowColor = "rgba(0,0,0,0.6)";

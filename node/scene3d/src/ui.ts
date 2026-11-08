@@ -8,6 +8,7 @@
  *
  * Шрифты — из vendor/fonts (render.mjs отдаёт /fonts/): Montserrat — интерфейс, Rubik — крупные цифры.
  */
+import { drawSite, type SiteScreen } from "./ui_site.ts";
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
 import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
@@ -385,8 +386,12 @@ export function drawAlert(g: CanvasRenderingContext2D, W: number, H: number,
 /* ---------------- телефон ---------------- */
 
 export interface PhoneScreen {
-  /** notifications — часы и стопка уведомлений; payment — перевод с галочкой; shop — товар; messenger — файл. */
-  screen?: "notifications" | "payment" | "shop" | "messenger";
+  /** notifications — часы и стопка уведомлений; payment — перевод с галочкой; shop — товар; messenger — файл;
+   * site — настоящие скриншоты сайта магазина (ui_site.ts). */
+  screen?: "notifications" | "payment" | "shop" | "messenger" | "site";
+  /** screen "site": страницы, прокрутки, касания и шаги (ui_site.ts); t0 — появление телефона. */
+  site?: SiteScreen;
+  t0?: number;
   clock?: string;
   date?: string;
   notifications?: { t: number; app?: string; title: string; text?: string; color?: string }[];
@@ -415,12 +420,13 @@ export function phoneSignature(p: PhoneScreen, t: number): string {
   const last = n.length ? n[n.length - 1].t : -1;
   const anim = last >= 0 && t - last < 0.35 ? Math.round((t - last) * 60) : "x";
   const pay = p.payment && p.payment.t !== undefined && t - p.payment.t < 0.5 ? Math.round((t - p.payment.t) * 60) : "x";
-  const live = p.screen === "shop" || p.screen === "messenger" ? Math.round(t * 30) : "";
+  const live = p.screen === "shop" || p.screen === "messenger" || p.screen === "site" ? Math.round(t * 30) : "";
   return [p.screen, n.length, anim, counterValue(p.counter, t), pay, live].join("|");
 }
 
 export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: PhoneScreen, t: number) {
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
+  if (p.screen === "site" && p.site) return drawSite(g, W, H, p.site, t, p.t0 ?? 0);
   if (p.screen === "shop") {
     const pv = (p.store as any)?.preview;
     if (pv === "vrm") return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawVrmTile(gg, cx, cy, sz, t));

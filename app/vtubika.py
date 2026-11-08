@@ -67,13 +67,39 @@ SFX = {
 
 # Концовка каждой истории (app/vtubika_endcard.py): значок, «vtubika», сайт и слоган сайта — без других обещаний.
 # План: "end_card": false — без неё, dict — поверх. Звук — мягкий стинг паков kenney, музыка затихает под карточкой.
+# Звук карточки — один из стингов END_CARD_STINGS (только курируемые паки kenney и freesound образа сервиса).
+# Время ``at`` — от начала карточки (отрицательное — звук начинается ещё под концом истории), громкость — после
+# выравнивания эффекта под голос (app.motion_render.effect_volume); громкости подобраны так, что пик мгновенной
+# громкости на карточке ≈ −16 LUFS при ролике −14 LUFS. Сравнение: D:/vvf-offload/vtubika/endcard_sounds.mp4.
+END_CARD_STINGS: dict[str, list[dict]] = {
+    # как было: «разворот» + «подтверждение».
+    "kenney_classic": [{"ref": "sfx:kenney-interface/maximize_006.ogg", "at": 0.12, "volume": 0.35},
+                       {"ref": "sfx:kenney-interface/confirmation_004.ogg", "at": 1.0, "volume": 0.45}],
+    # 1 — мягкий вжух под появление значка, звон стекла на его приземлении, искра на точке над «k».
+    "chime_whoosh": [{"ref": "sfx:freesound/whoosh-soft.ogg", "at": -0.3, "volume": 0.5},
+                     {"ref": "sfx:kenney-interface/glass_004.ogg", "at": 0.42, "volume": 0.75},
+                     {"ref": "sfx:kenney-interface/glass_001.ogg", "at": 1.02, "volume": 0.5}],
+    # 2 — касса, но тихо: мягкий «поп» значка и негромкий ча-чинг на точке.
+    "cha_ching_soft": [{"ref": "sfx:freesound/pop-soft.ogg", "at": 0.14, "volume": 0.9},
+                       {"ref": "sfx:freesound/cha-ching.ogg", "at": 0.98, "volume": 0.6}],
+    # 3 — тихий райзер подводит к карточке из конца истории, на значке — стеклянный звон, на точке — мягкий поп.
+    "riser_glass": [{"ref": "sfx:freesound/riser-subtle.ogg", "at": -2.3, "volume": 0.37},
+                    {"ref": "sfx:kenney-interface/glass_004.ogg", "at": 0.36, "volume": 0.75},
+                    {"ref": "sfx:freesound/pop-soft.ogg", "at": 1.0, "volume": 0.5}],
+    # 4 — стеклянное арпеджио вверх (1.45 → 1.9 → 2.2 кГц) на появлении значка, искра на точке.
+    "glass_arpeggio": [{"ref": "sfx:kenney-interface/glass_006.ogg", "at": 0.12, "volume": 0.5},
+                       {"ref": "sfx:kenney-interface/glass_001.ogg", "at": 0.24, "volume": 0.5},
+                       {"ref": "sfx:kenney-interface/glass_005.ogg", "at": 0.36, "volume": 0.54},
+                       {"ref": "sfx:kenney-interface/glass_004.ogg", "at": 1.0, "volume": 0.56}],
+}
+
 END_CARD = {
     "duration": 2.8,
     "site": "vtubika.store",
     "slogan": ["Купить VTuber-модель", "с оплатой в рублях"],
-    "sfx": [{"ref": "sfx:kenney-interface/maximize_006.ogg", "at": 0.12, "volume": 0.35},
-            {"ref": "sfx:kenney-interface/confirmation_004.ogg", "at": 1.0, "volume": 0.45}],
+    "sting": "kenney_classic",  # выбор владельца — одна строка: chime_whoosh / cha_ching_soft / riser_glass / glass_arpeggio
     "music_fade": 3.2,  # музыка затихает с ~0.4 с до карточки и до её конца
+    "crossfade": 0.3,  # последний кадр истории растворяется в карточке (без чёрного кадра между ними)
 }
 
 # Палитры комнаты поверх NEON. Нейтральный ключ (key) у всех — лицо не уходит в цвет RGB.

@@ -10,7 +10,8 @@ og-картинке сайта), «vtubika.store» и слоган сайта «
 * ``render(cfg, work)`` — SVG → кадры headless Chromium (``node/svg-to-webm.mjs``, покадрово, детерминированно) →
   webm в кэше ``work`` (по хешу SVG).
 * ``append(video, card, out)`` — ролик + карточка одним mp4 (BT.709, как кадры сцены).
-* ``card_sfx(cfg, t0)`` — звуки карточки на общей шкале ролика.
+* ``sting(cfg)`` / ``card_sfx(cfg, t0)`` — звук карточки (``END_CARD["sting"]`` из ``END_CARD_STINGS``) на общей
+  шкале ролика.
 """
 
 from __future__ import annotations
@@ -181,7 +182,8 @@ def card_svg(cfg: dict) -> str:
         f'<rect x="{W / 2 - 60}" y="1160" width="120" height="6" rx="3" fill="{ORANGE}" class="in" '
         f'style="animation-delay:1.15s;opacity:.85"/>',
         slogan_svg,
-        f'<rect width="{W}" height="{H}" fill="#000" class="veil"/>',
+        # Без наплыва (crossfade 0) карточка проявляется из чёрного; с наплывом истории — сразу своим фоном.
+        "" if float(cfg.get("crossfade") or 0) > 0 else f'<rect width="{W}" height="{H}" fill="#000" class="veil"/>',
         "</svg>",
     ]
     return "\n".join(parts)
@@ -212,25 +214,43 @@ def render(cfg: dict, work: Path) -> Path:
     return out
 
 
-def append_args(video: Path, card: Path, out: Path) -> list[str]:
-    """ffmpeg: ролик + карточка (кадры PNG → yuv BT.601 в webm → BT.709, как у сцены) → один mp4 без звука."""
-    graph = ("[0:v]setsar=1,format=yuv420p[a];"
-             "[1:v]scale=1080:1920:in_color_matrix=bt601:out_color_matrix=bt709:out_range=tv,fps=30,setsar=1,"
-             "format=yuv420p[b];[a][b]concat=n=2:v=1:a=0[v]")
+def append_args(video: Path, card: Path, out: Path, total: float | None = None, crossfade: float = 0.0) -> list[str]:
+    """ffmpeg: ролик + карточка (кадры PNG → yuv BT.601 в webm → BT.709, как у сцены) → один mp4 без звука.
+    ``crossfade`` > 0 (нужна длина ролика ``total``) — последний кадр истории растворяется в карточке (xfade):
+    карточка начинается на ``crossfade`` раньше конца ролика, чёрного кадра между ними нет."""
+    card_chain = ("[1:v]scale=1080:1920:in_color_matrix=bt601:out_color_matrix=bt709:out_range=tv,fps=30,setsar=1,"
+                  "format=yuv420p,settb=AVTB[b]")
+    if crossfade > 0 and total:
+        graph = (f"[0:v]setsar=1,format=yuv420p,fps=30,settb=AVTB[a];{card_chain};"
+                 f"[a][b]xfade=transition=fade:duration={crossfade:.3f}:offset={max(0.0, total - crossfade):.3f}[v]")
+    else:
+        graph = f"[0:v]setsar=1,format=yuv420p,settb=AVTB[a];{card_chain};[a][b]concat=n=2:v=1:a=0[v]"
     return ["ffmpeg", "-y", "-v", "error", "-i", str(video), "-c:v", "libvpx-vp9", "-i", str(card),
             "-filter_complex", graph, "-map", "[v]", "-an", "-c:v", "libx264", "-preset", "medium", "-crf", "18",
             "-pix_fmt", "yuv420p", "-color_range", "tv", "-colorspace", "bt709", "-color_primaries", "bt709",
             "-color_trc", "bt709", "-r", str(FPS), "-movflags", "+faststart", str(out)]
 
 
-def append(video: Path, card: Path, out: Path) -> None:
-    proc = subprocess.run(append_args(video, card, out), capture_output=True, text=True, encoding="utf-8",
+def append(video: Path, card: Path, out: Path, total: float | None = None, crossfade: float = 0.0) -> None:
+    proc = subprocess.run(append_args(video, card, out, total, crossfade), capture_output=True, text=True, encoding="utf-8",
                           errors="replace", stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out.is_file():
         raise RuntimeError(f"склейка с концовкой: {proc.stderr.strip()[-600:]}")
 
 
+def sting(cfg: dict) -> list[dict[str, Any]]:
+    """Звуки карточки: явный ``sfx`` плана или стинг ``cfg["sting"]`` из ``app.vtubika.END_CARD_STINGS``."""
+    from app import vtubika as U
+
+    if cfg.get("sfx"):
+        return list(cfg["sfx"])
+    name = cfg.get("sting") or "kenney_classic"
+    if name not in U.END_CARD_STINGS:
+        raise ValueError(f"нет стинга концовки {name!r}: {', '.join(U.END_CARD_STINGS)}")
+    return U.END_CARD_STINGS[name]
+
+
 def card_sfx(cfg: dict, t0: float) -> list[dict[str, Any]]:
-    """Звуки карточки ({ref, t, volume}) от начала карточки ``t0``."""
-    return [{"ref": s["ref"], "t": round(t0 + float(s["at"]), 3), "volume": float(s["volume"])}
-            for s in cfg.get("sfx") or []]
+    """Звуки карточки ({ref, t, volume}) от начала карточки ``t0`` (``at`` < 0 — ещё под концом истории)."""
+    return [{"ref": s["ref"], "t": round(max(0.0, t0 + float(s["at"])), 3), "volume": float(s["volume"])}
+            for s in sting(cfg)]

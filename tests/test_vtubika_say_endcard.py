@@ -150,3 +150,26 @@ def test_append_args_converts_card_to_bt709_and_concats():
     graph = args[args.index("-filter_complex") + 1]
     assert "out_color_matrix=bt709" in graph and "concat=n=2:v=1:a=0" in graph
     assert args[args.index("-c:v") + 1] == "libvpx-vp9"  # декодер webm перед вторым входом
+
+
+def test_end_card_sting_is_one_setting_and_every_option_uses_curated_packs():
+    assert U.END_CARD["sting"] in U.END_CARD_STINGS
+    assert {"chime_whoosh", "cha_ching_soft", "riser_glass", "glass_arpeggio"} <= set(U.END_CARD_STINGS)
+    for name, sounds in U.END_CARD_STINGS.items():
+        assert 1 <= len(sounds) <= 5, name
+        for s in sounds:
+            assert re.fullmatch(r"sfx:(kenney-[a-z]+|freesound)/[\w-]+\.ogg", s["ref"]), s["ref"]
+            assert -2.5 <= s["at"] <= 1.5 and 0 < s["volume"] <= 1.0, (name, s)
+    picked = E.card_sfx({**E.settings({}), "sting": "riser_glass"}, 60.0)
+    assert [s["ref"] for s in picked] == [s["ref"] for s in U.END_CARD_STINGS["riser_glass"]]
+    assert picked[0]["t"] < 60.0  # райзер начинается ещё под концом истории
+    assert E.card_sfx({**E.settings({}), "sting": "riser_glass"}, 1.0)[0]["t"] == 0.0
+
+
+def test_end_card_crossfades_from_story_without_black_veil():
+    cfg = E.settings({})
+    assert cfg["crossfade"] > 0 and 'class="veil"' not in E.card_svg(cfg)
+    assert 'class="veil"' in E.card_svg({**cfg, "crossfade": 0})
+    args = E.append_args(Path("a.mp4"), Path("c.webm"), Path("o.mp4"), total=64.7, crossfade=0.3)
+    graph = args[args.index("-filter_complex") + 1]
+    assert "xfade=transition=fade:duration=0.300:offset=64.400" in graph and "concat" not in graph

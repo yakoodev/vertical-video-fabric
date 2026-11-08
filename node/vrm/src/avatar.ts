@@ -276,7 +276,10 @@ export class AvatarStage {
   private placeMug(a: Avatar, keys: { t: number; act: string; drop?: number }[], t: number) {
     const mk = keys.find((k) => k.act === "mug");
     const mug = a.mug!;
-    mug.visible = !!mk && t >= mk.t - 0.01;
+    // Кружка — только в своей сцене: с кружкой, упала, поклон после; со следующим действием (через месяц, дуэт)
+    // её на полу уже нет.
+    const gone = mk ? keys.find((k) => k.t > mk.t && k.act !== "mug" && k.act !== "bow") : undefined;
+    mug.visible = !!mk && t >= mk.t - 0.01 && !(gone && t >= gone.t);
     if (!mk) return;
     const hand = a.rig.node("rightHand")!;
     const hq = hand.getWorldQuaternion(new THREE.Quaternion());
@@ -405,18 +408,27 @@ export class AvatarStage {
   }
 }
 
-/** Кружка: цилиндр с ручкой, нарисованная (без света), с контуром. */
+/** Ступенчатая заливка «под аниме» (2 тона) — кружка читается объёмной при любом повороте, не плоской плашкой. */
+function toonRamp(): THREE.DataTexture {
+  const tex = new THREE.DataTexture(new Uint8Array([90, 90, 90, 255, 255, 255, 255, 255]), 2, 1, THREE.RGBAFormat);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/** Кружка: цилиндр с дном и ручкой, тон-заливка (свет сцены аватара), с контуром. */
 function makeMug(): THREE.Group {
   const grp = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.036, 0.095, 24, 1, true),
-    new THREE.MeshBasicMaterial({ color: "#ffd36a", side: THREE.DoubleSide, toneMapped: false }));
-  const bottom = new THREE.Mesh(new THREE.CircleGeometry(0.036, 24), new THREE.MeshBasicMaterial({ color: "#e0b050", toneMapped: false }));
+  const ramp = toonRamp();
+  const toon = (color: string, side: THREE.Side = THREE.FrontSide) => new THREE.MeshToonMaterial({ color, gradientMap: ramp, side });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.036, 0.095, 24, 1, true), toon("#ffd36a", THREE.DoubleSide));
+  const bottom = new THREE.Mesh(new THREE.CircleGeometry(0.036, 24), toon("#a8742a", THREE.DoubleSide));
   bottom.rotation.x = Math.PI / 2;
   bottom.position.y = -0.047;
   const coffee = new THREE.Mesh(new THREE.CircleGeometry(0.037, 24), new THREE.MeshBasicMaterial({ color: "#5a3420", toneMapped: false }));
   coffee.rotation.x = -Math.PI / 2;
   coffee.position.y = 0.03;
-  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16, Math.PI), new THREE.MeshBasicMaterial({ color: "#ffd36a", toneMapped: false }));
+  const handle = new THREE.Mesh(new THREE.TorusGeometry(0.024, 0.007, 8, 16, Math.PI), toon("#ffd36a"));
   handle.rotation.z = -Math.PI / 2;
   handle.position.x = 0.04;
   const line = new THREE.Mesh(new THREE.CylinderGeometry(0.043, 0.039, 0.1, 24), new THREE.MeshBasicMaterial({ color: "#2a1838", side: THREE.BackSide, toneMapped: false }));

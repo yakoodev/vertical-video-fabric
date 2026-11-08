@@ -273,6 +273,14 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 phones.append({"t0": t, "t1": round(until or t + 3.0, 3), **ph})
             if ev.get("paid") and phones:
                 phones[-1].setdefault("store", {})["paidAt"] = t
+            if ev.get("site_step") and phones:
+                # Шаг вставки «сайт на телефоне» (app/vtubika_site.py): product — открыть товар, tap — кнопка,
+                # delivered — «Модель пришла».
+                phones[-1].setdefault("steps", []).append({"t": t, "step": str(ev["site_step"])})
+                if ev["site_step"] in ("product", "tap"):
+                    add_sfx("click", t)
+                elif ev["site_step"] == "delivered":
+                    add_sfx("notify", t)
             if ev.get("coin"):
                 drops.append(t)
             if ev.get("fork"):
@@ -361,6 +369,9 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
     for i, ph in enumerate(phones):
         if ph.pop("to_next", False) and i + 1 < len(phones):
             ph["t1"] = phones[i + 1]["t0"]  # склейка: следующий телефон сменяет этот без зазора
+            # Телефон остаётся на месте — меняется экран: первый не уезжает, второй не въезжает.
+            ph["cutOut"] = True
+            phones[i + 1]["cutIn"] = True
     for ph in phones:
         t0, t1 = ph.pop("t0"), ph.pop("t1")
         kind = ph.pop("screen", "notifications")
