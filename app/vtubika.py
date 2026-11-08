@@ -29,6 +29,14 @@ NARRATOR = {"provider": "gemini", "voice": "Aoede",
             # Без указания к подаче: модель 3.8 читает его вслух (проверено Whisper-ом 08.11).
             "style": ""}
 
+# Как рассказчик читает термины (только текст для TTS; субтитры — как в сценарии), app/vtubika_say.py.
+# План дополняет/отключает полем "pronounce". Live2D — выбор владельца 08.11 («лайв два дэ»).
+PRONOUNCE = {
+    "Live2D": "лайв-два-дэ",
+    "PNGtuber": "пи-эн-джи-тюбер",
+    "VTube Studio": "ви-тьюб студио",
+}
+
 # Чем заменить в плане (``"voice": {...}``). Polza платная: только с ``paid_ok: true`` по команде владельца,
 # потолок — tools/vtubika_story.POLZA_CAP_RUB (eleven-v4 ≈ 0.8 ₽ за 200 символов по замеру).
 NARRATOR_ALTERNATIVES = {
@@ -54,6 +62,17 @@ SFX = {
     "click": ("sfx:kenney-interface/click_002.ogg", 0.5),
     "pen": ("sfx:kenney-interface/scratch_002.ogg", 0.35),
     "notify": ("sfx:kenney-interface/maximize_004.ogg", 0.5),
+}
+
+# Концовка каждой истории (app/vtubika_endcard.py): значок, «vtubika», сайт и слоган сайта — без других обещаний.
+# План: "end_card": false — без неё, dict — поверх. Звук — мягкий стинг паков kenney, музыка затихает под карточкой.
+END_CARD = {
+    "duration": 2.8,
+    "site": "vtubika.store",
+    "slogan": ["Купить VTuber-модель", "с оплатой в рублях"],
+    "sfx": [{"ref": "sfx:kenney-interface/maximize_006.ogg", "at": 0.12, "volume": 0.35},
+            {"ref": "sfx:kenney-interface/confirmation_004.ogg", "at": 1.0, "volume": 0.45}],
+    "music_fade": 3.2,  # музыка затихает с ~0.4 с до карточки и до её конца
 }
 
 # Палитры комнаты поверх NEON. Нейтральный ключ (key) у всех — лицо не уходит в цвет RGB.
