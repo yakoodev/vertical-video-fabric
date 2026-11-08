@@ -184,3 +184,89 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
         out["siteShots"] = [site["catalog"]["url"], site["product"]["url"]]
         out["siteDir"] = site["dir"]
     return out
+
+
+# --------------------------------------------------------------------------- проверки готового рендера
+# Рендер под нагрузкой однажды потерял контекст GPU: героиня и комната пропали после ~9 с, а отчёт был «ok»
+# (проверки касаний считаются отдельным браузером и сам ролик не видят). Здесь — что рендер и проверки обязаны
+# сообщить, чтобы ролик пошёл дальше; любое «не измерено» — ошибка, а не «всё хорошо».
+
+
+class VrmRenderError(RuntimeError):
+    """Рендер VRM или его проверки ничего не измерили / нашли кадры без героини."""
+
+
+def hero_frames(spec: dict, fps: int | None = None) -> int:
+    """Сколько кадров ролика героиня должна быть в кадре (планы без вставки)."""
+    fps = int(fps or spec.get("fps") or 30)
+    n = round(float(spec.get("duration") or 0) * fps)
+    shots = spec.get("shots") or []
+    if not shots or not n:
+        return 0
+    count = 0
+    for i in range(n):
+        t = i / fps
+        sh = next((s for s in shots if float(s.get("t0", 0)) <= t < float(s.get("t1", 1e9))), shots[-1])
+        if not (sh.get("plate") or {}).get("insert"):
+            count += 1
+    return count
+
+
+def render_problems(rep: dict | None, spec: dict) -> list[str]:
+    """Отчёт render.mjs → причины забраковать ролик (пустой список — годен)."""
+    if not rep:
+        return ["рендер не вернул отчёт"]
+    out = []
+    if not rep.get("ok"):
+        out.append(f"рендер не ok (чёрные кадры: {len(rep.get('black_frames') or [])})")
+    need = hero_frames(spec, rep.get("fps"))
+    pres = rep.get("presence")
+    if need and not pres:
+        out.append("рендер не сообщил, была ли героиня в кадре (нет presence — старый бандл?)")
+    elif pres:
+        if int(pres.get("missing") or 0):
+            out.append(f"героини нет на {pres['missing']} кадрах: {pres.get('first_missing')}")
+        if int(pres.get("frames") or 0) != int(rep.get("frames") or -1):
+            out.append(f"присутствие проверено на {pres.get('frames')} кадрах из {rep.get('frames')}")
+        if int(pres.get("expected") or 0) != need:
+            out.append(f"героиня ожидалась на {need} кадрах, рендер проверил {pres.get('expected')}")
+    return out
+
+
+def check_problems(checks: dict | None, spec: dict) -> list[str]:
+    """Отчёт contact.mjs → пустые проверки (пальцы, кресло, волосы, руки) при героине в кадре — причины ошибки.
+    Нарушения зазоров (ok: false при полных замерах) сюда не входят — их показывает отчёт истории."""
+    if not hero_frames(spec) or not spec.get("timeline"):
+        return []
+    if not checks:
+        return ["проверки касаний не вернули отчёт"]
+    if checks.get("error"):
+        return [f"проверки касаний упали: {str(checks['error']).strip()[-300:]}"]
+    out = list(checks.get("empty") or [])
+    if not int(checks.get("frames") or 0):
+        out.append("проверки: 0 кадров")
+    tl = spec["timeline"]
+    blank = lambda d: not isinstance(d, dict) or d.get("min_gap_mm") is None  # noqa: E731
+    if tl.get("surfaces") and blank(checks.get("fingers")):
+        out.append("пальцы: нет замеров")
+    if tl.get("chair") and blank(checks.get("chair")):
+        out.append("кресло: нет замеров")
+    if tl.get("chair") and blank(checks.get("hair")):
+        out.append("волосы: нет замеров")
+    if spec.get("handCheck") is not False and not checks.get("hands"):
+        out.append("руки: нет замеров")
+    return list(dict.fromkeys(out))
+
+
+def require_render(rep: dict | None, spec: dict) -> None:
+    """Ошибка с понятной причиной, если в отрендеренном ролике героини нет там, где она должна быть."""
+    probs = render_problems(rep, spec)
+    if probs:
+        raise VrmRenderError("VRM-рендер забракован: " + "; ".join(probs))
+
+
+def require_checks(checks: dict | None, spec: dict) -> None:
+    """Ошибка с понятной причиной, если проверки касаний ничего не измерили."""
+    probs = check_problems(checks, spec)
+    if probs:
+        raise VrmRenderError("проверки VRM пустые: " + "; ".join(probs))

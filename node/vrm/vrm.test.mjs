@@ -8,6 +8,8 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spans } from "./handspans.mjs";
+import { emptyChecks } from "./checks.mjs";
+import { FrameError, frameProblem, presenceSummary, renderChunkRetry } from "../scene3d/render.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
@@ -101,4 +103,54 @@ test("отрезки проникновений рук: подряд идущи�
   const t = s.find((x) => x.key === "torso" && x.t0 === 1);
   assert.equal(t.gap_mm, -5);
   assert.equal(t.point, "b");
+});
+
+test("кадр без героини: потерян контекст GPU, модели нет, сеток нет, холст пуст — проблема; вставка — нет", () => {
+  const ok = { luma: 40, presence: { expect: 1, models: 1, meshes: 12, cover: 0.31 }, lost: [] };
+  assert.equal(frameProblem(ok), null);
+  assert.match(frameProblem({ ...ok, lost: ["webgl 1080×1920"] }), /контекст GPU/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, models: 0 } }), /модели нет/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, meshes: 0 } }), /сеток/);
+  assert.match(frameProblem({ ...ok, presence: { ...ok.presence, cover: 0 } }), /холст пуст/);
+  assert.equal(frameProblem({ luma: 40, presence: { expect: 0, models: 1, meshes: 12, cover: 0 }, lost: [] }), null);
+  assert.equal(frameProblem({ luma: 40 }), null); // движок scene3d присутствие не сообщает
+  const sum = presenceSummary([{ presence: [{ frame: 0, expect: 1 }, { frame: 1, expect: 0 }] }, { presence: [{ frame: 2, expect: 1 }] }]);
+  assert.deepEqual([sum.frames, sum.expected, sum.missing], [3, 2, 0]);
+  assert.equal(presenceSummary([{ luma: [1] }]), null);
+});
+
+test("кусок с потерей контекста переснимается один раз; вторая потеря — ошибка", async () => {
+  let n = 0;
+  const flaky = async () => {
+    if (n++ === 0) throw new FrameError("кадр 270: потерян контекст GPU");
+    return { luma: [40], presence: [], warnings: [] };
+  };
+  const r = await renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, flaky);
+  assert.equal(n, 2);
+  assert.match(r.retried, /контекст GPU/);
+  const dead = async () => {
+    throw new FrameError("кадр 270: модели нет в сцене");
+  };
+  await assert.rejects(renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, dead), (e) => e instanceof FrameError && /после пересъёмки/.test(e.message));
+  // Другие ошибки (ffmpeg, браузер) не переснимаются.
+  let m = 0;
+  const other = async () => {
+    m++;
+    throw new Error("ffmpeg: код 1");
+  };
+  await assert.rejects(renderChunkRetry({}, {}, 30, [0, 10], "seg.mp4", () => {}, other), /ffmpeg/);
+  assert.equal(m, 1);
+});
+
+test("пустые проверки касаний — причина, а не «ок»", () => {
+  const spec = { timeline: { surfaces: [{ name: "стол" }], chair: { pos: [0, 0.8, 0] } } };
+  const good = { frames: 100, min: 0.008, chair: { min: 0.003 }, hair: { min: 0.005 }, hands: { frames: 100, gaps: { torso: { min: 0.02 } } } };
+  assert.deepEqual(emptyChecks(good, spec, 80), []);
+  assert.deepEqual(emptyChecks(good, { ...spec, timeline: undefined }, 80), []);
+  const empty = { frames: 0, min: Infinity, chair: { min: Infinity }, hair: { min: Infinity }, hands: { frames: 0, gaps: {} } };
+  const why = emptyChecks(empty, spec, 80).join("; ");
+  for (const w of ["пальцы", "кресло", "волосы", "руки"]) assert.match(why, new RegExp(w));
+  assert.match(emptyChecks({ ...good, hands: { frames: 100, gaps: {} } }, spec, 80).join(), /руки: нет ни одного/);
+  assert.match(emptyChecks({ ...good, hands: null }, spec, 80).join(), /не запускалась/);
+  assert.match(emptyChecks(good, spec, 80, ["кадр 5: модели нет в сцене"]).join(), /модели нет на 1 кадрах/);
 });

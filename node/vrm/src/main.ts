@@ -3,7 +3,8 @@
  * рисует кадр как функцию времени. Слои: нарисованный 2D-фон (backdrop.ts) → 3D-персонаж и предметы
  * (WebGL на отдельном холсте, прозрачный фон, MToon) → 2D-передний план и пост (свечение, виньетка, зерно).
  *
- * window.__scene3d = { load(spec), render(t), inspect(t), warnings() } — тот же контракт, что у scene3d.
+ * window.__scene3d = { load(spec), render(t), inspect(t), warnings() } — тот же контракт, что у scene3d; render(t)
+ * ещё отдаёт presence {expect, models, meshes, cover} и lost (потери контекста GPU) — их проверяет render.mjs.
  * Кадр — из spec.shots: кадр i показывает план shots[i] (стопкадры), либо план по t0/t1 (ролик).
  *
  * Модель (не в репозитории, D:/vvf-offload/vtubika/vrm/vendor): VRM1_Constraint_Twist_Sample.vrm из
@@ -105,6 +106,47 @@ let overlays: Overlays | null = null;
 let stage: AvatarStage | null = null;
 let hands: HandCheck | null = null;
 const warnings: string[] = [];
+
+/**
+ * Потеря контекста GPU (WebGL и ускоренный 2D): three.js после webglcontextlost молча пропускает gl.render, а
+ * холсты 2D теряют закешированное содержимое (комната, экраны) — кадры дальше идут без героини и комнаты, но
+ * без ошибки. Каждый холст страницы, получивший контекст, слушает потерю; render() отдаёт счётчик, render.mjs
+ * по нему валит (и один раз переснимает) кусок.
+ */
+const lost: string[] = [];
+const getCtx = HTMLCanvasElement.prototype.getContext as any;
+const hooked = new WeakSet<HTMLCanvasElement>();
+(HTMLCanvasElement.prototype as any).getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+  const ctx = getCtx.call(this, kind, ...rest);
+  if (ctx && !hooked.has(this)) {
+    hooked.add(this);
+    const note = (what: string) => () => lost.push(`${what} ${this.width}×${this.height}`);
+    this.addEventListener("webglcontextlost", note("webgl"));
+    this.addEventListener("contextlost", note("2d"));
+  }
+  return ctx;
+};
+let presC: HTMLCanvasElement;
+
+/**
+ * Героиня на кадре на самом деле есть: модель загружена и в сцене, видимых сеток > 0, на WebGL-холсте есть
+ * непрозрачные пиксели (контекст жив и что-то нарисовал). expect — сколько моделей кадр должен показать (0 — вставка).
+ */
+function presence(expect: number) {
+  const models = vrm && vrm.scene.parent === scene ? 1 : 0;
+  let meshes = 0;
+  if (models) vrm.scene.traverseVisible((o) => void ((o as THREE.Mesh).isMesh && meshes++));
+  let cover = 0;
+  if (expect) {
+    const pc = presC.getContext("2d", { willReadFrequently: true })!;
+    pc.clearRect(0, 0, presC.width, presC.height);
+    pc.drawImage(gl.domElement, 0, 0, presC.width, presC.height);
+    const d = pc.getImageData(0, 0, presC.width, presC.height).data;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 0) cover++;
+    cover /= d.length / 4;
+  }
+  return { expect, models, meshes, cover: Math.round(cover * 1000) / 1000 };
+}
 
 function shotAt(t: number): { shot: Shot; local: number } {
   const timed = spec.shots.some((s) => s.t0 !== undefined);
@@ -226,7 +268,10 @@ function render(t: number) {
   const d = lc.getImageData(0, 0, 16, 28).data;
   let sum = 0;
   for (let i = 0; i < d.length; i += 4) sum += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-  return { luma: sum / (d.length / 4) };
+  const gone = [...lost];
+  if (gl.getContext().isContextLost()) gone.push("webgl героини: isContextLost");
+  if ((g as any).isContextLost?.()) gone.push("2d кадра: isContextLost");
+  return { luma: sum / (d.length / 4), presence: presence(pl.insert ? 0 : 1), lost: gone };
 }
 
 async function load(s: Spec) {
@@ -283,6 +328,9 @@ async function load(s: Spec) {
   lumaC = document.createElement("canvas");
   lumaC.width = 16;
   lumaC.height = 28;
+  presC = document.createElement("canvas");
+  presC.width = 27;
+  presC.height = 48;
   const meta: any = (vrm.meta as any) || {};
   return { warnings, meta: { name: meta.name || meta.title, authors: meta.authors || meta.author, commercial: meta.commercialUsage || meta.commercialUssageName } };
 }
@@ -299,5 +347,7 @@ async function load(s: Spec) {
       expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
   },
   warnings: () => warnings,
+  /** Отладка проверки присутствия: потерять контекст WebGL, как при сбое GPU (render() дальше сообщит lost). */
+  loseGpu: () => gl.forceContextLoss(),
   contact: () => ({ ...contact, hands: hands ? { frames: hands.frames, gaps: hands.gaps, groups: hands.counts(), bad: hands.bad } : null }),
 };
