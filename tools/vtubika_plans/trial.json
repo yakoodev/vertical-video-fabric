@@ -1,6 +1,7 @@
 {
   "id": "trial",
   "title": "Пробная",
+  "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true},
   "script": "D:/vvf-offload/vtubika/scripts_v1.md, раздел 3 (фраза «Делаешь шаг — она шагает» → «Киваешь — она кивает»: героиня сидит)",
   "hero": "alina",
   "look": "cozy",
