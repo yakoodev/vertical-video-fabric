@@ -67,10 +67,13 @@ SFX = {
 
 # Концовка каждой истории (app/vtubika_endcard.py): значок, «vtubika», сайт и слоган сайта — без других обещаний.
 # План: "end_card": false — без неё, dict — поверх. Звук — мягкий стинг паков kenney, музыка затихает под карточкой.
-# Звук карточки — один из стингов END_CARD_STINGS (только курируемые паки kenney и freesound образа сервиса).
+# Звук карточки — один из стингов END_CARD_STINGS: курируемые паки kenney и freesound образа сервиса (``ref``) или
+# свои файлы бренда в репозитории (``path``).
 # Время ``at`` — от начала карточки (отрицательное — звук начинается ещё под концом истории), громкость — после
 # выравнивания эффекта под голос (app.motion_render.effect_volume); громкости подобраны так, что пик мгновенной
 # громкости на карточке ≈ −16 LUFS при ролике −14 LUFS. Сравнение: D:/vvf-offload/vtubika/endcard_sounds.mp4.
+BRAND_SFX = "assets/brand/vtubika/sfx"  # свои звуки бренда, от корня репозитория (tools/vtubika_brand_sfx.py)
+KALIMBA_VOL = 0.6  # пик мгновенной громкости на карточке ≈ −16 LUFS (замер compare3)
 END_CARD_STINGS: dict[str, list[dict]] = {
     # как было: «разворот» + «подтверждение».
     "kenney_classic": [{"ref": "sfx:kenney-interface/maximize_006.ogg", "at": 0.12, "volume": 0.35},
@@ -91,13 +94,23 @@ END_CARD_STINGS: dict[str, list[dict]] = {
                        {"ref": "sfx:kenney-interface/glass_001.ogg", "at": 0.24, "volume": 0.5},
                        {"ref": "sfx:kenney-interface/glass_005.ogg", "at": 0.36, "volume": 0.54},
                        {"ref": "sfx:kenney-interface/glass_004.ogg", "at": 1.0, "volume": 0.56}],
+    # Калимба (выбор владельца — №10 раунда 2): аккорд на появлении значка + один тихий щипок той же калимбы, когда
+    # точка садится на «k». Свои файлы бренда (assets/brand/vtubika/sfx, CC0, LICENSES.md там же). ``cue`` — время
+    # от события анимации; ``at`` — минус удар внутри файла (у аккорда «перебором» — главный удар на 87 мс).
+    # Щипок на 6 дБ тише аккорда по громким 50 мс (у C — на 9 дБ). Сравнение: endcard_stock/compare3.mp4.
+    **{f"kalimba_{v}": [{"path": f"{BRAND_SFX}/kalimba_chord.ogg", "cue": "logo", "at": -0.087, "volume": KALIMBA_VOL},
+                        {"path": f"{BRAND_SFX}/{dot}", "cue": "dot", "at": -hit, "volume": round(KALIMBA_VOL * k, 3)}]
+       # A — нота B4 из того же аккорда (+5 полутонов, E5); B — одиночная нота той же калимбы (G4 +5, C5);
+       # C — A через ФНЧ 3 кГц с быстрым спадом, «тук».
+       for v, dot, hit, k in (("a", "dot_a_note.ogg", 0.009, 0.5), ("b", "dot_b_pluck.ogg", 0.004, 0.5),
+                              ("c", "dot_c_tap.ogg", 0.01, 0.355))},
 }
 
 END_CARD = {
     "duration": 2.8,
     "site": "vtubika.store",
     "slogan": ["Купить VTuber-модель", "с оплатой в рублях"],
-    "sting": "kenney_classic",  # выбор владельца — одна строка: chime_whoosh / cha_ching_soft / riser_glass / glass_arpeggio
+    "sting": "kenney_classic",  # выбор владельца — одна строка: chime_whoosh / … / kalimba_a / kalimba_b / kalimba_c
     "music_fade": 3.2,  # музыка затихает с ~0.4 с до карточки и до её конца
     "crossfade": 0.3,  # последний кадр истории растворяется в карточке (без чёрного кадра между ними)
 }

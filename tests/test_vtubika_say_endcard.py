@@ -158,7 +158,10 @@ def test_end_card_sting_is_one_setting_and_every_option_uses_curated_packs():
     for name, sounds in U.END_CARD_STINGS.items():
         assert 1 <= len(sounds) <= 5, name
         for s in sounds:
-            assert re.fullmatch(r"sfx:(kenney-[a-z]+|freesound)/[\w-]+\.ogg", s["ref"]), s["ref"]
+            if "path" in s:  # свои звуки бренда — только из папки бренда в репозитории
+                assert re.fullmatch(r"assets/brand/vtubika/sfx/[\w-]+\.ogg", s["path"]), s["path"]
+            else:
+                assert re.fullmatch(r"sfx:(kenney-[a-z]+|freesound)/[\w-]+\.ogg", s["ref"]), s["ref"]
             assert -2.5 <= s["at"] <= 1.5 and 0 < s["volume"] <= 1.0, (name, s)
     picked = E.card_sfx({**E.settings({}), "sting": "riser_glass"}, 60.0)
     assert [s["ref"] for s in picked] == [s["ref"] for s in U.END_CARD_STINGS["riser_glass"]]

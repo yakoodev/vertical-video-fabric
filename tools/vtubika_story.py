@@ -249,9 +249,9 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
     from app import vtubika as U
     from app.audio_mix_model import ebur128
     from app.motion import asset_key
-    from app.motion_assets import resolve_pack_ref
     from app.motion_render import build_audio_layers_args, speech_level_db
     from app.stories_3d import voice_lufs
+    from app.vtubika_endcard import sound_path
 
     music = {**U.MUSIC, **(plan.get("music") or {})}
     music_path = Path(music["file"]) if Path(music["file"]).is_absolute() else U.VTUBIKA_DIR / "music" / music["file"]
@@ -273,13 +273,14 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
     else:
         notes.append(f"нет музыки {music_path}")
     for n, s in enumerate(sfx):
-        path = resolve_pack_ref(s["ref"])
+        path = sound_path(s)  # звук пака (ref) или свой файл бренда в репозитории (path)
+        key = s.get("ref") or s.get("path")
         if path is None:
-            notes.append(f"нет звука {s['ref']}")
+            notes.append(f"нет звука {key}")
             continue
-        assets[asset_key(s["ref"])] = str(path)
+        assets[asset_key(key)] = str(path)
         layers.append({"id": f"sfx{n}", "type": "audio", "start": s["t"], "end": round(min(total, s["t"] + 2.5), 3),
-                       "props": {"asset_id": s["ref"], "volume": s["volume"], "mode": "effect"}})
+                       "props": {"asset_id": key, "volume": s["volume"], "mode": "effect"}})
     pre = work / "mixed.mp4"
     args = build_audio_layers_args(video, pre, layers, assets, total, clip_has_audio=False,
                                    speech_db=speech_level_db(narration), notes=notes)
@@ -372,6 +373,43 @@ def render_segment(spec: dict, out: Path, frames: tuple[int, int], gl: str) -> d
         return S3._result(S3._run(args, S3.TIMEOUT_SEC))
 
 
+def endcard_compare(args, plan: dict, built: dict, capped: Path, narration: Path, full: float, lead: float,
+                    music_fade: float | None, work: Path, report: dict) -> None:
+    """Сравнение стингов концовки: то же сведение, другой звук карточки; крупная метка на каждой (``--stings`` —
+    какие, по умолчанию все, кроме прежнего kenney_classic; ``--sting-labels`` — метки, иначе номера)."""
+    from app import vtubika as U
+    from app import vtubika_endcard as E
+    from vtubika_endcard_sounds import compare
+
+    cfg, ec = E.settings(plan), report["end_card"]
+    names = ([n.strip() for n in args.stings.split(",") if n.strip()] if args.stings
+             else [n for n in U.END_CARD_STINGS if n != "kenney_classic"])
+    unknown = [n for n in names if n not in U.END_CARD_STINGS]
+    if unknown:
+        raise SystemExit(f"нет стингов {unknown}: {', '.join(U.END_CARD_STINGS)}")
+    labels = [x.strip() for x in args.sting_labels.split(",")] if args.sting_labels else None
+    marks = {k: ec["start"] + E.cue(k) for k in ("logo", "dot")}
+    report["endcard_sounds"] = {"video": str(Path(args.endcard_sounds)), "levels": compare(
+        names, lambda name, path: mix(plan, capped, narration, built["sfx"] + E.card_sfx({**cfg, "sting": name}, ec["start"]),
+                                      full, path, work, {}, lead, music_fade),
+        ec["start"], ec["duration"], work, Path(args.endcard_sounds), labels=labels, marks=marks)}
+
+
+def endcard_sounds_only(args, plan: dict, built: dict, total: float, narration: Path, lead: float, work: Path,
+                        report: dict) -> int:
+    """``--endcard-sounds-only``: сравнение стингов на готовом ролике из кэша (``work/caps_vrm.mp4`` прошлой сборки) —
+    без рендера VRM, проверок и листов; report.json не перезаписывается."""
+    capped = work / "caps_vrm.mp4"
+    if not capped.is_file():
+        raise SystemExit(f"нет {capped}: сначала полная сборка VRM")
+    capped, full, _sfx, music_fade = end_card(plan, capped, work, total, report)
+    if not report.get("end_card"):
+        raise SystemExit("в плане нет концовки (end_card: false)")
+    endcard_compare(args, plan, built, capped, narration, full, lead, music_fade, work, report)
+    print(json.dumps(report, ensure_ascii=False, indent=1))
+    return 0
+
+
 def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narration: Path, lead: float,
             out_dir: Path, work: Path, report: dict, started: float) -> int:
     """Та же история на VRM-героине: спека node/vrm, рендер одним браузером, проверки касаний/кресла/волос,
@@ -380,6 +418,8 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     from app import vtubika_plan as P
     from app.vtubika_vrm import to_vrm_spec
 
+    if args.endcard_sounds_only:
+        return endcard_sounds_only(args, plan, built, total, narration, lead, work, report)
     spec = to_vrm_spec(plan, built, words, total)
     spec_path = work / "scene_vrm.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
@@ -425,17 +465,7 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     final = out_dir / f"{args.name}.mp4"
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
     if args.endcard_sounds and report.get("end_card"):
-        # Сравнение стингов концовки: то же сведение, другой звук карточки; крупный номер на каждой.
-        from app import vtubika as U
-        from app import vtubika_endcard as E
-        from vtubika_endcard_sounds import compare
-
-        cfg, ec = E.settings(plan), report["end_card"]
-        names = [n for n in U.END_CARD_STINGS if n != "kenney_classic"]
-        report["endcard_sounds"] = {"video": str(Path(args.endcard_sounds)), "levels": compare(
-            names, lambda name, path: mix(plan, capped, narration, built["sfx"] + E.card_sfx({**cfg, "sting": name}, ec["start"]),
-                                          full, path, work, {}, lead, music_fade),
-            ec["start"], ec["duration"], work, Path(args.endcard_sounds))}
+        endcard_compare(args, plan, built, capped, narration, full, lead, music_fade, work, report)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
@@ -468,7 +498,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="vrm — героиня VRM «под 2D-аниме» (node/vrm, app/vtubika_vrm.py)")
     ap.add_argument("--vrm-packs", default=r"D:\vvf-offload\vtubika\vrm\vendor", help="модель VRM и клипы мокапа")
     ap.add_argument("--endcard-sounds", help="VRM: ещё и сравнение стингов концовки (mp4 с номерами вариантов)")
+    ap.add_argument("--endcard-sounds-only", action="store_true",
+                    help="только сравнение стингов на ролике из кэша work (без рендера VRM)")
+    ap.add_argument("--stings", help="стинги для сравнения через запятую (END_CARD_STINGS), по умолчанию все новые")
+    ap.add_argument("--sting-labels", help="крупные метки вариантов через запятую (A,B,C), иначе номера")
     args = ap.parse_args(argv)
+    if args.endcard_sounds_only and not (args.endcard_sounds and args.engine == "vrm"):
+        ap.error("--endcard-sounds-only — вместе с --endcard-sounds OUT.mp4 и --engine vrm")
     if Path(args.env).is_file():
         load_env(Path(args.env))
     main_root = ROOT.parent.parent.parent if ".claude" in str(ROOT) else ROOT
