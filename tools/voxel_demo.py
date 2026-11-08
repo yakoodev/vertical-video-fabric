@@ -50,7 +50,7 @@ WORDS = [
 
 # Звуки — записи пака freesound (CC0), громкость здесь.
 SFX = [
-    ("sfx:freesound/whoosh-2.ogg", 2.55, 0.35), ("sfx:freesound/ding.ogg", 2.75, 0.55),
+    ("sfx:freesound/whoosh-soft.ogg", 2.55, 0.35), ("sfx:freesound/pop-soft.ogg", 2.75, 0.55),
     ("sfx:freesound/pop.ogg", 3.1, 0.45), ("sfx:freesound/pop.ogg", 3.45, 0.45), ("sfx:freesound/pop.ogg", 3.8, 0.45),
     ("sfx:freesound/pop.ogg", 4.15, 0.45), ("sfx:freesound/whoosh-3.ogg", 4.95, 0.35),
     ("sfx:freesound/record-scratch.ogg", 5.25, 0.5), ("sfx:freesound/whoosh-1.ogg", 7.35, 0.35),
