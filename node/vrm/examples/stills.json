@@ -1,0 +1,406 @@
+{
+  "width": 1080,
+  "height": 1920,
+  "model": "VRM1_Constraint_Twist_Sample.vrm",
+  "look": {
+    "outline": 0.0034,
+    "shade": "#a28ad6",
+    "toony": 0.97,
+    "shift": -0.05,
+    "rim": "#ff8fd0",
+    "rimPower": 4,
+    "tint": {
+      "Tops": "#8e86c8"
+    }
+  },
+  "stream": {
+    "title": "ночной стрим",
+    "uptime": 11520,
+    "avatars": [
+      {
+        "t": 0,
+        "kind": "hoodie"
+      }
+    ],
+    "viewers": [
+      {
+        "t": 0,
+        "value": 3,
+        "label": "3 зрителя"
+      }
+    ],
+    "chat": [
+      {
+        "t": -9,
+        "user": "nochnoy_dozor",
+        "color": "#7ad8ff",
+        "text": "привет"
+      },
+      {
+        "t": -7,
+        "user": "pelmen_404",
+        "color": "#ffd36a",
+        "text": "го катку"
+      },
+      {
+        "t": -5,
+        "user": "kotik_mur",
+        "color": "#ff8ac8",
+        "text": "ты чего не спишь"
+      },
+      {
+        "t": -3,
+        "user": "lapsha_v_3_nochi",
+        "color": "#8dffb0",
+        "text": "это я каждое утро"
+      }
+    ]
+  },
+  "shots": [
+    {
+      "name": "1_close_tired",
+      "pose": "tired",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.42,
+            -0.02,
+            2.6
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            -0.03,
+            -0.06,
+            0
+          ]
+        },
+        "fov": 9.5
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 60,
+        "dy": -60,
+        "zoom": 1.25,
+        "cup": [
+          690,
+          1330,
+          1.25
+        ]
+      },
+      "props": {
+        "desk": {
+          "y": 0.99,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          -0.4,
+          0.5,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fillPower": 0.75,
+        "fill": "#7a64b8"
+      }
+    },
+    {
+      "name": "2_medium_typing",
+      "pose": "typing",
+      "cam": {
+        "pos": [
+          0.35,
+          1.85,
+          3.4
+        ],
+        "target": [
+          0,
+          1.2,
+          0.25
+        ],
+        "fov": 17
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 40,
+        "dy": -80,
+        "zoom": 1.0
+      },
+      "props": {
+        "desk": {
+          "y": 0.99,
+          "z": 0.22
+        },
+        "keyboard": {
+          "pos": [
+            0,
+            1.001,
+            0.4
+          ]
+        },
+        "mouse": {
+          "pos": [
+            0.36,
+            1.005,
+            0.42
+          ]
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0,
+          0.8,
+          1
+        ],
+        "keyColor": "#f2ecff",
+        "keyPower": 2.1,
+        "fillPower": 0.75,
+        "fill": "#7a64b8"
+      }
+    },
+    {
+      "name": "3_yawn",
+      "pose": "yawn",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.3,
+            0.05,
+            2.9
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.16,
+            0
+          ]
+        },
+        "fov": 15
+      },
+      "plate": {
+        "kind": "front",
+        "dx": 0,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 0.99,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0.3,
+          0.6,
+          1
+        ],
+        "keyPower": 2.1,
+        "fillPower": 0.75,
+        "keyColor": "#f2ecff",
+        "fill": "#7a64b8"
+      }
+    },
+    {
+      "name": "4_wave_smile",
+      "pose": "wave",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            -0.2,
+            0.0,
+            3.1
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            -0.1,
+            -0.17,
+            0
+          ]
+        },
+        "fov": 16
+      },
+      "plate": {
+        "kind": "front",
+        "dx": -60,
+        "dy": -40,
+        "zoom": 1.05
+      },
+      "props": {
+        "desk": {
+          "y": 0.99,
+          "z": 0.22
+        },
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          -0.2,
+          0.6,
+          1
+        ],
+        "keyPower": 2.1,
+        "fillPower": 0.75,
+        "keyColor": "#f2ecff",
+        "fill": "#7a64b8"
+      }
+    },
+    {
+      "name": "5_ots_monitor",
+      "pose": "typing",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            -0.85,
+            0.5,
+            -0.9
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0.25,
+            -0.15,
+            0.4
+          ]
+        },
+        "fov": 28
+      },
+      "plate": {
+        "kind": "ots",
+        "cx": 735,
+        "cy": 1060,
+        "zoom": 2.2,
+        "charBlur": 1.2,
+        "bloom": 0.3,
+        "anchor": {
+          "bone": {
+            "bone": "head"
+          },
+          "at": [
+            560,
+            1390
+          ]
+        }
+      },
+      "props": {},
+      "light": {
+        "key": [
+          0,
+          0.3,
+          1
+        ],
+        "keyColor": "#bcd4ff",
+        "keyPower": 1.7,
+        "fill": "#4a3c8a",
+        "fillPower": 0.75
+      }
+    },
+    {
+      "name": "6_wide_room",
+      "pose": "typing",
+      "cam": {
+        "pos": {
+          "bone": "head",
+          "add": [
+            0.6,
+            2.2,
+            -13
+          ]
+        },
+        "target": {
+          "bone": "head",
+          "add": [
+            0,
+            -0.4,
+            0
+          ]
+        },
+        "fov": 14
+      },
+      "plate": {
+        "kind": "wide",
+        "cx": 720,
+        "cy": 1300,
+        "zoom": 0.84,
+        "anchor": {
+          "bone": {
+            "bone": "head"
+          },
+          "at": [
+            640,
+            1170
+          ]
+        }
+      },
+      "props": {
+        "chair": {
+          "pos": [
+            0,
+            0.88,
+            -0.2
+          ],
+          "h": 0.56,
+          "w": 0.6
+        }
+      },
+      "light": {
+        "key": [
+          0,
+          0.3,
+          1
+        ],
+        "keyColor": "#bcd4ff",
+        "keyPower": 1.24,
+        "fill": "#4a3c8a",
+        "fillPower": 0.75
+      }
+    }
+  ]
+}
