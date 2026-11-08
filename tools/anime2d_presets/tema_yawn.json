@@ -1,0 +1,199 @@
+{
+  "id": "tema_yawn",
+  "title": "Витубика, история 2 «Без лица»: Тёма зевает вместе с аватаром (AI-картинки + 2D-анимация кодом)",
+  "notes": [
+    "Первый пресет способа «AI-аниме 2D» (08.11.2026). Владелец для историй Витубики выбрал кодовую графику, этот способ сохранён как пресет и воркфлоу для других проектов.",
+    "Потрачено 39 ₽ (10 картинок, одна из них забракована). Баланс Polza 122.56 → 83.56.",
+    "Картинки лежат в paths.src; результаты Polza живут 7 дней, поэтому файлы скачаны сразу.",
+    "Подробности способа — docs/workflows/ai-anime-2d.md."
+  ],
+  "output": {"width": 1080, "height": 1920, "fps": 30, "duration": 9.6, "still": 4.5, "sheet": [12, 4]},
+  "paths": {
+    "src": "D:/vvf-offload/vtubika/2d/ai_src",
+    "out": "D:/vvf-offload/vtubika/2d",
+    "spend_log": "D:/vvf-offload/vtubika/2d/ai_spend.log"
+  },
+  "generation": {
+    "model": "google/gemini-nano-banana-2.1",
+    "price_rub": {"1K": 3.0, "2K": 4.5},
+    "container": "vertical-video-fabric-app-1",
+    "style": "TV anime style (clean thin line art, flat cel shading with one shadow tone, soft colors)",
+    "images": [
+      {
+        "id": "sheet", "file": "01_sheet.png", "role": "sheet", "res": "1K", "ar": "16:9", "refs": [],
+        "prompt": "Anime character reference sheet, modern Japanese TV anime style (slice-of-life, clean thin line art, flat cel shading with one shadow tone, soft colors). Character: Tyoma, a tired Russian guy around 22 years old, messy dark brown hair with bangs, slim, wearing a plain heather-grey hoodie with drawstrings, black over-ear gaming headphones on his head. Tired look: half-closed heavy eyelids, visible dark circles under the eyes, slightly slouched. Layout on a plain light grey background: left side full-body turnaround (front, three-quarter, side); right side a grid of 6 head close-ups with expressions: neutral tired, eyes closed, big anime yawn with mouth wide open and eyes squeezed shut, soft shy smile, surprised, blink half-closed. Consistent design across all views. No text, no labels, no watermark."
+      },
+      {
+        "id": "room", "file": "02_bg_room.png", "role": "background", "res": "2K", "ar": "9:16", "refs": ["sheet"],
+        "prompt": "Anime background art in the same TV anime style as the reference image (clean line art, painted cel-style background like a modern slice-of-life anime), vertical 9:16. NO people, NO characters. Interior of a small cramped bedroom of a young streamer at night, seen at seated eye level looking toward the back wall: a large window with the night city outside (apartment blocks with many lit yellow windows, a distant TV tower with red lights, dark blue sky), thin curtains, anime and game posters taped on the wall, a shelf with a few figurines and a small plant, a string of warm fairy lights along the wall, an unmade bed with a rumpled dark blue blanket on the right side, a hoodie thrown on the bed. The room is dark and lit mainly by cool cyan-blue monitor glow coming from the viewer's side and violet city light from the window. Cozy, lonely late-night mood. The lower 40 percent of the image is the dim back of the room and floor, simple, without important details. No text, no watermark."
+      },
+      {
+        "id": "tema", "file": "03_tema_base.png", "role": "character", "res": "2K", "ar": "9:16", "refs": ["sheet"],
+        "prompt": "Same character Tyoma from the reference sheet (messy dark brown hair, black over-ear headphones on his head, heather-grey hoodie with white drawstrings), same TV anime style with clean line art and cel shading. Vertical 9:16 medium close-up shot: he sits at his computer at night and looks slightly down-left past the viewer at his monitor, head and shoulders and upper chest visible, body cut off by the bottom edge of the image, shoulders relaxed and slightly slouched, arms down out of frame. Expression: exhausted, heavy half-closed eyelids, dark circles under the eyes, mouth closed and neutral. His face and front are lit by cool cyan-blue monitor light, with a soft violet rim light on hair and shoulders from behind. The top of his hair is at about 20 percent from the top of the image, his head is horizontally centered, leave empty space around the hair. Background: perfectly flat solid pure chroma green #00FF00 everywhere around him, no shadows, no gradient, no floor, no props, no green tint on the character. No text."
+      },
+      {
+        "id": "tema_blink", "file": "04_tema_blink.png", "role": "variant", "edit_of": "tema", "res": "2K", "ar": "9:16", "refs": ["tema"],
+        "prompt": "Edit this image. Keep EVERYTHING exactly identical: same drawing, same pose, same framing, same position and size of the head and body, same hair strands, same headphones, same hoodie, same lighting and colors, same flat pure green #00FF00 background. Change ONLY the eyes: both eyes fully closed, relaxed closed eyelids drawn as soft curved lines with lashes, dark circles still visible under them. Nothing else changes."
+      },
+      {
+        "id": "tema_yawn", "file": "06_tema_yawn2.png", "role": "variant", "edit_of": "tema", "res": "2K", "ar": "9:16", "refs": ["tema", "sheet"],
+        "prompt": "Edit the FIRST image. Keep EVERYTHING exactly identical: same drawing, same pose, same framing, same position and size of the head and body, same hair strands, same headphones, same hoodie, same cyan monitor lighting and colors, same flat pure green #00FF00 background. Change ONLY the facial expression to a sleepy, relaxed big yawn exactly like the yawning head in the second image (middle row, left): eyebrows relaxed and curved UP in a soft sleepy way (not angry, not frowning), eyes closed as soft curved lines, mouth open wide in a tall rounded vertical oval, a tiny tear at the eye corner. A drowsy, peaceful yawn, not shouting. The head stays in exactly the same place and size. Nothing else changes.",
+        "rejected": [
+          {
+            "file": "05_tema_yawn.png", "rub": 4.5, "refs": ["tema"],
+            "prompt": "Edit this image. Keep EVERYTHING exactly identical: same drawing, same pose, same framing, same position and size of the head and body, same hair strands, same headphones, same hoodie, same lighting and colors, same flat pure green #00FF00 background. Change ONLY the facial expression: a huge comedic anime yawn - mouth stretched wide open in a tall oval showing the dark mouth, tongue and upper teeth, eyes squeezed tightly shut as curved lines, eyebrows raised, a small tear at the corner of one eye. The head stays in exactly the same place and size. Nothing else changes.",
+            "why": "Вышел крик, а не зевок: брови домиком-«злостью», зажмуренные глаза, рот как при крике. Помогло: зевающая голова с листа персонажа вторым референсом и слова «sleepy, relaxed, eyebrows curved UP, not angry, not shouting»."
+          }
+        ]
+      },
+      {
+        "id": "tema_smile", "file": "07_tema_smile.png", "role": "variant", "edit_of": "tema", "res": "2K", "ar": "9:16", "refs": ["tema"],
+        "prompt": "Edit this image. Keep EVERYTHING exactly identical: same drawing, same pose, same framing, same position and size of the head and body, same hair strands, same headphones, same hoodie, same cyan monitor lighting and colors, same flat pure green #00FF00 background. Change ONLY the facial expression: a warm, surprised-happy soft smile - eyes more open and shining with small highlights, eyebrows lifted gently, a light pink blush on the cheeks, mouth in a gentle closed smile with corners up. Dark circles stay faintly. The head stays in exactly the same place and size. Nothing else changes."
+      },
+      {
+        "id": "avatar", "file": "08_avatar.png", "role": "avatar", "res": "1K", "ar": "1:1", "refs": ["sheet"],
+        "prompt": "A VTuber Live2D-style anime avatar model based on the character from the reference sheet, but idealized and well-rested: same messy dark brown hair with bangs (a bit glossier), same heather-grey hoodie with white drawstrings, black over-ear headphones with glowing cyan accent lights, big bright sparkling eyes with highlights, healthy skin, no dark circles, gentle friendly smile with mouth closed. Polished VTuber model rendering: clean thick outlines, soft cel shading, bright saturated colors. Facing the viewer straight on, head and shoulders and upper chest, centered, the head in the upper middle of the image. Background: perfectly flat solid pure chroma green #00FF00, no shadows, no gradient. No text."
+      },
+      {
+        "id": "avatar_yawn", "file": "09_avatar_yawn.png", "role": "variant", "edit_of": "avatar", "res": "1K", "ar": "1:1", "refs": ["avatar"],
+        "prompt": "Edit this image. Keep EVERYTHING exactly identical: same drawing, same pose, same framing, same position and size of the head and body, same hair, same headphones, same hoodie, same colors, same flat pure green #00FF00 background. Change ONLY the facial expression: a cute sleepy big yawn - eyebrows relaxed and curved up, eyes closed as soft curved lines, mouth open wide in a tall rounded vertical oval, a tiny tear at one eye corner. The head stays in exactly the same place and size. Nothing else changes."
+      },
+      {
+        "id": "desk", "file": "10_bg_desk.png", "role": "background", "res": "1K", "ar": "9:16", "refs": ["room"],
+        "prompt": "Anime background art in the same TV anime style as the reference image (clean line art, painted cel-style background of a slice-of-life anime), vertical 9:16, same bedroom at night as in the reference. NO people. View from the chair toward the computer desk: one large widescreen monitor seen perfectly straight-on and centered, filling most of the width in the upper-middle of the image, its screen is a completely blank flat uniform dark grey rectangle (nothing displayed); a small webcam on top of the monitor with a yellow sticky note covering its lens; on the desk below: a mechanical keyboard with soft rainbow RGB glow, a mouse, an instant noodle cup with chopsticks sticking out (front left), an energy drink can, tangled cables; a desk lamp turned off; the wall behind has taped posters and warm fairy lights. Dark room, cool blue light. No text, no watermark.",
+        "note": "Модель нарисовала на стакане настоящий бренд «CUP NOODLE» — закрыт кодовой этикеткой (patches). В новых промптах писать «plain unbranded cup, no logos»."
+      }
+    ]
+  },
+  "patches": [
+    {
+      "image": "desk", "type": "label", "rect": [104, 1041, 178, 1096],
+      "text": "ЛАПША", "font": "Rubik-Black.ttf", "size": 16,
+      "color": [150, 62, 66], "sub": "острая", "sub_size": 8, "soften": 0.6,
+      "why": "модель нарисовала настоящий бренд «CUP NOODLE» — закрыт своей этикеткой кодом, без новой картинки"
+    }
+  ],
+  "scene": {
+    "world": [1536, 2752],
+    "background": {
+      "image": "room", "scale": 0.5, "blur": 3.0, "parallax": 0.45, "light_gain": [0.92, 0.08],
+      "twinkle": {"reach": 19, "gain": 0.8, "glow": [[3.5, 1.3], [10, 0.9]], "color": [1.0, 0.6, 0.3]}
+    },
+    "character": {
+      "image": "tema", "box": [420, 960, 1140, 1740],
+      "variants": [
+        {"name": "smile", "image": "tema_smile", "ellipse": [[760, 1290], [285, 250], 60]},
+        {"name": "yawn", "image": "tema_yawn", "ellipse": [[755, 1365], [305, 330], 70]},
+        {"name": "blink", "image": "tema_blink", "ellipse": [[760, 1245], [260, 105], 45]}
+      ],
+      "blink_variant": "blink",
+      "jaw": {"variant": "yawn", "pivot_y": 1425},
+      "body": {"pivot": [765, 1640], "neck_y": 1665, "neck_soft": 85, "floor_y": 2540, "shoulders": 0.5},
+      "light": {"center": [700, 1300], "sigma": [520, 700], "amp": 0.8, "floor": 0.2}
+    },
+    "avatar": {
+      "image": "avatar", "box": [250, 200, 780, 760],
+      "variants": [
+        {"name": "yawn", "image": "avatar_yawn", "ellipse": [[512, 470], [205, 220], 40]},
+        {"name": "blink", "image": "avatar_yawn", "ellipse": [[512, 402], [180, 62], 26]}
+      ],
+      "jaw_pivot_y": 452,
+      "frame": {"height_px": 780, "center": [512, 560], "bob": [6, 2.1], "sway": [1.2, 1.3], "follow": [1.5, 0.6, 1.3]}
+    },
+    "foreground": {"desk_edge": {"size": [1600, 420], "top": 40, "parallax": 1.35, "place": [2.0, -830, 2440]}},
+    "screen_plate": {
+      "image": "desk", "scale": 0.5, "screen": [116, 534, 657, 844],
+      "dof": {"near_y": 900, "near_ramp": 180, "far_y": 480, "far_ramp": 300, "far_amount": 0.6, "blur": 4.0}
+    },
+    "dust": {"n": 44, "seed": 11, "shift": 0.4, "front_shift": 1.5},
+    "post": {"vignette": [0.62, 0.6, 0.55, 0.55], "grain": {"amount": 0.012, "frames": 4, "seed": 5}}
+  },
+  "acting": {
+    "breath": {"amp": 0.0065, "period": 3.3},
+    "sway": {"rot": [0.7, 0.6, 1.0], "dx": [3.0, 0.5, 4.0]},
+    "blinks": [0.55, 2.75, 6.0, 8.95],
+    "flicker": {"amp": 0.035, "f1": 11.3, "f2": 3.7, "noise": 0.02, "noise_speed": 4, "noise_seed": 9},
+    "jaw": {"keys": [[3.6, 0.8], [3.9, 1.0], [4.7, 1.07], [5.14, 0.9]], "tremble": [0.012, 17]},
+    "segments": [
+      {
+        "until": 3.0, "what": "клюёт носом и вздрагивает",
+        "dy": [[1.35, 0], [2.2, 17], [2.3, 17], [2.4, -8], [2.65, 0]],
+        "rot": [[1.35, 0], [2.2, -1.6], [2.3, -1.6], [2.42, 0.6], [2.7, 0]],
+        "faces": [["blink", 1.93, 2.33]]
+      },
+      {
+        "until": 6.2, "what": "вдох, зевок (глаза закрываются раньше рта), выдох",
+        "faces": [["yawn", 3.6, 5.14], ["blink", 3.52, 3.6], ["blink", 5.14, 5.4]],
+        "rot": [[3.15, 0], [3.6, -2.4], [4.6, -3.6], [5.1, -3.0], [5.38, 0.9], [5.65, -0.3], [5.9, 0]],
+        "tremble": {"variant": "yawn", "amp": 0.35, "freq": 21},
+        "dy": [[3.15, 0], [3.62, -18], [4.8, -24], [5.15, -12], [5.42, 7], [5.7, 0]],
+        "breath": [[3.15, 0], [3.62, 0.017], [5.0, 0.02], [5.4, -0.005], [5.85, 0]]
+      },
+      {
+        "until": 99, "what": "моргает и улыбается",
+        "faces": [["smile", 8.08, 99], ["blink", 8.01, 8.08]],
+        "rot": [[7.9, -0.4], [8.05, -0.4], [8.45, 2.0], [9.6, 1.4]],
+        "dy": [[8.0, 0], [8.18, -10], [8.5, -3]]
+      }
+    ],
+    "tint": [
+      {"rgb": [0.02, 0.07, 0.1], "env": [3.12, 3.2, 3.25, 3.6]},
+      {"rgb": [0.10, 0.03, 0.07], "from": 7.9, "ramp": 0.3, "wobble": [0.8, 0.2, 7]}
+    ]
+  },
+  "camera_noise": {"x": [0.45, 2.0], "y": [0.38, 7.0]},
+  "shots": [
+    {
+      "kind": "character", "t0": 0.0, "t1": 3.0, "what": "Тёма устало смотрит в монитор",
+      "camera": {"x": 768, "y": [[0, 1380], [3, 1335]], "z": [[0, 1.0], [3, 1.085]], "shake": [6, 5]},
+      "overlays": [{"type": "hud", "label": "ЗРИТЕЛЕЙ", "value": "3", "size": 30, "at": [40, 110]}]
+    },
+    {
+      "kind": "character", "t0": 3.0, "t1": 6.2, "what": "зевок, аватар в карточке эфира зевает следом",
+      "camera": {"x": 760, "y": [[3, 1300], [4.4, 1275], [6.2, 1285]], "z": [[3.0, 1.30], [3.55, 1.31], [4.3, 1.39], [6.2, 1.41]], "shake": [5, 4]},
+      "overlays": [
+        {"type": "stream_card", "appear": 3.12, "pop": 0.38, "size": [400, 330], "center": [838, 318],
+         "viewers": 3, "title": "ночной стрим · Тёма", "lag": 0.1},
+        {"type": "hud", "label": "ЗРИТЕЛЕЙ", "value": "3", "size": 30, "at": [40, 110]}
+      ]
+    },
+    {
+      "kind": "screen", "t0": 6.2, "t1": 7.9, "what": "монитор: чат и счётчик зрителей",
+      "camera": {"x": 773.0, "y": 1408.0, "z": [[6.2, 1.2], [6.75, 1.27], [7.9, 1.47]],
+                 "x_add": [[6.2, 0], [6.75, 20], [7.9, 165]], "noise": {"x": [6, 0.5, 3.0], "y": [5, 0.4, 5.0]}},
+      "ui": {
+        "title": "ночной стрим · Тёма",
+        "viewers": {"from": 3, "to": 41, "t0": 6.5, "t1": 7.55},
+        "plus": {"t": 6.55, "value": 38},
+        "chat": [
+          {"t": 0.0, "user": "nochnoy_dozor", "color": [126, 224, 255], "text": "привет, тём"},
+          {"t": 0.0, "user": "pelmen_404", "color": [255, 211, 92], "text": "го катку"},
+          {"t": 0.0, "user": "kot_v_kepke", "color": [255, 138, 216], "text": "покажи лицо"},
+          {"t": 6.35, "user": "pelmen_404", "color": [255, 211, 92], "text": "ОН ЗЕВАЕТ", "big": true},
+          {"t": 6.9, "user": "zhenya_ok", "color": [46, 232, 111], "text": "это я каждое утро", "big": true},
+          {"t": 7.35, "user": "kot_v_kepke", "color": [255, 138, 216], "text": "зевни ещё"},
+          {"t": 7.65, "user": "nochnoy_dozor", "color": [126, 224, 255], "text": "ещё раз!!"}
+        ],
+        "avatar": {"rot_amp": 0.8, "rot_freq": 1.6, "zoom": 1.08, "blinks": [6.75, 7.6]},
+        "glow": [0.55, 0.1, 9],
+        "dust": [0.8, 0.5]
+      }
+    },
+    {
+      "kind": "character", "t0": 7.9, "t1": 9.6, "what": "Тёма улыбается",
+      "camera": {"x": 748, "y": 1315, "z": [[7.9, 1.16], [9.6, 1.25]], "shake": [5, 4]},
+      "overlays": [{"type": "hud", "label": "ЗРИТЕЛЕЙ", "value": "41", "size": 30, "at": [40, 110]}]
+    }
+  ],
+  "captions": {
+    "style": "stories",
+    "words": [
+      ["Эфир.", 0.25, 0.85], ["Третий", 0.9, 1.3], ["час", 1.3, 1.65], ["ночи.", 1.65, 2.7],
+      ["Ты", 3.25, 3.55], ["зеваешь", 3.55, 4.3], ["—", 4.3, 4.45], ["он", 4.45, 4.75], ["зевает.", 4.75, 5.9],
+      ["Чат:", 6.3, 6.75], ["«ОН", 6.75, 7.05], ["ЗЕВАЕТ»,", 7.05, 7.75],
+      ["«это", 7.95, 8.2], ["я", 8.2, 8.35], ["каждое", 8.35, 8.75], ["утро».", 8.75, 9.5]
+    ],
+    "highlight": {"ночи.": "#ff9a3d", "зевает.": "#6fd3ff", "ЗЕВАЕТ»,": "#ffd35c", "утро».": "#ffd35c"}
+  },
+  "music": {"file": "D:/vvf-offload/vtubika/music/chill-keys.mp3", "volume": 0.55, "fade_in": 0.4, "fade_out": 1.2}
+}
