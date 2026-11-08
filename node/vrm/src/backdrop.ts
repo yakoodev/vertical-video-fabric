@@ -30,6 +30,9 @@ export interface PlateSpec {
   /** ots / wide: кость героя (точка) попадает в точку мира set.ts. */
   anchor?: { bone: Point; at: [number, number] };
   bloom?: number;
+  /** Монитор на переднем плане (спиной к нам, размыт): верх его корпуса — y кадра, x — центр. Прячет руки на
+   * клавиатуре, как в настоящих эфирах: в кадре лицо и плечи, руки — за монитором. */
+  fgMonitor?: { y: number; x?: number; w?: number };
 }
 
 type G = CanvasRenderingContext2D;
@@ -118,6 +121,7 @@ export class Backdrop {
   drawFront(g: G, p: PlateSpec, t: number) {
     const { W, H } = this;
     if (p.kind === "flat") return;
+    if (p.fgMonitor) this.monitorBack(g, p.fgMonitor, t);
     if (p.cup) {
       const [x, y, k] = p.cup;
       g.save();
@@ -129,6 +133,32 @@ export class Backdrop {
     }
     if (p.kind !== "wide") drawShafts(g, W, H, t + 3, 0.3);
     drawDust(g, this.room, W, H, t);
+  }
+
+  /** Спина монитора крупно на переднем плане: тёмный корпус с закруглением, контровой свет экрана по краю. */
+  private monitorBack(g: G, m: { y: number; x?: number; w?: number }, t: number) {
+    const { W, H } = this;
+    const w = m.w ?? W * 1.25, x0 = (m.x ?? W / 2) - w / 2, y0 = m.y;
+    g.save();
+    g.filter = "blur(7px)";
+    // Ореол экрана за краем корпуса (экран светит на героиню).
+    g.globalCompositeOperation = "lighter";
+    glow(g, x0 + w / 2, y0 + 10, w * 0.55, 70, "#9cc4ff", 0.35 + 0.05 * Math.sin(t * 2.1));
+    g.globalCompositeOperation = "source-over";
+    const gr = g.createLinearGradient(0, y0, 0, H);
+    gr.addColorStop(0, "#221a3c");
+    gr.addColorStop(0.25, "#120e22");
+    gr.addColorStop(1, "#0a0816");
+    g.fillStyle = gr;
+    g.beginPath();
+    g.roundRect(x0, y0, w, H - y0 + 60, 46);
+    g.fill();
+    // Блик по верхней кромке и тонкая полоса LED.
+    g.fillStyle = "rgba(190,170,255,0.35)";
+    g.fillRect(x0 + 40, y0 + 6, w - 80, 5);
+    g.fillStyle = "rgba(255,90,190,0.55)";
+    g.fillRect(x0 + 60, y0 + 34, w - 120, 4);
+    g.restore();
   }
 
   /** Пост: мягкое свечение только ярких мест (экраны, огни), виньетка, лиловая дымка, зерно. */

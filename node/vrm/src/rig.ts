@@ -33,6 +33,20 @@ export interface ArmSpec {
   poleWeight?: number;
   /** Дополнительный подъём ключицы (градусы). */
   shrug?: number;
+  /** Вес IK против того, что уже стоит (мокап): 1 — только IK, 0 — только мокап. */
+  weight?: number;
+  /** Кончики пальцев ложатся на поверхность (клавиши): кисть и опускается, и поднимается до касания. */
+  touch?: boolean;
+  /** Служебное (подъём кисти над поверхностью): не трогать пальцы и ключицу. */
+  keepFingers?: boolean;
+  noShoulder?: boolean;
+}
+
+/** Поза пальцев одной кисти (без точки кисти): пресет пальцев поверх мокапа или IK. */
+export interface FingerSpec {
+  curl?: number | number[];
+  spread?: number;
+  thumbOut?: number;
 }
 
 export interface PoseSpec {
@@ -46,6 +60,22 @@ export interface PoseSpec {
   expr?: Record<string, number>;
   /** Куда смотрят глаза (точка) или null. */
   look?: Point | null;
+  /** Мокап: кость → локальный поворот [x, y, z, w] в осях модели (до углов bones — они добавляются сверху). */
+  mocap?: Record<string, number[]>;
+  /** Пальцы кистей, которые ведёт мокап (у рук с IK пальцы — в ArmSpec). */
+  hands?: { left?: FingerSpec; right?: FingerSpec };
+  /** Поверхности, сквозь которые нельзя пальцам (стол, клавиатура): кисть приподнимается. */
+  surfaces?: Surface[];
+}
+
+/** Горизонтальная поверхность: высота и прямоугольник в плане (x, z). */
+export interface Surface {
+  name: string;
+  y: number;
+  x0: number;
+  x1: number;
+  z0: number;
+  z1: number;
 }
 
 const D = Math.PI / 180;
@@ -126,10 +156,20 @@ export class Rig {
     this.resolved = {};
     const hips = this.node("hips");
     if (hips && p.hips) hips.position.add(new THREE.Vector3(...p.hips));
+    for (const [name, q] of Object.entries(p.mocap || {})) {
+      const o = this.node(name);
+      if (o) o.quaternion.copy(this.conj(new THREE.Quaternion(q[0], q[1], q[2], q[3])));
+    }
     for (const [name, deg] of Object.entries(p.bones || {})) this.euler(name, deg);
     this.update();
     if (p.left) this.arm(1, p.left);
     if (p.right) this.arm(-1, p.right);
+    if (p.hands?.left) this.fingers(1, p.hands.left as ArmSpec);
+    if (p.hands?.right) this.fingers(-1, p.hands.right as ArmSpec);
+    if (p.surfaces?.length) {
+      this.keepAbove(1, p.surfaces, p.left);
+      this.keepAbove(-1, p.surfaces, p.right);
+    }
     const em = this.vrm.expressionManager;
     if (em) {
       for (const e of em.expressions) em.setValue(e.expressionName, 0);
@@ -150,9 +190,12 @@ export class Rig {
   arm(side: 1 | -1, a: ArmSpec) {
     const pre = side > 0 ? "left" : "right";
     const up = this.node(`${pre}UpperArm`)!, lo = this.node(`${pre}LowerArm`)!, hand = this.node(`${pre}Hand`)!;
+    const shNode = this.node(`${pre}Shoulder`);
+    const w = a.weight ?? 1;
+    const before = w < 1 ? [shNode, up, lo, hand].map((o) => o?.quaternion.clone()) : null;
     const T = this.point(a.target);
     // Ключица: подъём на треть от возвышения руки выше 15°, до 16°.
-    const sh = this.node(`${pre}Shoulder`);
+    const sh = a.noShoulder ? null : this.node(`${pre}Shoulder`);
     if (sh) {
       const S0 = this.pos(`${pre}UpperArm`);
       const v = T.clone().sub(S0);
@@ -224,7 +267,12 @@ export class Rig {
     this.setWorld(hand, basis(fingers || best.loDir, palm).multiply(handRest.invert()));
     this.hands[pre] = { pos: W.clone(), fingers: (fingers || best.loDir).clone(), palm: palm.clone() };
     this.resolved[pre] = { T: T.toArray() as V3, P: P.toArray() as V3 };
-    this.fingers(side, a);
+    if (before) {
+      // Смешать с тем, что стояло (мокап): локальные повороты от плеча к кисти.
+      [shNode, up, lo, hand].forEach((o, i) => o && before[i] && o.quaternion.copy(before[i]!.clone().slerp(o.quaternion, w)));
+      this.update();
+    }
+    if (!a.keepFingers) this.fingers(side, a);
     const flex = Math.acos(Math.max(-1, Math.min(1, best.upDir.dot(best.loDir))));
     this.info[pre] = { flex: Math.round(flex / D), roll: Math.round(best.roll / D), short: Math.round(Math.max(0, dMin - dist) * 1000) };
   }
@@ -249,8 +297,10 @@ export class Rig {
       segs.forEach((s, j) => {
         const o = this.node(`${pre}${f}${s}`);
         if (!o) return;
-        // Сгиб к ладони (-Y) — поворот вокруг Z; развод — вокруг Y (только основание).
-        const ang = k * [70, 95, 60][j] * D;
+        // Сгиб к ладони (-Y) — поворот вокруг Z; развод — вокруг Y (только основание). Пределы суставов:
+        // основание до 75°, средний сустав до 95°, концевой — 0.65 среднего (сухожилия сгибают их вместе).
+        const kk = Math.max(0, Math.min(1, k));
+        const ang = [kk * 75, kk * 95, kk * 95 * 0.65][j] * D;
         o.quaternion.copy(this.conj(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, j === 0 ? side * (i - 1.2) * spread * 12 * D : 0, -side * ang))));
       });
     });
@@ -264,6 +314,56 @@ export class Rig {
     if (t2) t2.quaternion.copy(e(0, side * k * 40, 0));
     if (t3) t3.quaternion.copy(e(0, side * k * 50, 0));
     this.update();
+  }
+
+  /** Точки пальцев кисти: суставы и кончики (кончик — продолжение последней фаланги). */
+  fingerPoints(side: 1 | -1): { name: string; p: THREE.Vector3 }[] {
+    const pre = side > 0 ? "left" : "right";
+    const out: { name: string; p: THREE.Vector3 }[] = [{ name: `${pre}Hand`, p: this.pos(`${pre}Hand`) }];
+    for (const f of ["Thumb", "Index", "Middle", "Ring", "Little"]) {
+      const segs = f === "Thumb" ? ["Metacarpal", "Proximal", "Distal"] : ["Proximal", "Intermediate", "Distal"];
+      const pts = segs.filter((s) => this.node(`${pre}${f}${s}`)).map((s) => this.pos(`${pre}${f}${s}`));
+      pts.forEach((p, i) => out.push({ name: `${pre}${f}${i}`, p }));
+      if (pts.length >= 2) {
+        const a = pts[pts.length - 2], b = pts[pts.length - 1];
+        out.push({ name: `${pre}${f}Tip`, p: b.clone().add(b.clone().sub(a).multiplyScalar(0.75)) });
+      }
+    }
+    return out;
+  }
+
+  /** Наименьший зазор точек кисти над поверхностями (в их прямоугольниках), м; Infinity — над ними нет. */
+  clearance(side: 1 | -1, surfaces: Surface[]): { gap: number; point: string; surface: string } {
+    let best = { gap: Infinity, point: "", surface: "" };
+    for (const { name, p } of this.fingerPoints(side)) {
+      for (const s of surfaces) {
+        if (p.x < s.x0 - 0.01 || p.x > s.x1 + 0.01 || p.z < s.z0 - 0.01 || p.z > s.z1 + 0.01) continue;
+        if (p.y - s.y < best.gap) best = { gap: p.y - s.y, point: name, surface: s.name };
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Пальцы не проходят сквозь стол и клавиатуру: если кончик или сустав ниже поверхности + запас (толщина
+   * пальца), кисть поднимается на недостающее (IK от текущего локтя, ориентация кисти и пальцы те же).
+   */
+  keepAbove(side: 1 | -1, surfaces: Surface[], arm?: ArmSpec, margin = 0.008) {
+    const pre = side > 0 ? "left" : "right";
+    // Касание — только у руки, полностью ведомой IK (при смешивании с мокапом — лишь не ниже поверхности).
+    const touch = !!arm?.touch && (arm.weight ?? 1) > 0.5;
+    for (let iter = 0; iter < 4; iter++) {
+      const c = this.clearance(side, surfaces);
+      if (c.gap >= margin && !(touch && Number.isFinite(c.gap) && c.gap > margin + 0.002)) return;
+      const lift = Math.max(-0.03, margin - c.gap + 0.001);
+      const hq = this.node(`${pre}Hand`)!.getWorldQuaternion(new THREE.Quaternion()).multiply(this.R0i);
+      const fingers = new THREE.Vector3(side, 0, 0).applyQuaternion(hq).toArray() as V3;
+      const palm = new THREE.Vector3(0, -1, 0).applyQuaternion(hq).toArray() as V3;
+      const W = this.pos(`${pre}Hand`);
+      const E = this.pos(`${pre}LowerArm`);
+      this.arm(side, { target: [W.x, W.y + lift, W.z], pole: E.toArray() as V3, autoPole: false, fingers, palm, keepFingers: true,
+        noShoulder: true, maxFlex: 170 });
+    }
   }
 
   lookTarget(p: Point | null | undefined, obj: THREE.Object3D) {

@@ -20,7 +20,7 @@ export function blinkAt(t: number, period = 3.7, phase = 0.6): number {
 type Bones = Record<string, V3>;
 
 /** Сидя: бёдра вперёд, голени вниз, дыхание грудью. */
-function seated(t: number, lean = 0): Bones {
+export function seated(t: number, lean = 0): Bones {
   const br = sin(t * 1.6) * 0.8;
   return {
     leftUpperLeg: [-86, 0, -6], rightUpperLeg: [-86, 0, 6],
@@ -30,22 +30,23 @@ function seated(t: number, lean = 0): Bones {
 }
 
 /** Кисть на клавиатуре: пальцы вперёд-вниз, ладонь к столу, локоть в сторону и назад. */
-function typingHand(side: 1 | -1, t: number, tap = 1): ArmSpec {
+export function typingHand(side: 1 | -1, t: number, tap = 1): ArmSpec {
   const ph = side > 0 ? 0 : 1.7;
   const k = (i: number) => 0.38 + 0.22 * tap * Math.max(0, sin(t * 11 + ph + i * 1.9));
   return {
-    target: [KB[0] + side * 0.095, KB[1] + 0.045, KB[2] - 0.035],
+    target: [KB[0] + side * 0.095, KB[1] + 0.04, KB[2] - 0.05],
     pole: [side * 0.3, 0.8, -0.35],
-    fingers: [-side * 0.12, -0.42, 1],
-    palm: [side * 0.12, -1, 0.35],
-    curl: [0.7, k(0), k(1), k(2), k(3) + 0.05],
+    fingers: [-side * 0.1, -0.18, 1],
+    palm: [side * 0.08, -1, 0.15],
+    curl: [0.55, k(0) - 0.08, k(1) - 0.08, k(2) - 0.06, k(3)],
+    touch: true,
     spread: 0.35,
     thumbOut: 0.05,
   };
 }
 
 /** Кисть лежит на столе расслабленно (у клавиатуры). */
-function restHand(side: 1 | -1, x = 0.17, z = 0.3): ArmSpec {
+export function restHand(side: 1 | -1, x = 0.17, z = 0.3): ArmSpec {
   return {
     target: [side * x, DESK_Y + 0.035, z],
     pole: [side * 0.45, 0.75, -0.35],

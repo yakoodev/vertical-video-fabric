@@ -18,6 +18,8 @@ import { applyLook, type LookSpec } from "./look.ts";
 import { Rig, type PoseSpec, type V3, type Point } from "./rig.ts";
 import { poseByName } from "./poses.ts";
 import { camAt, merge, poseAt, speechMouth, type CamKey, type PoseKey } from "./anim.ts";
+import { loadClips, type Clip } from "./mocap.ts";
+import { sequencePose, type Timeline } from "./sequence.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
 import { Props, type PropsSpec } from "./props.ts";
 import { loadUiFonts } from "../../scene3d/src/ui.ts";
@@ -59,6 +61,10 @@ export interface Spec {
   poses?: PoseKey[];
   /** Окна речи [[t0, t1], ...] — рот слогами только в них. */
   speech?: number[][];
+  /** Ролик на мокапе (sequence.ts) — вместо poses. */
+  timeline?: Timeline;
+  /** Каждый кадр: пальцы над поверхностями timeline.surfaces, иначе рендер падает. */
+  strictContact?: boolean;
 }
 
 let spec: Spec;
@@ -87,7 +93,12 @@ function shotAt(t: number): { shot: Shot; local: number } {
 }
 
 /** Поза на время: ролик — по ключам spec.poses (+ рот в окнах речи), стопкадр — поза плана. */
+let clips: Record<string, Clip> = {};
+/** Самый малый зазор пальцев над поверхностями за все отрисованные кадры. */
+const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0 };
+
 function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
+  if (spec.timeline) return sequencePose(spec.timeline, clips, time);
   if (spec.poses?.length) {
     const p = poseAt(rig, spec.poses, time);
     const mouth = speechMouth(spec.speech, time);
@@ -109,7 +120,7 @@ function settle(t: number, shot: Shot, local: number) {
     rig.apply(p);
     rig.lookTarget(p.look ?? null, lookObj);
   };
-  if (!(spec.poses?.length && Math.abs(t - simT - dt) < 1e-6)) {
+  if (!((spec.poses?.length || spec.timeline) && Math.abs(t - simT - dt) < 1e-6)) {
     vrm.springBoneManager?.reset();
     for (let k = 60; k >= 1; k--) {
       at(k);
@@ -124,6 +135,17 @@ function settle(t: number, shot: Shot, local: number) {
 function render(t: number) {
   const { shot, local } = shotAt(t);
   settle(t, shot, local);
+  const surf = spec.timeline?.surfaces;
+  if (surf?.length) {
+    contact.frames++;
+    for (const side of [1, -1] as const) {
+      const c = rig.clearance(side, surf);
+      if (c.gap < contact.min) Object.assign(contact, { min: c.gap, at: t, point: c.point, surface: c.surface });
+      if (spec.strictContact && c.gap < 0.004) {
+        throw new Error(`пальцы сквозь «${c.surface}»: t=${t.toFixed(3)} ${c.point} на ${((0.004 - c.gap) * 1000).toFixed(1)} мм ниже допуска`);
+      }
+    }
+  }
   const L = shot.light || {};
   key.position.set(...(L.key || [0.3, 0.6, 1]));
   key.color.set(L.keyColor || "#dfe6ff");
@@ -203,6 +225,7 @@ async function load(s: Spec) {
   applyLook(vrm, s.look);
   scene.add(vrm.scene);
   rig = new Rig(vrm);
+  if (s.timeline) clips = await loadClips("http://scene3d.local/packs", s.timeline.clips);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
   lumaC = document.createElement("canvas");
@@ -222,4 +245,5 @@ async function load(s: Spec) {
     return { t, arms: rig.info, bones: rig.dump(), expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
   },
   warnings: () => warnings,
+  contact: () => contact,
 };

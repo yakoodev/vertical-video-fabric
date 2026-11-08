@@ -344,6 +344,7 @@ export async function openScene(opts, spec, log = () => {}) {
       render: (t) => evaluate(`window.__scene3d.render(${Number(t).toFixed(6)})`),
       inspect: (t) => evaluate(`window.__scene3d.inspect(${Number(t).toFixed(6)})`),
       warnings: () => evaluate("window.__scene3d.warnings()"),
+      evaluate,
       shot: async (format = "jpeg", quality = 92) => {
         const r = await s("Page.captureScreenshot", {
           format, ...(format === "jpeg" ? { quality } : {}), fromSurface: true, captureBeyondViewport: false,

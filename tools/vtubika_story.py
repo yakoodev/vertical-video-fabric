@@ -220,8 +220,11 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
     comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[layer], camera=[],
                       words=comp_words)
     (work / "assets.json").write_text("{}", "utf-8")
+    # stdin=DEVNULL: компоновщик (node + @napi-rs/canvas) на Windows падает 0xC0000409 с недействительным
+    # унаследованным stdin (запуск из агента/планировщика).
     proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out),
-                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
+                          capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                          stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out.is_file():
         raise RuntimeError(f"субтитры: {proc.stderr.strip()[-600:]}")
 

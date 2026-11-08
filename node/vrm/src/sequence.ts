@@ -1,0 +1,153 @@
+/**
+ * Ролик на мокапе (spec.timeline): корпус, голова и руки — дорожки мокапа CMU (mocap.ts); поверх — лёгкие
+ * процедурные слои: сидя (ноги, дыхание), взгляд (глаза ведут, голова догоняет, корпус — следом),
+ * моргание (и на поворотах головы), руки на клавиатуре/столе — IK с плавным весом против мокапа, пресеты
+ * пальцев с пределами суставов, выражения с наплывом, рот слогами в окнах речи. Всё — функция t.
+ */
+import type { ArmSpec, FingerSpec, PoseSpec, Surface, V3 } from "./rig.ts";
+import { mocapAt, type Clip, type Track } from "./mocap.ts";
+import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
+import { speechMouth } from "./anim.ts";
+
+export interface Timeline {
+  clips: Record<string, string>;
+  tracks: Track[];
+  /** IK рук: пресет typing / rest / null (руку ведёт мокап); переход за dur. */
+  arms?: { t: number; dur?: number; left?: string | null; right?: string | null }[];
+  /** Пальцы рук, которые ведёт мокап. */
+  hands?: { t: number; dur?: number; left?: string; right?: string }[];
+  faces?: { t: number; dur?: number; expr: Record<string, number> }[];
+  /** Взгляд: цель (точка модели), head — доля поворота головой (остальное — глаза). */
+  look?: { t: number; target: V3; head?: number }[];
+  speech?: number[][];
+  surfaces?: Surface[];
+  /** false — не поднимать кисти над поверхностями (только чтобы показать, что проверка касаний ловит). */
+  clamp?: boolean;
+  /** Наклон корпуса сидя (градусы, вперёд +). */
+  lean?: number;
+}
+
+/** Пальцы: расслабленный каскад (мизинец согнут сильнее), открытая ладонь, кулак, у рта, на клавишах. */
+export const FINGERS: Record<string, FingerSpec> = {
+  relaxed: { curl: [0.25, 0.22, 0.3, 0.38, 0.46], spread: 0.12, thumbOut: 0.35 },
+  open: { curl: [0.05, 0.04, 0.06, 0.09, 0.13], spread: 0.75, thumbOut: 0.85 },
+  wave: { curl: [0.08, 0.03, 0.05, 0.08, 0.12], spread: 0.6, thumbOut: 0.7 },
+  mouth: { curl: [0.3, 0.14, 0.17, 0.21, 0.27], spread: 0.08, thumbOut: 0.2 },
+  fist: { curl: [0.6, 0.85, 0.92, 0.96, 1], spread: 0, thumbOut: 0.1 },
+  rest: { curl: [0.3, 0.32, 0.4, 0.48, 0.56], spread: 0.1, thumbOut: 0.3 },
+};
+
+const smooth = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
+
+function keyAt<T extends { t: number; dur?: number }>(keys: T[] | undefined, t: number, defDur = 0.5): { a?: T; b?: T; w: number } {
+  if (!keys?.length) return { w: 1 };
+  let i = -1;
+  while (i + 1 < keys.length && keys[i + 1].t <= t) i++;
+  if (i < 0) return { b: keys[0], w: 1 };
+  const b = keys[i], a = i > 0 ? keys[i - 1] : undefined;
+  return { a, b, w: a ? smooth((t - b.t) / (b.dur ?? defDur)) : 1 };
+}
+
+/** Отклик критически задемпфированной пружины на ступеньку (0 → 1), tau — постоянная времени. */
+const follow = (x: number, tau: number) => (x <= 0 ? 0 : 1 - Math.exp(-x / tau) * (1 + x / tau));
+
+/** Цель взгляда, догоняемая с постоянной tau (сумма откликов на смены цели). */
+export function lookPoint(keys: Timeline["look"], t: number, tau: number): V3 {
+  if (!keys?.length) return [0, 1.4, 2];
+  const p: V3 = [...keys[0].target];
+  for (let i = 1; i < keys.length; i++) {
+    const k = follow(t - keys[i].t, tau);
+    for (let j = 0; j < 3; j++) p[j] += (keys[i].target[j] - keys[i - 1].target[j]) * k;
+  }
+  return p;
+}
+
+function armPreset(name: string | null | undefined, side: 1 | -1, t: number): ArmSpec | null {
+  if (name === "typing") return typingHand(side, t);
+  if (name === "rest") return restHand(side);
+  return null;
+}
+
+function mixArm(a: ArmSpec | null, b: ArmSpec | null, w: number): ArmSpec | null {
+  if (!a && !b) return null;
+  if (!a) return { ...b!, weight: w };
+  if (!b) return { ...a, weight: 1 - w };
+  const v = (x: V3, y: V3): V3 => [lerp(x[0], y[0], w), lerp(x[1], y[1], w), lerp(x[2], y[2], w)];
+  const ca = a.curl as number[], cb = b.curl as number[];
+  return {
+    ...b, target: v(a.target as V3, b.target as V3), pole: v(a.pole as V3, b.pole as V3),
+    fingers: v(a.fingers as V3, b.fingers as V3), palm: v(a.palm as V3, b.palm as V3),
+    curl: ca.map((c, i) => lerp(c, cb[i], w)), spread: lerp(a.spread ?? 0.1, b.spread ?? 0.1, w),
+    thumbOut: lerp(a.thumbOut ?? 0.3, b.thumbOut ?? 0.3, w),
+  };
+}
+
+function mixFingers(a: FingerSpec | undefined, b: FingerSpec | undefined, w: number): FingerSpec | undefined {
+  if (!a || !b) return b || a;
+  const ca = a.curl as number[], cb = b.curl as number[];
+  return { curl: ca.map((c, i) => lerp(c, cb[i], w)), spread: lerp(a.spread ?? 0, b.spread ?? 0, w), thumbOut: lerp(a.thumbOut ?? 0, b.thumbOut ?? 0, w) };
+}
+
+/** Пальцы руки: у полностью IK-руки — её собственные; при смешивании с мокапом — наплыв к пресету мокап-руки. */
+function handFingers(arm: ArmSpec | null, preset: FingerSpec | undefined): FingerSpec | undefined {
+  if (!arm) return preset;
+  const w = arm.weight ?? 1;
+  if (w >= 0.999) return undefined;
+  return mixFingers({ curl: arm.curl as number[], spread: arm.spread, thumbOut: arm.thumbOut }, preset, 1 - w);
+}
+
+const HEAD: V3 = [0, 1.39, -0.02];
+
+export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: number): PoseSpec {
+  const bones: Record<string, V3> = { ...seated(t, tl.lean ?? 3) };
+  // Взгляд: глаза почти сразу, голова догоняет (0.28 с), корпус ещё позже (0.6 с) и чуть-чуть.
+  const eyes = lookPoint(tl.look, t, 0.05);
+  const head = lookPoint(tl.look, t, 0.28);
+  const body = lookPoint(tl.look, t, 0.6);
+  const hk = keyAt(tl.look, t).b?.head ?? 0.75;
+  const ang = (p: V3) => {
+    const dx = p[0] - HEAD[0], dy = p[1] - HEAD[1], dz = p[2] - HEAD[2];
+    return { yaw: (Math.atan2(dx, dz) * 180) / Math.PI, pitch: (-Math.atan2(dy, Math.hypot(dx, dz)) * 180) / Math.PI };
+  };
+  const h = ang(head), b = ang(body);
+  const add = (n: string, v: V3) => (bones[n] = [(bones[n]?.[0] ?? 0) + v[0], (bones[n]?.[1] ?? 0) + v[1], (bones[n]?.[2] ?? 0) + v[2]]);
+  add("neck", [h.pitch * 0.35 * hk, h.yaw * 0.35 * hk, 0]);
+  add("head", [h.pitch * 0.45 * hk, h.yaw * 0.45 * hk, 0]);
+  add("chest", [0, b.yaw * 0.15, 0]);
+  const mocap = mocapAt(clips, tl.tracks, t);
+  // Руки: IK-пресеты с плавным весом против мокапа.
+  const ak = keyAt(tl.arms, t, 0.5);
+  const arm = (side: 1 | -1) => {
+    const n = side > 0 ? "left" : "right";
+    const pa = ak.a ? armPreset((ak.a as any)[n], side, t) : null;
+    const pb = ak.b ? armPreset((ak.b as any)[n], side, t) : null;
+    return ak.a ? mixArm(pa, pb, ak.w) : pb;
+  };
+  const left = arm(1), right = arm(-1);
+  const hk2 = keyAt(tl.hands, t, 0.35);
+  const fing = (n: "left" | "right") => {
+    const a = hk2.a?.[n] ? FINGERS[hk2.a[n]!] : undefined, bb = hk2.b?.[n] ? FINGERS[hk2.b[n]!] : FINGERS.relaxed;
+    return hk2.a ? mixFingers(a, bb, hk2.w) : bb;
+  };
+  // Выражения: наплыв от прошлого к текущему; моргание по таймеру и на смену взгляда.
+  const fk = keyAt(tl.faces, t, 0.25);
+  const expr: Record<string, number> = {};
+  for (const n of new Set([...Object.keys(fk.a?.expr || {}), ...Object.keys(fk.b?.expr || {})])) {
+    expr[n] = lerp(fk.a?.expr[n] ?? 0, fk.b?.expr[n] ?? 0, fk.a ? fk.w : 1);
+  }
+  let blink = blinkAt(t, 3.9, 0.9);
+  for (const k of tl.look || []) {
+    const u = t - k.t - 0.03;
+    if (u >= 0 && u < 0.18) blink = Math.max(blink, u < 0.07 ? u / 0.07 : 1 - (u - 0.07) / 0.11);
+  }
+  expr.blink = Math.max(expr.blink ?? 0, blink * (1 - (expr.happy ?? 0)));
+  const mouth = speechMouth(tl.speech, t);
+  if (Object.keys(mouth).length) Object.assign(expr, { aa: 0, oh: 0, ee: 0, ih: 0, ou: 0 }, mouth);
+  return {
+    bones, mocap, expr, look: eyes,
+    left: left || undefined, right: right || undefined,
+    hands: { left: handFingers(left, fing("left")), right: handFingers(right, fing("right")) },
+    surfaces: tl.clamp === false ? undefined : tl.surfaces,
+  };
+}
