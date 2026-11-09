@@ -30,7 +30,7 @@ export function rng(seed: number) {
 
 /* ---------- пиксельные текстуры ---------- */
 
-function tex(size: number, paint: (g: CanvasRenderingContext2D, r: () => number) => void, seed: number, repeat = true) {
+export function tex(size: number, paint: (g: CanvasRenderingContext2D, r: () => number) => void, seed: number, repeat = true) {
   const c = document.createElement("canvas");
   c.width = c.height = size;
   const g = c.getContext("2d")!;
@@ -41,7 +41,7 @@ function tex(size: number, paint: (g: CanvasRenderingContext2D, r: () => number)
   return t;
 }
 
-const px = (g: CanvasRenderingContext2D, x: number, y: number, c: string, w = 1, h = 1) => {
+export const px = (g: CanvasRenderingContext2D, x: number, y: number, c: string, w = 1, h = 1) => {
   g.fillStyle = c;
   g.fillRect(x, y, w, h);
 };

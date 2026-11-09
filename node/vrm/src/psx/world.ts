@@ -13,6 +13,11 @@
  * Проба целиком: python tools/psx_world_test.py (стопкадры, ролик, проверка склеек, лист).
  * Проверка присутствия на каждом кадре: голова в кадре и перед камерой, фигура не мельче доли кадра —
  * иначе рендер падает (как strictContact у VRM-роликов).
+ *
+ * Сериал-хоррор (соло-ДнД, docs/design/viewer-turn-game.md): декорация street (street.ts) вместо острова,
+ * огонёк-рассказчик (wisp.ts) — точечный свет сцены, плёнка и помехи (fx.ts), меню создания персонажа, окна
+ * призыва, бросок d20 и окно героини (menu.ts), пробуждение «лёжа → сидя → стоя» (wake.ts + sit.ts), закрытые
+ * глаза по окнам eyesClosed. Все поля необязательны: остров (psx_world.json) работает как раньше.
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -31,6 +36,11 @@ import { lerp3, SIT_SEAT, sitBones, sitHips, sitWeight, type ActionKey } from ".
 import { buildThings, type StalkerSpec, type Things, type WorldObject } from "./things.ts";
 import { drawCaptions, drawComment, drawEndCard, drawTurn, type CapChunk, type CommentSpec, type EndCardSpec } from "./captions.ts";
 import type { ArmSpec } from "../rig.ts";
+import { buildStreet, type StreetSpec } from "./street.ts";
+import { buildWisp, type Wisp, type WispSpec } from "./wisp.ts";
+import { fxAt, grade, noise, type FxSpec } from "./fx.ts";
+import { drawCard, drawCreation, drawRoll, drawStats, type CardSpec, type CreationSpec, type RollSpec, type StatsSpec } from "./menu.ts";
+import { lieArm, lieBones, lieWeight } from "./wake.ts";
 
 export interface PsxShot {
   name?: string;
@@ -75,6 +85,17 @@ export interface PsxWorldSpec {
   comment?: CommentSpec;
   endcard?: EndCardSpec;
   turn?: { n: number; t?: number };
+  /** Сериал-хоррор: улица вместо острова, огонёк, плёнка, интерфейс ДнД, закрытые глаза. */
+  street?: StreetSpec;
+  wisp?: WispSpec;
+  fx?: FxSpec;
+  /** Фонарь в руке/от камеры: позиция, направление, цвет, сила, конус (градусы), дальность. */
+  flashlight?: { pos: V3; dir: V3; color?: string; power?: number; powerKeys?: [number, number][]; cone?: number; range?: number };
+  creation?: CreationSpec;
+  cards?: CardSpec[];
+  roll?: RollSpec;
+  stats?: StatsSpec;
+  eyesClosed?: [number, number][];
 }
 
 let spec: PsxWorldSpec;
@@ -89,6 +110,7 @@ let u: PsxUniforms;
 let post: PsxPost;
 let world: World;
 let things: Things;
+let wisp: Wisp | null = null;
 let lookObj: THREE.Object3D;
 let clips: Record<string, Clip> = {};
 let ankle0 = 0.08;
@@ -116,7 +138,10 @@ function pose(time: number) {
   // Действие «сесть» (sit.ts): смешение углов со стойкой, таз назад; кисти — на колени (точки колен — из
   // предварительной позы без рук). Всё в осях модели: сцена модели на нуле, сдвиг на траву — ниже.
   const sit = sitWeight(spec.actions, time);
-  const bones: Record<string, V3> = { ...sitBones(st.bones, sit.k, sit.phase) };
+  // Пробуждение (wake.ts): поверх «сидит» — «лежит» с весом lie.k; пока лежит, sit считается полным.
+  const lie = lieWeight(spec.actions, time);
+  if (lie.k > 0) Object.assign(sit, { k: 1, phase: 0 });
+  const bones: Record<string, V3> = { ...lieBones(sitBones(st.bones, sit.k, sit.phase), lie.k, lie.phase) };
   const hipsOff = sitHips(st.hips, sit.k);
   let left: ArmSpec = st.left, right: ArmSpec = st.right;
   vrm.scene.position.y = 0;
@@ -136,6 +161,11 @@ function pose(time: number) {
     };
     left = onKnee(1, st.left);
     right = onKnee(-1, st.right);
+    if (lie.k > 0) {
+      const hp = rig.pos("hips").toArray() as V3;
+      left = lieArm(1, left, lie.k, lie.phase, hp);
+      right = lieArm(-1, right, lie.k, lie.phase, hp);
+    }
   }
   const add = (n: string, v: V3) => (bones[n] = [(bones[n]?.[0] ?? 0) + v[0], (bones[n]?.[1] ?? 0) + v[1], (bones[n]?.[2] ?? 0) + v[2]]);
   const keys = spec.look_at;
@@ -145,6 +175,7 @@ function pose(time: number) {
     const hp = lookPoint(keys, time, 0.35);
     let hk = keys[0].head ?? 0.7;
     for (const k of keys) if (k.t <= time) hk = k.head ?? hk;
+    hk *= 1 - lie.k; // лёжа голову ведёт поза (повёрнута набок), не взгляд
     const dx = hp[0] - head0[0], dy = hp[1] - head0[1], dz = hp[2] - head0[2];
     const yaw = Math.atan2(dx, dz) * D, pitch = -Math.atan2(dy, Math.hypot(dx, dz)) * D;
     add("neck", [pitch * 0.35 * hk, yaw * 0.35 * hk, 0]);
@@ -156,6 +187,7 @@ function pose(time: number) {
     const v = time - k.t - 0.03;
     if (v >= 0 && v < 0.18) blink = Math.max(blink, v < 0.07 ? v / 0.07 : 1 - (v - 0.07) / 0.11);
   }
+  if (spec.eyesClosed?.some(([a, b]) => time >= a && time < b)) blink = 1;
   const expr = { ...(spec.heroine?.expr || {}), blink };
   rig.apply({ mocap, bones, hips: hipsOff, left, right, expr });
   // На траву: щиколотки не ниже высоты покоя, таз не ниже посадки (стоит — держат ступни, сидит — таз).
@@ -197,6 +229,25 @@ function render(t: number) {
   camera.updateMatrixWorld(true);
   world.update(time, camera);
   things.update(time, camera);
+  wisp?.update(time, camera);
+  const fl = spec.flashlight;
+  if (fl) {
+    u.psxSpPos.value.set(...fl.pos);
+    u.psxSpDir.value.set(...fl.dir).normalize();
+    // Сила по ключам [t, сила] (линейно), иначе постоянная.
+    let pw = fl.power ?? 1.2;
+    const pk = fl.powerKeys;
+    if (pk?.length) {
+      pw = time <= pk[0][0] ? pk[0][1] : pk[pk.length - 1][1];
+      for (let i = 0; i + 1 < pk.length; i++) {
+        if (time >= pk[i][0] && time < pk[i + 1][0]) pw = pk[i][1] + (pk[i + 1][1] - pk[i][1]) * ((time - pk[i][0]) / (pk[i + 1][0] - pk[i][0]));
+      }
+    }
+    u.psxSpCol.value.set(fl.color || "#fff2d8").multiplyScalar(pw);
+    const c = ((fl.cone ?? 22) * Math.PI) / 180;
+    u.psxSpCone.value.set(Math.cos(c), Math.cos(c * 0.55));
+    u.psxSpRange.value = fl.range ?? 12;
+  }
   // Присутствие: макушка, таз, ступни в экране.
   const head = rig.point({ bone: "head", off: [0, 0.14, 0] }), hips = rig.pos("hips");
   const feet = rig.pos("leftFoot").add(rig.pos("rightFoot")).multiplyScalar(0.5);
@@ -211,7 +262,10 @@ function render(t: number) {
     throw new Error(msg);
   }
   gl.render(scene, camera);
-  post.scene(gl.domElement);
+  const frame = Math.round(t * (spec.fps || 30));
+  const lv = fxAt(spec.fx, t);
+  // Зерно меняется раз в 2 кадра (15 в секунду): как плёнка, и ролик вдвое легче; помехи — каждый кадр.
+  post.scene(gl.domElement, spec.fx ? (d, w, h) => grade(d, w, h, spec.fx!, lv.black, frame >> 1) : undefined);
   const hud = spec.hud;
   const ui = still ? !!shot.hud : true;
   post.overlay((ug) => {
@@ -221,12 +275,17 @@ function render(t: number) {
     const card = !!spec.endcard && time >= spec.endcard.t0;
     if (spec.captions && !card) drawCaptions(ug, spec.captions, time, spec.captionY);
     if (spec.endcard) drawEndCard(ug, spec.endcard, time);
+    if (spec.stats && ui) drawStats(ug, spec.stats, still ? 99 : t);
+    if (spec.creation) drawCreation(ug, spec.creation, time);
+    for (const c of spec.cards || []) drawCard(ug, c, time);
+    if (spec.roll) drawRoll(ug, spec.roll, time);
   });
+  if (lv.static > 0) post.after((d, w, h) => noise(d, w, h, lv.static, frame));
   post.present(g, W, H);
   const lg = post.lg.getImageData(0, 0, post.w, post.h).data;
   let sum = 0;
   for (let i = 0; i < lg.length; i += 64) sum += 0.2126 * lg[i] + 0.7152 * lg[i + 1] + 0.0722 * lg[i + 2];
-  return { luma: sum / (lg.length / 64), presence: p, stalker: things.stalkerVisible(time) };
+  return { luma: sum / (lg.length / 64), presence: p, stalker: things.stalkerVisible(time), static: lv.static, black: lv.black };
 }
 
 async function load(s: PsxWorldSpec) {
@@ -243,7 +302,7 @@ async function load(s: PsxWorldSpec) {
   gl = new THREE.WebGLRenderer({ canvas: glc, antialias: false, alpha: false, preserveDrawingBuffer: true });
   gl.setPixelRatio(1);
   gl.setSize(ps.lowW, ps.lowH, false);
-  gl.setClearColor(0x05061a, 1);
+  gl.setClearColor(s.street ? new THREE.Color(ps.fog?.color || "#3a3c3a") : new THREE.Color(0x05061a), 1);
   gl.outputColorSpace = THREE.SRGBColorSpace;
   gl.toneMapping = THREE.NoToneMapping;
   post = new PsxPost(ps.lowW, ps.lowH, ps.dither !== false);
@@ -252,8 +311,12 @@ async function load(s: PsxWorldSpec) {
   camera = new THREE.PerspectiveCamera(30, ps.lowW / ps.lowH, 0.05, 200);
   lookObj = new THREE.Object3D();
   scene.add(lookObj);
-  world = buildIsland(u, s.island);
+  world = s.street ? buildStreet(u, { fogColor: ps.fog?.color, ...s.street }) : buildIsland(u, s.island);
   scene.add(world.group);
+  if (s.wisp) {
+    wisp = buildWisp(u, s.wisp);
+    scene.add(wisp.group);
+  }
   things = buildThings(u, s.objects, s.stalker);
   scene.add(things.group);
   const loader = new GLTFLoader();

@@ -1,0 +1,81 @@
+{
+ "width": 1080,
+ "height": 1920,
+ "fps": 30,
+ "model": "three-vrm-girl.vrm",
+ "psx": {
+  "lowW": 270,
+  "lowH": 480,
+  "snap": 1,
+  "affine": 0.7,
+  "maxTex": 256,
+  "fog": {
+   "color": "#575953",
+   "near": 0.8,
+   "far": 11.0
+  },
+  "light": {
+   "dir": [0.25, 1, -0.35],
+   "color": "#a8aca8",
+   "power": 0.35,
+   "ambient": "#70726e",
+   "ambientPower": 0.62
+  }
+ },
+ "street": {
+  "seed": 13,
+  "ash": 900,
+  "ashSpeed": 0.32,
+  "fogSheets": 7,
+  "sky": "#1a1b1c"
+ },
+ "fx": {
+  "desat": 0.6,
+  "tint": "#d6dacb",
+  "contrast": 1.06,
+  "grain": 13,
+  "vignette": 0.42,
+  "staticBase": 0
+ },
+ "look": {
+  "repaint": {
+   "Hair": ["#24170f", "#8a664c"],
+   "Body": ["#121311", "#46473f"],
+   "Tops": ["#17130f", "#5a4e3e"],
+   "Bottoms": ["#0b0c0f", "#373a42"],
+   "Shoes": ["#0c0c0c", "#3a3530"],
+   "EyeIris": ["#111613", "#62726a"],
+   "FaceBrow": ["#1a110d", "#4a3830"]
+  },
+  "stains": {
+   "Tops": {"colors": ["#3e3a33", "#22180f", "#48423a", "#30241a"], "n": 55, "seed": 5, "size": 0.025},
+   "Bottoms": {"colors": ["#3c3933", "#221a14"], "n": 40, "seed": 8, "size": 0.03}
+  }
+ },
+ "heroine": {
+  "tint": { "Face": "#ece6de" },
+  "noSprings": "TopsUpperArm",
+  "maxTex": 128,
+  "texFor": {"Face": 256, "Eye": 256, "Tops": 256},
+  "decimate": 0.035,
+  "decimateUv": 0.08,
+  "decimateOnly": "Hair",
+  "expr": {"relaxed": 0.0, "sad": 0.15}
+ },
+ "idle": {
+  "clips": {"wait": "cmu/clips/waiting.json"},
+  "tracks": [
+   {"clip": "wait", "start": -3, "end": 200, "offset": 0.5, "speed": 0.6, "pingpong": [0.5, 6.0, 40], "fadeIn": 0,
+    "fadeOut": 0, "mask": ["spine", "chest", "upperChest"], "scale": 0.2, "smooth": 0.6}
+  ]
+ },
+ "stand": {"period": 4.6, "sway": 0.016},
+ "wisp": {
+  "color": "#ffa850",
+  "power": 3.0,
+  "voicePower": 0.9,
+  "range": 6,
+  "scale": 0.75,
+  "bob": 0.06
+ }
+}

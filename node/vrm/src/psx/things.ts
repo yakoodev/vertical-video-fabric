@@ -28,6 +28,11 @@ export interface StalkerSpec {
   height?: number;
   /** Смотрит на точку (x, z). */
   face?: [number, number];
+  /** Вид: shadow — тонкая тень с глазами (остров); collector — «Сборщик» улицы: сутулый, длинные руки до земли,
+   * голова свёрнута набок, без глаз. */
+  shape?: "shadow" | "collector";
+  /** Идёт: к концу последнего окна видимости доходит сюда (x, y, z) — между окнами положение по прямой. */
+  move?: [number, number, number];
 }
 
 const faceted = (g: THREE.BufferGeometry) => {
@@ -154,6 +159,37 @@ const MAKERS: Record<string, Maker> = {
 
 export const OBJECT_KINDS = Object.keys(MAKERS);
 
+/** «Сборщик»: тёмный силуэт в тумане — сутулый, узкий, руки ниже колен, голова свёрнута набок. */
+function collector(u: PsxUniforms, h: number): THREE.Group {
+  const g = new THREE.Group();
+  const dark = "#06060a";
+  const m = (geo: THREE.BufferGeometry) => mesh(u, geo, dark, { lit: 0, fog: 0.12 });
+  const torso = m(new THREE.CylinderGeometry(0.12, 0.2, h * 0.42, 5));
+  torso.position.set(0, h * 0.6, 0.08);
+  torso.rotation.x = 0.35;
+  const neck = m(new THREE.CylinderGeometry(0.035, 0.05, h * 0.12, 4));
+  neck.position.set(0, h * 0.8, 0.2);
+  neck.rotation.x = 0.9;
+  const head = m(new THREE.IcosahedronGeometry(h * 0.06, 0));
+  head.scale.set(0.8, 1.4, 0.9);
+  head.position.set(0.05, h * 0.83, 0.3);
+  head.rotation.z = 1.1;
+  const legs = [-1, 1].map((sx) => {
+    const l = m(new THREE.CylinderGeometry(0.045, 0.03, h * 0.42, 4));
+    l.position.set(sx * 0.1, h * 0.21, 0);
+    l.rotation.z = sx * 0.05;
+    return l;
+  });
+  const arms = [-1, 1].map((sx) => {
+    const a = m(new THREE.CylinderGeometry(0.035, 0.02, h * 0.62, 4));
+    a.position.set(sx * 0.24, h * 0.42, 0.18);
+    a.rotation.set(0.15, 0, sx * 0.1);
+    return a;
+  });
+  g.add(torso, neck, head, ...legs, ...arms);
+  return g;
+}
+
 export interface Things {
   group: THREE.Group;
   update(t: number, camera: THREE.Camera): void;
@@ -186,7 +222,8 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
   });
   // «Кто-то»: высокая тонкая тень, неосвещённая, почти чёрная, сквозь туман слабо; два тусклых пикселя глаз.
   let shadow: THREE.Group | null = null;
-  if (stalker) {
+  if (stalker?.shape === "collector") shadow = collector(u, stalker.height ?? 2.6);
+  else if (stalker) {
     const h = stalker.height ?? 2.3;
     shadow = new THREE.Group();
     const dark = "#04040a";
@@ -212,6 +249,8 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
       return e;
     });
     shadow.add(body, head, ...legs, ...arms, ...eyes);
+  }
+  if (stalker && shadow) {
     shadow.position.set(...stalker.pos);
     const f = stalker.face || [0, 0];
     shadow.rotation.y = Math.atan2(f[0] - stalker.pos[0], f[1] - stalker.pos[2]);
@@ -228,7 +267,16 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
         x.o.visible = x.o.scale.x > 0;
         x.tick?.(t);
       }
-      if (shadow) shadow.visible = stalkerVisible(t);
+      if (shadow && stalker) {
+        shadow.visible = stalkerVisible(t);
+        if (stalker.move && stalker.show.length) {
+          const a = stalker.show[0][0], b = stalker.show[stalker.show.length - 1][1];
+          const k = Math.max(0, Math.min(1, (t - a) / Math.max(1e-3, b - a)));
+          shadow.position.set(...(stalker.pos.map((v, i) => v + (stalker.move![i] - v) * k) as [number, number, number]));
+          // Шаг: покачивание корпуса ступеньками.
+          shadow.rotation.z = 0.06 * Math.sign(Math.sin(t * 9));
+        }
+      }
     },
   };
 }
