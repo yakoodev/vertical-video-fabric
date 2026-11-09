@@ -5,6 +5,8 @@ import { projectsApi, type NumbersInput, type StatsItem } from "@/api/projects";
 import { formatCount, formatSnapshotTime } from "@/api/stats";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
+import { secText, sharePct } from "@/api/studio";
+import { StudioLine } from "@/components/StudioStats";
 import { useToast } from "@/components/Toast";
 import { ErrorState, Loading } from "@/components/ui";
 
@@ -85,6 +87,20 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
         <Tile label="Удержание" value={pct(t.avg_retention)} />
         <Tile label="Публикаций" value={String(t.publications)} sub={`${t.items_with_stats} из ${t.items} с числами`} />
       </div>
+      {t.studio ? (
+        <>
+          <div className="series-tiles">
+            <Tile label="Половина уходит к" value={secText(t.studio.median_half_gone_sec)} sub="медиана, TikTok Studio" />
+            <Tile label="К 3-й секунде остаётся" value={sharePct(t.studio.median_kept_3s)} />
+            <Tile label="Смотрят от длины" value={sharePct(t.studio.median_watch_share)} sub={`в среднем ${secText(t.studio.median_avg_watch_sec)}`} />
+            <Tile label="Досматривают" value={sharePct(t.studio.median_finish_rate)} />
+            <Tile label="Новые подписчики" value={String(t.studio.new_followers)} sub={t.studio.main_source ? `больше всего: ${t.studio.main_source}` : undefined} />
+          </div>
+          <p className="muted series-hint">
+            Из TikTok Studio, роликов: {t.studio.videos}. Собирается раз в сутки на свежий ролик (старше месяца — раз в неделю).
+          </p>
+        </>
+      ) : null}
       <p className="muted series-hint">{s.note}</p>
       <div className="series-grid">
         <TopList title="Лучшие" items={s.best} empty="Пока нет клипов с числами." />
@@ -206,6 +222,7 @@ function TopList({ title, items, empty }: { title: string; items: StatsItem[]; e
                 #{t}
               </span>
             ))}
+            {i.studio ? <div className="series-li-studio"><StudioLine studio={i.studio} compact /></div> : null}
           </li>
         ))}
       </ol>

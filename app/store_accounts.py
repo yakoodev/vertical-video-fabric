@@ -111,7 +111,7 @@ class AccountsStore:
     def list_accounts(self) -> list[dict]:
         rows = self.db.query_all(
             """
-            SELECT id, platform, label, encrypted_proxy_url, user_agent, cookie_count, has_required_cookies,
+            SELECT id, platform, label, encrypted_proxy_url, user_agent, handle, cookie_count, has_required_cookies,
                    missing_cookies, created_at, updated_at
             FROM accounts
             WHERE deleted_at IS NULL

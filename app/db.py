@@ -379,6 +379,9 @@ class Database:
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
             # UA браузера, из которого сняты cookie (расширение browser-extension/); пусто — TIKTOK_USER_AGENT.
             self._ensure_column(conn, "accounts", "user_agent", "TEXT NOT NULL DEFAULT ''")
+            # Ник аккаунта на площадке (TikTok — без @, маленькими): сервис узнаёт его сам в TikTok Studio
+            # и по нему находит аккаунт видео, выложенного руками (app/tiktok_studio_collect.py).
+            self._ensure_column(conn, "accounts", "handle", "TEXT NOT NULL DEFAULT ''")
             # Запрос поста ушёл, а ответа нет: ролик мог выйти (app/store_jobs.py не даст повторить молча).
             self._ensure_column(conn, "job_targets", "maybe_posted", "INTEGER NOT NULL DEFAULT 0")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.
@@ -641,6 +644,10 @@ class Database:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_publication_stats ON publication_stats(target_id, id)"
             )
+            # Аналитика TikTok Studio: удержание, досмотры, источники (app/tiktok_studio.py).
+            from app.tiktok_studio import ensure_schema as ensure_tiktok_studio_schema
+
+            ensure_tiktok_studio_schema(conn)
             # Free-form notes of the clip file (why it is cut this way) — for the
             # human and for outside agents working through the clip file API.
             self._ensure_column(conn, "clip_plans", "notes", "TEXT NOT NULL DEFAULT ''")

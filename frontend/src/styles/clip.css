@@ -527,6 +527,17 @@ button.cseg-row:hover { background: var(--surface-2); }
 .cpubs-sub { grid-column: 1; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12.5px; }
 .cpubs-sub a { color: var(--accent-2); }
 .cpubs-note { white-space: pre-line; }
+.cpubs-studio { grid-column: 1; }
+/* TikTok Studio у публикации: кривая удержания 0–15 с + числа строкой (components/StudioStats.tsx). */
+.studio-line { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font-size: 12.5px; color: var(--text-dim); min-width: 0; }
+.studio-facts { min-width: 0; }
+.studio-spark { display: inline-flex; align-items: center; gap: 6px; }
+.studio-spark svg { display: block; cursor: crosshair; }
+.studio-spark-line { fill: none; stroke: var(--accent-2); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.studio-spark-half { stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 2 3; }
+.studio-spark-dot { fill: var(--accent-2); stroke: var(--surface, #000); stroke-width: 1.5; }
+.studio-spark-label { font-size: 11.5px; min-width: 9.5em; font-variant-numeric: tabular-nums; }
+.series-li-studio { flex-basis: 100%; }
 .cpubs-acts { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 2px; }
 .cpubs-form { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--border-strong); border-radius: var(--r-sm); }
 .cpubs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

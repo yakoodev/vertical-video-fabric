@@ -53,4 +53,38 @@ def build_stats_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter
     def api_stats_refresh(_auth: auth_dep) -> dict:
         return platform_stats.start_collect(get_store(), force=True)
 
+    # --- TikTok Studio: удержание, досмотры, источники (app/tiktok_studio.py) --- #
+
+    @router.get("/api/tiktok-studio/status", tags=["Jobs"], summary="TikTok Studio analytics: collector status")
+    def api_tiktok_studio_status(_auth: auth_dep) -> dict:
+        from app import tiktok_studio_collect as C
+
+        store = get_store()
+        accounts = C.tiktok_accounts(store)
+        items, unmapped = C.candidates(store, accounts)
+        return {**C.status(), "accounts": list(accounts.values()), "videos": len(items), "unmapped": unmapped}
+
+    @router.post("/api/tiktok-studio/collect", tags=["Jobs"],
+                 summary="Collect TikTok Studio analytics now (background; optional account_id / video_id)")
+    def api_tiktok_studio_collect(_auth: auth_dep, payload: dict = Body(default={})) -> dict:
+        from app import tiktok_studio_collect as C
+
+        account_id = payload.get("account_id")
+        try:
+            account_id = int(account_id) if account_id not in (None, "") else None
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="account_id — число") from exc
+        video_id = str(payload.get("video_id") or "").strip()
+        if video_id and not video_id.isdigit():
+            raise HTTPException(status_code=400, detail="video_id — числовой id ролика TikTok")
+        return C.start_collect(get_store(), account_id=account_id, video_id=video_id,
+                               force=bool(payload.get("force", True)))
+
+    @router.get("/api/tiktok-studio/publications", tags=["Jobs"],
+                summary="Latest TikTok Studio summary per publication (service:<target_id>, manual:<publication_id>)")
+    def api_tiktok_studio_publications(_auth: auth_dep) -> dict:
+        from app import tiktok_studio as S
+
+        return {f"{kind}:{ref}": brief for (kind, ref), brief in S.briefs_by_ref(get_store()).items()}
+
     return router

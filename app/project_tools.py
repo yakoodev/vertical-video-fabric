@@ -347,7 +347,9 @@ def project_tools() -> list[Tool]:
             "get_project_stats", "Статистика проекта",
             "Статистика клипов проекта (публикации сервиса + добавленные по ссылке): суммы, медиана просмотров, "
             "удержание (если есть), площадки, best/worst; with_items — все клипы с публикациями. "
-            "/ Project stats.",
+            "У TikTok — studio (TikTok Studio): сколько зрителей остаётся на 1/2/3/5-й секунде, к какой "
+            "секунде уходит половина, средний просмотр против длины, досмотры, главный источник, новые "
+            "подписчики; totals.studio — медианы по проекту. / Project stats.",
             _obj({**_PROJECT_ARGS, "top": {"type": "integer"}, "with_items": {"type": "boolean"}}),
             h_get_project_stats, scope="project",
         ),
