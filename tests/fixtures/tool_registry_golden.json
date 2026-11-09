@@ -1459,7 +1459,7 @@
 {
 "name": "get_project_stats",
 "title": "Статистика проекта",
-"description": "5954da3b3f41ae8f",
+"description": "7610ea7f13bca744",
 "parameters": "889f7dd7055e543a",
 "mutating": false,
 "scope": "project",
