@@ -150,7 +150,9 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
     plan_ids = [int(p["id"]) for p in plans]
     renders = _renders(store, plan_ids)
     pieces = _pieces(store, plan_ids)
-    card = _card(plans, renders, pieces)
+    from app.clip_marks import clip_publications, marks_for_plans
+
+    card = _card(plans, renders, pieces, marks_for_plans(store, plan_ids))
     source_row = store.db.query_one(
         """
         SELECT id, source_type, original_filename, original_url, local_path, duration_sec, width, height, created_at,
@@ -268,6 +270,9 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
         "start_sec": card["start_sec"],
         "duration_sec": card["duration_sec"],
         "published": card["published"],
+        # Что уже выложено (сервисом и руками) и заметка владельца — app/clip_marks.py.
+        "publications": clip_publications(store, head_id),
+        "note": {"text": card["note"], "updated_at": card["note_updated_at"]},
         "favorite": card["favorite"],
         "stale": stale,
         "pending": pending[-4:],

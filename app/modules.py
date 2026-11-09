@@ -384,10 +384,11 @@ MODULES: list[Module] = [
                "remember_fact", "note_observation", "forget_fact",
                "list_rules", "add_rule", "revoke_rule", "get_project_stats", "add_manual_publication", "tag_clip",
                "list_hypotheses", "add_hypothesis", "evaluate_hypotheses"),
+        # Правка и удаление ручной публикации — основа, не модуль: ими пользуется экран клипа (app/clip_marks.py).
         routes=("/api/projects", "/api/projects/{id}", "/api/projects/{id}/brief*", "/api/projects/{id}/knowledge",
                 "/api/projects/{id}/stats",
                 "/api/projects/{id}/publications", "/api/projects/{id}/hypotheses*", "/api/rules*",
-                "/api/hypotheses/*", "/api/manual-publications/*", "/api/clip-plans/{id}/tags",
+                "/api/hypotheses/*", "/api/manual-publications/{id}/stats", "/api/clip-plans/{id}/tags",
                 "PATCH /api/sources/{id}/project"),
         ui=("серии на странице «Проекты», страница серии",),
     ),

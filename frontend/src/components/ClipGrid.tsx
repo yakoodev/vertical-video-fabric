@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client";
 import { qk } from "@/api/keys";
 import { BatchPublishDialog } from "@/components/BatchPublishDialog";
 import { ClipCard } from "@/components/ClipCard";
+import { PubBadge, TileNote } from "@/components/ClipMarks";
 import { Icon } from "@/components/Icon";
 import { ShowMore, useShowMore } from "@/components/ShowMore";
 import { UploadClipButton } from "@/components/UploadClipButton";
@@ -40,6 +41,7 @@ export function ClipTile({
   const qc = useQueryClient();
   const toast = useToast();
   const [menu, setMenu] = useState(false);
+  const [noting, setNoting] = useState(false);
   const flags = useMutation({
     mutationFn: (body: { favorite?: boolean; hidden?: boolean }) => clipPlansApi.setFlags(clip.id, body),
     onSuccess: () => {
@@ -87,13 +89,14 @@ export function ClipTile({
           {showVideo && clip.video_name ? <div className="ctile-video" title={clip.video_name}>{clip.video_name}</div> : null}
           <div className="ctile-st">
             <span className={`cchip ${status.cls}`}>{status.label}{draft && clip.picked ? ", в работе" : ""}</span>
-            {clip.published ? <span className="cchip">опубликован{clip.published > 1 ? `: ${clip.published}` : ""}</span> : null}
+            <PubBadge count={clip.published} pubs={clip.publications ?? []} />
             {clip.moments.map((m) => (
               <Link key={m.id} className="ctile-moment" to={clipPath(m.id)} title="Этот момент в другом формате">
                 {m.format}
               </Link>
             ))}
           </div>
+          <TileNote planId={clip.id} text={clip.note ?? ""} editing={noting} onEditing={setNoting} />
         </div>
         <div className="ctile-acts">
           {onSelect && clip.latest ? (
@@ -121,6 +124,10 @@ export function ClipTile({
             <div className="ctile-menu" role="menu">
               {clip.uploaded ? null : <Link role="menuitem" to={clipEditorPath(clip.source_id, clip.id)}>Открыть монтаж</Link>}
               {clip.latest ? <a role="menuitem" href={`/media/clips/${clip.latest.id}`} download>Скачать</a> : null}
+              <button role="menuitem" type="button" onClick={() => setNoting(true)}>
+                {clip.note ? "Поправить заметку" : "Заметка"}
+              </button>
+              <Link role="menuitem" to={`${clipPath(clip.id)}#pubs`}>Отметить публикацию</Link>
               <button role="menuitem" type="button" onClick={() => flags.mutate({ favorite: !clip.favorite })}>
                 {clip.favorite ? "Убрать ★" : draft ? "Взять в работу ★" : "В избранное ★"}
               </button>
@@ -133,7 +140,7 @@ export function ClipTile({
   );
 }
 
-type Filter = "all" | "vertical" | "horizontal" | "ready" | "published" | "failed" | "no_render" | "favorite";
+type Filter = "all" | "vertical" | "horizontal" | "ready" | "unpublished" | "published" | "failed" | "no_render" | "favorite";
 
 const FILTERS: [Filter, string, (c: ClipGridItem) => boolean][] = [
   ["all", "Все", () => true],
@@ -141,6 +148,8 @@ const FILTERS: [Filter, string, (c: ClipGridItem) => boolean][] = [
   ["horizontal", "Горизонтальные", (c) => isHorizontal(c.format)],
   ["ready", "Готово", (c) => c.status === "ready"],
   ["no_render", "Черновики", (c) => c.status === "no_render"],
+  // Готовые, но ещё нигде не выложенные (ни сервисом, ни руками) — что выложить следующим.
+  ["unpublished", "Не опубликованные", (c) => c.status === "ready" && !c.published],
   ["published", "Опубликованные", (c) => c.published > 0],
   ["failed", "Ошибка", (c) => c.status === "failed"],
   ["favorite", "★", (c) => c.favorite],

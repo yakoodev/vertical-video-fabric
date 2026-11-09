@@ -72,7 +72,9 @@ _ACTIVE = ("queued", "rendering")
 _FAILED = ("failed", "error")
 
 
-def _card(plans: list[dict], renders: dict[int, list[dict]], pieces: dict[int, list[tuple[float, float]]]) -> dict:
+def _card(plans: list[dict], renders: dict[int, list[dict]], pieces: dict[int, list[tuple[float, float]]],
+          marks: dict | None = None) -> dict:
+    """``marks`` — публикации и заметки планов (app/clip_marks.marks_for_plans); без них — только счёт файлов."""
     plans = sorted(plans, key=lambda p: int(p["id"]))
     head = plans[-1]
     members = [r for p in plans for r in renders.get(int(p["id"]), [])]
@@ -111,10 +113,19 @@ def _card(plans: list[dict], renders: dict[int, list[dict]], pieces: dict[int, l
         "span_end": max((b for _, b in all_pieces), default=0.0),
         "duration_sec": float(latest["duration_sec"]) if latest else sum(max(0.0, b - a) for a, b in head_pieces),
         "published": sum(int(c.get("published_targets_count") or 0) for c in members),
+        "publications": [],
+        "note": "",
+        "note_updated_at": None,
         "error": members[-1].get("error", "") if status == "failed" else "",
         "created_at": str(head.get("created_at") or ""),
         "latest": latest,
-    }
+    } | (_marks_of(plans, marks) if marks is not None else {})
+
+
+def _marks_of(plans: list[dict], marks: dict) -> dict:
+    from app.clip_marks import card_marks
+
+    return card_marks([int(p["id"]) for p in plans], marks)
 
 
 def _cards_from_plans(store: Any, rows: list[dict], scope_ids: set[int] | None = None) -> list[dict]:
@@ -125,7 +136,10 @@ def _cards_from_plans(store: Any, rows: list[dict], scope_ids: set[int] | None =
     for row in rows:
         key = int(row["clip_group_id"]) if row["clip_group_id"] is not None else -int(row["id"])
         grouped.setdefault(key, []).append(row)
-    cards = [_card(group, renders, pieces) for group in grouped.values()]
+    from app.clip_marks import marks_for_plans
+
+    marks = marks_for_plans(store, plan_ids)
+    cards = [_card(group, renders, pieces, marks) for group in grouped.values()]
     if scope_ids is not None:
         # Клип принадлежит видео своего главного плана.
         cards = [c for c in cards if c["source_id"] in scope_ids]

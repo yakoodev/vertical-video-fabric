@@ -205,7 +205,7 @@ export interface StatsItem {
   age_days: number | null;
   platforms: string[];
   tags: string[];
-  publications?: { kind: "service" | "manual"; id: number; platform: string; url: string; views: number | null }[];
+  publications?: { kind: "service" | "manual"; id: number; platform: string; account?: string; url: string; views: number | null }[];
 }
 
 export interface ProjectStats {
@@ -231,8 +231,13 @@ export interface ManualPublication {
   project_id: number | null;
   clip_plan_id: number | null;
   clip_title?: string | null;
+  /** Какой готовый файл выложен (null — не указан). */
+  clip_id?: number | null;
+  /** Пустая — отмечено без ссылки, числа не собираются. */
   url: string;
+  /** tiktok / youtube / instagram / vk / other (старые — по ссылке, бывает пусто). */
   platform: string;
+  account: string;
   title: string;
   published_at: string;
   tags: string[];
@@ -308,8 +313,8 @@ export const projectsApi = {
   publications: (id: number) => api.get<ManualPublication[]>(`/api/projects/${id}/publications`),
   addPublication: (
     id: number,
-    body: { url: string; clip_plan_id?: number | null; title?: string; published_at?: string; tags?: string[];
-      stats?: NumbersInput; fetch?: boolean },
+    body: { url: string; clip_plan_id?: number | null; platform?: string; account?: string; title?: string;
+      published_at?: string; tags?: string[]; stats?: NumbersInput; fetch?: boolean },
   ) => api.post<ManualPublication>(`/api/projects/${id}/publications`, body),
   removePublication: (pubId: number) => api.del<{ deleted: boolean }>(`/api/manual-publications/${pubId}`),
   publicationNumbers: (pubId: number, numbers: NumbersInput) =>

@@ -191,8 +191,9 @@ def h_add_manual_publication(ctx: ToolContext, args: dict) -> dict:
         ctx.store, str(args.get("url") or ""), project_id=project_id,
         clip_plan_id=int(clip) if clip not in (None, "") else None, title=str(args.get("title") or ""),
         published_at=args.get("published_at"), tags=args.get("tags"), stats=numbers or None,
+        platform=args.get("platform"), account=args.get("account") or "", notes=str(args.get("notes") or ""),
     )
-    if not numbers:
+    if not numbers and pub["url"]:
         pub["fetch"] = P.refresh_manual_publication(ctx.store, pub["id"])
         pub["stats"] = P.get_manual_publication(ctx.store, pub["id"])["stats"]
     return {"ok": True, "publication": pub}
@@ -352,15 +353,19 @@ def project_tools() -> list[Tool]:
         ),
         Tool(
             "add_manual_publication", "Добавляю публикацию",
-            "Видео, выложенное НЕ через сервис: url (TikTok/YouTube/Shorts/Instagram), clip — clip_id клипа "
-            "(или project_id/source_id — только к проекту), title, published_at, tags. Числа: views, likes, "
-            "comments, shares, avg_retention (0..1) — если их нет, YouTube/TikTok подтянутся сами (yt-dlp), "
-            "Instagram — только вручную. / Add a manually published video by link.",
+            "Видео, выложенное НЕ через сервис (один клип можно отметить сколько угодно раз): clip — clip_id "
+            "клипа (или project_id/source_id — только к проекту), platform (tiktok/youtube/instagram/vk/other), "
+            "account — подпись аккаунта, published_at (по умолчанию сегодня), url — необязательно (без ссылки "
+            "чисел нет), notes, title, tags. Числа: views, likes, comments, shares, avg_retention (0..1) — если "
+            "их нет, YouTube/TikTok по ссылке подтянутся сами (yt-dlp), Instagram — только вручную. "
+            "/ Mark a clip as published manually (link optional).",
             _obj({**_PROJECT_ARGS, "url": {"type": "string"}, "clip": {"type": "integer"},
+                  "platform": {"type": "string", "enum": ["tiktok", "youtube", "instagram", "vk", "other"]},
+                  "account": {"type": "string"}, "notes": {"type": "string"},
                   "title": {"type": "string"}, "published_at": {"type": "string"},
                   "tags": {"type": "array", "items": {"type": "string"}},
                   "views": {"type": "integer"}, "likes": {"type": "integer"}, "comments": {"type": "integer"},
-                  "shares": {"type": "integer"}, "avg_retention": {"type": "number"}}, ["url"]),
+                  "shares": {"type": "integer"}, "avg_retention": {"type": "number"}}),
             h_add_manual_publication, mutating=True, scope="project",
         ),
         Tool(

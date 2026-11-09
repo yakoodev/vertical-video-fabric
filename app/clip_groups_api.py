@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app import clip_groups as G
+from app.store_clips import _PUBLISHED_SQL
 
 
 class ClipMetaPayload(BaseModel):
@@ -45,10 +46,8 @@ _PAGE_FILTERS: dict[str, str] = {
     "vertical": "c.status = 'succeeded' AND c.height >= c.width",
     "horizontal": "c.status = 'succeeded' AND c.width > c.height",
     "error": "c.status IN ('failed', 'error')",
-    "published": (
-        "EXISTS (SELECT 1 FROM job_targets jt JOIN jobs j ON j.id = jt.job_id "
-        "WHERE j.clip_id = c.id AND jt.status = 'succeeded')"
-    ),
+    # Выложен сервисом или отмечен руками (тот же счёт, что у карточки, app/store_clips._PUBLISHED_SQL).
+    "published": f"{_PUBLISHED_SQL} > 0",
 }
 
 
