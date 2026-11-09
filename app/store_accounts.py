@@ -45,14 +45,29 @@ def _redact_proxy_url(proxy_url: str) -> str:
     return urlunsplit((parts.scheme, netloc, "", "", ""))
 
 
+USER_AGENT_MAX = 512
+
+
+def _account_user_agent(raw: str) -> str:
+    """UA браузера, из которого сняты cookie. Уходит заголовком в TikTok: перевод строки и мусор — отказ."""
+    user_agent = (raw or "").strip()
+    if len(user_agent) > USER_AGENT_MAX or any(ord(ch) < 32 or ord(ch) == 127 for ch in user_agent):
+        raise ValueError(f"user_agent: одна строка до {USER_AGENT_MAX} символов")
+    return user_agent
+
+
 class AccountsStore:
     def upsert_account(self, platform: str, label: str, raw_cookie: str, proxy_url: str = "",
-                       clear_proxy: bool = False) -> dict:
+                       clear_proxy: bool = False, user_agent: str = "") -> dict:
         """Новый аккаунт или свежие cookie старого (тот же платформа + метка). Пустой ``proxy_url`` у старого прокси не
-        трогает: иначе обновление cookie молча пускало аккаунт напрямую. Убрать прокси — ``clear_proxy``."""
+        трогает: иначе обновление cookie молча пускало аккаунт напрямую. Убрать прокси — ``clear_proxy``.
+
+        ``user_agent`` — браузер, выдавший эти cookie: он идёт вместе с ними и заменяется вместе с ними. Свежие cookie
+        без UA (вставка руками) стирают прежний UA — TikTok тогда берёт ``TIKTOK_USER_AGENT``, как раньше."""
         platform = platform.lower().strip()
         label = label.strip()
         proxy_url = _account_proxy(proxy_url) if proxy_url.strip() else ""
+        user_agent = _account_user_agent(user_agent)
         if platform not in VALID_PLATFORMS:
             raise ValueError(f"unsupported platform: {platform}")
         if not label:
@@ -71,22 +86,24 @@ class AccountsStore:
             self.db.execute(
                 """
                 UPDATE accounts
-                SET encrypted_cookies = ?, encrypted_proxy_url = ?, cookie_count = ?, has_required_cookies = ?,
-                    missing_cookies = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+                SET encrypted_cookies = ?, encrypted_proxy_url = ?, user_agent = ?, cookie_count = ?,
+                    has_required_cookies = ?, missing_cookies = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (encrypted, encrypted_proxy_url, len(cookies), int(ok), ",".join(missing), existing["id"]),
+                (encrypted, encrypted_proxy_url, user_agent, len(cookies), int(ok), ",".join(missing),
+                 existing["id"]),
             )
             account_id = existing["id"]
         else:
             cur = self.db.execute(
                 """
                 INSERT INTO accounts
-                    (platform, label, encrypted_cookies, encrypted_proxy_url, cookie_count,
+                    (platform, label, encrypted_cookies, encrypted_proxy_url, user_agent, cookie_count,
                      has_required_cookies, missing_cookies)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (platform, label, encrypted, encrypted_proxy_url, len(cookies), int(ok), ",".join(missing)),
+                (platform, label, encrypted, encrypted_proxy_url, user_agent, len(cookies), int(ok),
+                 ",".join(missing)),
             )
             account_id = cur.lastrowid
         return self.get_account(account_id, include_secret=False)
@@ -94,7 +111,7 @@ class AccountsStore:
     def list_accounts(self) -> list[dict]:
         rows = self.db.query_all(
             """
-            SELECT id, platform, label, encrypted_proxy_url, cookie_count, has_required_cookies,
+            SELECT id, platform, label, encrypted_proxy_url, user_agent, cookie_count, has_required_cookies,
                    missing_cookies, created_at, updated_at
             FROM accounts
             WHERE deleted_at IS NULL

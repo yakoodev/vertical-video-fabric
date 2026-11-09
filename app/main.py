@@ -124,6 +124,10 @@ from app.agent_settings_api import AgentStopGate, build_agent_settings_router  #
 app.add_middleware(AgentStopGate, get_store=lambda: store)
 # Снаружи всех: страницы идут через домен, а JS и списки весят мегабайты (app/compression.py).
 app.add_middleware(TextGzipMiddleware)
+# Ещё снаружи: CORS своего расширения браузера (только /api/accounts) — и для 401/423 тоже.
+from app.extension_cors import ExtensionCors  # noqa: E402
+
+app.add_middleware(ExtensionCors, get_origins=lambda: settings.browser_extension_origins)
 app.add_exception_handler(modules.ModuleDisabled, module_disabled_handler)
 templates =Jinja2Templates(directory=settings.root_dir / "app" / "templates")
 

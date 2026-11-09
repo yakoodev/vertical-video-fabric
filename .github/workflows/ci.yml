@@ -71,6 +71,19 @@ jobs:
       - name: Сборка
         run: npx vite build
 
+  extension:
+    name: Расширение браузера
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      # Чистые функции browser-extension/: без зависимостей и без браузера.
+      - name: Тесты
+        run: node --test browser-extension/tests/lib.test.js
+
   motion:
     name: Моушн-движок
     runs-on: ubuntu-24.04

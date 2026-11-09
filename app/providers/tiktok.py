@@ -50,10 +50,10 @@ class _StepFailed(Exception):
         self.result = result
 
 
-def _user_agent() -> str:
-    """UA всей загрузки и подписи: ``TIKTOK_USER_AGENT`` (браузер, из которого взяты cookie), иначе встроенный
-    Linux Chrome 120. Один на сервис, не на аккаунт."""
-    return settings.tiktok_user_agent or _UA
+def _user_agent(account_user_agent: str = "") -> str:
+    """UA всей загрузки и подписи: UA аккаунта (браузер, из которого сняты его cookie — пишет расширение
+    browser-extension/), иначе ``TIKTOK_USER_AGENT`` сервиса, иначе встроенный Linux Chrome 120."""
+    return account_user_agent.strip() or settings.tiktok_user_agent or _UA
 
 
 class TikTokProvider(Provider):
@@ -72,6 +72,7 @@ class TikTokProvider(Provider):
         proxy_url: str,
         video_format: str = "9:16",
         thumbnail_path: str = "",
+        user_agent: str = "",
     ) -> ProviderResult:
         # TikTok ждёт вертикаль: 16:9/1:1/4:5 публикуем как есть (площадка покажет с полосами),
         # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт.
@@ -89,6 +90,7 @@ class TikTokProvider(Provider):
                 allow_comments=allow_comments,
                 account_label=account_label,
                 proxy_url=proxy_url,
+                user_agent=user_agent,
             )
             warning = publish_plan(self.platform, video_format)["warning"] if video_format != "9:16" else ""
             if warning:
@@ -118,12 +120,13 @@ class TikTokProvider(Provider):
         allow_comments: bool,
         account_label: str,
         proxy_url: str,
+        user_agent: str = "",
     ) -> ProviderResult:
         session = requests.Session()
         session.verify = True
         # Иначе HTTP(S)_PROXY окружения перекрывает прокси аккаунта: в requests запрос сильнее сессии.
         session.trust_env = False
-        user_agent = _user_agent()
+        user_agent = _user_agent(user_agent)
         session.headers.update({"User-Agent": user_agent, "Accept": "application/json, text/plain, */*"})
         if proxy_url:
             session.proxies = {"http": proxy_url, "https": proxy_url}

@@ -106,6 +106,7 @@ class Database:
                     label TEXT NOT NULL,
                     encrypted_cookies TEXT NOT NULL,
                     encrypted_proxy_url TEXT NOT NULL DEFAULT '',
+                    user_agent TEXT NOT NULL DEFAULT '',
                     cookie_count INTEGER NOT NULL DEFAULT 0,
                     has_required_cookies INTEGER NOT NULL DEFAULT 0,
                     missing_cookies TEXT NOT NULL DEFAULT '',
@@ -376,6 +377,8 @@ class Database:
             )
             self._ensure_column(conn, "accounts", "encrypted_proxy_url", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(conn, "accounts", "deleted_at", "TEXT")
+            # UA браузера, из которого сняты cookie (расширение browser-extension/); пусто — TIKTOK_USER_AGENT.
+            self._ensure_column(conn, "accounts", "user_agent", "TEXT NOT NULL DEFAULT ''")
             # Запрос поста ушёл, а ответа нет: ролик мог выйти (app/store_jobs.py не даст повторить молча).
             self._ensure_column(conn, "job_targets", "maybe_posted", "INTEGER NOT NULL DEFAULT 0")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.

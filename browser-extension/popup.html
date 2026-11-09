@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Cookie для сервиса</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <header>
+    <strong id="platform-title">Cookie для сервиса</strong>
+    <button id="open-options" class="link" type="button" title="Адрес сервиса и токен">Настройки</button>
+  </header>
+
+  <section id="need-settings" hidden>
+    <p>Сначала укажите адрес сервиса и токен.</p>
+    <button id="go-options" type="button">Открыть настройки</button>
+  </section>
+
+  <section id="choose-platform" hidden>
+    <p>Эта вкладка не TikTok и не YouTube. Откройте сайт площадки или выберите её:</p>
+    <div class="row">
+      <button type="button" data-platform="tiktok">TikTok</button>
+      <button type="button" data-platform="youtube">YouTube</button>
+    </div>
+  </section>
+
+  <section id="need-permission" hidden>
+    <p>Браузер ещё не разрешил расширению читать cookie этой площадки.</p>
+    <button id="grant-platform" type="button">Разрешить</button>
+    <p class="hint" id="permission-hint"></p>
+  </section>
+
+  <section id="main" hidden>
+    <p id="login-state" class="state"></p>
+    <p class="hint" id="cookie-count"></p>
+
+    <label for="account">Аккаунт в сервисе</label>
+    <select id="account"></select>
+    <input id="new-label" type="text" maxlength="100" autocomplete="off" hidden>
+
+    <button id="send" type="button" class="primary">Отправить в сервис</button>
+    <p id="result" class="result" role="status" aria-live="polite"></p>
+
+    <button id="copy" type="button" class="secondary">Скопировать JSON</button>
+    <textarea id="copy-fallback" readonly hidden></textarea>
+
+    <details>
+      <summary>Браузер (User-Agent)</summary>
+      <p class="hint mono" id="ua"></p>
+    </details>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

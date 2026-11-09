@@ -46,6 +46,7 @@ class SettingsStore:
                         "platform": a["platform"],
                         "label": a["label"],
                         "proxy_url": self.get_account_proxy_url(a["id"]),
+                        "user_agent": a.get("user_agent") or "",
                         "cookies": cookies,
                     }
                 )
@@ -113,7 +114,8 @@ class SettingsStore:
                 if not header:
                     counts["skipped"] += 1
                     continue
-                self.upsert_account(str(a["platform"]), str(a["label"]), header, str(a.get("proxy_url") or ""))
+                self.upsert_account(str(a["platform"]), str(a["label"]), header, str(a.get("proxy_url") or ""),
+                                    user_agent=str(a.get("user_agent") or ""))
                 have_acc.add(key)
                 counts["accounts"] += 1
             except Exception:  # noqa: BLE001
