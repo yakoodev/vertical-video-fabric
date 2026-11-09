@@ -43,6 +43,10 @@ class AccountCreate(BaseModel):
     )
 
 
+class AccountProxy(BaseModel):
+    proxy_url: str = Field(default="", description="Empty removes the proxy (posting goes from the server address).")
+
+
 class AccountRead(BaseModel):
     id: int
     platform: str
@@ -178,6 +182,21 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
     )
     def api_accounts(_auth: auth_dep) -> list[dict]:
         return get_store().list_accounts()
+
+    @router.put(
+        "/api/accounts/{account_id}/proxy",
+        response_model=AccountRead,
+        tags=["Accounts"],
+        summary="Set or remove an account proxy without re-sending cookies",
+        description="`http://login:password@host:port` or `login:password:host:port`; empty removes the proxy.",
+    )
+    def api_set_account_proxy(account_id: int, payload: AccountProxy, _auth: auth_dep) -> dict:
+        try:
+            return get_store().set_account_proxy(account_id, payload.proxy_url)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.delete(
         "/api/accounts/{account_id}",

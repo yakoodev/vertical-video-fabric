@@ -129,6 +129,7 @@ export function AccountsSettings() {
                 <span>прокси: {acc.proxy_display}</span>
                 {acc.missing_cookies ? <span style={{ color: "var(--warn)" }}>не хватает: {acc.missing_cookies}</span> : null}
               </div>
+              <AccountProxyForm account={acc} />
               <div>
                 <button className="btn ghost sm" onClick={() => del.mutate(acc.id)}>
                   Удалить
@@ -138,6 +139,43 @@ export function AccountsSettings() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Прокси у готового аккаунта: без повторной вставки cookie. */
+function AccountProxyForm({ account }: { account: Account }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [value, setValue] = useState("");
+  const save = useMutation({
+    mutationFn: (proxyUrl: string) => accountsApi.setProxy(account.id, proxyUrl),
+    onSuccess: (_acc, proxyUrl) => {
+      toast.success(proxyUrl ? "Прокси сохранён" : "Прокси убран");
+      setValue("");
+      qc.invalidateQueries({ queryKey: qk.accounts });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить прокси"),
+  });
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <input
+        className="input"
+        style={{ flex: 1, minWidth: 160 }}
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="логин:пароль:хост:порт"
+        aria-label={`Прокси для ${account.label}`}
+      />
+      <button className="btn sm" disabled={save.isPending || !value.trim()} onClick={() => save.mutate(value.trim())}>
+        Сохранить прокси
+      </button>
+      {account.proxy_configured ? (
+        <button className="btn ghost sm" disabled={save.isPending} onClick={() => save.mutate("")}>
+          Убрать
+        </button>
+      ) : null}
     </div>
   );
 }

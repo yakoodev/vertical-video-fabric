@@ -143,6 +143,18 @@ class AccountsStore:
         )
         return account
 
+    def set_account_proxy(self, account_id: int, proxy_url: str) -> dict:
+        """Только прокси аккаунта, cookie не трогаем (вставлять их заново ради прокси неудобно).
+        Пусто — убрать прокси: публикация пойдёт с адреса сервера."""
+        self.get_account(account_id)
+        proxy_url = _account_proxy(proxy_url) if proxy_url.strip() else ""
+        encrypted = self.cipher.encrypt_json(proxy_url) if proxy_url else ""
+        self.db.execute(
+            "UPDATE accounts SET encrypted_proxy_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (encrypted, account_id),
+        )
+        return self.get_account(account_id)
+
     def get_account_cookies(self, account_id: int):
         row = self.db.query_one("SELECT encrypted_cookies FROM accounts WHERE id = ?", (account_id,))
         if not row:

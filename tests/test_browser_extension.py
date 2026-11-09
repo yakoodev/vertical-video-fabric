@@ -224,3 +224,28 @@ def test_worker_hands_the_account_user_agent_to_tiktok_only(tmp_path, monkeypatc
         store.create_job(fileobj, "video.mp4", "T", "", [with_ua["id"], without["id"], youtube["id"]], "public", True)
     assert JobWorker(store).process_once()
     assert sorted(calls) == [("tiktok", "tt-plain", "<нет>"), ("tiktok", "tt-ua", UA), ("youtube", "yt", "<нет>")]
+
+
+# --- Прокси без повторной вставки cookie ----------------------------------------------------------------------------- #
+
+def test_proxy_is_set_and_removed_without_touching_cookies(api):
+    client, store = api
+    acc = _post(client, user_agent=UA).json()
+    response = client.put(f"/api/accounts/{acc['id']}/proxy", json={"proxy_url": "user:secret:203.0.113.5:49155"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["proxy_configured"] is True
+    assert "secret" not in response.text and "203.0.113.5" in body["proxy_display"]
+    assert store.get_account_proxy_url(acc["id"]) == "http://user:secret@203.0.113.5:49155"
+    assert body["cookie_count"] == acc["cookie_count"] and body["user_agent"] == UA
+    assert [c.name for c in store.get_account_cookies(acc["id"])] == ["sessionid", "msToken"]
+
+    cleared = client.put(f"/api/accounts/{acc['id']}/proxy", json={"proxy_url": ""}).json()
+    assert cleared["proxy_configured"] is False and store.get_account_proxy_url(acc["id"]) == ""
+
+
+def test_bad_proxy_and_unknown_account_are_refused(api):
+    client, _ = api
+    acc = _post(client).json()
+    assert client.put(f"/api/accounts/{acc['id']}/proxy", json={"proxy_url": "nonsense"}).status_code == 400
+    assert client.put("/api/accounts/9999/proxy", json={"proxy_url": "u:p:203.0.113.5:1"}).status_code == 404
