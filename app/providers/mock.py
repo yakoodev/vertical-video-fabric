@@ -23,7 +23,9 @@ class MockProvider(Provider):
         proxy_url: str,
         video_format: str = "9:16",
         thumbnail_path: str = "",
+        user_agent: str = "",  # UA аккаунта TikTok (app/worker.py): заглушке не нужен
     ) -> ProviderResult:
+        del user_agent
         if not cookies:
             return ProviderResult(status="needs_reauth", error="mock: missing cookies")
         remote_id = f"mock-{self.platform}-{file_path.stem[:12]}"

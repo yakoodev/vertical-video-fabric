@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "VVF: cookie аккаунтов",
+  "short_name": "VVF cookie",
+  "version": "1.0.0",
+  "description": "Личное расширение: отправляет cookie TikTok и YouTube в свой сервис vertical-video-fabric.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwDddALIG8Qkf8IbJi1Tf+8yxcFzXPxnC+GY+nnM3PbgQpUU106cqKGcyQxRy2qDJG1FEgyJc0NgEiSUvK9BCTfrC9BUfNaC8BTfNwmX4XeuX8i96ulANufVBbIUQKZtcPkMfsdd0WZdJTHGEE0nFk7q+Ihd+LdyXth9IiHi3n3/FlUntBo7mglhLB1t16Vvp3/ILMS3/7fvx9D6Xy0tLTUQhc5BXCb9E3Am/VZLhBHobUX391vj9QLdjQ49pDqmBeuAGs4rHRtVOncGOvokYtl2ODo/Kalg0xE+lFP2DMfoLWB6nt15DbUwjVO4ld7erL6IqCTRspy3pB5PqYp6RtwIDAQAB",
+  "permissions": ["cookies", "storage"],
+  "host_permissions": ["*://*.tiktok.com/*", "*://*.youtube.com/*"],
+  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "action": {
+    "default_title": "Cookie → сервис",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "options_ui": { "page": "options.html", "open_in_tab": true },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "vvf-cookies@yakoo.local",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["authenticationInfo"] }
+    }
+  }
+}

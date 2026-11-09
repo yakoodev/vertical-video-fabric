@@ -34,6 +34,13 @@ class AccountCreate(BaseModel):
         examples=["SID=...; HSID=...; SSID=...; APISID=...; SAPISID=..."],
     )
     clear_proxy: bool = Field(default=False, description="Remove the account proxy (an empty proxy_url keeps it).")
+    user_agent: str = Field(
+        default="",
+        description=(
+            "User-Agent of the browser the cookies came from (TikTok uploads with it). Goes with the cookies: "
+            "new cookies without it clear the stored one, and TikTok falls back to TIKTOK_USER_AGENT."
+        ),
+    )
 
 
 class AccountRead(BaseModel):
@@ -45,6 +52,7 @@ class AccountRead(BaseModel):
     missing_cookies: str
     proxy_configured: bool
     proxy_display: str
+    user_agent: str = ""
     created_at: str
     updated_at: str
 
@@ -157,7 +165,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         # Не owner_only: владелец добавляет аккаунт и curl с токеном (docs/cookie-import.md). Обратно cookie не отдаются.
         try:
             return get_store().upsert_account(payload.platform, payload.label, payload.cookie, payload.proxy_url,
-                                              clear_proxy=payload.clear_proxy)
+                                              clear_proxy=payload.clear_proxy, user_agent=payload.user_agent)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Настройки — cookie для сервиса</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="options">
+  <main>
+    <h1>Куда отправлять cookie</h1>
+    <p class="hint">Всё хранится только в этом браузере. Cookie уходят только по адресу ниже — в ваш сервис.</p>
+
+    <form id="form" novalidate>
+      <label for="service-url">Адрес сервиса</label>
+      <input id="service-url" type="url" autocomplete="off" spellcheck="false">
+
+      <label for="token">Токен сервиса</label>
+      <input id="token" type="password" autocomplete="off" spellcheck="false">
+      <p class="hint">Тот же токен, что для входа в сервис (файл <code>api_token.txt</code> на сервере).</p>
+
+      <button id="save" type="submit" class="primary" disabled>Сохранить и проверить</button>
+      <p id="status" class="result" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

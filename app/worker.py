@@ -84,6 +84,9 @@ class JobWorker:
                 # Формат клипа (16:9 на YouTube — обычное видео, не Shorts; app/publish_format.py).
                 # У 9:16 и файла без клипа — пусто, вызов площадки прежний.
                 extras = upload_extras(self.store, fresh_job, target["platform"])
+                # TikTok — с UA браузера, выдавшего cookie аккаунта (иначе TIKTOK_USER_AGENT). Другим площадкам не нужен.
+                if target["platform"] == "tiktok" and account.get("user_agent"):
+                    extras = {**extras, "user_agent": account["user_agent"]}
                 # Текст клипа без правок владельца + вариант площадки в метаданных клипа —
                 # уходит вариант (app/ai/publish_meta.platform_texts); иначе текст задания.
                 title, description = platform_texts(self.store, fresh_job, target["platform"])

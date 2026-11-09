@@ -4,6 +4,9 @@ import os
 import secrets
 from pathlib import Path
 
+# Адрес расширения browser-extension/ в Chrome и Edge: id вычислен из "key" в его manifest.json и не меняется.
+BROWSER_EXTENSION_ORIGIN = "chrome-extension://nmhfjjfmmidnfhfjmpglcfaogegfiedg"
+
 
 class Settings:
     def __init__(self) -> None:
@@ -69,6 +72,10 @@ class Settings:
         # User-Agent веб-загрузки TikTok: лучше того браузера, из которого взяты cookie аккаунта
         # (пусто — прежний встроенный).
         self.tiktok_user_agent = os.getenv("TIKTOK_USER_AGENT", "").strip()
+        # Своё расширение браузера (browser-extension/) ходит к /api/accounts с токеном: CORS только этим адресам.
+        # По умолчанию — Chrome/Edge-расширение с ключом из его manifest.json; через запятую можно добавить другие.
+        self.browser_extension_origins = tuple(
+            item.rstrip("/") for item in _csv(os.getenv("BROWSER_EXTENSION_ORIGINS", "") or BROWSER_EXTENSION_ORIGIN))
         # YouTube после загрузки: аудитория «не для детей» (false), «для детей» (true) или не трогать
         # (unset — как раньше); категория — id YouTube (20 игры, 24 развлечения, 1 фильмы и
         # анимация…), пусто — не трогать.
