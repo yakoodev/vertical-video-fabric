@@ -7,6 +7,8 @@
  *  - вершины прилипают к сетке экрана низкого разрешения (дрожание полигонов при движении камеры);
  *  - текстура «аффинно» — без поправки на перспективу (доля affine), как у PS1 без Z-буфера текстур;
  *  - туман по вершинам — смешение к цвету тумана по расстоянию;
+ *  - необязательные точечный свет (огонёк, wisp.ts) и фонарь-конус (spot) — тоже по вершинам: пятно света
+ *    «ступенчатое», как у PS1 (у пола и стен сетка мельче — street.ts);
  *  - текстуры: ближайший тексель, без мипмапов, уменьшены (maxTex) и сведены к 15 битам цвета.
  * Кадр (PsxPost): 3D рисуется в холст низкого разрешения, затем 15-битный цвет с упорядоченным
  * дизерингом 4×4 (матрица PS1), интерфейс поверх — без дизеринга (спрайты PS1 не дизерились), и
@@ -40,6 +42,16 @@ export interface PsxUniforms {
   psxAffine: { value: number };
   psxFogCol: { value: THREE.Color };
   psxFog: { value: THREE.Vector2 };
+  /** Точечный свет (мир): позиция, цвет×сила (0 — выключен), радиус (м). */
+  psxPtPos: { value: THREE.Vector3 };
+  psxPtCol: { value: THREE.Color };
+  psxPtRange: { value: number };
+  /** Фонарь-конус: позиция и направление (мир), цвет×сила, косинусы краёв [внешний, внутренний], дальность. */
+  psxSpPos: { value: THREE.Vector3 };
+  psxSpDir: { value: THREE.Vector3 };
+  psxSpCol: { value: THREE.Color };
+  psxSpCone: { value: THREE.Vector2 };
+  psxSpRange: { value: number };
 }
 
 export function psxUniforms(spec: PsxSpec = {}): PsxUniforms {
@@ -51,6 +63,14 @@ export function psxUniforms(spec: PsxSpec = {}): PsxUniforms {
     psxAffine: { value: 0 },
     psxFogCol: { value: new THREE.Color() },
     psxFog: { value: new THREE.Vector2() },
+    psxPtPos: { value: new THREE.Vector3() },
+    psxPtCol: { value: new THREE.Color(0, 0, 0) },
+    psxPtRange: { value: 5 },
+    psxSpPos: { value: new THREE.Vector3() },
+    psxSpDir: { value: new THREE.Vector3(0, 0, -1) },
+    psxSpCol: { value: new THREE.Color(0, 0, 0) },
+    psxSpCone: { value: new THREE.Vector2(0.8, 0.95) },
+    psxSpRange: { value: 12 },
   };
   setPsx(u, spec);
   return u;
@@ -87,6 +107,8 @@ export interface PsxMatOpts {
 const VERT_HEAD = /* glsl */ `
 uniform vec3 psxLightDir; uniform vec3 psxLightCol; uniform vec3 psxAmb; uniform vec2 psxGrid;
 uniform vec2 psxFog; uniform float psxLit; uniform float psxFogK;
+uniform vec3 psxPtPos; uniform vec3 psxPtCol; uniform float psxPtRange;
+uniform vec3 psxSpPos; uniform vec3 psxSpDir; uniform vec3 psxSpCol; uniform vec2 psxSpCone; uniform float psxSpRange;
 varying vec3 vPsxLight; varying float vPsxFog; varying vec3 vPsxUvw;
 void main() {`;
 
@@ -96,7 +118,25 @@ const VERT_TAIL = /* glsl */ `#include <project_vertex>
   vec3 L = normalize((viewMatrix * vec4(psxLightDir, 0.0)).xyz);
   // Полу-Ламберт: тень не проваливается в черноту (ночь, но лицо читается).
   float d = clamp(dot(n, L) * 0.6 + 0.4, 0.0, 1.0);
-  vPsxLight = mix(vec3(1.0), psxAmb + psxLightCol * d, psxLit);
+  vec3 lit = psxAmb + psxLightCol * d;
+  // Точечный свет: полу-Ламберт и спад (1 - r/R)^2 — светит и на грани «вбок», круг света в тумане.
+  if (psxPtCol.r + psxPtCol.g + psxPtCol.b > 0.0) {
+    vec3 lp = (viewMatrix * vec4(psxPtPos, 1.0)).xyz - mvPosition.xyz;
+    float ld = length(lp);
+    float pd = clamp(dot(n, lp / max(ld, 1e-4)) * 0.7 + 0.3, 0.0, 1.0);
+    float fall = clamp(1.0 - ld / psxPtRange, 0.0, 1.0);
+    lit += psxPtCol * pd * fall * fall;
+  }
+  // Фонарь: конус с мягким краем, спад по дальности.
+  if (psxSpCol.r + psxSpCol.g + psxSpCol.b > 0.0) {
+    vec3 sp = (viewMatrix * vec4(psxSpPos, 1.0)).xyz - mvPosition.xyz;
+    float sd = length(sp);
+    vec3 sl = sp / max(sd, 1e-4);
+    float cone = smoothstep(psxSpCone.x, psxSpCone.y, dot(-sl, normalize((viewMatrix * vec4(psxSpDir, 0.0)).xyz)));
+    float fall = clamp(1.0 - sd / psxSpRange, 0.0, 1.0);
+    lit += psxSpCol * cone * fall * clamp(dot(n, sl) * 0.8 + 0.2, 0.0, 1.0);
+  }
+  vPsxLight = mix(vec3(1.0), lit, psxLit);
   vPsxFog = psxFogK * smoothstep(psxFog.x, psxFog.y, length(mvPosition.xyz));
   vec4 p = gl_Position;
   if (p.w > 0.0) gl_Position.xy = floor(p.xy / p.w * psxGrid + 0.5) / psxGrid * p.w;
@@ -141,7 +181,7 @@ export function psxMaterial(u: PsxUniforms, o: PsxMatOpts = {}): THREE.MeshBasic
       .replace("vec3 outgoingLight = reflectedLight.indirectDiffuse;", "vec3 outgoingLight = reflectedLight.indirectDiffuse * vPsxLight;")
       .replace("#include <fog_fragment>", "gl_FragColor.rgb = mix(gl_FragColor.rgb, psxFogCol, vPsxFog);");
   };
-  m.customProgramCacheKey = () => "psx1";
+  m.customProgramCacheKey = () => "psx2";
   return m;
 }
 
@@ -344,13 +384,14 @@ export class PsxPost {
     this.ug = this.ui.getContext("2d", { willReadFrequently: true })!;
   }
 
-  /** 3D-кадр (холст WebGL того же размера) → 15 бит с дизерингом. */
-  scene(src: CanvasImageSource) {
+  /** 3D-кадр (холст WebGL того же размера) → (цветокор grade, fx.ts) → 15 бит с дизерингом. */
+  scene(src: CanvasImageSource, grade?: (d: Uint8ClampedArray, w: number, h: number) => void) {
     const g = this.lg;
     g.globalAlpha = 1;
     g.clearRect(0, 0, this.w, this.h);
     g.drawImage(src, 0, 0, this.w, this.h);
     const d = g.getImageData(0, 0, this.w, this.h);
+    grade?.(d.data, this.w, this.h);
     ditherQuantize(d.data, this.w, this.h, this.dither);
     g.putImageData(d, 0, 0);
   }
@@ -365,6 +406,13 @@ export class PsxPost {
     hardAlpha(d.data);
     g.putImageData(d, 0, 0);
     this.lg.drawImage(this.ui, 0, 0);
+  }
+
+  /** Поверх всего (и интерфейса): помехи и т. п. (fx.ts) — по пикселям готового кадра низкого разрешения. */
+  after(fn: (d: Uint8ClampedArray, w: number, h: number) => void) {
+    const d = this.lg.getImageData(0, 0, this.w, this.h);
+    fn(d.data, this.w, this.h);
+    this.lg.putImageData(d, 0, 0);
   }
 
   /** На выходной холст без сглаживания. */

@@ -19,6 +19,10 @@ export { standPose } from "./src/psx/idle.ts";
 export { sitWeight, sitBones, sitHips } from "./src/psx/sit.ts";
 export { spawnScale } from "./src/psx/things.ts";
 export { typed } from "./src/psx/captions.ts";
+export { fxAt, grade, noise, hash3 } from "./src/psx/fx.ts";
+export { lieWeight, lieBones } from "./src/psx/wake.ts";
+export { wispPath, wispGlow, voiceAt } from "./src/psx/wisp.ts";
+export { rollOutcome, spinFace, creationHeight } from "./src/psx/menu.ts";
 export * as THREE from "three";`,
     resolveDir: HERE, loader: "ts",
   },
@@ -144,4 +148,58 @@ test("предметы появляются ступеньками с перел
   assert.ok(Math.max(...steps) > 1.05 && M.spawnScale(2, 1) === 1);
   assert.equal(M.typed("привет", 0.1, 30), "при");
   assert.equal(M.typed("привет", -1), "");
+});
+
+test("плёнка: уровни по ключам линейно, чёрное — ноль, помехи 0 кадр не трогают, шум детерминирован", () => {
+  const fx = { keys: [{ t: 0, black: 1, static: 1 }, { t: 2, black: 0, static: 0.2 }], staticBase: 0.05 };
+  assert.deepEqual(M.fxAt(fx, 1), { black: 0.5, static: 0.65 });
+  assert.equal(M.fxAt(fx, 9).black, 0);
+  assert.equal(M.fxAt(undefined, 3).static, 0);
+  const d = new Uint8ClampedArray(4 * 4 * 4).fill(200);
+  M.grade(d, 4, 4, { grain: 10 }, 1, 0);
+  assert.ok([...d].filter((_, i) => i % 4 !== 3).every((v) => v === 0));
+  const e = new Uint8ClampedArray(8 * 8 * 4).fill(90), e0 = e.slice();
+  M.noise(e, 8, 8, 0, 3);
+  assert.deepEqual(e, e0);
+  M.noise(e, 8, 8, 1, 3);
+  const f = e0.slice();
+  M.noise(f, 8, 8, 1, 3);
+  assert.deepEqual(e, f);
+  assert.notDeepEqual(e, e0);
+  assert.equal(M.hash3(1, 2, 3), M.hash3(1, 2, 3));
+});
+
+test("пробуждение: лежит до situp, садится за dur, голова выпрямляется раньше корпуса", () => {
+  const keys = [{ id: "sit", t: -10, dur: 0.01 }, { id: "lie", t: -10 }, { id: "situp", t: 5, dur: 2 }];
+  assert.equal(M.lieWeight(keys, 1).k, 1);
+  const mid = M.lieWeight(keys, 6);
+  assert.ok(mid.k > 0 && mid.k < 1 && mid.phase === 0.5);
+  assert.equal(M.lieWeight(keys, 8).k, 0);
+  const lying = M.lieBones({}, 1, 0), early = M.lieBones({}, 0.9, 0.4);
+  assert.ok(lying.hips[0] < -80);
+  assert.equal(early.head[1], 0);
+});
+
+test("огонёк: путь через ключи, до появления не светит, приглушение и голос", () => {
+  const s = { keys: [{ t: 0, pos: [0, 1, 5] }, { t: 2, pos: [0, 1, 1] }], appear: 1, fadeIn: 1, voice: [0, 0, 1, 1], voiceFps: 2,
+    dim: [[3, 4, 0.5]], voicePower: 1 };
+  assert.deepEqual(M.wispPath(s.keys, 0), [0, 1, 5]);
+  assert.deepEqual(M.wispPath(s.keys, 9), [0, 1, 1]);
+  assert.ok(M.wispPath(s.keys, 1)[2] < 5 && M.wispPath(s.keys, 1)[2] > 1);
+  assert.equal(M.wispGlow(s, 0.5), 0);
+  assert.equal(M.voiceAt(s, 1.2), 1);
+  assert.ok(M.wispGlow(s, 3.5) < M.wispGlow(s, 2.5));
+});
+
+test("d20: криты и сложность, вращение кончается настоящим числом, окно меню по пунктам", () => {
+  assert.deepEqual(M.rollOutcome(20, -1, 18), { total: 19, ok: true, crit: "success" });
+  assert.deepEqual(M.rollOutcome(1, 5, 2), { total: 6, ok: false, crit: "fail" });
+  assert.equal(M.rollOutcome(9, 3, 12).ok, true);
+  const r = { t0: 0, die: 7, bonus: 2, dc: 12, stat: "УМ", spin: 1.4 };
+  assert.equal(M.spinFace(r, 0.3 + 1.5), 7);
+  const faces = new Set(Array.from({ length: 40 }, (_, i) => M.spinFace(r, 0.3 + i * 0.03)));
+  assert.ok(faces.size > 5 && [...faces].every((n) => n >= 1 && n <= 20));
+  const menu = { t0: 0, title: "", name: { label: "ИМЯ", value: "???", hint: "", t: 0 },
+    groups: [{ label: "A", t: 0, items: [{ n: 1, title: "x", sub: "y" }, { n: 2, title: "z" }] }] };
+  assert.equal(M.creationHeight(menu), 46 + 16 + 21 + 11);
 });
