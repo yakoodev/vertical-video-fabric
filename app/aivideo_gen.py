@@ -225,7 +225,9 @@ def _preflight(store: Any, job: dict) -> list[str]:
     spent = spent_approval(store, card["id"]) + _sum(
         store, "SELECT COALESCE(SUM(estimate_rub), 0) FROM aiv_gen_jobs WHERE approval_id = ? AND status = 'uncertain' "
                "AND cost_source = '' AND id != ?", (card["id"], int(job["id"])))
-    if spent + float(job["estimate_rub"]) > amount + 0.01:
+    # Запас на расхождение «оценка → списание»: картинка по оценке 3.00 ₽ списывается 3.04 ₽, и без запаса
+    # вторая поза карточки на 6.00 ₽ упиралась в «не хватает 4 копеек». Потолки запуска и месяца — ниже, отдельно.
+    if spent + float(job["estimate_rub"]) > amount + max(0.5, amount * 0.05):
         out.append(f"по карточке #{card['id']} потрачено {spent:.2f} ₽ + {job['estimate_rub']:.2f} ₽ > одобренных "
                    f"{amount:.2f} ₽ — нужна новая карточка")
     if card.get("decided_by") == S.SPEND_ACTOR:

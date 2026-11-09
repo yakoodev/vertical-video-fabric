@@ -227,6 +227,19 @@ def test_spending_over_approved_amount_stops_the_batch(paid, monkeypatch):
     assert statuses == {"done", "held"}
 
 
+def test_kopecks_over_estimate_do_not_block_the_last_job(paid, monkeypatch):
+    """Списание чуть выше оценки (6.04 вместо 6 ₽) не останавливает последний запуск карточки: есть запас."""
+    (_client_, store), fake = paid
+    monkeypatch.setattr(settings, "aivideo_enabled", True)
+    fake.cost = 6.04
+    pid, _sid = _project(store, provider="polza")
+    req = G.request_stage(store, pid, "refs")
+    A.decide(store, req["approval_id"], "approve", actor="ui")
+    out = G.run_pending(store)
+    assert not out["held"]
+    assert {j["status"] for j in G.list_jobs(store, approval_id=req["approval_id"])} == {"done"}
+
+
 def test_caps_refuse_requests(paid, monkeypatch):
     (_client_, store), fake = paid
     pid, sid = _project(store, provider="polza")
