@@ -65,7 +65,8 @@ def test_social_asset_refs_and_missing_picture_keeps_card(tmp_path):
 
     kept, assets, notes = resolve_layer_assets(_Store(), [post])
     assert [layer["id"] for layer in kept] == [post["id"]]  # карточка нужна и без картинки
-    assert assets == {} and notes
+    # Эмодзи-аватар может найтись в паке twemoji (если он скачан) — проверяем только пропавшие картинку и стикер.
+    assert 7 not in assets and "sticker:p/a.png" not in assets and notes
 
 
 def test_social_size_cover_share_and_zones():
