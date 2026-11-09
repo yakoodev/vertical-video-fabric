@@ -236,12 +236,14 @@ export function layerTitle(layer: Layer): string {
       return layer.props.title || "Плашка";
     case "nameplate":
       return layer.props.handle ? `Канал ${layer.props.handle}` : "Плашка канала";
+    case "social":
+      return layer.props.style === "post" ? `Пост ${layer.props.name ?? ""}`.trim() : `Комментарий ${layer.props.name ?? ""}`.trim();
     case "chart":
       return layer.props.title || "График";
     case "progress":
       return "Прогресс";
     case "shape":
-      return { rect: "Прямоугольник", ellipse: "Круг", line: "Линия", arrow: "Стрелка", triangle: "Треугольник", star: "Звезда", burst: "Взрыв", star4: "Искра" }[layer.props.kind] ?? "Фигура";
+      return { rect: "Прямоугольник", ellipse: "Круг", line: "Линия", arrow: "Стрелка", triangle: "Треугольник", star: "Звезда", burst: "Взрыв", star4: "Искра", scribble: "Штриховка", cursor: "Курсор" }[layer.props.kind] ?? "Фигура";
     case "image":
       return "Картинка";
     case "particles":
@@ -277,6 +279,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   chart: "📊",
   callout: "▤",
   nameplate: "@",
+  social: "❝",
   captions: "💬",
   chat: "🗨",
   audio: "♪",

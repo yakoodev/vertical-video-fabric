@@ -286,8 +286,8 @@ def resolve_layer_assets(store: Any, layers: list[dict]) -> tuple[list[dict], di
             path = _resolve_ref(store, ref, layer["type"])
             if path is None:
                 what = f"файл для монтажа {ref}" if isinstance(ref, int) else ref
-                if layer["type"] == "callout":
-                    # Значок — украшение: плашка нужна и без него.
+                if layer["type"] in ("callout", "social"):
+                    # Значок и картинка карточки — украшение: плашка нужна и без них.
                     notes.append(f"слой {layer['id']}: значок {what} не найден")
                     continue
                 notes.append(f"слой {layer['id']}: {what} не найден — пропущен")

@@ -36,7 +36,8 @@ from app.motion_limits import (  # noqa: F401
     BEZIER_RE, PACK_REF_RE, LAYER_TYPES, VISUAL_TYPES, EASINGS, DEFAULT_EASING, ANIMATIONS, TEXT_ONLY_ANIMATIONS,
     ANIMATION_ALIASES, DRAW_SHAPE_KINDS, LOOPS, TEXT_ONLY_LOOPS, LOOP_ALIASES, BLENDS, FX_KINDS, FX_ALIASES,
     FX_MAX_AT_ONCE, REACT_SOURCES, REACT_PROPS, REACT_ALIASES, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES,
-    MAX_PARTICLES, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES,
+    MAX_PARTICLES, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES,
+    SKETCH_SHAPE_KINDS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES,
     NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, ALIGNS, HIGHLIGHT_STYLES,
     CAPTION_STYLES, DEFAULT_CAPTION_STYLE, CAPTION_ANIMATIONS, DEFAULT_CAPTIONS_Y, MAX_CAPTION_MARKS, CHAT_STYLES,
     MAX_CHAT_HIGHLIGHT_USERS, Z_NEAR_LIMIT, Z_FAR_LIMIT, ROT3D_LIMIT, CAMERA_Z_LIMIT, CAMERA_ROT_LIMIT, DEFAULT_FOV,
@@ -157,6 +158,16 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         # Значок плашки рисуется Twemoji — ему нужен тот же файл, что и эмодзи.
         ref = emoji_ref(props["icon"])
         if ref:
+            refs.append(ref)
+    elif ltype == "social":
+        # Карточка: картинка аватара и поста (файлы или паки), эмодзи-аватар — Twemoji.
+        for value in (props.get("avatarImage"), props.get("image") if props.get("style") == "post" else None):
+            ref = _as_ref(value)
+            if ref is not None and ref not in refs:
+                refs.append(ref)
+        avatar = str(props.get("avatar") or "").strip()
+        ref = emoji_ref(avatar) if avatar and not avatar.isalnum() else None
+        if ref and ref not in refs:
             refs.append(ref)
     elif ltype == "scene":
         # Узлы image сцены: файлы для монтажа и emoji:/sticker: из паков.
@@ -471,6 +482,23 @@ def schema_summary() -> dict:
             "note": "плашка канала: значок площадки (свой векторный глиф) + ник; glass — тёмное стекло с "
                     "обводкой accent, solid — заливка accent; accent null — цвет площадки; size — высота "
                     f"пилюли (опорн. px, {NAMEPLATE_SIZE}); boxWidth + align — пилюля у края рамки слоя",
+        },
+        "social": {
+            "styles": list(SOCIAL_STYLES),
+            "themes": list(SOCIAL_THEMES),
+            "note": "карточка «в стиле соцсети», без логотипов площадок: comment — кружок аватара, ник · время, "
+                    "текст, «Ответить», справа сердечко со счётом; post — аватар, имя (+ галочка verified), "
+                    "@handle · time, текст, картинка image 5:3, ответы/репосты/лайки. Высота — по тексту "
+                    f"(перенос по словам, сверх maxLines={SOCIAL_MAX_LINES} строк — «…»); лайки идут от likes до "
+                    "likesTo по progress (нет ключей — за первые 60 % слоя), сердечко закрашивается. avatar — "
+                    "эмодзи или буквы в кружке accent (нет — первая буква name), avatarImage — картинка аватара",
+        },
+        "sketch": {
+            "kinds": list(SKETCH_SHAPE_KINDS),
+            "note": "shape.rough 0..1 — «от руки»: линия дрожит, круг заходит сам на себя, рамка с перехлёстом, "
+                    "наконечник стрелки — два штриха; seed — вариант рисунка; boil — дрожание меняется 8 раз в "
+                    "секунду. kind scribble — штриховка зигзагом по w×h (draw рисует её), cursor — курсор мыши, "
+                    "остриё в левом верхнем углу w×h",
         },
         "chat": {
             "styles": list(CHAT_STYLES),

@@ -219,6 +219,19 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         text = len(str(props.get("handle") or "")) * h * 0.5 * GLYPH_W
         live = h * 0.48 if props.get("live") is True else 0.0  # точка LIVE с зазором
         return max(_num(props.get("boxWidth"), 0), h, h * 0.84 + icon + text + live), h
+    if kind == "social":
+        # Карточка соцсети: высота по строкам текста (кегль 44) и картинке 5:3 (как reframe.ts).
+        post = props.get("style") == "post"
+        w = _num(props.get("w"), 900)
+        max_lines = _num(props.get("maxLines"), 8)
+        text = str(props.get("text") or "")
+        if post:
+            inner = w - 80
+            lines = min(max_lines, _text_lines(text, 44, inner)) if text else 0
+            image = inner * 0.6 + 30 if props.get("image") not in (None, "") else 0.0
+            return w, 250 + (lines * 44 * 1.3 + 28 if lines else 0.0) + image
+        lines = min(max_lines, _text_lines(text, 44, w - 316)) if text else 0
+        return w, max(160.0, 172 + lines * 44 * 1.28)
     if kind == "captions":
         size = _num(props.get("size"), 88)
         lines = _num(props.get("maxLines"), 2)

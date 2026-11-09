@@ -39,6 +39,7 @@ import { particlesRenderer } from "./layers/particles";
 import { pngtuberRenderer } from "./layers/pngtuber";
 import { sceneRenderer, sceneViewport } from "./layers/scene";
 import { shapeRenderer } from "./layers/shape";
+import { socialRenderer } from "./layers/social";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import { drawFx } from "./layers/fx";
@@ -58,6 +59,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   chart: chartRenderer as LayerRenderer,
   callout: calloutRenderer as LayerRenderer,
   nameplate: nameplateRenderer as LayerRenderer,
+  social: socialRenderer as LayerRenderer,
   captions: captionsRenderer as LayerRenderer,
   chat: chatRenderer as LayerRenderer,
   pngtuber: pngtuberRenderer as LayerRenderer,

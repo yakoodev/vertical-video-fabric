@@ -162,6 +162,21 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
     const live = props.live === true ? h * 0.48 : 0; // точка LIVE с зазором
     return [Math.max(num(props.boxWidth, 0), h, h * 0.84 + icon + text + live), h];
   }
+  if (kind === "social") {
+    // Карточка соцсети: высота по строкам текста (кегль 44) и картинке 5:3 (как layers/social.ts).
+    const post = props.style === "post";
+    const w = num(props.w, 900);
+    const maxLines = num(props.maxLines, 8);
+    const text = String(props.text ?? "");
+    if (post) {
+      const inner = w - 80;
+      const lines = text ? Math.min(maxLines, textLines(text, 44, inner)) : 0;
+      const image = props.image !== null && props.image !== undefined && props.image !== "" ? inner * 0.6 + 30 : 0;
+      return [w, 250 + (lines ? lines * 44 * 1.3 + 28 : 0) + image];
+    }
+    const lines = text ? Math.min(maxLines, textLines(text, 44, w - 316)) : 0;
+    return [w, Math.max(160, 172 + lines * 44 * 1.28)];
+  }
   if (kind === "captions") {
     const size = num(props.size, 88);
     const lines = num(props.maxLines, 2);

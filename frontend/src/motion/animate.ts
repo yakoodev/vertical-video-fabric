@@ -83,6 +83,9 @@ function defaultProgress(type: LayerType, local: number, dur: number): number {
       return ease("outCubic", local / (dur * 0.5));
     case "chart":
       return ease("outCubic", local / (dur * 0.4));
+    case "social":
+      // Карточка: лайки считают вверх за первые 60 % слоя.
+      return ease("outCubic", local / (dur * 0.6));
     default:
       return 1;
   }

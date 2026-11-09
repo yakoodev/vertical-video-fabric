@@ -177,6 +177,10 @@ def _layer_box(layer: dict, ref_h: float = 1920.0) -> tuple[float, float]:
         height = 180.0
     elif kind == "nameplate":
         height = _num(props.get("size"), float(motion.NAMEPLATE_SIZE)) or float(motion.NAMEPLATE_SIZE)
+    elif kind == "social":
+        from app.aspect import layer_size
+
+        height = (layer_size(layer) or (0.0, 300.0))[1]
     elif kind == "image":
         height = _num(props.get("w"), 400.0) or 400.0
     elif kind == "video":
@@ -212,10 +216,19 @@ FULL_INSERT_MAX_SEC = 3.0
 def cover_share(layer: dict, fmt: Any = None) -> float:
     """Какую долю кадра непрозрачно закрывает слой-картинка/фигура (0, если прозрачный); кадр —
     опорный формата слоёв ``fmt`` (нет — 9:16, 1080×1920)."""
-    if layer.get("type") not in ("shape", "image", "video", "scene"):
+    if layer.get("type") not in ("shape", "image", "video", "scene", "social"):
         return 0.0
     ref_w, ref_h = _ref(fmt)
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+    if layer.get("type") == "social":
+        # Карточка соцсети непрозрачна: высота — по строкам текста и картинке (app/aspect.layer_size).
+        from app.aspect import layer_size
+
+        if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
+            return 0.0
+        w, h = layer_size(layer) or (0.0, 0.0)
+        scale = _num(layer.get("scale"), 1.0) or 1.0
+        return min(1.0, (w * h * scale * scale) / (ref_w * ref_h))
     if layer.get("type") == "scene":
         # Сцена закрывает кадр только своим фоном: без background она прозрачна (графика поверх).
         scene = props.get("scene") if isinstance(props.get("scene"), dict) else {}

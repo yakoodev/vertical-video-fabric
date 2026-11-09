@@ -85,6 +85,20 @@ def _in_place() -> dict:
     return {"name": "in_place", "layers": layers, "camera": camera, "sizes": {"9": [1600, 1000]}}
 
 
+def _social() -> dict:
+    """Комментарий и пост «как в соцсети» (layers/social.ts): высота карточки — по строкам текста и картинке."""
+    layers = normalize_layers([
+        {"id": "cm", "type": "social", "start": 0, "end": 5, "x": 0.5, "y": 0.7,
+         "props": {"style": "comment", "name": "zritel", "text": "Сова, ты опять перепутала право и лево " * 3}},
+        {"id": "ps", "type": "social", "start": 0, "end": 5, "x": 0.5, "y": 0.32,
+         "props": {"style": "post", "name": "Сова", "text": "Пост с картинкой", "image": 7, "w": 860}},
+        {"id": "hand", "type": "shape", "start": 1, "end": 4, "x": 0.62, "y": 0.4,
+         "props": {"kind": "ellipse", "w": 420, "h": 240, "fill": None, "stroke": {"color": "#ff2d55", "width": 14},
+                   "rough": 0.6, "seed": 5}},
+    ])
+    return {"name": "social", "layers": layers, "camera": [], "sizes": {"7": [1200, 720]}}
+
+
 def _scaffold() -> dict:
     """Настоящий клип промо-заготовки (клип 581: 40 слоёв, 18 ключей камеры)."""
     data = json.loads((FIXTURES / "clip581_scaffold.json").read_text(encoding="utf-8"))
@@ -97,7 +111,7 @@ def _scaffold() -> dict:
 def build_cases() -> dict:
     """Входы (``bases``) и ответ Python по всем парам форматов (``cases``)."""
     bases, cases = {}, []
-    for base in (_promo(), _scenes(), _scaffold(), _in_place()):
+    for base in (_promo(), _scenes(), _scaffold(), _in_place(), _social()):
         name = base.pop("name")
         bases[name] = base
         sizes = {k: tuple(v) for k, v in base["sizes"].items()}
