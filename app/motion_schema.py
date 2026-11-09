@@ -6,7 +6,8 @@ from app.scene_engine import SceneSpec
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
     BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
-    CHART_KINDS, CALLOUT_STYLES, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS,
+    CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, NAMEPLATE_PLATFORMS,
+    NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS,
     NAMEPLATE_SIZE, ALIGNS, HIGHLIGHT_STYLES, CAPTION_STYLES, DEFAULT_CAPTION_STYLE, CAPTION_ANIMATIONS,
     MAX_CAPTION_MARKS, CHAT_STYLES, MAX_CHAT_HIGHLIGHT_USERS, Z_NEAR_LIMIT, Z_FAR_LIMIT, ROT3D_LIMIT,
     CAMERA_Z_LIMIT, CAMERA_ROT_LIMIT, DEFAULT_FOV, FOV_RANGE, DEFAULT_BASE_Z, DEVICE_KINDS, DEFAULT_DEVICE_COLOR,
@@ -121,6 +122,10 @@ PROPS: dict[str, dict] = {
         "points": Num(5, 3, 24, integer=True),
         "dash": Flag(False),
         "bend": Opt(Num(0, -2000, 2000, 1)),
+        # «От руки» (layers/sketch.ts): дрожание 0..1, вариант рисунка, «кипение» 8 раз в секунду.
+        "rough": Opt(Num(0, 0, 1, 3)),
+        "seed": Opt(Num(0, 0, 999999, integer=True)),
+        "boil": Opt(Flag(False)),
     },
     "image": {
         "asset_id": AssetRef(),
@@ -210,6 +215,29 @@ PROPS: dict[str, dict] = {
         "w": Num(900, 100, 2160, 1),
         "skew": Opt(Num(0, -30, 30, 2)),
         "icon": Opt(Text("", 32)),
+    },
+    # Карточка соцсети: comment — комментарий (сердечко со счётом справа), post — пост ленты
+    # (картинка 5:3, ответы/репосты/лайки). Лайки считают от likes до likesTo по progress.
+    "social": {
+        "style": Choice("comment", SOCIAL_STYLES),
+        "theme": Choice("dark", SOCIAL_THEMES),
+        "name": Text("", 40),
+        "handle": Opt(Text("", 40)),
+        "time": Opt(Text("", 24)),
+        "text": Text("", 500),
+        "maxLines": Opt(Num(SOCIAL_MAX_LINES, 1, 20, integer=True)),
+        "avatar": Opt(Text("", 8)),
+        "accent": Color("#8b5cf6"),
+        "avatarImage": Opt(AssetRef(prefixes=("emoji", "sticker"))),
+        "image": Opt(AssetRef(prefixes=("emoji", "sticker"))),
+        "likes": Num(0, 0, 1e10, integer=True),
+        "likesTo": Opt(Num(0, 0, 1e10, integer=True)),
+        "replies": Opt(Num(0, 0, 1e10, integer=True)),
+        "reposts": Opt(Num(0, 0, 1e10, integer=True)),
+        "liked": Flag(False),
+        "verified": Flag(False),
+        "w": Num(900, 400, 2160, 1),
+        "font": FONT,
     },
     # Плашка канала: пилюля со значком площадки и ником. accent null — цвет площадки;
     # boxWidth — рамка слоя, пилюля в ней по align (бренд ставит её от края кадра).

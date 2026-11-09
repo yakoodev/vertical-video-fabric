@@ -223,8 +223,13 @@ bearer_token_env_var = "VVF_TOKEN"
 - Типы: `text`, `emoji`, `image` (`asset_id` или `src: "emoji:1f525" | "sticker:<pack>/<file>"`),
   `video` (видео из библиотеки: `asset_id`, `from`, `speed`, `loop`, `freeze`; по умолчанию немое, `audio: true` —
   со звуком, см. «Звук слоёв»), `shape` (arrow/ellipse/…),
-  `counter`, `progress`, `chart`, `callout`, `audio` (`sfx:<pack>/<file>`). У `image` и `video` —
+  `counter`, `progress`, `chart`, `callout`, `social` (карточка комментария или поста «как в соцсети»),
+  `audio` (`sfx:<pack>/<file>`). У `image` и `video` —
   `device: "phone"`: содержимое в корпусе телефона (см. «Промо приложения»).
+- **От руки** (объяснялки: «вот здесь ошибка»): у `shape` ellipse/rect/line/arrow/scribble — `rough` 0..1 (линия
+  дрожит, круг заходит сам на себя, наконечник — два штриха) + `in: draw`; `scribble` — штриховка маркером,
+  `cursor` — курсор мыши. Готовое в галерее: «Стрелка от руки», «Обвести от руки», «Подчеркнуть от руки»
+  (Акценты), «Курсор и клики», «Касания пальцем» (Промо), «Комментарий зрителя», «Пост из ленты» (Мемы).
 - Вход/выход: `pop`, `words`, `typewriter`, `rise`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
   `rise` (только текст) — каждое слово по очереди выезжает снизу из-под невидимой маски своей строки
   (с плашкой — из-под её края) с проявлением: «дорогие» титры промо; на выходе — уходит под маску.

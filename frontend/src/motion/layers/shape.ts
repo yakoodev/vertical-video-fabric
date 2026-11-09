@@ -1,5 +1,6 @@
 /**
- * Фигуры: прямоугольник, эллипс, линия, стрелка, треугольник, звезда, искра (star4), «взрыв».
+ * Фигуры: прямоугольник, эллипс, линия, стрелка, треугольник, звезда, искра (star4), «взрыв»,
+ * штриховка (scribble) и курсор мыши (cursor). `rough` > 0 — обводка «от руки» (sketch.ts).
  *
  * Каждая фигура строится ломаной с мелким шагом — так «рисование обводки»
  * (in/out `draw` и ключи `progress`) работает одинаково для всех форм и не
@@ -9,6 +10,7 @@ import { clamp01 } from "../easing";
 import { sparklePoints } from "../glyphs";
 import type { ShapeLayer, Stroke } from "../types";
 import { clearShadow, partialPolyline, rgba, type LayerRenderer, type Pt } from "./common";
+import { cursorPts, roughOf, scribblePts, sketchHead, sketchOutline, sketchSeed, wobbleAmp } from "./sketch";
 
 type Outline = { pts: Pt[]; closed: boolean };
 
@@ -91,35 +93,53 @@ export function shapeOutline(p: ShapeLayer["props"]): Outline {
     case "star4":
       // Четырёхлучевая искра ✦ с вогнутыми сторонами (та же форма, что у символа и частиц).
       return { pts: sparklePoints(w / 2, h / 2), closed: true };
+    case "scribble":
+      return { pts: scribblePts(w, h, p.stroke?.width ?? 24, 0, 0), closed: false };
+    case "cursor":
+      return { pts: cursorPts(w, h), closed: true };
     case "rect":
     default:
       return { pts: rectPts(w, h, p.radius ?? 0), closed: true };
   }
 }
 
+/** Фигуры из одной линии: без stroke обводка берётся цветом fill. */
+const isLineKind = (kind: string) => kind === "line" || kind === "arrow" || kind === "scribble";
+
+/** Какие фигуры умеют «от руки» (`rough`); у остальных rough не действует. */
+const SKETCH_KINDS = new Set(["ellipse", "rect", "line", "arrow", "scribble"]);
+
 function arrowStroke(p: ShapeLayer["props"]): Stroke {
   if (p.stroke && p.stroke.width > 0) return p.stroke;
-  return { color: p.fill || "#ffffff", width: 18 };
+  return { color: p.fill || "#ffffff", width: p.kind === "scribble" ? 24 : 18 };
 }
 
 export const shapeRenderer: LayerRenderer<ShapeLayer> = {
   multipart: true,
   measure(_ctx, layer) {
     const p = layer.props;
-    const sw = p.stroke?.width ?? (p.kind === "arrow" || p.kind === "line" ? 18 : 0);
+    const sw = p.stroke?.width ?? (isLineKind(p.kind) ? arrowStroke(p).width : 0);
     const w = Math.max(1, p.w ?? 300);
+    // Дрожание и заход круга на себя выводят линию за рамку — запас, чтобы маска не резала.
+    const rough = SKETCH_KINDS.has(p.kind) ? roughOf(p) : 0;
+    const wob = rough ? wobbleAmp(p, rough) * 2 + (p.kind === "ellipse" ? w * 0.08 * rough : 0) : 0;
     if (p.kind === "line" || p.kind === "arrow") {
       const head = p.kind === "arrow" ? Math.max(sw * 3.2, 28) : 0;
-      return { w: w + sw + head, h: Math.abs(p.bend ?? 0) * 2 + sw + head * 1.2 };
+      return { w: w + sw + head + wob, h: Math.abs(p.bend ?? 0) * 2 + sw + head * 1.2 + wob };
     }
-    return { w: w + sw, h: Math.max(1, p.h ?? 300) + sw };
+    return { w: w + sw + wob, h: Math.max(1, p.h ?? 300) + sw + wob };
   },
   draw(ctx, layer, st) {
     const p = layer.props;
     const frac = clamp01(Math.min(st.draw, layer.keys?.progress?.length ? st.progress : 1));
     if (frac <= 0) return;
-    const { pts, closed } = shapeOutline(p);
-    const isLine = p.kind === "line" || p.kind === "arrow";
+    const outline = shapeOutline(p);
+    const rough = SKETCH_KINDS.has(p.kind) ? roughOf(p) : 0;
+    const seed = rough ? sketchSeed(p, st.local) : 0;
+    // «От руки» линия открытая: круг заходит сам на себя, рамка — с перехлёстом.
+    const pts = rough ? sketchOutline(p, rough, seed, outline.pts) : outline.pts;
+    const closed = rough ? false : outline.closed;
+    const isLine = isLineKind(p.kind);
     const stroke = isLine ? arrowStroke(p) : p.stroke && p.stroke.width > 0 ? p.stroke : null;
 
     // Заливка проявляется к концу рисования обводки (или просто гаснет, если обводки нет).
@@ -144,6 +164,21 @@ export const shapeRenderer: LayerRenderer<ShapeLayer> = {
     if (p.dash) ctx.setLineDash([stroke.width * 1.2, stroke.width * 2.2]);
 
     const head = p.kind === "arrow" ? Math.max(stroke.width * 3.2, 28) : 0;
+    if (rough && head) {
+      // Стрелка от руки: линия до острия, потом два штриха наконечника (последние 18 % хода).
+      const lineFrac = Math.min(1, frac / 0.82);
+      ctx.beginPath();
+      partialPolyline(ctx, pts, false, lineFrac);
+      ctx.stroke();
+      const end = partialEnd(pts, 1);
+      for (const strokePts of sketchHead(end.end, end.angle, head * 0.9, seed, lineFrac >= 1 ? (frac - 0.82) / 0.18 : 0)) {
+        ctx.beginPath();
+        strokePts.forEach((pt, i) => (i ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1])));
+        ctx.stroke();
+      }
+      if (p.dash) ctx.setLineDash([]);
+      return;
+    }
     let tip: { end: Pt; angle: number };
     ctx.beginPath();
     if (frac >= 1 && !head) {

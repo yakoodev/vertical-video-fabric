@@ -158,7 +158,11 @@ export type TextProps = TextStyle & {
   highlight?: Highlight | null;
 };
 
-export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "triangle" | "star" | "burst" | "star4";
+/**
+ * scribble — штриховка маркером зигзагом по прямоугольнику w×h (выделить слово, «закрасить»);
+ * cursor — стрелка-курсор мыши, остриё в левом верхнем углу рамки w×h.
+ */
+export type ShapeKind = "rect" | "ellipse" | "line" | "arrow" | "triangle" | "star" | "burst" | "star4" | "scribble" | "cursor";
 
 export type ShapeProps = {
   kind: ShapeKind;
@@ -171,6 +175,15 @@ export type ShapeProps = {
   dash?: boolean;
   /** line/arrow: изгиб дугой в опорных px (+ вверх, − вниз), 0 — прямая. */
   bend?: number;
+  /**
+   * «Нарисовано от руки» 0..1 (layers/sketch.ts): линия дрожит, круг не замыкается, а заходит
+   * сам на себя, наконечник стрелки — два штриха маркера. 0 / нет — ровная геометрия.
+   */
+  rough?: number;
+  /** Вариант дрожания (целое): одинаковый seed — одинаковая линия в превью и рендере. */
+  seed?: number;
+  /** Линия «кипит» — дрожание меняется 8 раз в секунду, как в рисованной анимации. */
+  boil?: boolean;
 };
 
 /** Видимая часть картинки в долях; ключи cropX/Y/W/H анимируют её поверх этой базы. */
@@ -373,6 +386,42 @@ export type NameplateProps = {
   live?: boolean;
   /** collapse — в последние 0.6 с слоя свернуться в значок и уйти (перед призывом/концовкой). */
   outro?: "none" | "collapse";
+};
+
+/**
+ * Карточка «в стиле соцсети» (layers/social.ts): comment — комментарий под роликом (аватар, ник,
+ * текст, сердечко со счётом справа), post — пост ленты (аватар, имя, @ник, текст, картинка,
+ * счётчики ответов, репостов и лайков). Без логотипов площадок: нейтральные значки путями.
+ */
+export type SocialStyle = "comment" | "post";
+
+export type SocialProps = {
+  style?: SocialStyle;
+  theme?: "dark" | "light";
+  /** Имя или ник автора; `handle` — @ник под именем у поста; `time` — «2 ч», «вчера». */
+  name?: string;
+  handle?: string;
+  time?: string;
+  /** Текст; длинный переносится по словам, сверх `maxLines` строк — «…». */
+  text?: string;
+  maxLines?: number;
+  /** В кружке аватара цвета `accent`: эмодзи или буквы (нет — первая буква имени). */
+  avatar?: string;
+  accent?: string;
+  /** Картинки из «Файлов для монтажа»: аватар (вместо кружка) и картинка поста (рамка 5:3). */
+  avatarImage?: string | number | null;
+  image?: string | number | null;
+  /** Лайки: с `likes` до `likesTo` по ходу `progress` (нет — число стоит); ответы и репосты поста. */
+  likes?: number;
+  likesTo?: number | null;
+  replies?: number | null;
+  reposts?: number | null;
+  /** Сердечко закрашено сразу; при счёте вверх закрашивается само. `verified` — галочка у имени. */
+  liked?: boolean;
+  verified?: boolean;
+  /** Ширина карточки, опорн. px. */
+  w?: number;
+  font?: string;
 };
 
 export type AudioProps = {
@@ -625,6 +674,7 @@ export type LayerPropsMap = {
   chart: ChartProps;
   callout: CalloutProps;
   nameplate: NameplateProps;
+  social: SocialProps;
   captions: CaptionsProps;
   chat: ChatProps;
   audio: AudioProps;
@@ -718,6 +768,7 @@ export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
 export type CalloutLayer = LayerOf<"callout">;
 export type NameplateLayer = LayerOf<"nameplate">;
+export type SocialLayer = LayerOf<"social">;
 export type CaptionsLayer = LayerOf<"captions">;
 export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
@@ -737,6 +788,7 @@ export type Layer =
   | ChartLayer
   | CalloutLayer
   | NameplateLayer
+  | SocialLayer
   | CaptionsLayer
   | ChatLayer
   | AudioLayer

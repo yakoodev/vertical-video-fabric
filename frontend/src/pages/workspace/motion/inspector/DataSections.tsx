@@ -1,5 +1,5 @@
-// Разделы инспектора: график, плашка, плашка канала.
-import { NAMEPLATE_SIZE, nameplateAccent, type ChartDatum } from "@/motion";
+// Разделы инспектора: график, плашка, плашка канала, карточка соцсети.
+import { NAMEPLATE_SIZE, SOCIAL_MAX_LINES, nameplateAccent, type ChartDatum } from "@/motion";
 import { Color, Num, Section, Toggle, type LayerOf, type PatchProps } from "./fields";
 
 export function ChartSection({ layer, patchProps }: { layer: LayerOf<"chart">; patchProps: PatchProps }) {
@@ -149,6 +149,90 @@ export function NameplateSection({ layer, patchProps }: { layer: LayerOf<"namepl
         </select>
       </div>
       <Toggle label="Точка LIVE" checked={Boolean(layer.props.live)} onChange={(live) => patchProps({ live })} />
+    </Section>
+  );
+}
+
+/** Пустое поле числа → поля нет вовсе (счётчик не показан); null схема бэкенда приняла бы за 0. */
+const countOrNull = (v: string) => (v.trim() === "" ? undefined : Math.max(0, Math.round(Number(v) || 0)));
+
+export function SocialSection({ layer, refWidth, patchProps }: { layer: LayerOf<"social">; refWidth: number; patchProps: PatchProps }) {
+  const p = layer.props;
+  const post = p.style === "post";
+  return (
+    <Section title={post ? "Пост" : "Комментарий"}>
+      <div className="li-row">
+        <select className="input" value={p.style ?? "comment"} onChange={(e) => patchProps({ style: e.target.value })}>
+          <option value="comment">Комментарий</option>
+          <option value="post">Пост ленты</option>
+        </select>
+        <select className="input" value={p.theme ?? "dark"} onChange={(e) => patchProps({ theme: e.target.value })}>
+          <option value="dark">Тёмная</option>
+          <option value="light">Светлая</option>
+        </select>
+      </div>
+      <label>
+        <span className="li-cap">{post ? "Имя" : "Ник"}</span>
+        <input className="input" value={p.name ?? ""} maxLength={40} onChange={(e) => patchProps({ name: e.target.value })} />
+      </label>
+      {post ? (
+        <label>
+          <span className="li-cap">@ник</span>
+          <input className="input" value={p.handle ?? ""} maxLength={40} onChange={(e) => patchProps({ handle: e.target.value })} />
+        </label>
+      ) : null}
+      <label>
+        <span className="li-cap">Текст</span>
+        <textarea className="input" rows={3} value={p.text ?? ""} maxLength={500} onChange={(e) => patchProps({ text: e.target.value })} />
+      </label>
+      <div className="li-row">
+        <label>
+          <span className="li-cap">Когда</span>
+          <input className="input" value={p.time ?? ""} maxLength={24} onChange={(e) => patchProps({ time: e.target.value })} />
+        </label>
+        <label>
+          <span className="li-cap">В аватаре</span>
+          <input className="input li-emoji" value={p.avatar ?? ""} maxLength={8} onChange={(e) => patchProps({ avatar: e.target.value })} />
+        </label>
+        <Color label="Цвет аватара" value={p.accent ?? "#8b5cf6"} onChange={(accent) => patchProps({ accent })} />
+      </div>
+      <div className="li-row">
+        <label className="li-grow" title="id картинки из «Файлов для монтажа»">
+          <span className="li-cap">Фото аватара (id)</span>
+          <input className="input" value={p.avatarImage ?? ""} onChange={(e) => patchProps({ avatarImage: e.target.value.trim() || null })} />
+        </label>
+        {post ? (
+          <label className="li-grow" title="id картинки из «Файлов для монтажа»; рамка 5:3">
+            <span className="li-cap">Картинка поста (id)</span>
+            <input className="input" value={p.image ?? ""} onChange={(e) => patchProps({ image: e.target.value.trim() || null })} />
+          </label>
+        ) : null}
+      </div>
+      <div className="li-row">
+        <Num label="Лайков" value={p.likes ?? 0} min={0} max={1e10} onChange={(likes) => patchProps({ likes: Math.round(likes) })} />
+        <label className="li-num" title="Пусто — число стоит; иначе считает вверх по ходу слоя">
+          <span>Досчитать до</span>
+          <input className="input" value={p.likesTo ?? ""} onChange={(e) => patchProps({ likesTo: countOrNull(e.target.value) })} />
+        </label>
+        <Toggle label="Лайк стоит" checked={Boolean(p.liked)} onChange={(liked) => patchProps({ liked })} />
+      </div>
+      {post ? (
+        <div className="li-row">
+          <label className="li-num" title="Пусто — не показывать">
+            <span>Ответов</span>
+            <input className="input" value={p.replies ?? ""} onChange={(e) => patchProps({ replies: countOrNull(e.target.value) })} />
+          </label>
+          <label className="li-num" title="Пусто — не показывать">
+            <span>Репостов</span>
+            <input className="input" value={p.reposts ?? ""} onChange={(e) => patchProps({ reposts: countOrNull(e.target.value) })} />
+          </label>
+          <Toggle label="Галочка" checked={Boolean(p.verified)} onChange={(verified) => patchProps({ verified })} />
+        </div>
+      ) : null}
+      <div className="li-row">
+        <Num label="Ширина" value={p.w ?? 900} min={400} max={refWidth} step={10} onChange={(w) => patchProps({ w })} />
+        <Num label="Строк не больше" value={p.maxLines ?? SOCIAL_MAX_LINES} min={1} max={20} onChange={(maxLines) => patchProps({ maxLines: Math.round(maxLines) })} />
+      </div>
     </Section>
   );
 }

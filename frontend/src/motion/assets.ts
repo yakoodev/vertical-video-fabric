@@ -56,6 +56,13 @@ export function collectImageRefs(layers: Layer[]): string[] {
         emojiIn(layer.props.subtitle, out);
         if (layer.props.icon) out.add(emojiRef(layer.props.icon));
         break;
+      case "social": {
+        // Карточка: эмодзи в тексте и нике, эмодзи-аватар, картинки аватара и поста.
+        const p = layer.props;
+        emojiIn(`${p.name ?? ""} ${p.text ?? ""} ${p.avatar ?? ""}`, out);
+        for (const ref of [p.avatarImage, p.style === "post" ? p.image : null]) if (ref !== null && ref !== undefined && ref !== "") out.add(String(ref));
+        break;
+      }
       default:
         break;
     }

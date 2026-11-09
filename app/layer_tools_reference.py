@@ -181,7 +181,7 @@ def _motion_reference_text() -> str:
   in {{type, duration}}, out {{type, duration}} (null или duration 0 — без анимации; у слоя до конца клипа out не играет), loop {{type, speed 0.1..5, amount 0..3}},
   shadow {{color, blur, x, y, opacity}}, blend normal|multiply|screen|overlay|add, props {{...}}}}
 type: {', '.join(enums['types'])}
-in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text; draw — shape line/arrow/ellipse)
+in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text; draw — shape line/arrow/ellipse/scribble)
   rise — каждое слово выезжает снизу из-под невидимой маски своей строки с проявлением, по очереди (титры промо, «дорогой» текст)
   glitch/scramble — только text (RGB-расслоение со срезами / буквы перебираются и «расшифровываются»); stomp — удар у любого слоя
 loop: {', '.join(enums['loops'])} (glitch — редкие сбои, wave — буквы волной: только text)
@@ -199,6 +199,8 @@ props по типу:
         титр читается, когда под него наездом заезжает телефон/пёстрый фон. Символы-декор {motion.DECOR_GLYPHS}
         внутри текста рисуются векторно цветом текста (в шрифтах их нет — без этого был бы квадрат)
   shape: kind {'|'.join(enums['shapes'])} (star4 — четырёхлучевая искра ✦), w, h, fill|null, stroke {{color,width}}, radius, points, dash
+         rough 0..1 — «от руки» (ellipse/rect/line/arrow/scribble: линия дрожит, круг заходит сам на себя, наконечник — два штриха),
+         seed, boil (дрожит 8 раз/с); scribble — штриховка маркером по w×h; cursor — курсор мыши (остриё — левый верх w×h)
   image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX,
          device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island,
          statusBar (true или доля ширины экрана 0..0.4: полоса «9:41 · связь · батарея» НАД записью, экран выше на неё;
@@ -223,6 +225,9 @@ props по типу:
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
+  social (карточка «в стиле соцсети», без логотипов): style comment|post, theme dark|light, name, handle, time, text (≤500,
+         перенос по словам, сверх maxLines — «…»), avatar (эмодзи/буквы), accent, avatarImage, image (post, 5:3), likes, likesTo
+         (счёт вверх по progress), replies, reposts (post), liked, verified, w (900)
   nameplate (плашка канала, весь ролик): platform {'|'.join(motion.NAMEPLATE_PLATFORMS)} (свой векторный значок), handle (ник),
          style glass (тёмное стекло + обводка accent) | solid (заливка accent), accent (нет — цвет площадки), size (высота
          пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки), anim

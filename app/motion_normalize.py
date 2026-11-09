@@ -143,7 +143,7 @@ def _norm_anim(raw: Any, rep: _Report, where: str, layer: dict) -> dict:
         rep(f"{where}.type", f"«{kind}» бывает только у текста — заменено на fade")
         anim["type"] = "fade"
     elif kind == "draw" and not (ltype == "shape" and layer["props"].get("kind") in DRAW_SHAPE_KINDS):
-        rep(f"{where}.type", "«draw» бывает только у формы line/arrow/ellipse — заменено на fade")
+        rep(f"{where}.type", "«draw» бывает только у формы line/arrow/ellipse/scribble — заменено на fade")
         anim["type"] = "fade"
     half = round((layer["end"] - layer["start"]) / 2, 3)
     # У «без анимации» длительность ничего не значит — не придираемся к ней.
@@ -346,6 +346,7 @@ TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "callout": ("title", "subtitle"),
     "chart": ("title", "centerLabel"),
     "nameplate": ("handle",),
+    "social": ("name", "text", "handle", "time"),
 }
 # Gemini пишет перенос в JSON двойным экранированием ("СТРОКА\\nСТРОКА") — в строке
 # остаются обратный слэш и n, а капс в движке делал из них «\N» прямо в кадре (прогон 578).
@@ -394,6 +395,8 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props", "у плашки пустые title и subtitle")
     elif ltype == "scene" and not props["scene"].get("nodes"):
         rep(f"{where}.props.scene.nodes", "пустая сцена — слой ничего не покажет (get_scene_reference)")
+    elif ltype == "social" and not props["text"].strip() and not props["name"].strip():
+        rep(f"{where}.props.text", "у карточки нет ни текста, ни имени — пустая карточка")
     elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":
         rep(f"{where}.props.handle", "у плашки канала нет ни ника (handle), ни площадки — слой ничего не покажет")
 

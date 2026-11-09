@@ -20,6 +20,8 @@ import { barChart, countdown, counter, donutChart, pieChart, progressBar, top3 }
 import { alertBanner, beforeAfter, boom, lookHere, subscribe } from "./templates/calls";
 import { fxTpl, glitchRange, glitchTitle, particlesTpl, phoneScreen } from "./templates/effects";
 import { cardFan, depthTitle, phoneSpace } from "./templates/space3d";
+import { cursorClicks, fingerTaps, handArrow, handCircle, handUnderline } from "./templates/sketch";
+import { commentCard, postCard } from "./templates/social";
 
 export { TEMPLATE_CATEGORIES, newLayerId } from "./templates/kit";
 export type { TemplateParamType, TemplateParam, TemplateParams, TemplateResult, MotionTemplate } from "./templates/kit";
@@ -45,12 +47,19 @@ export const TEMPLATES: MotionTemplate[] = [
   pieChart,
   subscribe,
   lookHere,
+  handArrow,
+  handCircle,
+  handUnderline,
   beforeAfter,
   countdown,
   alertBanner,
   boom,
   top3,
+  commentCard,
+  postCard,
   phoneScreen,
+  cursorClicks,
+  fingerTaps,
   particlesTpl,
   glitchTitle,
   fxTpl,

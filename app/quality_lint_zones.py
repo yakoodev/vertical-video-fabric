@@ -251,7 +251,7 @@ def is_sticker(layer: dict) -> bool:
     return _num(props.get("w"), 400.0) * _num(layer.get("scale"), 1.0) < STICKER_MAX_SHARE * W
 
 
-ZONE_TYPES = ("text", "counter", "callout", "nameplate", "emoji", "image")
+ZONE_TYPES = ("text", "counter", "callout", "nameplate", "social", "emoji", "image")
 
 
 def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, float, float] | None:
@@ -275,6 +275,10 @@ def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, 
         w, h = _num(props.get("w"), 900.0), 220.0 if props.get("subtitle") else 160.0
     elif kind == "nameplate":
         w, h, shift = _nameplate_box(props)
+    elif kind == "social":
+        from app.aspect import layer_size
+
+        w, h = layer_size(layer) or (900.0, 300.0)
     elif kind == "emoji":
         w = h = _num(props.get("size"), 160.0)
     else:
@@ -365,6 +369,8 @@ def _what(layer: dict) -> str:
         return f"плашка «{_short(props.get('title') or props.get('subtitle'))}»"
     if kind == "nameplate":
         return f"плашка канала {_short(props.get('handle'))}".strip()
+    if kind == "social":
+        return f"карточка «{_short(props.get('text') or props.get('name'))}»"
     if kind == "captions":
         return "субтитры (слой)"
     if kind == "counter":

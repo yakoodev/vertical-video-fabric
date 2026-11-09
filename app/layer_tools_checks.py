@@ -87,6 +87,8 @@ def _layer_summary(layer: dict) -> str:
         "chart": lambda: f"график {props.get('kind') or ''}",
         "callout": lambda: f"плашка «{_short(props.get('title'))}»",
         "nameplate": lambda: f"плашка канала {props.get('platform') or ''} «{_short(props.get('handle'))}»",
+        "social": lambda: ("пост" if props.get("style") == "post" else "комментарий")
+        + f" {props.get('name') or ''} «{_short(props.get('text'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),

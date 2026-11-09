@@ -12,7 +12,7 @@ import type { PickedPoint } from "@/pages/workspace/motion/TrackPanel";
 import { SceneInspector } from "@/pages/workspace/motion/SceneInspector";
 import { AudioSection } from "./inspector/AudioSection";
 import { CaptionsSection } from "./inspector/CaptionsSection";
-import { CalloutSection, ChartSection, NameplateSection } from "./inspector/DataSections";
+import { CalloutSection, ChartSection, NameplateSection, SocialSection } from "./inspector/DataSections";
 import { FxSection, ParticlesSection } from "./inspector/EffectSections";
 import { Section } from "./inspector/fields";
 import { MediaSection, ProgressSection, ShapeSection } from "./inspector/MediaSections";
@@ -107,6 +107,8 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
       {layer.type === "callout" ? <CalloutSection layer={layer} refWidth={refWidth} patchProps={patchProps} /> : null}
 
       {layer.type === "nameplate" ? <NameplateSection layer={layer} patchProps={patchProps} /> : null}
+
+      {layer.type === "social" ? <SocialSection layer={layer} refWidth={refWidth} patchProps={patchProps} /> : null}
 
       {layer.type === "audio" ? <AudioSection layer={layer} patchProps={patchProps} /> : null}
 

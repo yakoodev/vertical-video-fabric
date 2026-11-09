@@ -1,6 +1,9 @@
 // Разделы инспектора: картинка и видео, фигура, прогресс.
 import { Color, Num, Section, Swatches, Toggle, type LayerOf, type PatchProps } from "./fields";
 
+/** Фигуры, которые умеют «от руки» (layers/sketch.ts). */
+const SKETCH_KINDS: string[] = ["ellipse", "rect", "line", "arrow", "scribble"];
+
 export function MediaSection({ layer, patchProps }: { layer: LayerOf<"image" | "video">; patchProps: PatchProps }) {
   return (
     <Section title={layer.type === "video" ? "Видео" : "Картинка"}>
@@ -85,6 +88,8 @@ export function ShapeSection({ layer, patchProps }: { layer: LayerOf<"shape">; p
             ["star", "Звезда"],
             ["burst", "Взрыв"],
             ["star4", "Искра ✦"],
+            ["scribble", "Штриховка маркером"],
+            ["cursor", "Курсор мыши"],
           ].map(([v, l]) => (
             <option key={v} value={v}>
               {l}
@@ -128,6 +133,18 @@ export function ShapeSection({ layer, patchProps }: { layer: LayerOf<"shape">; p
           </>
         ) : null}
       </div>
+      {SKETCH_KINDS.includes(layer.props.kind) ? (
+        <>
+          <Toggle label="Нарисовано от руки" checked={(layer.props.rough ?? 0) > 0} onChange={(on) => patchProps({ rough: on ? 0.6 : 0 })} />
+          {(layer.props.rough ?? 0) > 0 ? (
+            <div className="li-row">
+              <Num label="Неровность" value={layer.props.rough ?? 0.6} min={0} max={1} step={0.05} onChange={(rough) => patchProps({ rough })} />
+              <Num label="Вариант" value={layer.props.seed ?? 0} min={0} max={999} onChange={(seed) => patchProps({ seed: Math.round(seed) })} />
+              <Toggle label="Дрожит" checked={Boolean(layer.props.boil)} onChange={(boil) => patchProps({ boil })} />
+            </div>
+          ) : null}
+        </>
+      ) : null}
     </Section>
   );
 }

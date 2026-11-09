@@ -31,7 +31,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio", "pngtuber", "nameplate", "fx", "scene",
+    "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -50,8 +50,8 @@ TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise", "glitch", "scramble")
 # Похожие имена, которые пишут агенты, → наши (с пометкой).
 ANIMATION_ALIASES = {"decode": "scramble", "decrypt": "scramble", "hacker": "scramble", "slam": "stomp",
                      "stamp": "stomp", "punch": "stomp", "impact": "stomp", "rgb": "glitch", "glitchIn": "glitch"}
-# «draw» — обводка рисуется; у формы это линия, стрелка и круг (эллипс).
-DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse")
+# «draw» — обводка рисуется; у формы это линия, стрелка, круг (эллипс) и штриховка маркером.
+DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse", "scribble")
 LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink", "glitch", "wave")
 # Циклы букв — только у текста; у остальных — похожий цикл движения.
 TEXT_ONLY_LOOPS = {"glitch": "shake", "wave": "float"}
@@ -77,7 +77,10 @@ REACT_SOURCES = ("voice", "music", "mix")
 REACT_PROPS = ("scale", "glow", "opacity", "y")
 REACT_ALIASES = {"speech": "voice", "mic": "voice", "all": "mix", "audio": "mix", "sound": "mix",
                  "brightness": "glow", "bounce": "y", "jump": "y", "size": "scale", "alpha": "opacity"}
-SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst", "star4")
+# scribble — штриховка маркером зигзагом по рамке w×h; cursor — стрелка-курсор мыши (остриё —
+# левый верхний угол рамки). «От руки» (props.rough > 0) умеют ellipse/rect/line/arrow/scribble.
+SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst", "star4", "scribble", "cursor")
+SKETCH_SHAPE_KINDS = ("ellipse", "rect", "line", "arrow", "scribble")
 # Частицы одним слоем (frontend/src/motion/layers/particles.ts): вид, форма, предел числа.
 PARTICLE_KINDS = ("burst", "sparkle", "confetti", "rise")
 PARTICLE_SHAPES = ("star4", "star", "dot", "circle", "square", "heart")
@@ -86,6 +89,11 @@ MAX_PARTICLES = 200
 DECOR_GLYPHS = "✦✧★☆✶✷•●○◆◇♥♡→←↑↓✓✔✕✖▶►"
 CHART_KINDS = ("bar", "hbar", "line", "pie", "donut")
 CALLOUT_STYLES = ("bar", "box", "pill", "neon")
+# Карточка «в стиле соцсети» (frontend/src/motion/layers/social.ts): комментарий или пост ленты,
+# без логотипов площадок; текст длиннее SOCIAL_MAX_LINES строк обрезается «…».
+SOCIAL_STYLES = ("comment", "post")
+SOCIAL_THEMES = ("dark", "light")
+SOCIAL_MAX_LINES = 8
 # Плашка канала (frontend/src/motion/layers/nameplate.ts): площадка — свой векторный значок,
 # вид — стекло с обводкой или заливка акцентом; высота пилюли по умолчанию — как на шортсах.
 NAMEPLATE_PLATFORMS = ("twitch", "youtube", "tiktok", "telegram", "kick", "none")
