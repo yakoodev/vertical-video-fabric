@@ -60,7 +60,7 @@ export function ClipCard({
           </label>
         ) : null}
         {clip.published_targets_count ? (
-          <span className="clip-ov clip-ov--pub">опубликовано: {clip.published_targets_count}</span>
+          <span className="clip-ov clip-ov--pub" title="Выложен сервисом и отмечен руками">опубликовано ×{clip.published_targets_count}</span>
         ) : null}
       </div>
       {editing ? (

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { PUB_PLATFORMS, pubPlatformLabel, shortDate, todayIso } from "@/api/clipMarks";
 import { projectsApi, type NumbersInput, type StatsItem } from "@/api/projects";
 import { formatCount, formatSnapshotTime } from "@/api/stats";
 import { qk } from "@/api/keys";
@@ -18,7 +19,8 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
   const stats = useQuery({ queryKey: qk.channelStats(projectId), queryFn: () => projectsApi.stats(projectId) });
   const pubs = useQuery({ queryKey: qk.channelPublications(projectId), queryFn: () => projectsApi.publications(projectId) });
   const brief = useQuery({ queryKey: qk.channelBrief(projectId), queryFn: () => projectsApi.brief(projectId) });
-  const [form, setForm] = useState({ url: "", clip: "", title: "", published_at: "", views: "", likes: "", retention: "" });
+  const blank = () => ({ url: "", platform: "", account: "", clip: "", title: "", published_at: todayIso(), views: "", likes: "", retention: "" });
+  const [form, setForm] = useState(blank);
   const [numbersFor, setNumbersFor] = useState<number | null>(null);
   const [numbers, setNumbers] = useState({ views: "", likes: "", retention: "" });
 
@@ -36,16 +38,19 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
       const statsIn = toNumbers({ views: form.views, likes: form.likes, retention: form.retention });
       return projectsApi.addPublication(projectId, {
         url: form.url.trim(),
+        // Площадка не выбрана — по ссылке (как раньше).
+        platform: form.platform || undefined,
+        account: form.account.trim(),
         clip_plan_id: form.clip ? Number(form.clip) : null,
         title: form.title,
         published_at: form.published_at,
         stats: statsIn,
-        fetch: !statsIn,
+        fetch: !statsIn && Boolean(form.url.trim()),
       });
     },
     onSuccess: () => {
       toast.success("Публикация добавлена");
-      setForm({ url: "", clip: "", title: "", published_at: "", views: "", likes: "", retention: "" });
+      setForm(blank());
       reload();
     },
     onError: (e) => toast.error(errText(e, "Не удалось добавить")),
@@ -88,11 +93,19 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
       <section className="panel series-panel">
         <h3>Выложено руками</h3>
         <p className="muted series-hint">
-          Видео, опубликованное не через сервис: YouTube и TikTok подтянут числа сами (тем же сбором, что
-          «Публикации»), Instagram — только вручную.
+          Видео, опубликованное не через сервис. Ссылка необязательна: по ссылке YouTube и TikTok подтянут числа
+          сами (тем же сбором, что «Публикации»), Instagram — только вручную. Один клип можно отметить сколько
+          угодно раз; на экране клипа — блок «Где выложен».
         </p>
         <div className="series-row">
-          <input className="input wide" placeholder="Ссылка на TikTok / YouTube / Shorts / Reels" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+          <input className="input wide" placeholder="Ссылка (необязательно)" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+          <select className="input" aria-label="Площадка" value={form.platform} onChange={(e) => setForm({ ...form, platform: e.target.value })}>
+            <option value="">{form.url.trim() ? "Площадка по ссылке" : "Площадка…"}</option>
+            {PUB_PLATFORMS.map((p) => (
+              <option key={p.key} value={p.key}>{p.label}</option>
+            ))}
+          </select>
+          <input className="input" placeholder="Аккаунт" value={form.account} onChange={(e) => setForm({ ...form, account: e.target.value })} />
           <select className="input" value={form.clip} onChange={(e) => setForm({ ...form, clip: e.target.value })}>
             <option value="">Без клипа (к проекту)</option>
             {(brief.data?.covered ?? []).map((c) => (
@@ -108,7 +121,12 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
           <input className="input series-num" placeholder="просмотры" value={form.views} onChange={(e) => setForm({ ...form, views: e.target.value })} />
           <input className="input series-num" placeholder="лайки" value={form.likes} onChange={(e) => setForm({ ...form, likes: e.target.value })} />
           <input className="input series-num" placeholder="удерж. %" value={form.retention} onChange={(e) => setForm({ ...form, retention: e.target.value })} />
-          <button className="btn primary" disabled={!form.url.trim() || add.isPending} onClick={() => add.mutate()}>
+          <button
+            className="btn primary"
+            disabled={(!form.url.trim() && !form.platform) || add.isPending}
+            title={form.url.trim() || form.platform ? "" : "Нужна ссылка или площадка"}
+            onClick={() => add.mutate()}
+          >
             Добавить
           </button>
         </div>
@@ -116,14 +134,21 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
           {(pubs.data ?? []).map((p) => (
             <li key={p.id}>
               <div className="series-li-main">
-                <span className="chip">{p.platform || "ссылка"}</span>
-                <a href={p.url} target="_blank" rel="noreferrer">
-                  {p.title || p.clip_title || p.url}
-                </a>
+                <span className="chip">{p.platform ? pubPlatformLabel(p.platform) : "ссылка"}</span>
+                {p.url ? (
+                  <a href={p.url} target="_blank" rel="noreferrer">
+                    {p.title || p.clip_title || p.url}
+                  </a>
+                ) : (
+                  <span>{p.title || p.clip_title || "без ссылки"}</span>
+                )}
+                {p.account ? <span className="muted">{p.account}</span> : null}
                 <span className="mono">{formatCount(p.stats?.views ?? null)} просм.</span>
-                <button className="btn ghost sm" title="Подтянуть числа с площадки" disabled={refresh.isPending} onClick={() => refresh.mutate(p.id)}>
-                  ↻
-                </button>
+                {p.url ? (
+                  <button className="btn ghost sm" title="Подтянуть числа с площадки" disabled={refresh.isPending} onClick={() => refresh.mutate(p.id)}>
+                    ↻
+                  </button>
+                ) : null}
                 <button className="btn ghost sm" onClick={() => setNumbersFor(numbersFor === p.id ? null : p.id)}>
                   Числа
                 </button>
@@ -132,6 +157,7 @@ export function ProjectStatsTab({ projectId }: { projectId: number }) {
                 </button>
               </div>
               <div className="muted series-li-sub">
+                {p.published_at ? `${shortDate(p.published_at)} · ` : ""}
                 {p.clip_title ? `клип «${p.clip_title}» · ` : ""}
                 {p.stats?.captured_at ? `сняты ${formatSnapshotTime(p.stats.captured_at)} (${p.stats.origin === "manual" ? "вручную" : "с площадки"})` : "чисел нет"}
                 {p.stats?.error ? ` · ${p.stats.error}` : ""}

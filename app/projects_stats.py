@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 import statistics
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from app.projects_core import _text, _long_text, _date, _json, _loads, get_project, project_of_plan
 
@@ -84,16 +85,77 @@ def get_manual_publication(store: Any, publication_id: int) -> dict:
     return data
 
 
-def add_manual_publication(store: Any, url: str, project_id: int | None = None, clip_plan_id: int | None = None,
-                           title: str = "", published_at: Any = None, tags: Any = None, notes: str = "",
-                           stats: dict | None = None) -> dict:
-    """Видео, выложенное руками, по ссылке — к клипу или к проекту. ``stats`` — числа,
-    введённые вручную (Instagram без сессии и т.п.); YouTube и TikTok сервис подтянет сам."""
+# Площадки, куда владелец выкладывает сам (форма «Опубликовано» на экране клипа).
+MANUAL_PLATFORMS = {"tiktok": "TikTok", "youtube": "YouTube Shorts", "instagram": "Instagram Reels", "vk": "VK",
+                    "other": "Другое"}
+
+
+def _platform_of(url: str) -> str:
     from app.platform_stats import platform_of_url
 
-    url = _text(url, 500)
-    if not re.match(r"^https?://", url):
+    found = platform_of_url(url)
+    if found:
+        return found
+    host = (urlsplit(url).hostname or "").lower()
+    return "vk" if host.endswith(("vk.com", "vk.ru", "vkvideo.ru")) else ""
+
+
+def _platform(value: Any, url: str) -> str:
+    """Площадка: названа явно (из списка) или по ссылке; без ссылки и без площадки — «другое»."""
+    key = str(value or "").strip().lower()
+    if key:
+        if key not in MANUAL_PLATFORMS:
+            raise ValueError(f"площадка — одна из: {', '.join(MANUAL_PLATFORMS)}")
+        return key
+    return _platform_of(url) if url else "other"
+
+
+def _url(value: Any) -> str:
+    """Ссылка необязательна: без неё публикация просто отмечена, числа не собираются."""
+    url = _text(value, 500)
+    if url and not re.match(r"^https?://", url):
         raise ValueError("нужна ссылка http(s)://")
+    return url
+
+
+def _check_url_free(store: Any, url: str, publication_id: int | None = None) -> None:
+    if not url:
+        return
+    row = store.db.query_one("SELECT id FROM project_publications WHERE url = ? AND id != ?",
+                             (url, int(publication_id or 0)))
+    if row:
+        raise ValueError("эта ссылка уже добавлена")
+
+
+def _render_plan(store: Any, clip_id: Any, clip_plan_id: int | None) -> tuple[int | None, int | None]:
+    """Какой готовый файл выложен: рендер этого клипа (любого плана его группы). Без плана — план рендера."""
+    if clip_id in (None, "", 0):
+        return None, clip_plan_id
+    row = store.db.query_one("SELECT id, clip_plan_id FROM clips WHERE id = ?", (int(clip_id),))
+    if not row:
+        raise KeyError(f"clip not found: {clip_id}")
+    render_plan = row["clip_plan_id"]
+    if clip_plan_id is None:
+        return int(row["id"]), None if render_plan is None else int(render_plan)
+    if render_plan is None:
+        raise ValueError("этот файл не из клипа")
+    from app.clip_groups_cards import group_members
+
+    if int(render_plan) not in {int(m["id"]) for m in group_members(store, int(clip_plan_id))}:
+        raise ValueError("этот файл — не версия этого клипа")
+    return int(row["id"]), int(clip_plan_id)
+
+
+def add_manual_publication(store: Any, url: str = "", project_id: int | None = None, clip_plan_id: int | None = None,
+                           title: str = "", published_at: Any = None, tags: Any = None, notes: str = "",
+                           stats: dict | None = None, platform: Any = None, account: Any = "",
+                           clip_id: Any = None) -> dict:
+    """Видео, выложенное руками, — к клипу или к проекту. Один клип можно выложить сколько угодно раз:
+    на разные площадки и аккаунты, на один и тот же — тоже. Ссылка необязательна (без неё чисел нет);
+    ``clip_id`` — какой готовый файл выложен; ``published_at`` по умолчанию — сегодня.
+    ``stats`` — числа, введённые вручную (Instagram без сессии и т.п.); YouTube и TikTok сервис подтянет сам."""
+    url = _url(url)
+    clip_id, clip_plan_id = _render_plan(store, clip_id, None if clip_plan_id in (None, "", 0) else int(clip_plan_id))
     if clip_plan_id is not None:
         plan_project = project_of_plan(store, int(clip_plan_id))
         if project_id is None:
@@ -102,13 +164,13 @@ def add_manual_publication(store: Any, url: str, project_id: int | None = None, 
         get_project(store, int(project_id), include_sources=False)
     if project_id is None and clip_plan_id is None:
         raise ValueError("укажите проект или клип")
-    if store.db.query_one("SELECT id FROM project_publications WHERE url = ?", (url,)):
-        raise ValueError("эта ссылка уже добавлена")
+    _check_url_free(store, url)
     cur = store.db.execute(
-        """INSERT INTO project_publications (project_id, clip_plan_id, url, platform, title, published_at, tags_json, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (project_id, clip_plan_id, url, platform_of_url(url), _text(title, 200), _date(published_at),
-         _json(_tags(tags)), _long_text(notes, 1000)),
+        """INSERT INTO project_publications (project_id, clip_plan_id, clip_id, url, platform, account, title,
+                                            published_at, tags_json, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (project_id, clip_plan_id, clip_id, url, _platform(platform, url), _text(account, 100), _text(title, 200),
+         _date(published_at) or date.today().isoformat(), _json(_tags(tags)), _long_text(notes, 1000)),
     )
     pub_id = int(cur.lastrowid)
     if stats:
@@ -117,7 +179,7 @@ def add_manual_publication(store: Any, url: str, project_id: int | None = None, 
 
 
 def update_manual_publication(store: Any, publication_id: int, **fields: Any) -> dict:
-    get_manual_publication(store, publication_id)
+    current = get_manual_publication(store, publication_id)
     updates: dict[str, Any] = {}
     if "title" in fields:
         updates["title"] = _text(fields["title"], 200)
@@ -127,11 +189,26 @@ def update_manual_publication(store: Any, publication_id: int, **fields: Any) ->
         updates["tags_json"] = _json(_tags(fields["tags"]))
     if "notes" in fields:
         updates["notes"] = _long_text(fields["notes"], 1000)
+    if "account" in fields:
+        updates["account"] = _text(fields["account"], 100)
+    if "url" in fields:
+        updates["url"] = _url(fields["url"])
+        _check_url_free(store, updates["url"], publication_id)
+        if "platform" not in fields and updates["url"]:
+            updates["platform"] = _platform_of(updates["url"]) or current["platform"]
+    if "platform" in fields:
+        updates["platform"] = _platform(fields["platform"], updates.get("url", current["url"]))
     if "clip_plan_id" in fields:
         plan_id = fields["clip_plan_id"]
         if plan_id is not None:
             project_of_plan(store, int(plan_id))
         updates["clip_plan_id"] = None if plan_id is None else int(plan_id)
+        if "clip_id" not in fields:
+            updates["clip_id"] = None  # другой клип — прежний файл к нему не относится
+    if "clip_id" in fields:
+        plan_id = updates.get("clip_plan_id", current["clip_plan_id"])
+        updates["clip_id"], plan_id = _render_plan(store, fields["clip_id"], plan_id)
+        updates["clip_plan_id"] = plan_id
     if updates:
         sets = ", ".join(f"{key} = ?" for key in updates)
         store.db.execute(f"UPDATE project_publications SET {sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -217,6 +294,9 @@ def refresh_manual_publication(store: Any, publication_id: int) -> dict:
     from app import platform_stats
 
     pub = get_manual_publication(store, publication_id)
+    if not pub["url"]:
+        # Отмечено без ссылки: собирать нечего, и это не ошибка сбора.
+        return {"ok": False, "skipped": True, "error": "нет ссылки — числа только вручную"}
     platform = platform_stats.platform_of_url(pub["url"])
     if platform not in ("youtube", "tiktok"):
         reason = ("Instagram без входа чисел не отдаёт — введите вручную" if platform == "instagram"
@@ -240,7 +320,8 @@ def due_manual_publications(store: Any, *, force: bool) -> list[dict]:
         """SELECT mp.id, mp.url, mp.platform,
                   (SELECT MAX(captured_at) FROM project_publication_stats ps
                     WHERE ps.publication_id = mp.id AND ps.origin = 'auto') AS last_attempt_at
-           FROM project_publications mp WHERE mp.platform IN ('youtube', 'tiktok') ORDER BY mp.id"""
+           FROM project_publications mp WHERE mp.platform IN ('youtube', 'tiktok') AND mp.url != ''
+           ORDER BY mp.id"""
     )
     return platform_stats.due_targets([dict(r) for r in rows], force=force)
 
@@ -311,7 +392,7 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
     for row in store.db.query_all(
         """
         SELECT jt.id AS target_id, jt.platform, jt.remote_url, jt.finished_at, j.title, j.clip_id,
-               c.clip_plan_id, c.source_id, cp.title AS plan_title
+               COALESCE((SELECT a.label FROM accounts a WHERE a.id = jt.account_id), '') AS account, c.clip_plan_id, c.source_id, cp.title AS plan_title
         FROM job_targets jt
         JOIN jobs j ON j.id = jt.job_id
         JOIN clips c ON c.id = j.clip_id
@@ -331,7 +412,7 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
         stats = latest.get(int(row["target_id"]), {})
         item["publications"].append({
             "kind": "service", "id": row["target_id"], "platform": row["platform"] or "", "url": row["remote_url"],
-            "published_at": row["finished_at"], **{k: stats.get(k) for k in
+            "account": row["account"], "published_at": row["finished_at"], **{k: stats.get(k) for k in
                                                    ("views", "likes", "comments", "shares", "avg_retention",
                                                     "captured_at")},
             "error": stats.get("error") or "",
@@ -342,11 +423,12 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
         if plan_id:
             item = item_for(f"plan:{plan_id}", clip_plan_id=plan_id, title=pub.get("clip_title") or pub["title"])
         else:
-            item = item_for(f"pub:{pub['id']}", title=pub["title"] or pub["url"], manual_id=pub["id"])
+            label = MANUAL_PLATFORMS.get(pub["platform"], pub["platform"])
+            item = item_for(f"pub:{pub['id']}", title=pub["title"] or pub["url"] or label, manual_id=pub["id"])
             item["tags"] = list(pub["tags"])
         stats = pub.get("stats") or {}
         item["publications"].append({
-            "kind": "manual", "id": pub["id"], "platform": pub["platform"], "url": pub["url"],
+            "kind": "manual", "id": pub["id"], "platform": pub["platform"], "url": pub["url"], "account": pub["account"],
             "published_at": pub["published_at"] or pub["created_at"],
             **{k: stats.get(k) for k in ("views", "likes", "comments", "shares", "avg_retention", "captured_at")},
             "error": stats.get("error") or "",

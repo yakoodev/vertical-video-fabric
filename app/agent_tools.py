@@ -180,6 +180,22 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "inserts": inserts,
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
+        "owner": _owner_marks(ctx),
+    }
+
+
+def _owner_marks(ctx: ToolContext) -> dict:
+    """Заметка владельца и где клип уже выложен (app/clip_marks.py) — только читать: это пишет владелец."""
+    from app.clip_marks import card_marks, marks_for_plans
+    from app.clip_groups_cards import group_members
+
+    members = [int(m["id"]) for m in group_members(ctx.store, ctx.plan_id)]
+    marks = card_marks(members, marks_for_plans(ctx.store, members))
+    return {
+        "note": marks["note"],
+        "published": marks["published"],
+        "publications": [{k: p[k] for k in ("kind", "platform", "account", "date", "url", "note")}
+                         for p in marks["publications"]],
     }
 
 
@@ -512,7 +528,7 @@ def _clip_view_tools() -> list[Tool]:
             "исходника, субтитры с временем слов, места для текста (positions: хук с поправкой на число строк "
             "и полосу вебки split), звуковые дорожки исходника (source.audio) и предупреждения. Шкалы времени "
             "— time_scales: clip (до вырезов, с наплывами; почти всё), final (готовый ролик), source, piece. "
-            "Зови первым. / Full clip state; times are in the 'clip' scale unless named otherwise.",
+            "owner — заметка владельца и где клип уже выложен (только читать). Зови первым. / Full clip state; times are in the 'clip' scale unless named otherwise.",
             _obj({}), h_get_clip,
         ),
         Tool(

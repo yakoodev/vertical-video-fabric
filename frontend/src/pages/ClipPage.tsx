@@ -20,6 +20,7 @@ import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
 import { clipEditorPath, clipPath, projectPath, videoPath } from "@/lib/paths";
 import { localInputToUtc } from "@/lib/time";
+import { ClipNoteCard, ClipPublicationsCard } from "@/pages/ClipPublications";
 import { ClipQuestions } from "@/pages/workspace/ClipQuestions";
 import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 
@@ -706,7 +707,11 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
       <div className="cpub-more">
         {view.uploaded ? null : <a href={playbackApi.packageUrl(view.id)} title="Zip для Premiere и DaVinci Resolve: монтаж, субтитры, файлы, без рендера">Экспорт для монтажки</a>}
         {publishingOn && render ? <button type="button" className="linkish" title={`Версия ${render.label}`} onClick={() => setDialogRender(render)}>Все настройки публикации</button> : null}
-        {jobId ? <Link to={`/pubs/${jobId}`}>Публикация №{jobId} в очереди</Link> : view.published ? <Link to="/pubs?tab=pubs">Опубликован: {view.published}</Link> : null}
+        {jobId ? <Link to={`/pubs/${jobId}`}>Публикация №{jobId} в очереди</Link> : view.published ? (
+          <button type="button" className="linkish" onClick={() => document.getElementById("pubs")?.scrollIntoView({ block: "center", behavior: "smooth" })}>
+            Где выложен: {view.published}
+          </button>
+        ) : null}
       </div>
       {dialogRender ? <VersionPublishDialog render={dialogRender} onClose={() => setDialogRender(null)} /> : null}
     </section>
@@ -899,9 +904,11 @@ export function ClipPage() {
           ) : null}
         </div>
         <div className="cpage-col">
+          <ClipNoteCard view={view} />
           <MetaCard view={view} onChanged={refresh} />
           {on("covers") ? <CoverCard view={view} /> : null}
           <PublishCard view={view} render={selected?.render_id ? { id: selected.render_id, label: selected.label } : null} />
+          <ClipPublicationsCard view={view} />
         </div>
       </div>
       {watching ? (

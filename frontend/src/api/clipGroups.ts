@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import type { ClipPubBrief, ClipPublication } from "@/api/clipMarks";
 import type { Clip } from "@/api/types";
 
 /**
@@ -32,7 +33,12 @@ export interface ClipGridItem {
   span_start: number;
   span_end: number;
   duration_sec: number;
+  /** Сколько раз выложен: сервисом и отмечено руками. */
   published: number;
+  publications: ClipPubBrief[];
+  /** Заметка владельца (app/clip_marks.py). */
+  note: string;
+  note_updated_at: string | null;
   error: string;
   created_at: string;
   latest: Clip | null;
@@ -93,6 +99,8 @@ export interface ClipView {
   start_sec: number;
   duration_sec: number;
   published: number;
+  publications: ClipPublication[];
+  note: { text: string; updated_at: string | null };
   favorite: boolean;
   stale: boolean;
   /** Что изменилось после последнего файла: подпись строки «Текущий монтаж». */

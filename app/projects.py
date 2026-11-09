@@ -21,8 +21,9 @@
 * бриф (лор) — кратко, люди, арки, шутки, табу + вычисляемое «что уже нарезано»;
 * ``project_rules`` — правила владельца с цитатой, датой и историей отмен; поиск
   дублей и противоречий простой нормализацией строк;
-* ``project_publications`` — опубликованное руками (не через сервис) по ссылке, числа
-  — тем же yt-dlp, что ``app/platform_stats.py``, или вручную;
+* ``project_publications`` — опубликованное руками (не через сервис): площадка, аккаунт, дата,
+  необязательная ссылка; числа — тем же yt-dlp, что ``app/platform_stats.py``, или вручную;
+* ``clip_notes`` — заметка владельца к клипу (``app/clip_marks.py``);
 * ``clip_tags`` и ``project_hypotheses`` — признаки клипов и честное сравнение групп
   медианами («мало данных», пока N мало).
 
@@ -51,8 +52,8 @@ from app.projects_rules import (  # noqa: F401
 )
 from app.projects_stats import (  # noqa: F401
     normalize_tag, _tags, clip_tags_map, get_clip_tags, set_clip_tags, _pub_from_row, get_manual_publication,
-    add_manual_publication, update_manual_publication, delete_manual_publication, _count_value, add_manual_stats,
-    latest_manual_stats, refresh_manual_publication, due_manual_publications, collect_manual_stats,
+    MANUAL_PLATFORMS, add_manual_publication, update_manual_publication, delete_manual_publication, _count_value,
+    add_manual_stats, latest_manual_stats, refresh_manual_publication, due_manual_publications, collect_manual_stats,
     list_manual_publications, _parse_time, _sum, project_items, _median, project_stats,
 )
 from app.projects_hypotheses import (  # noqa: F401
@@ -113,15 +114,20 @@ PROJECTS_SCHEMA_SQL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_project_rules ON project_rules(project_id, status, id)",
-    # Опубликованное НЕ через сервис: ссылка на TikTok/YouTube/Shorts, привязка к клипу
-    # (clip_plan_id) или только к проекту. Клип важнее: проект берётся по его источнику.
+    # Опубликованное НЕ через сервис, привязка к клипу (clip_plan_id) или только к проекту.
+    # Клип важнее: проект берётся по его источнику. Один клип — сколько угодно публикаций.
+    # url — необязательная ссылка ('' — просто отмечено, числа не собираются); platform —
+    # tiktok / youtube / instagram / vk / other; account — подпись аккаунта; clip_id — какой
+    # готовый файл выложен (NULL — не указан). Колонки старых баз добавляет ensure_projects_schema.
     """
     CREATE TABLE IF NOT EXISTS project_publications (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
         clip_plan_id INTEGER REFERENCES clip_plans(id) ON DELETE SET NULL,
-        url TEXT NOT NULL,
+        url TEXT NOT NULL DEFAULT '',
         platform TEXT NOT NULL DEFAULT '',
+        account TEXT NOT NULL DEFAULT '',
+        clip_id INTEGER REFERENCES clips(id) ON DELETE SET NULL,
         title TEXT NOT NULL DEFAULT '',
         published_at TEXT NOT NULL DEFAULT '',
         tags_json TEXT NOT NULL DEFAULT '[]',
@@ -131,6 +137,16 @@ PROJECTS_SCHEMA_SQL = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_project_publications ON project_publications(project_id, id)",
+    "CREATE INDEX IF NOT EXISTS idx_project_publications_plan ON project_publications(clip_plan_id)",
+    # Заметка владельца к клипу (app/clip_marks.py): свободный текст — «выложил в тикток», «переделать
+    # хук». Клип — группа планов; заметка лежит на главном плане группы.
+    """
+    CREATE TABLE IF NOT EXISTS clip_notes (
+        clip_plan_id INTEGER PRIMARY KEY REFERENCES clip_plans(id) ON DELETE CASCADE,
+        text TEXT NOT NULL DEFAULT '',
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+    """,
     # Снимки чисел ручных публикаций — как publication_stats у публикаций сервиса.
     # origin: auto (yt-dlp) / manual (ввёл человек).
     """
@@ -217,6 +233,13 @@ def ensure_projects_schema(conn) -> None:
     """Таблицы проектов + ``sources.project_id`` (вызывается из ``Database.init``)."""
     for sql in PROJECTS_SCHEMA_SQL:
         conn.execute(sql)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(project_publications)")}
+    # Старые ручные публикации: аккаунт пустой, файл не указан, ссылка у всех была — ничего не теряется.
+    if "account" not in columns:
+        conn.execute("ALTER TABLE project_publications ADD COLUMN account TEXT NOT NULL DEFAULT ''")
+    if "clip_id" not in columns:
+        conn.execute("ALTER TABLE project_publications ADD COLUMN clip_id INTEGER REFERENCES clips(id) ON DELETE SET NULL")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_project_publications_clip ON project_publications(clip_id)")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(sources)")}
     if "project_id" not in columns:
         # Старые источники остаются без проекта (NULL) — ничего не теряется.

@@ -3,7 +3,7 @@
 {
 "name": "get_clip",
 "title": "Смотрю клип",
-"description": "2694f863be0d23ff",
+"description": "5aeba63a9af5e9b5",
 "parameters": "47055dafa1144126",
 "mutating": false,
 "scope": "clip",
@@ -1470,8 +1470,8 @@
 {
 "name": "add_manual_publication",
 "title": "Добавляю публикацию",
-"description": "d7c55e71d6bf17f9",
-"parameters": "6010201e5961474f",
+"description": "36eeb83e745f393c",
+"parameters": "59779c5d79a16d3b",
 "mutating": true,
 "scope": "project",
 "module": "series",

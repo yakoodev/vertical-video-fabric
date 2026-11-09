@@ -12,6 +12,18 @@ from app.store_common import (
     VALID_SUBTITLE_PROVIDERS,
 )
 
+# Сколько раз выложен готовый файл: через сервис (успешные цели публикации) и руками
+# (project_publications, app/clip_marks.py). Ручная публикация без указанного файла
+# относится к последнему готовому файлу своего плана.
+_PUBLISHED_SQL = """(
+    (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+      WHERE j.clip_id = c.id AND jt.status = 'succeeded')
+    + (SELECT COUNT(*) FROM project_publications mp
+        WHERE mp.clip_id = c.id
+           OR (mp.clip_id IS NULL AND mp.clip_plan_id = c.clip_plan_id AND c.id = (
+                SELECT MAX(c2.id) FROM clips c2 WHERE c2.clip_plan_id = c.clip_plan_id AND c2.status = 'succeeded')))
+)"""
+
 
 def _decode_clip_qc(clip: dict) -> dict:
     """``qc_json`` → ``qc`` (None when the clip was rendered before QC existed)."""
@@ -51,8 +63,7 @@ class ClipsStore:
             f"""
             SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                   (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
-                     WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
+                   {_PUBLISHED_SQL} AS published_targets_count,
                    (SELECT jt.error FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
                      WHERE j.clip_id = c.id AND jt.error != '' ORDER BY jt.updated_at DESC LIMIT 1) AS last_post_error,
                    (SELECT j.status FROM jobs j WHERE j.clip_id = c.id ORDER BY j.id DESC LIMIT 1) AS last_job_status
@@ -68,8 +79,7 @@ class ClipsStore:
             f"""
             SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                   (SELECT COUNT(*) FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
-                     WHERE j.clip_id = c.id AND jt.status = 'succeeded') AS published_targets_count,
+                   {_PUBLISHED_SQL} AS published_targets_count,
                    (SELECT jt.error FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
                      WHERE j.clip_id = c.id AND jt.error != '' ORDER BY jt.updated_at DESC LIMIT 1) AS last_post_error,
                    (SELECT j.status FROM jobs j WHERE j.clip_id = c.id ORDER BY j.id DESC LIMIT 1) AS last_job_status
@@ -177,12 +187,7 @@ class ClipsStore:
             f"""
             SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                   (
-                       SELECT COUNT(*)
-                       FROM job_targets jt
-                       JOIN jobs j ON j.id = jt.job_id
-                       WHERE j.clip_id = c.id AND jt.status = 'succeeded'
-                   ) AS published_targets_count,
+                   {_PUBLISHED_SQL} AS published_targets_count,
                    (
                        SELECT jt.error
                        FROM job_targets jt
@@ -209,15 +214,10 @@ class ClipsStore:
 
     def get_clip(self, clip_id: int) -> dict:
         row = self.db.query_one(
-            """
+            f"""
             SELECT c.*, (SELECT s2.source_type FROM sources s2 WHERE s2.id = c.source_id) AS source_type,
                    (SELECT COUNT(*) FROM jobs j WHERE j.clip_id = c.id) AS posts_count,
-                   (
-                       SELECT COUNT(*)
-                       FROM job_targets jt
-                       JOIN jobs j ON j.id = jt.job_id
-                       WHERE j.clip_id = c.id AND jt.status = 'succeeded'
-                   ) AS published_targets_count,
+                   {_PUBLISHED_SQL} AS published_targets_count,
                    (
                        SELECT jt.error
                        FROM job_targets jt

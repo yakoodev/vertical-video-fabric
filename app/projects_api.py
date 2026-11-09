@@ -10,6 +10,9 @@
 * ``GET/POST /api/projects/{id}/publications``, ``PATCH/DELETE /api/manual-publications/{id}``,
   ``POST /api/manual-publications/{id}/stats`` (числа руками), ``…/refresh`` (yt-dlp)
 * ``GET/PUT /api/clip-plans/{id}/tags`` — теги клипа
+* ``GET/PUT /api/clip-plans/{id}/note`` — заметка владельца к клипу (app/clip_marks.py)
+* ``GET/POST /api/clip-plans/{id}/publications`` — где клип уже выложен (сервисом и руками) / отметить
+  публикацию руками: площадка, аккаунт, дата, ссылка (необязательна), пометка, какой файл
 * ``GET/POST /api/projects/{id}/hypotheses``, ``POST /api/projects/{id}/hypotheses/evaluate``,
   ``PATCH/DELETE /api/hypotheses/{id}``, ``POST /api/hypotheses/{id}/promote`` (→ правило)
 
@@ -22,6 +25,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
+from app import clip_marks as M
 from app import project_knowledge as K
 from app import projects as P
 from app.auth import is_agent_request
@@ -29,6 +33,10 @@ from app.auth import is_agent_request
 
 def _int_or_none(value: Any) -> int | None:
     return int(value) if value not in (None, "", 0) else None
+
+
+# Поля ручной публикации, которые можно задать и поправить (url — отдельно: при добавлении он позиционный).
+_PUB_FIELDS = ("clip_plan_id", "clip_id", "platform", "account", "title", "published_at", "tags", "notes")
 
 
 def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -159,17 +167,16 @@ def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
 
     @router.post("/api/projects/{project_id}/publications", summary="Добавить видео по ссылке (к проекту/клипу)")
     def api_add_manual_publication(project_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
-        allowed = {k: payload[k] for k in ("clip_plan_id", "title", "published_at", "tags", "notes", "stats")
-                   if k in payload}
+        allowed = {k: payload[k] for k in (*_PUB_FIELDS, "stats") if k in payload}
         pub = call(P.add_manual_publication, str(payload.get("url") or ""), project_id=project_id, **allowed)
-        if payload.get("fetch") and not payload.get("stats"):
+        if payload.get("fetch") and not payload.get("stats") and pub["url"]:
             pub["fetch"] = call(P.refresh_manual_publication, pub["id"])
             pub["stats"] = call(P.get_manual_publication, pub["id"])["stats"]
         return pub
 
     @router.patch("/api/manual-publications/{publication_id}", summary="Изменить ручную публикацию")
     def api_update_manual_publication(publication_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
-        allowed = {k: payload[k] for k in ("title", "published_at", "tags", "notes", "clip_plan_id") if k in payload}
+        allowed = {k: payload[k] for k in (*_PUB_FIELDS, "url") if k in payload}
         return call(P.update_manual_publication, publication_id, **allowed)
 
     @router.delete("/api/manual-publications/{publication_id}", summary="Убрать ручную публикацию")
@@ -197,6 +204,30 @@ def build_projects_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
         tags = call(P.set_clip_tags, clip_plan_id, add=payload.get("add"), remove=payload.get("remove"),
                     replace=payload.get("tags"))
         return {"clip_plan_id": clip_plan_id, "tags": tags}
+
+    # --- заметка и публикации клипа (app/clip_marks.py) ---------------------- #
+
+    @router.get("/api/clip-plans/{clip_plan_id}/note", summary="Заметка владельца к клипу")
+    def api_clip_note(clip_plan_id: int, _auth: auth_dep) -> dict:
+        return call(M.get_clip_note, clip_plan_id)
+
+    @router.put("/api/clip-plans/{clip_plan_id}/note", summary="Сохранить заметку клипа целиком ({text})")
+    def api_set_clip_note(clip_plan_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        return call(M.set_clip_note, clip_plan_id, payload.get("text"))
+
+    @router.get("/api/clip-plans/{clip_plan_id}/publications", summary="Где клип уже выложен: сервисом и руками")
+    def api_clip_publications(clip_plan_id: int, _auth: auth_dep) -> list[dict]:
+        return call(M.clip_publications, clip_plan_id)
+
+    @router.post("/api/clip-plans/{clip_plan_id}/publications",
+                 summary="Отметить публикацию руками: platform, account, published_at, url (необязательна), notes")
+    def api_add_clip_publication(clip_plan_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        allowed = {k: payload[k] for k in (*_PUB_FIELDS, "stats") if k in payload and k != "clip_plan_id"}
+        pub = call(P.add_manual_publication, str(payload.get("url") or ""), clip_plan_id=clip_plan_id, **allowed)
+        if payload.get("fetch") and not payload.get("stats") and pub["url"]:
+            pub["fetch"] = call(P.refresh_manual_publication, pub["id"])
+            pub["stats"] = call(P.get_manual_publication, pub["id"])["stats"]
+        return pub
 
     # --- гипотезы ----------------------------------------------------------- #
 
