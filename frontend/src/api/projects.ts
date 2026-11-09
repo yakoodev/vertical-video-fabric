@@ -1,4 +1,5 @@
 import { api, request } from "@/api/client";
+import type { StudioBrief, StudioSummary } from "@/api/studio";
 
 /**
  * Проект (app/projects.py) — несколько видео одного стрим-канала, сериала или промо: страница /p/:id.
@@ -205,7 +206,10 @@ export interface StatsItem {
   age_days: number | null;
   platforms: string[];
   tags: string[];
-  publications?: { kind: "service" | "manual"; id: number; platform: string; account?: string; url: string; views: number | null }[];
+  /** TikTok Studio клипа (публикация с наибольшими просмотрами). */
+  studio?: StudioBrief | null;
+  publications?: { kind: "service" | "manual"; id: number; platform: string; account?: string; url: string; views: number | null;
+    studio?: StudioBrief | null }[];
 }
 
 export interface ProjectStats {
@@ -218,6 +222,8 @@ export interface ProjectStats {
     comments: number | null;
     median_views: number | null;
     avg_retention: number | null;
+    /** Медианы TikTok Studio по проекту; null — данных Studio нет. */
+    studio?: StudioSummary | null;
   };
   platforms: Record<string, { publications: number; views: number | null }>;
   best: StatsItem[];

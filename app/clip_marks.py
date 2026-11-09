@@ -12,6 +12,9 @@
   готовый файл выложен;
 * публикации сервиса — успешные ``job_targets`` рендеров планов группы (правка — только на «Публикациях»).
 
+У публикаций TikTok на экране клипа ещё сводка TikTok Studio (``studio``): удержание первых секунд,
+сколько досматривают, откуда пришли зрители (``app/tiktok_studio.py``).
+
 Счёт «опубликовано ×N» у карточки клипа — сумма обоих видов (``marks_for_plans``).
 """
 
@@ -132,6 +135,7 @@ def card_marks(plan_ids: list[int], marks: dict) -> dict:
 def clip_publications(store: Any, clip_plan_id: int) -> list[dict]:
     """Публикации клипа для его экрана: всё из карточки + название, числа и ошибка сбора."""
     from app.projects_stats import latest_manual_stats
+    from app.tiktok_studio import briefs_by_ref
 
     members = [int(m["id"]) for m in group_members(store, clip_plan_id)]
     pubs = card_marks(members, marks_for_plans(store, members))["publications"]
@@ -145,6 +149,7 @@ def clip_publications(store: Any, clip_plan_id: int) -> list[dict]:
             manual_ids,
         )
         titles = {int(r["id"]): r for r in rows}
+    studio = briefs_by_ref(store) if any(p["platform"] == "tiktok" for p in pubs) else {}
     out = []
     for pub in pubs:
         stats = (manual if pub["kind"] == "manual" else service).get(int(pub["id"])) or {}
@@ -155,5 +160,7 @@ def clip_publications(store: Any, clip_plan_id: int) -> list[dict]:
             "published_at": (extra["published_at"] if extra else pub["date"]) or "",
             "views": stats.get("views"), "likes": stats.get("likes"), "captured_at": stats.get("captured_at"),
             "error": stats.get("error") or "",
+            # Удержание, досмотры, источники из TikTok Studio (app/tiktok_studio.py); нет — None.
+            "studio": studio.get((pub["kind"], int(pub["id"]))),
         })
     return out

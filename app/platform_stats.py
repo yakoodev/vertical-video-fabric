@@ -276,6 +276,12 @@ class StatsCollector:
                 zero_views.check(self.store, sleep=stop.wait)
             except Exception:  # noqa: BLE001
                 pass
+            try:  # аналитика TikTok Studio — свой поток, раз в сутки на ролик (app/tiktok_studio_collect.py)
+                from app import tiktok_studio_collect
+
+                tiktok_studio_collect.maybe_start(self.store)
+            except Exception:  # noqa: BLE001
+                pass
             stop.wait(CHECK_EVERY_SECONDS)
 
 
@@ -332,7 +338,10 @@ def _sum(values: list) -> int | None:
 def clip_performance(store: Any) -> list[dict]:
     """Клипы с публикациями: последние числа (сумма по площадкам) + признаки монтажа.
     Отсортировано по просмотрам, клипы без чисел — в конце."""
+    from app.tiktok_studio import briefs_by_ref
+
     latest = store.latest_publication_stats()
+    studio = briefs_by_ref(store)
     groups: dict[str, dict] = {}
     plan_of_clip: dict[int, int | None] = {}
     now = datetime.utcnow()
@@ -359,6 +368,7 @@ def clip_performance(store: Any) -> list[dict]:
             "views": stats.get("views"), "likes": stats.get("likes"), "comments": stats.get("comments"),
             "shares": stats.get("shares"), "captured_at": stats.get("captured_at"),
             "error": stats.get("error") or "",
+            "studio": studio.get(("service", int(target["id"]))),  # TikTok Studio (app/tiktok_studio.py)
         })
     out = []
     for group in groups.values():
@@ -415,9 +425,12 @@ def performance_report(store: Any, limit: int = 5) -> dict:
     bottom = [row for row in rows[::-1][:limit] if row not in top]
 
     def brief(row: dict) -> dict:
+        studio = [p["studio"] for p in row["publications"] if (p.get("studio") or {}).get("captured_at")]
         return {key: row.get(key) for key in ("clip_plan_id", "title", "views", "likes", "comments", "like_rate",
                                               "views_per_day", "age_days", "captured_at", "features")} | {
-            "platforms": sorted({p["platform"] for p in row["publications"]})}
+            "platforms": sorted({p["platform"] for p in row["publications"]}),
+            # Удержание первых секунд и досмотры из TikTok Studio — строкой (подробности: get_project_stats).
+            "studio": max(studio, key=lambda b: b.get("views") or 0)["text"] if studio else None}
 
     compare = {}
     with_features = [row for row in rows if row.get("features")]

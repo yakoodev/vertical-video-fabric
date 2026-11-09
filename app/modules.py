@@ -349,10 +349,11 @@ MODULES: list[Module] = [
     ),
     Module(
         "platform_stats", "Статистика площадок", "publish",
-        "Просмотры и лайки опубликованного: фоновый сбор раз в STATS_INTERVAL_HOURS и «что заходит».",
-        cost=("network",), cost_note="запросы к площадкам",
+        "Просмотры и лайки опубликованного: фоновый сбор раз в STATS_INTERVAL_HOURS и «что заходит». "
+        "Для TikTok — ещё удержание, досмотры и источники из TikTok Studio (раз в сутки на ролик).",
+        cost=("network",), cost_note="запросы к площадкам; TikTok Studio — браузер с cookie аккаунта",
         tools=("get_performance",),
-        routes=("/api/stats/*", "POST /api/manual-publications/{id}/refresh"),
+        routes=("/api/stats/*", "POST /api/manual-publications/{id}/refresh", "/api/tiktok-studio/*"),
         ui=("статистика на странице «Публикации»",),
         workers=("stats-collector",),
     ),

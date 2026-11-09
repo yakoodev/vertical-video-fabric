@@ -380,8 +380,11 @@ def _sum(values: list) -> int | None:
 def project_items(store: Any, project_id: int, with_features: bool = False) -> list[dict]:
     """Единицы статистики проекта: клип (все его публикации — сервиса и ручные — в сумме)
     или ручная публикация без клипа. У каждой — теги, числа и, по запросу, признаки монтажа."""
+    from app.tiktok_studio import briefs_by_ref
+
     get_project(store, project_id, include_sources=False)
     latest = store.latest_publication_stats()
+    studio = briefs_by_ref(store)
     items: dict[str, dict] = {}
     now = datetime.utcnow()
 
@@ -415,7 +418,7 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
             "account": row["account"], "published_at": row["finished_at"], **{k: stats.get(k) for k in
                                                    ("views", "likes", "comments", "shares", "avg_retention",
                                                     "captured_at")},
-            "error": stats.get("error") or "",
+            "error": stats.get("error") or "", "studio": studio.get(("service", int(row["target_id"]))),
         })
     manual = list_manual_publications(store, project_id)
     for pub in manual:
@@ -431,7 +434,7 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
             "kind": "manual", "id": pub["id"], "platform": pub["platform"], "url": pub["url"], "account": pub["account"],
             "published_at": pub["published_at"] or pub["created_at"],
             **{k: stats.get(k) for k in ("views", "likes", "comments", "shares", "avg_retention", "captured_at")},
-            "error": stats.get("error") or "",
+            "error": stats.get("error") or "", "studio": studio.get(("manual", int(pub["id"]))),
         })
         if plan_id:  # теги ручной публикации клипа тоже признаки клипа
             item["tags"] = sorted(set(item["tags"]) | set(pub["tags"]))
@@ -454,6 +457,10 @@ def project_items(store: Any, project_id: int, with_features: bool = False) -> l
             avg_retention=round(sum(retention) / len(retention), 3) if retention else None,
             age_days=age, platforms=sorted({p["platform"] for p in pubs if p["platform"]}),
         )
+        # TikTok Studio у клипа — публикация с числами Studio и с наибольшими просмотрами (сумма удержаний
+        # разных роликов ничего не значит).
+        with_studio = [p["studio"] for p in pubs if (p.get("studio") or {}).get("captured_at")]
+        item["studio"] = max(with_studio, key=lambda b: b.get("views") or 0) if with_studio else None
         item["features"] = None
         if with_features and item["clip_plan_id"]:
             from app.platform_stats import plan_features
@@ -471,9 +478,22 @@ def _median(values: list[float]) -> float | None:
     return float(statistics.median(values)) if values else None
 
 
+STUDIO_SHORT_KEYS = ("captured_at", "avg_watch_sec", "duration_sec", "watch_share", "finish_rate", "new_followers",
+                     "main_source", "hook", "half_gone_sec", "retention", "text")
+
+
+def _studio_short(brief: dict | None) -> dict | None:
+    """Сводка TikTok Studio клипа для best/worst и агентов: без списка источников и служебных полей."""
+    if not brief or not brief.get("captured_at"):
+        return None
+    return {key: brief.get(key) for key in STUDIO_SHORT_KEYS}
+
+
 def project_stats(store: Any, project_id: int, top: int = 5) -> dict:
     """Агрегаты проекта: суммы, медиана просмотров, удержание (если есть), площадки,
-    лучшие и худшие клипы."""
+    лучшие и худшие клипы; у TikTok — сводка TikTok Studio (удержание первых секунд, досмотры)."""
+    from app.tiktok_studio import project_summary
+
     items = project_items(store, project_id)
     with_views = [i for i in items if i["views"] is not None]
     retention = [i["avg_retention"] for i in items if i["avg_retention"] is not None]
@@ -486,8 +506,10 @@ def project_stats(store: Any, project_id: int, top: int = 5) -> dict:
                 entry["views"] = (entry["views"] or 0) + int(pub["views"])
 
     def brief(item: dict) -> dict:
-        return {key: item.get(key) for key in ("key", "clip_plan_id", "title", "views", "likes", "like_rate",
-                                               "views_per_day", "avg_retention", "age_days", "platforms", "tags")}
+        out = {key: item.get(key) for key in ("key", "clip_plan_id", "title", "views", "likes", "like_rate",
+                                              "views_per_day", "avg_retention", "age_days", "platforms", "tags")}
+        out["studio"] = _studio_short(item.get("studio"))
+        return out
 
     top = max(1, int(top))
     best = with_views[:top]
@@ -503,6 +525,8 @@ def project_stats(store: Any, project_id: int, top: int = 5) -> dict:
             "comments": _sum([i["comments"] for i in items]),
             "median_views": _median([float(i["views"]) for i in with_views]),
             "avg_retention": round(sum(retention) / len(retention), 3) if retention else None,
+            # Медианы TikTok Studio по клипам и строка для агента («половина уходит к 2 с…»).
+            "studio": project_summary([i["studio"] for i in items if i.get("studio")]),
         },
         "platforms": platforms,
         "best": [brief(i) for i in best],

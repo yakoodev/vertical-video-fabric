@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import type { StudioBrief } from "@/api/studio";
 
 /**
  * Заметка владельца к клипу и где клип уже выложен (app/clip_marks.py).
@@ -38,6 +39,8 @@ export interface ClipPublication extends ClipPubBrief {
   likes: number | null;
   captured_at: string | null;
   error: string;
+  /** TikTok Studio: удержание, досмотры, источники (только TikTok; null — ещё не собрано). */
+  studio?: StudioBrief | null;
 }
 
 export interface ClipNote {

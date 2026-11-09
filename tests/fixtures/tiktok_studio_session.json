@@ -1,0 +1,312 @@
+{
+ "status": "ok",
+ "handle": "fixture_owner",
+ "login_required": false,
+ "videos": {
+  "7300000000000000042": {
+   "ok": true,
+   "insight": {
+    "realtime_total_video_views": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": 474
+     },
+     "value_compare_previous_day": {
+      "status": 0,
+      "value": 474
+     }
+    },
+    "video_finish_rate_realtime": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": 0.0295
+     },
+     "value_compare_previous_day": {
+      "status": 0,
+      "value": 0.0295
+     }
+    },
+    "video_per_duration_realtime": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": 8.73
+     },
+     "value_compare_previous_day": {
+      "status": 0,
+      "value": 8.73
+     }
+    },
+    "video_total_duration_realtime": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": 4443
+     },
+     "value_compare_previous_day": {
+      "status": 0,
+      "value": 4443
+     }
+    },
+    "video_new_followers": {
+     "status": 0,
+     "value": 1
+    },
+    "realtime_new_followers": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": 1
+     },
+     "value_compare_previous_day": {
+      "status": 0,
+      "value": 1
+     }
+    },
+    "video_traffic_source_percent_realtime": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "status": 0,
+      "value": [
+       {
+        "key": "For You",
+        "str_value": "0.99",
+        "value": 0.994
+       },
+       {
+        "key": "Personal Profile",
+        "str_value": "0.00",
+        "value": 0.004
+       },
+       {
+        "key": "Others",
+        "str_value": "0.00",
+        "value": 0.002
+       },
+       {
+        "key": "Follow",
+        "str_value": "0.00",
+        "value": 0
+       },
+       {
+        "key": "Direct Message",
+        "str_value": "0.00",
+        "value": 0
+       },
+       {
+        "key": "Sound",
+        "str_value": "0.00",
+        "value": 0
+       },
+       {
+        "key": "Search",
+        "str_value": "0.00",
+        "value": 0
+       }
+      ]
+     }
+    },
+    "video_retention_rate_realtime": {
+     "is_after_7d": false,
+     "is_data_delay": false,
+     "value": {
+      "list": [
+       {
+        "timestamp": "0",
+        "value": 1
+       },
+       {
+        "timestamp": "1000",
+        "value": 0.74
+       },
+       {
+        "timestamp": "2000",
+        "value": 0.54
+       },
+       {
+        "timestamp": "3000",
+        "value": 0.46
+       },
+       {
+        "timestamp": "4000",
+        "value": 0.43
+       },
+       {
+        "timestamp": "5000",
+        "value": 0.35
+       },
+       {
+        "timestamp": "6000",
+        "value": 0.29
+       },
+       {
+        "timestamp": "7000",
+        "value": 0.27
+       },
+       {
+        "timestamp": "8000",
+        "value": 0.26
+       },
+       {
+        "timestamp": "9000",
+        "value": 0.23
+       },
+       {
+        "timestamp": "10000",
+        "value": 0.22
+       },
+       {
+        "timestamp": "11000",
+        "value": 0.21
+       },
+       {
+        "timestamp": "12000",
+        "value": 0.19
+       },
+       {
+        "timestamp": "13000",
+        "value": 0.18
+       },
+       {
+        "timestamp": "14000",
+        "value": 0.17
+       },
+       {
+        "timestamp": "15000",
+        "value": 0.17
+       },
+       {
+        "timestamp": "16000",
+        "value": 0.16
+       },
+       {
+        "timestamp": "17000",
+        "value": 0.15
+       },
+       {
+        "timestamp": "18000",
+        "value": 0.15
+       },
+       {
+        "timestamp": "19000",
+        "value": 0.14
+       },
+       {
+        "timestamp": "20000",
+        "value": 0.14
+       },
+       {
+        "timestamp": "21000",
+        "value": 0.13
+       },
+       {
+        "timestamp": "22000",
+        "value": 0.13
+       },
+       {
+        "timestamp": "23000",
+        "value": 0.12
+       },
+       {
+        "timestamp": "24000",
+        "value": 0.11
+       },
+       {
+        "timestamp": "25000",
+        "value": 0.11
+       },
+       {
+        "timestamp": "26000",
+        "value": 0.1
+       },
+       {
+        "timestamp": "27000",
+        "value": 0.09
+       },
+       {
+        "timestamp": "28000",
+        "value": 0.09
+       },
+       {
+        "timestamp": "29000",
+        "value": 0.08
+       },
+       {
+        "timestamp": "30000",
+        "value": 0.08
+       },
+       {
+        "timestamp": "31000",
+        "value": 0.07
+       },
+       {
+        "timestamp": "32000",
+        "value": 0.07
+       },
+       {
+        "timestamp": "33000",
+        "value": 0.07
+       },
+       {
+        "timestamp": "34000",
+        "value": 0.06
+       },
+       {
+        "timestamp": "35000",
+        "value": 0.06
+       },
+       {
+        "timestamp": "36000",
+        "value": 0.06
+       },
+       {
+        "timestamp": "37000",
+        "value": 0.05
+       },
+       {
+        "timestamp": "38000",
+        "value": 0.05
+       },
+       {
+        "timestamp": "39000",
+        "value": 0.05
+       },
+       {
+        "timestamp": "40000",
+        "value": 0.04
+       },
+       {
+        "timestamp": "41000",
+        "value": 0.04
+       },
+       {
+        "timestamp": "42000",
+        "value": 0.02
+       }
+      ],
+      "peak_value": 1000,
+      "status": 0
+     }
+    },
+    "video_info": {
+     "aweme_id": "7300000000000000042",
+     "create_time": 1794052551,
+     "duration_ms": 42411,
+     "author": "fixture_owner"
+    }
+   }
+  },
+  "7300000000000000043": {
+   "ok": false,
+   "error": "страница не отдала числа (ролик чужой, удалён или ещё не обработан)"
+  }
+ }
+}

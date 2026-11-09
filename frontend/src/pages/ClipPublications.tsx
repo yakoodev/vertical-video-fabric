@@ -16,6 +16,7 @@ import { ApiError } from "@/api/client";
 import { qk } from "@/api/keys";
 import { formatCount } from "@/api/stats";
 import { NoteEditor, useMarksRefresh } from "@/components/ClipMarks";
+import { StudioLine } from "@/components/StudioStats";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { useToast } from "@/components/Toast";
 import { useModuleOn } from "@/hooks/useModules";
@@ -219,6 +220,7 @@ export function ClipPublicationsCard({ view }: { view: ClipView }) {
                   {p.views != null ? <span>{formatCount(p.views)} просм.</span> : null}
                   {p.note ? <span className="cpubs-note">{p.note}</span> : null}
                 </div>
+                {p.studio ? <div className="cpubs-studio"><StudioLine studio={p.studio} /></div> : null}
                 {p.kind === "manual" ? (
                   <div className="cpubs-acts">
                     <button type="button" className="btn ghost sm" title="Поправить" aria-label="Поправить" onClick={() => { setEditing(p.id); setAdding(false); }}>✎</button>
