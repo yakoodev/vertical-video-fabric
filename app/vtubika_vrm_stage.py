@@ -10,7 +10,8 @@
                           {"badge": "трекинг: лицо и руки", "dur": 3}]}
 
 ``at``/``dt``/``until``/``dur`` — как у событий ``do`` (слово-якорь фразы). Аватар: ``av`` — действие модели
-(mirror — повторяет за героиней, idle, dance, mug с ``drop`` — словом, когда роняет кружку, bow, showcase).
+(mirror — повторяет за героиней, idle, png — застывшая картинка PNGtuber (только моргает), dance, mug с ``drop`` —
+словом, когда роняет кружку, bow, showcase).
 """
 
 from __future__ import annotations
@@ -35,6 +36,13 @@ HEROINES: dict[str, dict[str, Any]] = {
                       "repaint": {"Hair": ["#140c10", "#7a4a3a"], "Tops": ["#4a3010", "#e8b44a"]},
                       "stains": {"Tops": {"colors": ["#3f8cff", "#ff5c8a", "#2ec27e", "#ffffff", "#7a4dff"], "n": 46, "seed": 11,
                                           "size": 0.028}}}},
+    # Ника, стримерка-PNGtuber: медовые светлые волосы, бирюзовая толстовка, белые наушники с бирюзовым кольцом.
+    # Модель — та же, что у Веры: руки Twist-модели при печати/взмахе проходят сквозь корпус (проверка рук), у этой — чисто.
+    "nika": {"model": GIRL, "chair_y": 0.775,
+             "headphones": {"kind": "headphones", "color": "#f4f1ff", "accent": "#35d0c0", "ring": 0.02, "scale": 1.06, "lift": 0.035},
+             "look": {"outline": 0.0034, "shade": "#9aa0d0", "toony": 0.97, "shift": -0.05, "rim": "#8ff0e0", "rimPower": 4,
+                      "skin": "^(face|body)", "skinShade": "#e8a8a0", "tint": {"Hair": "#ffffff"},
+                      "repaint": {"Hair": ["#c4963c", "#fff2c0"], "Tops": ["#0e5a5a", "#6fe0d0"], "EyeIris": ["#0a3a3a", "#6adfc8"]}}},
 }
 
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
@@ -49,6 +57,14 @@ AVATARS: dict[str, dict[str, Any]] = {
                          "repaint": {"Hair": ["#9a5ab8", "#fff0fc"], "Tops": ["#7a6aa0", "#fbf6ff"], "EyeIris": ["#2a0a40", "#d08aff"],
                                      "Bottoms": ["#2a1a4a", "#8a6ac8"]}},
                 "accessories": [{"kind": "star", "color": "#ffd36a", "side": 1}]},
+    # Картинка Ники (сначала неподвижная PNGtuber, потом оживлённая модель): чёрно-синие волосы,
+    # красный верх, красные глаза и чёрные ушки.
+    "kira": {"model": GIRL,
+             "look": {"outline": 0.004, "shade": "#9a8ad0", "toony": 0.97, "rim": "#ff8a9a", "rimPower": 4, "skin": "^(face|body)",
+                      "tint": {"Hair": "#ffffff"},
+                      "repaint": {"Hair": ["#101840", "#6a9cff"], "Tops": ["#5a0f1e", "#ff7a8a"], "EyeIris": ["#4a0a1a", "#ff6a7a"],
+                                  "Bottoms": ["#1a1a30", "#5a5a90"]}},
+             "accessories": [{"kind": "ears", "color": "#14122a", "accent": "#ff6a7a", "scale": 1.0}]},
 }
 
 # Камеры сцены аватара (модель стоит в начале координат, рост ≈ 1.55 м): весь рост, по колено, по грудь, двое.

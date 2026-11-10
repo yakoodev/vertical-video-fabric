@@ -97,3 +97,20 @@ def test_real_product_card_has_neutral_picture_without_site_shots():
     cards = [o for o in spec["overlays"] if o["kind"] == "phone" and o.get("screen") == "shop"]
     assert cards and all(c["store"]["preview"] == "vrm" for c in cards)
     assert "siteShots" not in spec
+
+
+def test_sticker_episode_pngtuber_then_tracked_avatar():
+    """Серия 4 «Стикер»: Ника (своя героиня), её картинка Кира — сначала застывший PNGtuber, потом повторяет за ней,
+    в конце снова заставка; карточка — настоящий Live2D-товар Ferret, а не наша модель; цена — как на сайте."""
+    plan, _built, _words, _total, spec = _story("sticker.json")
+    _, _, _, _, trial = _story()
+    assert spec["model"] == VS.GIRL and spec["look"]["repaint"]["Hair"] != trial["look"]["repaint"]["Hair"]
+    assert spec["look"]["repaint"]["Tops"] != trial["look"]["repaint"]["Tops"] and "stains" not in spec["look"]
+    av = spec["avatar"]
+    assert [m["id"] for m in av["models"]] == ["kira"]
+    acts = [k["act"] for k in av["acts"]]
+    assert acts[0] == "png" and "copy" in acts and acts[-1] == "png"
+    assert any(a["kind"] == "live" for a in spec["stream"]["avatars"])
+    cards = [o for o in spec["overlays"] if o["kind"] == "phone"]
+    assert cards and cards[0]["site"]["price"] == "1 290 ₽" and "Ferret" in cards[0]["site"]["title"]
+    assert cards[0]["site"]["steps"] and "тысячу двести девяносто" in P.caption_text(plan)
