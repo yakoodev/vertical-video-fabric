@@ -152,7 +152,6 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
     end = total
     c0, steps, choice = ev["c0"], ph["steps1"]["t0"], ph["choice1"]["t0"]
     i2 = ph["intro2"]["t0"]
-    t_stat = ph["item1"]["t0"] - 0.1
 
     def seg(t0, t1, name, keys, minh=0.0, **kw):
         return {"name": name, "t0": round(t0, 3), "t1": round(t1, 3), "minHeight": minh, "camKeys": keys, **kw}
@@ -171,8 +170,8 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
         # Селфи: объектив — в её вытянутой руке, кадр дрожит вместе с рукой.
         seg(ev["self"], ev["out"], "селфи", [_key(0, 0, 1, 1.5, 1.45, 60)], 0.0, selfie={"fov": 70, "back": 0.22}),
         # Смотрит запись на экранчике: из-за плеча, наезд на экранчик.
-        seg(ev["out"], ev["full0"], "экранчик", [_key(0, 178, 1.2, 1.75, [0.1, 1.2, 0.3], 36), _key(ev["lcd0"] - ev["out"], 174, 0.95, 1.65, [0.13, 1.18, 0.32], 32),
-                                                _key(ev["full0"] - ev["out"], 175, 0.5, 1.38, [0.14, 1.17, 0.34], 26)], 0.0, free=True),
+        seg(ev["out"], ev["full0"], "экранчик", [_key(0, 148, 1.3, 1.7, [0.1, 1.2, 0.3], 36), _key(ev["lcd0"] - ev["out"], 152, 1.0, 1.55, [0.13, 1.18, 0.33], 32),
+                                                _key(ev["full0"] - ev["out"], 165, 0.55, 1.32, [0.14, 1.17, 0.34], 26)], 0.0, free=True),
         {"name": "запись", "t0": round(ev["full0"], 3), "t1": round(ev["full1"], 3), "minHeight": 0.0, "free": True, "camKeys": [_key(0, 0, 3, 1.5, 1.4, 40)]},
         # Лицо в свете экранчика: огонёк реагирует.
         seg(ev["full1"], c0, "лицо в свете", [_key(0, 6, 1.7, 1.45, [0, 1.3, 0], 36), _key(c0 - ev["full1"], 3, 1.5, 1.42, [0, 1.3, 0], 35)], 0.0),
@@ -217,11 +216,12 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
 
     # --- интерфейс
     hud_stats = stats_spec(hero, ev["name"] - 0.05)
-    hud_stats.update({"nameLabel": "ИМЯ", "invLabel": "ПРЕДМЕТ", "statsT": round(t_stat, 3), "invT": round(ev["drop"] - 0.05, 3),
+    # Статы и предмет открываются, когда окно броска уже закрылось (иначе окна налезают друг на друга).
+    hud_stats.update({"nameLabel": "ИМЯ", "invLabel": "ПРЕДМЕТ", "statsT": round(ev["drop"] - 0.1, 3), "invT": round(ev["drop"] + 0.5, 3),
                       "t1": round(ev["self"] - 0.1, 3), "w": 170})
     die = roll["die"]
     p = PRESETS[roll["preset"]]
-    rolls = {"t0": round(ev["throw"] - 0.1, 3), "t1": round(ev["drop"] - 0.1, 3), "stat": "УДАЧА ТУМАНА", "action": "КТО ТЫ ТАКАЯ?", "die": die,
+    rolls = {"t0": round(ev["throw"] - 0.1, 3), "t1": round(ev["drop"] - 0.3, 3), "stat": "УДАЧА ТУМАНА", "action": "КТО ТЫ ТАКАЯ?", "die": die,
              "bonus": 0, "dc": 0, "spin": round(DIE_T + 0.1, 3), "y": 30, "compact": True, "custom": [f"ВЫПАЛО {die}", p["title"]]}
     cards = [{"t0": round(ev["drop"], 3), "t1": round(ev["take"] + 0.2, 3), "lines": ["НАЙДЕН ПРЕДМЕТ:", "СТАРАЯ КАМЕРА"], "accent": [1], "y": 84},
              {"t0": round(choice - 0.1, 3), "t1": round(ev["final"] - 0.05, 3), "lines": CHOICE, "accent": [0], "y": 268}]
