@@ -196,6 +196,8 @@ export interface RollSpec {
   y?: number;
   /** Свой итог вместо «к + бонус = итог против сложности»: две строки (число и что выпало) — для создания героини. */
   custom?: [string, string];
+  /** Кубик настоящий, в сцене (die.ts): окно без рисованного кубика — только заголовок и итог после приземления (spin — когда лёг). */
+  compact?: boolean;
 }
 
 /** Итог броска: натуральная 20 — крит успех, 1 — крит провал, иначе итог против сложности. */
@@ -258,6 +260,20 @@ function d20(g: CanvasRenderingContext2D, cx: number, cy: number, R: number, a: 
 
 export function drawRoll(g: CanvasRenderingContext2D, s: RollSpec, t: number) {
   if (t < s.t0 || (s.t1 !== undefined && t >= s.t1)) return;
+  if (s.compact) {
+    // Кубик катится в сцене: окно сверху — заголовок, после приземления — что выпало.
+    const W = g.canvas.width, w = 200, x = Math.round((W - w) / 2), y = s.y ?? 40, landed = t - s.t0 >= (s.spin ?? 1.4);
+    if (!menuWindow(g, x, y, w, landed ? 62 : 34, (t - s.t0) / 0.3, 0.72)) return;
+    const head = `БРОСОК: ${s.stat}`;
+    label(g, head, Math.round(x + (w - textW(g, head)) / 2), y + 9, C.gold);
+    if (s.action) label(g, s.action, Math.round(x + (w - textW(g, s.action)) / 2), y + 21, C.hint);
+    if (landed && s.custom) {
+      const after = t - s.t0 - (s.spin ?? 1.4);
+      if (after > 0.1) label(g, s.custom[0], Math.round(x + (w - textW(g, s.custom[0])) / 2), y + 35, "#ffffff", 10);
+      if (after > 0.5) label(g, s.custom[1], Math.round(x + (w - textW(g, s.custom[1])) / 2), y + 49, C.gold);
+    }
+    return;
+  }
   const W = g.canvas.width, w = 200, x = Math.round((W - w) / 2), y = s.y ?? 120, h = 150;
   if (!menuWindow(g, x, y, w, h, (t - s.t0) / 0.3, 0.7)) return;
   const head = `БРОСОК: ${s.stat}`;
