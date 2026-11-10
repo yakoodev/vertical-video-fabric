@@ -6,7 +6,8 @@
  * Действия (``acts``, по модели): ``mirror`` — повторяет за героиней (трекинг: повороты её костей корпуса, рук и
  * пальцев зеркально, как в зеркале, и выражения лица); ``idle`` — стоит, дышит; ``dance`` — спокойно танцует;
  * ``mug`` — держит кружку, в ``drop`` роняет (кружка падает и катится), пугается; ``bow`` — кланяется;
- * ``showcase`` — витрина (медленно поворачивается, улыбается). Смена действия — наплыв 0.5 с.
+ * ``showcase`` — витрина (медленно поворачивается, улыбается); ``png`` — PNGtuber: застывшая картинка, только
+ * моргает. Смена действия — наплыв 0.5 с.
  * Подписи над головами (``labels``) и плашка трекинга (``badge``) — 2D поверх.
  */
 import * as THREE from "three";
@@ -175,7 +176,14 @@ export class AvatarStage {
       p.right = armDown(-1, t, 1.3);
       p.hips = [Math.sin(t * 0.5) * 0.008, 0, 0];
       p.expr = { relaxed: 0.25, blink: blinkAt(t, 3.6, 0.4) };
-      if (act.act === "showcase") {
+      if (act.act === "png") {
+        // PNGtuber: неподвижная картинка — ни дыхания, ни покачиваний, ни поворота; живёт только моргание.
+        p.bones = { leftUpperLeg: [0, 0, -2], rightUpperLeg: [0, 0, 2] };
+        p.hips = [0, 0, 0];
+        p.left = armDown(1, 0);
+        p.right = armDown(-1, 0, 1.3);
+        p.expr = { happy: 0.3, blink: blinkAt(t, 2.6, 0.25) };
+      } else if (act.act === "showcase") {
         yaw = Math.sin(t * 0.7) * 28;
         p.expr = { happy: 0.6, blink: blinkAt(t, 3.6, 0.4) * 0.4 };
       } else if (act.act === "dance") {
