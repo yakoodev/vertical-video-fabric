@@ -288,6 +288,22 @@ def latest_manual_stats(store: Any, publication_ids: list[int] | None = None) ->
     return out
 
 
+def _tiktok_proxy(store: Any, pub: dict) -> str:
+    """Прокси для чисел ручной TikTok-ссылки. С адреса сервера TikTok отвечает «IP blocked» (10.11), поэтому
+    ходим через прокси аккаунта этого ролика (по нику в ссылке), иначе — любого TikTok-аккаунта с прокси:
+    числа публичные. Нет ни одного — пусто, как раньше (сам адрес + DOWNLOAD_PROXY_URL)."""
+    from app import tiktok_studio as S
+    from app import tiktok_studio_collect as C
+
+    accounts = C.tiktok_accounts(store)
+    own = C.account_for_handle(accounts, S.handle_of(pub["url"]), pub.get("account") or "")
+    for account_id in ([own] if own else []) + [a for a in accounts if a != own]:
+        proxy = store.get_account_proxy_url(int(account_id))
+        if proxy:
+            return proxy
+    return ""
+
+
 def refresh_manual_publication(store: Any, publication_id: int) -> dict:
     """Числа ручной публикации тем же путём, что публикации сервиса (yt-dlp для
     YouTube/TikTok). Instagram без входа чисел не отдаёт — тогда только вручную."""
@@ -304,7 +320,7 @@ def refresh_manual_publication(store: Any, publication_id: int) -> dict:
         add_manual_stats(store, publication_id, None, origin="auto", error=f"пропуск: {reason}")
         return {"ok": False, "skipped": True, "error": reason}
     try:
-        stats = platform_stats.fetch_ytdlp_stats(pub["url"])
+        stats = platform_stats.fetch_ytdlp_stats(pub["url"], _tiktok_proxy(store, pub) if platform == "tiktok" else "")
     except RuntimeError as exc:
         add_manual_stats(store, publication_id, None, origin="auto", error=str(exc)[:300] or "ошибка")
         return {"ok": False, "error": str(exc)[:300]}

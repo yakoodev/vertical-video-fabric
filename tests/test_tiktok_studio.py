@@ -347,3 +347,23 @@ def test_background_gate(tmp_path, monkeypatch):
     assert C.maybe_start(store) is True and calls == [{"force": False}]
     monkeypatch.setitem(C._status, "finished_at", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
     assert C.maybe_start(store) is False  # недавно был проход
+
+
+def test_manual_tiktok_link_numbers_go_through_the_owner_account_proxy(tmp_path, monkeypatch):
+    """С адреса сервера TikTok отвечает «IP blocked»: числа ручной ссылки — через прокси аккаунта по нику,
+    чужой ник — через любой TikTok-аккаунт с прокси."""
+    _c, store = _client(tmp_path, monkeypatch)
+    _tt_account(store, "сова", handle="user5260959022512", proxy="http://u:p@10.0.0.1:1000")
+    _tt_account(store, "yakoodev", handle="yakoodev", proxy="http://u:p@10.0.0.2:2000")
+    source = _source(store)
+    project = P.create_project(store, "Сова", source_ids=[source["id"]])
+    seen = []
+    monkeypatch.setattr("app.platform_stats.fetch_ytdlp_stats",
+                        lambda url, account_proxy="": seen.append(account_proxy) or {"views": 5})
+    mine = P.add_manual_publication(store, "https://www.tiktok.com/@yakoodev/video/7706134923484122389",
+                                    project_id=project["id"])
+    other = P.add_manual_publication(store, "https://www.tiktok.com/@.psx53/video/7706158002662903060",
+                                     project_id=project["id"])
+    assert P.refresh_manual_publication(store, mine["id"])["ok"]
+    assert P.refresh_manual_publication(store, other["id"])["ok"]
+    assert seen[0].endswith("10.0.0.2:2000") and seen[1]  # свой аккаунт; чужой ник — первый с прокси

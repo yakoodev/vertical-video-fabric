@@ -59,7 +59,7 @@ def test_clip_publications_many_times_without_link_and_counts(tmp_path, monkeypa
     render = store.list_clips_for_plan(plan["id"])[0]
     _publish(store, plan["id"], "https://www.youtube.com/shorts/svc1")
     calls = []
-    monkeypatch.setattr("app.platform_stats.fetch_ytdlp_stats", lambda url: calls.append(url) or {"views": 10})
+    monkeypatch.setattr("app.platform_stats.fetch_ytdlp_stats", lambda url, account_proxy="": calls.append(url) or {"views": 10})
 
     # Без ссылки: площадка, аккаунт, дата — сегодня, пометка. Чисел не тянем.
     r = client.post(f"/api/clip-plans/{plan['id']}/publications",

@@ -284,7 +284,7 @@ def test_manual_publications_and_project_stats(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_fetch(url):
+    def fake_fetch(url, account_proxy=""):
         calls.append(url)
         return {"views": 1200, "likes": 60, "comments": 4, "shares": None}
 
