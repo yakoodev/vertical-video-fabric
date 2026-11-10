@@ -34,13 +34,15 @@ import { drawHud, loadHudFont, type HudSpec } from "./hud.ts";
 import { orbitAt, presence, type OrbitKey } from "./orbit.ts";
 import { lerp3, SIT_SEAT, sitBones, sitHips, sitWeight, type ActionKey } from "./sit.ts";
 import { buildThings, type StalkerSpec, type Things, type WorldObject } from "./things.ts";
-import { drawCaptions, drawComment, drawEndCard, drawTurn, type CapChunk, type CommentSpec, type EndCardSpec } from "./captions.ts";
+import { drawCaptions, drawComment, drawEndCard, drawTitle, drawTurn, type CapChunk, type CommentSpec, type EndCardSpec, type TitleSpec } from "./captions.ts";
 import type { ArmSpec } from "../rig.ts";
 import { buildStreet, type StreetSpec } from "./street.ts";
 import { buildWisp, type Wisp, type WispSpec } from "./wisp.ts";
 import { fxAt, grade, noise, type FxSpec } from "./fx.ts";
 import { drawCard, drawCreation, drawRoll, drawStats, type CardSpec, type CreationSpec, type RollSpec, type StatsSpec } from "./menu.ts";
 import { lieArm, lieBones, lieWeight } from "./wake.ts";
+import { focusBlur, handheld, tearAt, vhs, vhsAt, type VhsSpec } from "./vhs.ts";
+import { drawCam, type CamSpec } from "./cam.ts";
 
 export interface PsxShot {
   name?: string;
@@ -96,6 +98,12 @@ export interface PsxWorldSpec {
   roll?: RollSpec;
   stats?: StatsSpec;
   eyesClosed?: [number, number][];
+  /** Найденная плёнка: картинка старой видеокамеры (vhs.ts), экранные надписи камеры (cam.ts), крупные титры. */
+  vhs?: VhsSpec;
+  cam?: CamSpec[];
+  titles?: TitleSpec[];
+  /** Рот: огибающая её голоса (0..1 по кадрам voiceFps) на окне [от, до] — открывает «а» (для записи, где говорит она). */
+  mouth?: { t0: number; t1: number; voice: number[]; fps?: number }[];
 }
 
 let spec: PsxWorldSpec;
@@ -188,7 +196,12 @@ function pose(time: number) {
     if (v >= 0 && v < 0.18) blink = Math.max(blink, v < 0.07 ? v / 0.07 : 1 - (v - 0.07) / 0.11);
   }
   if (spec.eyesClosed?.some(([a, b]) => time >= a && time < b)) blink = 1;
-  const expr = { ...(spec.heroine?.expr || {}), blink };
+  const expr: Record<string, number> = { ...(spec.heroine?.expr || {}), blink };
+  for (const m of spec.mouth || []) {
+    if (time < m.t0 || time >= m.t1) continue;
+    const f = Math.floor((time - m.t0) * (m.fps ?? 30));
+    expr.aa = Math.max(expr.aa ?? 0, Math.min(0.7, 0.8 * (m.voice[f] ?? 0)));
+  }
   rig.apply({ mocap, bones, hips: hipsOff, left, right, expr });
   // На траву: щиколотки не ниже высоты покоя, таз не ниже посадки (стоит — держат ступни, сидит — таз).
   // Сдвиг — до пружин: волосы не видят скачка сцены между кадрами.
@@ -223,8 +236,12 @@ function render(t: number) {
   settle(time);
   const c = shot.camKeys?.length ? orbitAt(shot.camKeys, local) : orbitAt([shot.cam!], 0);
   camera.fov = c.fov;
-  camera.position.set(...c.pos);
-  camera.lookAt(...c.target);
+  // Ручная съёмка: покачивание положения, точки взгляда и крен — пропорционально силе эффекта камеры.
+  const kv = vhsAt(spec.vhs, t);
+  const hh = kv > 0 && spec.vhs?.shake ? handheld(t, spec.vhs.shake * Math.min(1.6, kv)) : null;
+  camera.position.set(c.pos[0] + (hh?.pos[0] ?? 0), c.pos[1] + (hh?.pos[1] ?? 0), c.pos[2] + (hh?.pos[2] ?? 0));
+  camera.lookAt(c.target[0] + (hh?.aim[0] ?? 0), c.target[1] + (hh?.aim[1] ?? 0), c.target[2]);
+  if (hh) camera.rotateZ(hh.roll);
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   world.update(time, camera);
@@ -265,7 +282,11 @@ function render(t: number) {
   const frame = Math.round(t * (spec.fps || 30));
   const lv = fxAt(spec.fx, t);
   // Зерно меняется раз в 2 кадра (15 в секунду): как плёнка, и ролик вдвое легче; помехи — каждый кадр.
-  post.scene(gl.domElement, spec.fx ? (d, w, h) => grade(d, w, h, spec.fx!, lv.black, frame >> 1) : undefined);
+  const blur = focusBlur(spec.vhs, t);
+  post.scene(gl.domElement, spec.fx || kv > 0 ? (d, w, h) => {
+    if (spec.fx) grade(d, w, h, spec.fx, lv.black, frame >> 1);
+    if (kv > 0) vhs(d, w, h, kv, blur, tearAt(spec.vhs, t), t, frame);
+  } : undefined);
   const hud = spec.hud;
   const ui = still ? !!shot.hud : true;
   post.overlay((ug) => {
@@ -279,6 +300,8 @@ function render(t: number) {
     if (spec.creation) drawCreation(ug, spec.creation, time);
     for (const c of spec.cards || []) drawCard(ug, c, time);
     if (spec.roll) drawRoll(ug, spec.roll, time);
+    for (const c of spec.cam || []) drawCam(ug, c, time, blur > 1.0);
+    for (const e of spec.titles || []) drawTitle(ug, e, time);
   });
   if (lv.static > 0) post.after((d, w, h) => noise(d, w, h, lv.static, frame));
   post.present(g, W, H);

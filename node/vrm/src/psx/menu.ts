@@ -194,6 +194,8 @@ export interface RollSpec {
   /** Сколько крутится (с). */
   spin?: number;
   y?: number;
+  /** Свой итог вместо «к + бонус = итог против сложности»: две строки (число и что выпало) — для создания героини. */
+  custom?: [string, string];
 }
 
 /** Итог броска: натуральная 20 — крит успех, 1 — крит провал, иначе итог против сложности. */
@@ -269,13 +271,18 @@ export function drawRoll(g: CanvasRenderingContext2D, s: RollSpec, t: number) {
   const ang = landed ? 0 : Math.floor(u * (2 - u) * 18) * 0.7;
   const bounce = landed && dt - spin < 0.12 ? -2 : 0;
   const o = rollOutcome(s.die, s.bonus, s.dc);
-  const edge = !landed ? C.text : o.crit === "success" ? C.gold : o.crit === "fail" ? C.accent : o.ok ? C.good : C.accent;
+  const edge = !landed ? C.text : s.custom ? C.gold : o.crit === "success" ? C.gold : o.crit === "fail" ? C.accent : o.ok ? C.good : C.accent;
   const cy = y + 70 + bounce;
   d20(g, x + w / 2, cy, 30, ang, edge, "rgba(30,26,24,0.62)");
   const num = String(face);
   label(g, num, Math.round(x + w / 2 - textW(g, num, 16) / 2), cy - 3, landed ? "#ffffff" : C.text, 16);
   if (!landed) return;
   const after = dt - spin;
+  if (s.custom) {
+    if (after > 0.25) label(g, s.custom[0], Math.round(x + (w - textW(g, s.custom[0])) / 2), y + 108, C.text);
+    if (after > 0.7) label(g, s.custom[1], Math.round(x + (w - textW(g, s.custom[1])) / 2), y + 124, C.gold);
+    return;
+  }
   const sign = s.bonus >= 0 ? "+" : "−";
   const sum = `${s.die} ${sign} ${Math.abs(s.bonus)} = ${o.total}`;
   if (after > 0.25) label(g, sum, Math.round(x + (w - textW(g, sum)) / 2), y + 108, C.text);
@@ -292,21 +299,36 @@ export function drawRoll(g: CanvasRenderingContext2D, s: RollSpec, t: number) {
 
 export interface StatsSpec {
   t?: number;
+  /** Окно закрывается (с). */
+  t1?: number;
   name: string;
+  /** Подпись перед именем в окне («ИМЯ: НИКТО»); пусто — только имя. */
+  nameLabel?: string;
   hp: number;
   hpMax: number;
   /** Статы по порядку: [подпись, бонус]. */
   stats: [string, number][];
   inventory?: string[];
+  /** Подпись перед предметами («ПРЕДМЕТ: КАМЕРА»); пусто — просто список. */
+  invLabel?: string;
+  /** Когда появляются HP со статами и предметы (с); нет — сразу. Пока их нет, окно — одна строка с именем. */
+  statsT?: number;
+  invT?: number;
   x?: number;
   y?: number;
+  w?: number;
 }
 
 export function drawStats(g: CanvasRenderingContext2D, s: StatsSpec, t: number) {
-  if (t < (s.t ?? 0)) return;
-  const x = s.x ?? 6, y = s.y ?? 8, w = 150, h = 56;
+  if (t < (s.t ?? 0) || (s.t1 !== undefined && t >= s.t1)) return;
+  const x = s.x ?? 6, y = s.y ?? 8, w = s.w ?? 150;
+  const full = t >= (s.statsT ?? -1e9);
+  const h = full ? 56 : 20;
+  // Когда появляются статы, окно сразу вырастает (раскрывается оно один раз — к появлению имени).
   if (!menuWindow(g, x, y, w, h, (t - (s.t ?? 0)) / 0.3, 0.58)) return;
-  label(g, s.name, x + 8, y + 7, C.text);
+  const nm = (s.nameLabel ? `${s.nameLabel}: ` : "") + s.name;
+  label(g, nm, x + 8, y + 7, C.text);
+  if (!full) return;
   const hp = `HP ${s.hp}/${s.hpMax}`;
   label(g, hp, x + w - 8 - textW(g, hp), y + 7, s.hp <= s.hpMax / 3 ? C.accent : C.good);
   // Полоса HP: 12 сегментов.
@@ -320,5 +342,7 @@ export function drawStats(g: CanvasRenderingContext2D, s: StatsSpec, t: number) 
     label(g, k, sx, sy, C.dim);
     label(g, `${v >= 0 ? "+" : "−"}${Math.abs(v)}`, sx + 38, sy, v > 0 ? C.gold : C.text);
   });
-  if (s.inventory?.length) label(g, s.inventory.join(", "), x + 8, y + h + 3, C.hint);
+  if (s.inventory?.length && t >= (s.invT ?? -1e9)) {
+    label(g, (s.invLabel ? `${s.invLabel}: ` : "") + s.inventory.join(", "), x + 8, y + h + 3, C.hint);
+  }
 }

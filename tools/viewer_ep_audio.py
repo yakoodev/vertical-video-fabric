@@ -21,7 +21,9 @@ RATE = 48000
 TARGET_LUFS = -14.0
 # Уровни относительно громкости голоса (дБ LUFS ниже голоса); помехи — на полном уровне (1.0).
 UNDER = {"drone": 15.0, "wind": 17.0, "static_full": 6.0, "chime": 9.0, "chime_soft": 14.0, "braam": 6.0,
-         "glitch": 9.0, "step": 16.0}
+         "glitch": 9.0, "step": 16.0,
+         # серия 1: тики кубика, подтверждение, предмет, писк камеры, шаги Сборщика (ближе — громче), шипение ленты
+         "tick": 15.0, "ding": 12.0, "dropitem": 10.0, "beep": 11.0, "stomp": 11.0, "stomp2": 8.0, "stomp3": 5.0}
 
 
 def _run(args: list[str], what: str) -> None:
@@ -133,8 +135,10 @@ def hits(events: dict, glitch_times: list[float], total: float) -> list[tuple[st
 
 
 def mix(video: Path, voice: Path, lead: float, total: float, events: dict, fx_keys: list[dict], glitch_times: list[float],
-        out: Path, work: Path) -> dict:
-    """Голос (с lead) + подложки + звуки событий по уровням UNDER → −14 LUFS, видео копией."""
+        out: Path, work: Path, hits_fn=None, extras: list[dict] | None = None) -> dict:
+    """Голос (с lead) + подложки + звуки событий по уровням UNDER → −14 LUFS, видео копией. ``hits_fn`` — свой набор
+    звуков на событиях (как ``hits``); ``extras`` — дорожки-вставки ``{name, path, at, rel_db, af}``: громкость —
+    относительно голоса (rel_db дБ LUFS), фильтры ``af`` (серия 1: её запись на старой плёнке, шипение ленты)."""
     from app.stories_3d import voice_lufs
 
     v_lufs = voice_lufs(voice)
@@ -159,7 +163,9 @@ def mix(video: Path, voice: Path, lead: float, total: float, events: dict, fx_ke
         add(st[name], name, v_lufs - UNDER[name] - lufs(st[name]))
     # Помехи: громкость шума на уровне 1.0 → голос − static_full; огибающая уже внутри.
     add(st["static"], "static", v_lufs - UNDER["static_full"] - lufs(st["_static_full_ref"]))
-    for name, path, t, af in hits(events, glitch_times, total):
+    for ex in extras or []:
+        add(Path(ex["path"]), ex["name"], v_lufs + float(ex["rel_db"]) - lufs(Path(ex["path"])), ex.get("af", ""), at=float(ex["at"]))
+    for name, path, t, af in (hits_fn or hits)(events, glitch_times, total):
         src_l = lufs(path)
         add(path, name, v_lufs - UNDER[name] - (src_l if src_l > -70 else -20), af, at=t)
     graph = ";".join(chains) + ";" + "".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0[mix]"

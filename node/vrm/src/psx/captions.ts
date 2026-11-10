@@ -31,6 +31,17 @@ export interface EndCardSpec {
   accent?: number[];
 }
 
+export interface TitleSpec {
+  t0: number;
+  t1?: number;
+  lines: string[];
+  /** Цвет строк по порядку (остальные — белые). */
+  colors?: string[];
+  y?: number;
+  /** Размер шрифта, кратный 8 (24 — крупный крючок первого кадра, 16 — финальный призыв). */
+  px?: number;
+}
+
 const fontPx = (px: number) => `${px}px ${HUD_FONT}, monospace`;
 
 function outlined(g: CanvasRenderingContext2D, s: string, x: number, y: number, col: string, px: number) {
@@ -156,4 +167,15 @@ export function drawEndCard(g: CanvasRenderingContext2D, e: EndCardSpec, t: numb
     const cx = x + w - 14, cy = y + h - 10;
     for (let r = 0; r < 4; r++) g.fillRect(cx - 3 + r, cy + r, 7 - 2 * r, 1);
   }
+}
+
+/** Крупный титр поверх кадра (крючок первого кадра, финальный призыв): центр, толстая обводка, без набора по буквам. */
+export function drawTitle(g: CanvasRenderingContext2D, e: TitleSpec, t: number) {
+  if (t < e.t0 || (e.t1 !== undefined && t >= e.t1)) return;
+  const W = g.canvas.width, px = e.px ?? 24;
+  e.lines.forEach((line, i) => {
+    g.font = fontPx(px);
+    const x = Math.round((W - g.measureText(line).width) / 2);
+    outlined(g, line, x, (e.y ?? 60) + i * (px + 8), e.colors?.[i] ?? "#f8f8f8", px);
+  });
 }
