@@ -29,6 +29,7 @@ class YouTubeProvider(Provider):
         proxy_url: str,
         video_format: str = "9:16",
         thumbnail_path: str = "",
+        channel: str = "",
     ) -> ProviderResult:
         # 16:9 — обычное видео, не Shorts (app/publish_format.py): YouTube сам решает по кадру,
         # а #shorts в тексте горизонтального ролика только путает — убираем; горизонтальная
@@ -54,6 +55,11 @@ class YouTubeProvider(Provider):
             payload["categoryId"] = category
         if thumbnail_path and is_regular_video(self.platform, video_format):
             payload["thumbnailPath"] = str(thumbnail_path)
+        # Канал аккаунта (UC… или @ник, accounts.handle): у одного входа Google их бывает
+        # несколько, без выбора ролик уходит на канал по умолчанию. Помощник переключается
+        # и до загрузки проверяет, что активен именно он; не тот — отказ без загрузки.
+        if channel.strip():
+            payload["channel"] = channel.strip()
         try:
             proc = subprocess.run(
                 [settings.node_bin, str(settings.youtube_helper)],
@@ -88,15 +94,21 @@ class YouTubeProvider(Provider):
             result = json.loads(stdout)
         except json.JSONDecodeError:
             return ProviderResult(status="failed", error="youtube helper returned invalid JSON")
+        refreshed = result.pop("refreshedCookies", None)
+        refreshed = refreshed if isinstance(refreshed, dict) else {}
         if not result.get("ok"):
             error = _safe_error(result.get("error") or "")
-            return ProviderResult(status=_classify_youtube_error(error), error=error, response=result)
+            if result.get("channelError"):
+                log.warning("youtube channel check failed: account=%s channel=%s %s", account_label, channel, error)
+            # Отказ из-за канала — не повод перевходить: cookie живые, дело в настройке канала.
+            status = "failed" if result.get("channelError") else _classify_youtube_error(error)
+            return ProviderResult(status=status, error=error, response=result, refreshed_cookies=refreshed)
         remote_id = result.get("videoId") or ""
-        log.info("youtube upload ok: account=%s video_id=%s attempts=%s metadata=%s%s", account_label,
-                 remote_id or "?", result.get("uploadAttempts"), result.get("metadataSet"),
+        log.info("youtube upload ok: account=%s video_id=%s channel=%s attempts=%s metadata=%s%s", account_label,
+                 remote_id or "?", _channel_text(result.get("channel")), result.get("uploadAttempts"),
+                 result.get("metadataSet"),
                  f" metadata_error={result['metadataError']}" if result.get("metadataError") else "")
-        refreshed = result.get("refreshedCookies")
-        response = {k: v for k, v in result.items() if k != "refreshedCookies"}
+        response = dict(result)
         if video_format != "9:16":
             response["publish_as"] = "video" if is_regular_video(self.platform, video_format) else "shorts"
         return ProviderResult(
@@ -104,8 +116,17 @@ class YouTubeProvider(Provider):
             remote_id=remote_id,
             remote_url=f"https://youtu.be/{remote_id}" if remote_id else "",
             response=response,
-            refreshed_cookies=refreshed if isinstance(refreshed, dict) else {},
+            refreshed_cookies=refreshed,
         )
+
+
+def _channel_text(channel) -> str:
+    """Канал, куда ушёл ролик, для журнала: «имя (UC…)»; помощник не узнал — «?»."""
+    if not isinstance(channel, dict):
+        return "?"
+    name = channel.get("name") or channel.get("handle") or ""
+    cid = channel.get("id") or ""
+    return f"{name} ({cid})" if name and cid else (name or cid or "?")
 
 
 def _made_for_kids(value: str) -> bool | None:

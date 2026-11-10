@@ -15,5 +15,7 @@ export const accountsApi = {
   create: (body: AccountCreate) => api.post<Account>("/api/accounts", body),
   /** Только прокси, без повторной вставки cookie; пустая строка убирает прокси. */
   setProxy: (id: number, proxy_url: string) => api.put<Account>(`/api/accounts/${id}/proxy`, { proxy_url }),
+  /** Канал YouTube для загрузки (UC… или @ник); пустая строка — канал по умолчанию у входа. */
+  setChannel: (id: number, channel: string) => api.put<Account>(`/api/accounts/${id}/channel`, { channel }),
   remove:(id: number | string) => api.del<{ deleted: boolean }>(`/api/accounts/${id}`),
 };

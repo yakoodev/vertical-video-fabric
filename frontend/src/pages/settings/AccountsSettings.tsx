@@ -129,6 +129,7 @@ export function AccountsSettings() {
                 <span>прокси: {acc.proxy_display}</span>
                 {acc.missing_cookies ? <span style={{ color: "var(--warn)" }}>не хватает: {acc.missing_cookies}</span> : null}
               </div>
+              {acc.platform === "youtube" ? <AccountChannelForm account={acc} /> : null}
               <AccountProxyForm account={acc} />
               <div>
                 <button className="btn ghost sm" onClick={() => del.mutate(acc.id)}>
@@ -139,6 +140,46 @@ export function AccountsSettings() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Канал YouTube: у одного входа Google их бывает несколько, без выбора ролик уходит на канал по умолчанию. */
+function AccountChannelForm({ account }: { account: Account }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [value, setValue] = useState(account.handle ?? "");
+  const current = account.handle ?? "";
+  const save = useMutation({
+    mutationFn: (channel: string) => accountsApi.setChannel(account.id, channel),
+    onSuccess: (acc) => {
+      toast.success(acc.handle ? "Канал сохранён" : "Канал по умолчанию");
+      setValue(acc.handle ?? "");
+      qc.invalidateQueries({ queryKey: qk.accounts });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить канал"),
+  });
+
+  return (
+    <div className="field">
+      <span>Канал YouTube (UC… или @ник)</span>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <input
+          className="input"
+          style={{ flex: 1, minWidth: 160 }}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder="пусто — канал по умолчанию"
+          aria-label={`Канал YouTube для ${account.label}`}
+        />
+        <button
+          className="btn sm"
+          disabled={save.isPending || value.trim() === current}
+          onClick={() => save.mutate(value.trim())}
+        >
+          Сохранить канал
+        </button>
+      </div>
     </div>
   );
 }

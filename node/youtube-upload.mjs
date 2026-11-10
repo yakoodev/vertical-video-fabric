@@ -2,6 +2,8 @@ import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
+import { activeChannel, ChannelError, publicIdentities, selectChannel } from './youtube-channel.mjs';
+
 async function readStdin() {
   const chunks = [];
   for await (const chunk of process.stdin) {
@@ -95,14 +97,45 @@ export function metadataUpdate(payload) {
 }
 
 export async function run(payload, { createClient, readFile = fs.readFile, sleep, log = () => {} } = {}) {
-  const file = await readFile(payload.filePath);
   const cookieJar = new Map();
   const retries = Math.max(0, Number(payload.retries) || 0);
   const delayMs = Math.max(0, Number(payload.retrySeconds) || 0) * 1000;
   const attempts = { upload: 0 };
-  const yt = await withRetry(() => createClient(cookieJar), {
+  const create = (options = {}) => withRetry(() => createClient(cookieJar, options), {
     retries, delayMs, sleep, onRetry: (n, e) => log(`innertube create retry ${n}: ${errorText(e)}`)
   });
+  let yt = await create();
+  // Канал аккаунта (accounts.handle): переключиться на него и убедиться ДО загрузки, что активен
+  // именно он; иначе — отказ без загрузки. Без канала — как раньше, но в ответе видно, куда ушло.
+  let channel = null;
+  let identities = [];
+  if (payload.channel) {
+    try {
+      const selected = await selectChannel(yt, payload.channel, { createClient: create, log });
+      yt = selected.yt;
+      channel = selected.active;
+      identities = publicIdentities(selected.identities);
+    } catch (error) {
+      if (!(error instanceof ChannelError)) throw error;
+      // Свежие cookie — и при отказе: Google мог уже сменить __Secure-*PSIDTS.
+      return {
+        ok: false, error: error.message, channelError: true, identities: error.identities || [],
+        refreshedCookies: Object.fromEntries(cookieJar)
+      };
+    }
+  } else {
+    try {
+      channel = await activeChannel(yt);
+    } catch (error) {
+      log(`active channel unknown: ${errorText(error)}`);
+    }
+  }
+  const channelInfo = channel ? { id: channel.channelId, name: channel.name, handle: channel.handle } : null;
+  // Проверка без загрузки: каналы входа и итог переключения.
+  if (payload.dryRun) {
+    return { ok: true, dryRun: true, channel: channelInfo, identities, refreshedCookies: Object.fromEntries(cookieJar) };
+  }
+  const file = await readFile(payload.filePath);
   const response = await withRetry(
     (attempt) => {
       attempts.upload = attempt;
@@ -120,7 +153,7 @@ export async function run(payload, { createClient, readFile = fs.readFile, sleep
   );
   const safe = jsonSafe(response);
   const videoId = findVideoId(safe);
-  const extra = { uploadAttempts: attempts.upload };
+  const extra = { uploadAttempts: attempts.upload, channel: channelInfo };
   // Best effort: видео уже загружено, неудача с метаданными/миниатюрой не делает загрузку проваленной.
   const update = metadataUpdate(payload);
   if (videoId && Object.keys(update).length) {
@@ -160,8 +193,11 @@ async function main() {
     agent = new ProxyAgent(proxyUrl);
   }
   const result = await run(payload, {
-    createClient: (cookieJar) => Innertube.create({
+    // accountIndex — вход Google (X-Goog-AuthUser), onBehalfOfUser — pageId канала-бренда.
+    createClient: (cookieJar, { accountIndex = 0, onBehalfOfUser } = {}) => Innertube.create({
       cookie: payload.cookie,
+      account_index: accountIndex,
+      on_behalf_of_user: onBehalfOfUser,
       fetch: async (input, init = {}) => {
         const res = agent
           ? await fetch(input, { ...init, dispatcher: agent })

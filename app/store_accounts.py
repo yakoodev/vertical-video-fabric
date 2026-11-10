@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import replace as _dc_replace
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from app.cookies import (
     CookieRecord, cookies_from_jsonable, cookies_to_jsonable, DEFAULT_DOMAINS, parse_cookie_input,
@@ -54,6 +55,33 @@ def _account_user_agent(raw: str) -> str:
     if len(user_agent) > USER_AGENT_MAX or any(ord(ch) < 32 or ord(ch) == 127 for ch in user_agent):
         raise ValueError(f"user_agent: одна строка до {USER_AGENT_MAX} символов")
     return user_agent
+
+
+YOUTUBE_CHANNEL_MAX = 100
+_CHANNEL_ID_RE = re.compile(r"UC[\w-]{22}")
+
+
+def youtube_channel(raw: str) -> str:
+    """Канал YouTube аккаунта: ``UC…`` (лучше всего), ``@ник``, ссылка на канал или точное имя.
+    Ссылка сводится к id или @нику. Пусто — канал по умолчанию у входа Google."""
+    value = (raw or "").strip()
+    if not value:
+        return ""
+    if len(value) > YOUTUBE_CHANNEL_MAX or any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError(f"channel: одна строка до {YOUTUBE_CHANNEL_MAX} символов")
+    if "youtube.com/" in value or "youtu.be/" in value:
+        path = unquote(urlsplit(value if "://" in value else f"https://{value}").path)
+        parts = [part for part in path.split("/") if part]
+        if len(parts) >= 2 and parts[0] == "channel" and _CHANNEL_ID_RE.fullmatch(parts[1]):
+            return parts[1]
+        if parts and parts[0].startswith("@") and len(parts[0]) > 1:
+            return parts[0]
+        raise ValueError("channel: нужна ссылка вида youtube.com/channel/UC… или youtube.com/@ник")
+    if _CHANNEL_ID_RE.fullmatch(value):
+        return value
+    if value.startswith("@") and len(value) < 2:
+        raise ValueError("channel: пустой @ник")
+    return value
 
 
 class AccountsStore:
@@ -152,6 +180,18 @@ class AccountsStore:
         self.db.execute(
             "UPDATE accounts SET encrypted_proxy_url = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (encrypted, account_id),
+        )
+        return self.get_account(account_id)
+
+    def set_account_channel(self, account_id: int, channel: str) -> dict:
+        """Канал YouTube, куда грузить (``accounts.handle``): у одного входа Google их бывает
+        несколько, без выбора ролик уходит на канал по умолчанию. Пусто — канал по умолчанию."""
+        account = self.get_account(account_id)
+        if account["platform"] != "youtube":
+            raise ValueError("channel: только для аккаунтов YouTube")
+        self.db.execute(
+            "UPDATE accounts SET handle = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (youtube_channel(channel), account_id),
         )
         return self.get_account(account_id)
 

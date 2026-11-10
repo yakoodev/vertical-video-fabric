@@ -87,6 +87,10 @@ class JobWorker:
                 # TikTok — с UA браузера, выдавшего cookie аккаунта (иначе TIKTOK_USER_AGENT). Другим площадкам не нужен.
                 if target["platform"] == "tiktok" and account.get("user_agent"):
                     extras = {**extras, "user_agent": account["user_agent"]}
+                # YouTube — на канал аккаунта (accounts.handle: UC… или @ник): у одного входа Google
+                # каналов бывает несколько, без выбора ролик уходит на канал по умолчанию.
+                if target["platform"] == "youtube" and (account.get("handle") or "").strip():
+                    extras = {**extras, "channel": account["handle"].strip()}
                 # Текст клипа без правок владельца + вариант площадки в метаданных клипа —
                 # уходит вариант (app/ai/publish_meta.platform_texts); иначе текст задания.
                 title, description = platform_texts(self.store, fresh_job, target["platform"])
@@ -101,8 +105,9 @@ class JobWorker:
                     proxy_url=proxy_url,
                     **extras,
                 )
-                # Persist any rotated cookies so the session self-heals next time.
-                if result.status == "succeeded" and result.refreshed_cookies:
+                # Persist any rotated cookies so the session self-heals next time — и при отказе:
+                # Google мог уже сменить __Secure-*PSIDTS, старые значения потом не пустят.
+                if result.refreshed_cookies:
                     try:
                         self.store.update_account_cookie_values(
                             target["account_id"], result.refreshed_cookies

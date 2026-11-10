@@ -47,6 +47,17 @@ class AccountProxy(BaseModel):
     proxy_url: str = Field(default="", description="Empty removes the proxy (posting goes from the server address).")
 
 
+class AccountChannel(BaseModel):
+    channel: str = Field(
+        default="",
+        description=(
+            "YouTube channel to upload to: channel id `UC…` (preferred), `@handle`, channel URL or exact name. "
+            "One Google login can own several channels; empty uploads to the login's default channel."
+        ),
+        examples=["UCk6k6kwZyYr3LMDAqyQ7pdg", "@yakoodev"],
+    )
+
+
 class AccountRead(BaseModel):
     id: int
     platform: str
@@ -57,6 +68,8 @@ class AccountRead(BaseModel):
     proxy_configured: bool
     proxy_display: str
     user_agent: str = ""
+    # TikTok — ник, узнанный в TikTok Studio; YouTube — канал для загрузки (UC… или @ник).
+    handle: str = ""
     created_at: str
     updated_at: str
 
@@ -193,6 +206,24 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
     def api_set_account_proxy(account_id: int, payload: AccountProxy, _auth: auth_dep) -> dict:
         try:
             return get_store().set_account_proxy(account_id, payload.proxy_url)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.put(
+        "/api/accounts/{account_id}/channel",
+        response_model=AccountRead,
+        tags=["Accounts"],
+        summary="Set the YouTube channel this account uploads to",
+        description=(
+            "`UC…` channel id (preferred) or `@handle`. Before each upload the helper switches to it and checks "
+            "the active channel; a mismatch fails the post without uploading. Empty — the login's default channel."
+        ),
+    )
+    def api_set_account_channel(account_id: int, payload: AccountChannel, _auth: auth_dep) -> dict:
+        try:
+            return get_store().set_account_channel(account_id, payload.channel)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
