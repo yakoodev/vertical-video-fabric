@@ -2,7 +2,7 @@ import { realpathSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
-import { activeChannel, ChannelError, publicIdentities, selectChannel } from './youtube-channel.mjs';
+import { activeChannel, brandUploadRequest, ChannelError, publicIdentities, selectChannel } from './youtube-channel.mjs';
 
 async function readStdin() {
   const chunks = [];
@@ -96,8 +96,9 @@ export function metadataUpdate(payload) {
   return update;
 }
 
-export async function run(payload, { createClient, readFile = fs.readFile, sleep, log = () => {} } = {}) {
-  const cookieJar = new Map();
+// cookieJar — снаружи (main), чтобы свежие cookie ушли в ответ и при исключении: 10.11 задание 117
+// упало на загрузке, ответ без них — сохранённые cookie устарели, Google разлогинил вход.
+export async function run(payload, { createClient, readFile = fs.readFile, sleep, log = () => {}, cookieJar = new Map() } = {}) {
   const retries = Math.max(0, Number(payload.retries) || 0);
   const delayMs = Math.max(0, Number(payload.retrySeconds) || 0) * 1000;
   const attempts = { upload: 0 };
@@ -183,7 +184,18 @@ export async function run(payload, { createClient, readFile = fs.readFile, sleep
   };
 }
 
-async function main() {
+/** fetch клиента: прокси аккаунта, сбор свежих cookie и поправка загрузки на канал-бренд. */
+export function clientFetch({ cookieJar, agent = null, target = {}, fetchImpl = fetch }) {
+  return async (input, init = {}) => {
+    const patched = brandUploadRequest(input, init, target);
+    const [url, options] = patched ? [patched.url, patched.init] : [input, init];
+    const res = await fetchImpl(url, agent ? { ...options, dispatcher: agent } : options);
+    collectSetCookies(res.headers, cookieJar);
+    return res;
+  };
+}
+
+async function main(cookieJar) {
   const payload = JSON.parse(await readStdin());
   const { Innertube } = await import('youtubei.js');
   const proxyUrl = payload.proxyUrl || '';
@@ -193,18 +205,14 @@ async function main() {
     agent = new ProxyAgent(proxyUrl);
   }
   const result = await run(payload, {
-    // accountIndex — вход Google (X-Goog-AuthUser), onBehalfOfUser — pageId канала-бренда.
-    createClient: (cookieJar, { accountIndex = 0, onBehalfOfUser } = {}) => Innertube.create({
+    cookieJar,
+    // accountIndex — вход Google (X-Goog-AuthUser), onBehalfOfUser — pageId канала-бренда,
+    // channelId — id этого канала (для createvideo).
+    createClient: (jar, { accountIndex = 0, onBehalfOfUser, channelId } = {}) => Innertube.create({
       cookie: payload.cookie,
       account_index: accountIndex,
       on_behalf_of_user: onBehalfOfUser,
-      fetch: async (input, init = {}) => {
-        const res = agent
-          ? await fetch(input, { ...init, dispatcher: agent })
-          : await fetch(input, init);
-        collectSetCookies(res.headers, cookieJar);
-        return res;
-      }
+      fetch: clientFetch({ cookieJar: jar, agent, target: { authUser: accountIndex, pageId: onBehalfOfUser, channelId } })
     }),
     log: (line) => process.stderr.write(`${line}\n`)
   });
@@ -223,10 +231,12 @@ function isMain() {
 }
 
 if (isMain()) {
-  main().catch((error) => {
+  const cookieJar = new Map();
+  main(cookieJar).catch((error) => {
     process.stdout.write(JSON.stringify({
       ok: false,
-      error: error && error.stack ? error.stack : String(error)
+      error: error && error.stack ? error.stack : String(error),
+      refreshedCookies: Object.fromEntries(cookieJar)
     }));
     process.exitCode = 1;
   });

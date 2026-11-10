@@ -2,8 +2,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { activeChannelFromMenu, identitiesFromAccountsList, matchIdentity, parseChannelTarget } from './youtube-channel.mjs';
-import { isRetryableUploadError, metadataUpdate, run, withRetry } from './youtube-upload.mjs';
+import {
+  activeChannelFromMenu, brandUploadRequest, identitiesFromAccountsList, matchIdentity, parseChannelTarget
+} from './youtube-channel.mjs';
+import { clientFetch, isRetryableUploadError, metadataUpdate, run, withRetry } from './youtube-upload.mjs';
 
 function fakeClient({ uploadErrors = [], metadataError = null } = {}) {
   const calls = { upload: 0, metadata: [] };
@@ -167,7 +169,7 @@ test('channel id: switches to the brand channel of the other login and uploads t
   const { result, calls } = await channelRun({ channel: DEV });
   assert.equal(result.ok, true);
   assert.equal(calls.upload, 1);
-  assert.deepEqual(calls.created.at(-1), { accountIndex: 2, onBehalfOfUser: '113000' });
+  assert.deepEqual(calls.created.at(-1), { accountIndex: 2, onBehalfOfUser: '113000', channelId: DEV });
   assert.deepEqual(result.channel, { id: DEV, name: 'Yakoo dev', handle: '@yakoodev' });
 });
 
@@ -227,4 +229,149 @@ test('channel parsing helpers', () => {
   assert.equal(matchIdentity(ids, parseChannelTarget('@nobody')), null);
   assert.deepEqual(activeChannelFromMenu(menu('Yakoo dev', '@yakoodev', DEV)), { channelId: DEV, name: 'Yakoo dev', handle: '@yakoodev' });
   assert.equal(activeChannelFromMenu({}), null);
+});
+
+// --- Загрузка на канал-бренд: 10.11 задание 117 — 401 у upload.youtube.com из-за X-Goog-PageId -------- //
+
+const BRAND = { authUser: 2, pageId: '113000', channelId: DEV };
+
+// Запрос, как его отдаёт в fetch HTTPClient youtubei.js: Request + init с Headers и телом.
+function libRequest(url, headers, body) {
+  return [new Request(url, { method: 'POST', body }), { body, headers: new Headers(headers), redirect: 'follow' }];
+}
+const AUTH = { Authorization: 'SAPISIDHASH 1_x', Cookie: 'SAPISID=s', 'X-Goog-Authuser': '2', 'X-Goog-PageId': '113000' };
+
+test('brand upload: start goes as the Google login — no PageId, authuser in header and query', () => {
+  const body = JSON.stringify({ frontendUploadId: 'innertube_android:x' });
+  const [input, init] = libRequest('https://upload.youtube.com//upload/youtubei?prettyPrint=false&alt=json', {
+    ...AUTH, 'Content-Type': 'application/x-www-form-urlencoded', 'x-goog-upload-command': 'start', 'x-goog-upload-protocol': 'resumable'
+  }, body);
+  const patched = brandUploadRequest(input, init, BRAND);
+  const url = new URL(patched.url);
+  assert.equal(url.hostname, 'upload.youtube.com');
+  assert.equal(url.searchParams.get('authuser'), '2');
+  assert.equal(url.searchParams.get('alt'), 'json');
+  assert.equal(patched.init.method, 'POST');
+  assert.equal(patched.init.body, body);
+  const h = patched.init.headers;
+  assert.equal(h.get('x-goog-pageid'), null);
+  assert.equal(h.get('x-goog-authuser'), '2');
+  assert.equal(h.get('authorization'), 'SAPISIDHASH 1_x');
+  assert.equal(h.get('cookie'), 'SAPISID=s');
+  assert.equal(h.get('x-goog-upload-command'), 'start');
+  // Исходные заголовки клиента не испорчены (копия).
+  assert.equal(init.headers.get('x-goog-pageid'), '113000');
+});
+
+test('brand upload: createvideo keeps PageId and names the channel', () => {
+  const body = JSON.stringify({ context: { user: { onBehalfOfUser: '113000' } }, frontendUploadId: 'f', resourceId: { scottyResourceId: { id: 'r' } } });
+  const [input, init] = libRequest('https://www.youtube.com/youtubei/v1/upload/createvideo?prettyPrint=false&alt=json', {
+    ...AUTH, 'Content-Type': 'application/json'
+  }, body);
+  const patched = brandUploadRequest(input, init, BRAND);
+  const sent = JSON.parse(patched.init.body);
+  assert.equal(sent.channelId, DEV);
+  assert.equal(sent.context.user.onBehalfOfUser, '113000');
+  assert.deepEqual(sent.resourceId, { scottyResourceId: { id: 'r' } });
+  assert.equal(patched.init.headers.get('x-goog-pageid'), '113000');
+  assert.equal(patched.init.method, 'POST');
+});
+
+test('brand upload: other requests and the default login go untouched', () => {
+  const start = libRequest('https://upload.youtube.com//upload/youtubei', { ...AUTH, 'x-goog-upload-command': 'start' }, '{}');
+  // Вход по умолчанию без бренда — путь, что работает: как есть.
+  assert.equal(brandUploadRequest(...start, { authUser: 0 }), null);
+  assert.equal(brandUploadRequest(...start, {}), null);
+  // Передача файла: адрес с upload_id от start, свои заголовки — не трогаем.
+  const chunk = ['https://upload.youtube.com/?upload_id=abc', {
+    method: 'POST', headers: { 'x-goog-upload-command': 'upload, finalize' }, body: Buffer.from('v')
+  }];
+  assert.equal(brandUploadRequest(...chunk, BRAND), null);
+  const menuReq = libRequest('https://www.youtube.com/youtubei/v1/account/account_menu', AUTH, '{}');
+  assert.equal(brandUploadRequest(...menuReq, BRAND), null);
+  // Без id канала тело createvideo не трогаем.
+  const create = libRequest('https://www.youtube.com/youtubei/v1/upload/createvideo', AUTH, '{"a":1}');
+  assert.equal(brandUploadRequest(...create, { authUser: 2, pageId: '113000' }), null);
+  // Личный канал второго входа (без бренда): start всё равно с ?authuser.
+  const own = brandUploadRequest(...start, { authUser: 2 });
+  assert.equal(new URL(own.url).searchParams.get('authuser'), '2');
+});
+
+test('client fetch: patched request, proxy dispatcher and rotated cookies', async () => {
+  const sent = [];
+  const fetchImpl = async (url, options) => {
+    sent.push({ input: url, url: typeof url === 'string' ? url : url.url, options });
+    const headers = new Headers();
+    headers.append('Set-Cookie', '__Secure-1PSIDTS=fresh; Path=/; Secure');
+    headers.append('Set-Cookie', 'SIDCC=; Path=/');
+    return new Response('{}', { status: 200, headers });
+  };
+  const jar = new Map();
+  const agent = { proxy: true };
+  const f = clientFetch({ cookieJar: jar, agent, target: BRAND, fetchImpl });
+  await f(...libRequest('https://upload.youtube.com//upload/youtubei', { ...AUTH, 'x-goog-upload-command': 'start' }, '{}'));
+  assert.match(sent[0].url, /authuser=2/);
+  assert.equal(sent[0].options.headers.get('x-goog-pageid'), null);
+  assert.equal(sent[0].options.dispatcher, agent);
+  assert.deepEqual(Object.fromEntries(jar), { '__Secure-1PSIDTS': 'fresh' });
+  // Обычный запрос уходит без изменений, тем же объектом.
+  const plain = libRequest('https://www.youtube.com/youtubei/v1/account/account_menu', AUTH, '{}');
+  await clientFetch({ cookieJar: jar, fetchImpl })(...plain);
+  assert.equal(sent[1].input, plain[0]);
+  assert.equal(sent[1].options, plain[1]);
+});
+
+// Настоящий youtubei.js без сети: сессия локально, fetch понарошку — что уходит на деле.
+test('real youtubei.js studio.upload for the brand: start without PageId, createvideo names the channel', async () => {
+  const { Innertube } = await import('youtubei.js');
+  const sent = [];
+  const fetchImpl = async (input, options = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const headers = new Headers(options.headers ?? (typeof input === 'string' ? {} : input.headers));
+    sent.push({ url, headers, body: options.body });
+    if (headers.get('x-goog-upload-command') === 'start') {
+      return new Response('', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.youtube.com/?upload_id=u1' } });
+    }
+    if (url.startsWith('https://upload.youtube.com/?upload_id=')) {
+      return Response.json({ status: 'STATUS_SUCCESS', scottyResourceId: 'res1' });
+    }
+    return Response.json({ videoId: 'vid12345678' });
+  };
+  const client = (target) => Innertube.create({
+    cookie: 'SAPISID=sap; SID=sid', account_index: 2, on_behalf_of_user: '113000',
+    generate_session_locally: true, retrieve_player: false, retrieve_innertube_config: false, enable_session_cache: false,
+    fetch: clientFetch({ cookieJar: new Map(), target, fetchImpl })
+  });
+  // Без поправки библиотека шлёт PageId и на сервер загрузки — отсюда 401 задания 117.
+  await (await client({})).studio.upload(new Uint8Array([1]), { title: 'T' });
+  assert.equal(sent[0].headers.get('x-goog-pageid'), '113000');
+  assert.equal(JSON.parse(sent[2].body).channelId, undefined);
+  sent.length = 0;
+
+  await (await client(BRAND)).studio.upload(new Uint8Array([1, 2, 3]), { title: 'T', privacy: 'UNLISTED' });
+  const [start, chunk, create] = sent;
+  assert.equal(new URL(start.url).hostname, 'upload.youtube.com');
+  assert.equal(new URL(start.url).searchParams.get('authuser'), '2');
+  assert.equal(start.headers.get('x-goog-pageid'), null);
+  assert.equal(start.headers.get('x-goog-authuser'), '2');
+  assert.match(start.headers.get('authorization') || '', /^SAPISIDHASH /);
+  assert.equal(chunk.url, 'https://upload.youtube.com/?upload_id=u1');
+  assert.match(create.url, /\/upload\/createvideo/);
+  assert.equal(create.headers.get('x-goog-pageid'), '113000');
+  assert.equal(create.headers.get('x-goog-authuser'), '2');
+  const body = JSON.parse(create.body);
+  assert.equal(body.channelId, DEV);
+  assert.equal(body.context.user.onBehalfOfUser, '113000');
+  assert.equal(body.resourceId.scottyResourceId.id, 'res1');
+  assert.equal(body.initialMetadata.privacy.newPrivacy, 'UNLISTED');
+});
+
+test('rotated cookies reach the caller even when the upload throws', async () => {
+  const jar = new Map();
+  const createClient = (cookieJar) => {
+    cookieJar.set('__Secure-3PSIDTS', 'rotated');
+    return { studio: { async upload() { throw new Error('Request to https://upload.youtube.com failed with status code 401'); } } };
+  };
+  await assert.rejects(run(base, { createClient, readFile, sleep, cookieJar: jar }), /401/);
+  assert.deepEqual(Object.fromEntries(jar), { '__Secure-3PSIDTS': 'rotated' });
 });
