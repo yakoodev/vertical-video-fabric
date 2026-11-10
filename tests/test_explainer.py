@@ -394,6 +394,29 @@ def test_edits_keep_a_cancelled_video_cancelled(env):
     assert X.resume(store, video["id"])["status"] != "cancelled"  # «Продолжить» по-прежнему ведёт дальше
 
 
+def test_plan_of_a_replaced_script_is_not_saved(env, monkeypatch):
+    """Сценарий заменили, пока шёл подбор поз: биты старого текста не пишутся, ролик ждёт нового плана."""
+    _client_, store, tmp = env
+    ids = _setup(store, tmp)
+    video = E.create_video(store, ids["mascot_id"], "сон", 45)
+    X.set_script(store, video["id"], SCRIPT)
+    owner = {**SCRIPT, "hook": "Спорим, ты сейчас зевнёшь?"}
+    real_unrepeat = X._unrepeat
+
+    def replace_mid_plan(beats, poses):  # владелец прислал свой текст посреди подбора поз
+        X.set_script(store, video["id"], owner, "owner")
+        return real_unrepeat(beats, poses)
+
+    monkeypatch.setattr(X, "_unrepeat", replace_mid_plan)
+    out = X.plan_beats(store, video["id"], client=None)
+    assert out["ok"] is False and out["stale"] is True
+    fresh = E.get_video(store, video["id"])
+    assert fresh["status"] == "scripted" and fresh["beats"] == [] and fresh["script"]["source"] == "owner"
+    monkeypatch.setattr(X, "_unrepeat", real_unrepeat)
+    X.plan_beats(store, video["id"], client=None)
+    assert E.get_video(store, video["id"])["beats"][0]["text"].startswith("Спорим")
+
+
 @pytest.fixture
 def paid(env, monkeypatch):
     fake = FakePaid()

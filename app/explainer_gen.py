@@ -204,6 +204,12 @@ def plan_beats(store: Any, video_id: int, client: Any = None) -> dict:
         beat["pose_title"] = pose["title"] if pose else ""
         beat["pose_new"] = bool(pose and not E.pose_usable(pose, dry))
     new = sorted({b["pose_id"] for b in beats if b["pose_new"]})
+    # Сценарий заменили, пока шёл подбор поз (PUT /script): биты старого текста не пишем, иначе голос нового
+    # текста идёт с битами старого (10.11: плашки #1–#3 не на своих словах). Ролик остаётся «scripted» —
+    # следующий шаг спланирует новый текст.
+    if E.narration_text(E.get_video(store, video_id)) != E.narration_text(video):
+        return {"ok": False, "video_id": int(video_id), "stale": True,
+                "notes": ["сценарий сменился во время подбора поз — планирую заново"]}
     E.set_status(store, video_id, "planned", None, beats=beats, notes=notes, error="")
     return {"ok": True, "video_id": int(video_id), "beats": len(beats), "source": source,
             "reused": len({b["pose_id"] for b in beats}) - len(new), "new_poses": new, "notes": notes}
