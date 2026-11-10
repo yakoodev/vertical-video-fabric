@@ -176,7 +176,9 @@ export async function selectChannel(baseClient, rawTarget, { createClient, maxLo
   }
   const yt = identity.authUser === 0 && !identity.pageId
     ? baseClient
-    : await createClient({ accountIndex: identity.authUser, onBehalfOfUser: identity.pageId || undefined });
+    : await createClient({
+      accountIndex: identity.authUser, onBehalfOfUser: identity.pageId || undefined, channelId: identity.channelId || undefined
+    });
   let active;
   try {
     active = await activeChannel(yt);
@@ -193,4 +195,56 @@ export async function selectChannel(baseClient, rawTarget, { createClient, maxLo
     throw error;
   }
   return { yt, identity, active, identities };
+}
+
+const UPLOAD_HOST = 'upload.youtube.com';
+
+function requestParts(input, init) {
+  const isRequest = input && typeof input === 'object' && !(input instanceof URL) && typeof input.url === 'string';
+  return {
+    url: new URL(isRequest ? input.url : String(input)),
+    method: init.method || (isRequest ? input.method : '') || 'GET',
+    headers: new Headers(init.headers ?? (isRequest ? input.headers : undefined) ?? {})
+  };
+}
+
+/**
+ * Поправка запросов загрузки для входа не по умолчанию / канала-бренда — подмена в fetch
+ * клиента youtubei.js (node_modules не трогаем). ``target`` — { authUser, pageId, channelId }.
+ * Возвращает { url, init } для fetch или null — запрос идёт как есть.
+ *
+ * Почему: youtubei.js (HTTPClient) вешает на начало загрузки (upload.youtube.com,
+ * x-goog-upload-command: start) те же заголовки, что на innertube, вместе с X-Goog-PageId.
+ * Сервер загрузки (Scotty) знает только вход Google, а не канал-бренд: с PageId он отвечает
+ * 401 REJECTED_NOT_AUTHENTICATED (10.11 задание 117; LuanRT/YouTube.js#485 — то же у брендов).
+ * Студия в браузере начинает загрузку как сам вход (cookie + ?authuser=N, без PageId), а канал
+ * задаёт уже в /upload/createvideo. Так и делаем: у start — без PageId, вход и заголовком,
+ * и ?authuser; в createvideo (идёт на www.youtube.com с PageId/onBehalfOfUser, как всё
+ * innertube) — ещё и channelId канала, как шлёт Студия, чтобы ролик не лёг на другой канал.
+ * Вход по умолчанию без бренда (authuser 0) не трогаем — этот путь проверен живьём.
+ */
+export function brandUploadRequest(input, init = {}, target = {}) {
+  const authUser = Number(target.authUser) || 0;
+  const pageId = target.pageId ? String(target.pageId) : '';
+  if (!authUser && !pageId) return null;
+  const { url, method, headers } = requestParts(input, init);
+  const command = String(headers.get('x-goog-upload-command') || '').trim().toLowerCase();
+  if (url.hostname === UPLOAD_HOST && command === 'start') {
+    headers.delete('X-Goog-PageId');
+    headers.set('X-Goog-AuthUser', String(authUser));
+    url.searchParams.set('authuser', String(authUser));
+    return { url: url.toString(), init: { ...init, method, headers } };
+  }
+  const channelId = CHANNEL_ID_RE.test(String(target.channelId || '')) ? target.channelId : '';
+  if (pageId && channelId && url.pathname.endsWith('/upload/createvideo') && typeof init.body === 'string') {
+    let body;
+    try {
+      body = JSON.parse(init.body);
+    } catch {
+      return null;
+    }
+    body.channelId = channelId;
+    return { url: url.toString(), init: { ...init, method, headers, body: JSON.stringify(body) } };
+  }
+  return null;
 }

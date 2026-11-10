@@ -58,6 +58,19 @@ def test_unset_audience_and_empty_category_keep_old_payload(monkeypatch, tmp_pat
     assert "madeForKids" not in payload and "categoryId" not in payload
 
 
+def test_crashed_helper_still_hands_back_rotated_cookies(monkeypatch, tmp_path):
+    # 10.11 задание 117: помощник упал на 401, свежие cookie пропали — вход разлогинило.
+    stdout = json.dumps({"ok": False, "error": "Error: Request to https://upload.youtube.com failed with status code 401",
+                         "refreshedCookies": {"__Secure-1PSIDTS": "new"}})
+    result, _ = _upload(monkeypatch, tmp_path, stdout, returncode=1)
+    assert result.status == "needs_reauth" and "401" in result.error
+    assert result.refreshed_cookies == {"__Secure-1PSIDTS": "new"}
+    assert "refreshedCookies" not in result.response
+    # Не JSON — как раньше, без cookie.
+    plain, _ = _upload(monkeypatch, tmp_path, "boom", returncode=1)
+    assert plain.status == "failed" and plain.refreshed_cookies == {}
+
+
 def test_setting_parsers():
     assert _made_for_kids("false") is False and _made_for_kids("NO") is False
     assert _made_for_kids("true") is True

@@ -85,10 +85,16 @@ class YouTubeProvider(Provider):
                     error = response.get("error") or error
                 except json.JSONDecodeError:
                     error = stdout or error
+            response = response if isinstance(response, dict) else {}
+            # Свежие cookie и при падении помощника: Google уже сменил __Secure-*PSIDTS, без них
+            # сохранённый вход протухает (10.11 задание 117 так разлогинило аккаунт). В ответ
+            # задания cookie не кладём.
+            refreshed = response.pop("refreshedCookies", None)
             return ProviderResult(
                 status=_classify_youtube_error(error),
                 error=_safe_error(error),
                 response=response,
+                refreshed_cookies=refreshed if isinstance(refreshed, dict) else {},
             )
         try:
             result = json.loads(stdout)
