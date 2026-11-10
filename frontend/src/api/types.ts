@@ -410,6 +410,8 @@ export interface Account {
   missing_cookies: string;
   proxy_configured: boolean;
   proxy_display: string;
+  /** TikTok — ник из TikTok Studio; YouTube — канал для загрузки (UC… или @ник), пусто — по умолчанию. */
+  handle?: string;
   updated_at: string;
 }
 

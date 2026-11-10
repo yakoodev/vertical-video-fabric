@@ -24,6 +24,7 @@ class MockProvider(Provider):
         video_format: str = "9:16",
         thumbnail_path: str = "",
         user_agent: str = "",  # UA аккаунта TikTok (app/worker.py): заглушке не нужен
+        channel: str = "",  # канал аккаунта YouTube (app/worker.py): заглушке не нужен
     ) -> ProviderResult:
         del user_agent
         if not cookies:
