@@ -17,6 +17,14 @@ export interface WorldObject {
   scale?: number;
   /** Когда появляется в этом ролике (с); нет — уже стоит. */
   spawn?: number;
+  /** Парит: высота над землёй (м), покачивание (м) и вращение (рад/с) — «найденный предмет» в играх PS1. */
+  y?: number;
+  bob?: number;
+  spin?: number;
+  /** Покачивание вокруг оси (рад): поворачивается туда-сюда, а не крутится — объектив остаётся виден. */
+  sway?: number;
+  /** Исчезает (с): подобрали. */
+  until?: number;
   id?: string;
 }
 
@@ -33,6 +41,8 @@ export interface StalkerSpec {
   shape?: "shadow" | "collector";
   /** Идёт: к концу последнего окна видимости доходит сюда (x, y, z) — между окнами положение по прямой. */
   move?: [number, number, number];
+  /** Бледное свечение тумана за ним (цвет): светлое пятно, на фоне которого тёмный силуэт читается сразу. */
+  glow?: string;
 }
 
 const faceted = (g: THREE.BufferGeometry) => {
@@ -142,6 +152,29 @@ const MAKERS: Record<string, Maker> = {
     tail.rotation.x = -0.6;
     g.add(body, head, ...ears, tail);
     return { obj: g };
+  },
+  // Старая видеокамера: корпус-коробка, объектив с синим стеклом, видоискатель сверху, ремешок, красная лампа записи.
+  camcorder: (u) => {
+    const g = new THREE.Group();
+    const grey = "#6c6a64", black = "#121216";
+    const body = mesh(u, new THREE.BoxGeometry(0.1, 0.12, 0.22), grey);
+    const grip = mesh(u, new THREE.BoxGeometry(0.075, 0.1, 0.1), black);
+    grip.position.set(0.058, -0.01, -0.03);
+    const lens = mesh(u, new THREE.CylinderGeometry(0.043, 0.05, 0.1, 8), black);
+    lens.rotation.x = Math.PI / 2;
+    lens.position.set(0, 0.0, 0.16);
+    const glass = mesh(u, new THREE.CylinderGeometry(0.038, 0.038, 0.012, 8), "#6ab8ff", { lit: 0, fog: 0.4 });
+    glass.rotation.x = Math.PI / 2;
+    glass.position.set(0, 0.0, 0.212);
+    const finder = mesh(u, new THREE.BoxGeometry(0.05, 0.05, 0.1), black);
+    finder.position.set(-0.01, 0.085, -0.04);
+    const strap = mesh(u, new THREE.BoxGeometry(0.012, 0.1, 0.16), "#4a3a2a");
+    strap.position.set(0.1, 0.0, -0.02);
+    const led = mesh(u, new THREE.BoxGeometry(0.02, 0.02, 0.014), "#ff3020", { lit: 0, fog: 0.4 });
+    led.position.set(-0.03, 0.04, 0.114);
+    g.add(body, grip, lens, glass, finder, strap, led);
+    g.rotation.order = "YXZ";
+    return { obj: g, tick: (t) => (led.visible = Math.floor(t * 2) % 2 === 0) };
   },
   lantern: (u) => {
     const g = new THREE.Group();
@@ -257,14 +290,36 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
     shadow.visible = false;
     group.add(shadow);
   }
+  // Свечение за Сборщиком: мягкое радиальное пятно (аддитивное), следует за ним и смотрит в камеру.
+  let glow: THREE.Mesh | null = null;
+  if (stalker?.glow && shadow) {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const g2 = c.getContext("2d")!;
+    const gr = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, "rgba(255,255,255,1)");
+    gr.addColorStop(0.55, "rgba(255,255,255,0.45)");
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    g2.fillStyle = gr;
+    g2.fillRect(0, 0, 64, 64);
+    const gm = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), color: stalker.glow, transparent: true, depthWrite: false,
+      blending: THREE.AdditiveBlending, fog: false, opacity: 0.55 });
+    glow = new THREE.Mesh(new THREE.PlaneGeometry(4.2, 4.6), gm);
+    glow.renderOrder = 1;
+    glow.visible = false;
+    group.add(glow);
+  }
   const stalkerVisible = (t: number) => !!stalker?.show.some(([a, b]) => t >= a && t < b);
   return {
     group,
     stalkerVisible,
-    update(t: number) {
+    update(t: number, camera?: THREE.Camera) {
       for (const x of live) {
         x.o.scale.setScalar(x.s * spawnScale(t, x.w.spawn));
-        x.o.visible = x.o.scale.x > 0;
+        x.o.visible = x.o.scale.x > 0 && (x.w.until === undefined || t < x.w.until);
+        if (x.w.y !== undefined) x.o.position.y = x.w.y + (x.w.bob ?? 0) * Math.sin(t * 2.2);
+        if (x.w.spin) x.o.rotation.y = (x.w.rot ?? 0) + x.w.spin * t;
+        if (x.w.sway) x.o.rotation.y = (x.w.rot ?? 0) + x.w.sway * Math.sin(t * 1.8);
         x.tick?.(t);
       }
       if (shadow && stalker) {
@@ -275,6 +330,11 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
           shadow.position.set(...(stalker.pos.map((v, i) => v + (stalker.move![i] - v) * k) as [number, number, number]));
           // Шаг: покачивание корпуса ступеньками.
           shadow.rotation.z = 0.06 * Math.sign(Math.sin(t * 9));
+        }
+        if (glow) {
+          glow.visible = shadow.visible;
+          glow.position.set(shadow.position.x, (stalker.height ?? 2.6) * 0.5, shadow.position.z - 0.9);
+          if (camera) glow.quaternion.copy(camera.quaternion);
         }
       }
     },

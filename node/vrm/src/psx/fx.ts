@@ -20,6 +20,9 @@ export interface FxSpec {
   tint?: string;
   /** Контраст вокруг середины (1 — без изменений). */
   contrast?: number;
+  /** Экспозиция: множитель яркости после контраста (1 — без изменений) и подъём чёрного (уровней 8-бит). */
+  gain?: number;
+  lift?: number;
   /** Сила зерна (уровней 8-бит, ±). */
   grain?: number;
   /** Виньетка 0..1: насколько темнеют углы. */
@@ -61,6 +64,7 @@ const hex = (s: string): [number, number, number] => {
 /** Цветокор кадра на месте (до дизеринга). frame — номер кадра для зерна. */
 export function grade(d: Uint8ClampedArray | Uint8Array, w: number, h: number, s: FxSpec, black: number, frame: number) {
   const ds = s.desat ?? 0, tn = s.tint ? hex(s.tint) : [1, 1, 1], ct = s.contrast ?? 1, gr = s.grain ?? 0;
+  const gn = s.gain ?? 1, lf = s.lift ?? 0;
   const vg = s.vignette ?? 0, keep = 1 - black;
   const cx = (w - 1) / 2, cy = (h - 1) / 2, rr = cx * cx + cy * cy;
   for (let y = 0; y < h; y++) {
@@ -71,9 +75,9 @@ export function grade(d: Uint8ClampedArray | Uint8Array, w: number, h: number, s
       r = l + (r - l) * (1 - ds);
       g = l + (g - l) * (1 - ds);
       b = l + (b - l) * (1 - ds);
-      r = (r * tn[0] - 128) * ct + 128;
-      g = (g * tn[1] - 128) * ct + 128;
-      b = (b * tn[2] - 128) * ct + 128;
+      r = ((r * tn[0] - 128) * ct + 128) * gn + lf;
+      g = ((g * tn[1] - 128) * ct + 128) * gn + lf;
+      b = ((b * tn[2] - 128) * ct + 128) * gn + lf;
       // Зерно: одно на пиксель (не по каналам) — «плёнка», а не цветной шум.
       const n = gr ? (hash3(x, y, frame) - 0.5) * 2 * gr : 0;
       const dx = x - cx, dy = y - cy;
