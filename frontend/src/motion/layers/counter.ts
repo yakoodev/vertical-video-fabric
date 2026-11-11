@@ -10,6 +10,8 @@ import { fontString } from "../fonts";
 import type { CounterLayer, CounterProps, Ctx2D, ProgressLayer } from "../types";
 import { clearShadow, fillRoundRect, rgba, roundRectPath, shade, type LayerRenderer } from "./common";
 import { drawTextLayout, envFont, layoutText, textBoxSize, type TextBlockOptions } from "./text";
+import { odometerCells, odometerPlan } from "./odometer";
+import type { LayerState } from "../animate";
 
 /** Число по правилам слоя: знаки после запятой, разделитель тысяч, префикс/суффикс. */
 export function formatCounter(value: number, p: CounterProps): string {
@@ -45,16 +47,22 @@ function counterOptions(ctx: Ctx2D, p: CounterProps, text: string, font: string)
   return { ...p, text, tabularDigits: true, maxWidth: 1e5, minWidth, highlight: null };
 }
 
+/** Текст счётчика сейчас: одометр держит раскладку итога (цифры крутят барабаны), иначе — значение хода. */
+function counterText(layer: CounterLayer, st: LayerState): string {
+  const p = layer.props;
+  return p.roll ? formatCounter(odometerPlan(p).shown, p) : formatCounter(counterValue(p, st.progress), p);
+}
+
 export const counterRenderer: LayerRenderer<CounterLayer> = {
   multipart: true,
   measure(ctx, layer, st, env) {
-    const p = layer.props;
-    const opts = counterOptions(ctx, p, formatCounter(counterValue(p, st.progress), p), envFont(env));
+    const opts = counterOptions(ctx, layer.props, counterText(layer, st), envFont(env));
     return textBoxSize(layoutText(ctx, opts, envFont(env)), opts);
   },
   draw(ctx, layer, st, env) {
     const p = layer.props;
-    const opts = counterOptions(ctx, p, formatCounter(counterValue(p, st.progress), p), envFont(env));
+    const opts = counterOptions(ctx, p, counterText(layer, st), envFont(env));
+    if (p.roll) opts.cells = odometerCells(layer, st.local);
     drawTextLayout(ctx, layoutText(ctx, opts, envFont(env)), opts, env, null);
   },
 };

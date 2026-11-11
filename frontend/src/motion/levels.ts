@@ -15,8 +15,11 @@ export const REACT_PROPS: ReactProp[] = ["scale", "glow", "opacity", "y"];
 /** Окно сглаживания при smooth = 1, с. */
 export const REACT_MAX_WINDOW = 0.5;
 
-/** Огибающие клипа по источнику. */
-export type Levels = Partial<Record<ReactSource, LevelTrack>>;
+/** Огибающие клипа по источнику (voice / music / mix) и звук слоёв волны (`wave:<id слоя>`). */
+export type Levels = { [source: string]: LevelTrack | undefined };
+
+/** Ключ огибающей слоя волны со своим звуком (app/audio_react.py, `wave_tracks`). */
+export const waveLevelKey = (layerId: string) => `wave:${layerId}`;
 
 /** Значение кадра k огибающей 0..1; за краем массива — тишина. */
 function sample(track: LevelTrack, k: number): number {

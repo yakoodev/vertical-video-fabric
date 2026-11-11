@@ -106,7 +106,9 @@ def h_camera_preset(ctx: ToolContext, args: dict) -> dict:
         res = apply_preset(args.get("preset"), args.get("start"), args.get("duration"), args.get("intensity"),
                            camera=render.get("camera"), layers=render.get("layers"), layer_id=args.get("layer_id"),
                            clip_duration=_clip_duration(ctx),
-                           motion_blur=args.get("motionBlur", args.get("motion_blur")))
+                           motion_blur=args.get("motionBlur", args.get("motion_blur")),
+                           layer_ids=args.get("layer_ids"), layer_prefix=args.get("layer_prefix"),
+                           point={"x": args.get("x"), "y": args.get("y")}, zoom=args.get("zoom"))
     except (PresetError, ValueError) as exc:
         raise ToolError(f"пресет не поставлен: {exc}", getattr(exc, "hints", [])) from exc
     fresh = _save_render(ctx, {**render, "camera": res["camera"], "layers": res["layers"]})

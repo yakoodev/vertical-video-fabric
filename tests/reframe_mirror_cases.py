@@ -99,6 +99,26 @@ def _social() -> dict:
     return {"name": "social", "layers": layers, "camera": [], "sizes": {"7": [1200, 720]}}
 
 
+def _ads() -> dict:
+    """Рекламный пакет: стена плиток во весь кадр (тянется, как фон), карусель, облако, волна, схема и группа с
+    общей точкой наклона pivot (переносится вместе со слоями)."""
+    tilt = {"rotX": [{"t": 0, "v": 24}, {"t": 2, "v": 3}], "scale": [{"t": 0, "v": 0.9}, {"t": 2, "v": 1.3}]}
+    layers = normalize_layers([
+        {"id": "wall", "type": "tile_wall", "start": 0, "end": 6, "props": {"overlay": 0.6}},
+        {"id": "car", "type": "carousel", "start": 0, "end": 6, "y": 0.4,
+         "props": {"cards": [{"title": "Ника"}, {"title": "Граф"}], "cardH": 760}},
+        {"id": "bub", "type": "bubbles", "start": 0, "end": 6, "y": 0.62, "props": {"items": [{"value": 5}], "w": 900, "h": 700}},
+        {"id": "wave", "type": "waveform", "start": 0, "end": 6, "y": 0.8, "props": {"w": 760, "h": 180}},
+        {"id": "flow", "type": "flow_diagram", "start": 0, "end": 6, "y": 0.3,
+         "props": {"nodes": [{"label": "А"}, {"label": "Б"}]}},
+        {"id": "ui1", "type": "shape", "start": 0, "end": 6, "y": 0.5, "pivot": {"x": 0.5, "y": 0.62}, "keys": tilt,
+         "props": {"kind": "rect", "w": 800, "h": 1100, "fill": "#12141c"}},
+        {"id": "ui2", "type": "text", "start": 0, "end": 6, "y": 0.62, "pivot": {"x": 0.5, "y": 0.62}, "keys": tilt,
+         "props": {"text": "Купить"}},
+    ])
+    return {"name": "ads", "layers": layers, "camera": [], "sizes": {}}
+
+
 def _scaffold() -> dict:
     """Настоящий клип промо-заготовки (клип 581: 40 слоёв, 18 ключей камеры)."""
     data = json.loads((FIXTURES / "clip581_scaffold.json").read_text(encoding="utf-8"))
@@ -111,7 +131,7 @@ def _scaffold() -> dict:
 def build_cases() -> dict:
     """Входы (``bases``) и ответ Python по всем парам форматов (``cases``)."""
     bases, cases = {}, []
-    for base in (_promo(), _scenes(), _scaffold(), _in_place(), _social()):
+    for base in (_promo(), _scenes(), _scaffold(), _in_place(), _social(), _ads()):
         name = base.pop("name")
         bases[name] = base
         sizes = {k: tuple(v) for k, v in base["sizes"].items()}

@@ -23,6 +23,8 @@ import { cardFan, depthTitle, phoneSpace } from "./templates/space3d";
 import { cursorClicks, fingerTaps, handArrow, handCircle, handUnderline } from "./templates/sketch";
 import { commentCard, postCard } from "./templates/social";
 import { pagePhone, pageScroll } from "./templates/page";
+import { bubblesCloud, cardCarousel, odometerCounter, ratingBadge } from "./templates/ads";
+import { dealFlow, karaokeCard, screenTilt, tileWallTpl, voiceWave } from "./templates/ads2";
 
 export { TEMPLATE_CATEGORIES, newLayerId } from "./templates/kit";
 export type { TemplateParamType, TemplateParam, TemplateParams, TemplateResult, MotionTemplate } from "./templates/kit";
@@ -70,6 +72,16 @@ export const TEMPLATES: MotionTemplate[] = [
   phoneSpace,
   depthTitle,
   cardFan,
+  // Рекламный пакет (промо продукта и сервиса).
+  odometerCounter,
+  bubblesCloud,
+  ratingBadge,
+  screenTilt,
+  cardCarousel,
+  voiceWave,
+  karaokeCard,
+  tileWallTpl,
+  dealFlow,
   // Движок сцен (scene/): настоящий 3D/2D одним слоем scene.
   ...sceneTemplates(newLayerId),
 ];
@@ -119,13 +131,13 @@ export function fitTemplate(result: TemplateResult, fmt: unknown, mode: MotionTe
   const infos: Info[] = result.layers.map((layer) => {
     const size = layer.type === "audio" ? null : layerSize(layer);
     const k = layer.scale ?? 1;
-    const flat = layer.type === "shape" || layer.type === "image" || layer.type === "video";
+    const flat = layer.type === "shape" || layer.type === "image" || layer.type === "video" || layer.type === "tile_wall";
     const xs = (layer.keys?.x ?? []).map((p) => p.v);
     return {
       layer,
       size,
       fullW: Boolean(size && flat && size[0] * k >= FULL_FRAC * SW),
-      fullH: Boolean(size && layer.type === "shape" && size[1] * k >= FULL_FRAC * SH),
+      fullH: Boolean(size && (layer.type === "shape" || layer.type === "tile_wall") && size[1] * k >= FULL_FRAC * SH),
       offX: xs.some((v) => v < -0.02 || v > 1.02),
     };
   });
@@ -183,10 +195,13 @@ export function fitTemplate(result: TemplateResult, fmt: unknown, mode: MotionTe
     const groupY = yMode === "group" && !fullH;
     if (groupX) out.x = mapX(layer.x ?? 0.5);
     if (groupY) out.y = mapY(layer.y ?? 0.5);
+    // Точка наклона группы — тем же переносом, что центры её слоёв.
+    if (layer.pivot) out.pivot = { x: groupX ? mapX(layer.pivot.x) : layer.pivot.x, y: groupY ? mapY(layer.pivot.y) : layer.pivot.y };
     if (fullW || fullH) {
       const props = { ...(layer.props as Record<string, unknown>) };
-      if (fullW) props.w = Math.round(Number(props.w ?? 400) + (W - SW));
-      if (fullH) props.h = Math.round(Number(props.h ?? 400) + (H - SH));
+      const [dw, dh] = layer.type === "tile_wall" ? [SW, SH] : [400, 400];
+      if (fullW) props.w = Math.round(Number(props.w ?? dw) + (W - SW));
+      if (fullH) props.h = Math.round(Number(props.h ?? dh) + (H - SH));
       (out as { props: unknown }).props = props;
     }
     const k = fullW || fullH ? 1 : s;

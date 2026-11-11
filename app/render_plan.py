@@ -97,6 +97,7 @@ class PlanRender:
         # Моушн, как и вставки, живёт в настройках самого клипа. Нет слоёв и
         # камеры — рендер ровно прежний (те же команды ffmpeg).
         from app.motion import has_pngtuber, plan_motion, react_sources, visual_motion
+        from app.waveform_levels import wave_layers
 
         motion = plan_motion(plan.get("render_settings"))
         visual = visual_motion(motion)
@@ -126,7 +127,7 @@ class PlanRender:
 
             voice_fps = float(self._preset(ffmpeg_preset_id).get("fps") or 30)
             visual = attach_voice(self.store, plan, visual, voice_fps, "final")
-        if visual and react_sources(visual.get("layers")):
+        if visual and (react_sources(visual.get("layers")) or wave_layers(visual.get("layers"))):
             # Реакция слоёв на звук: огибающие громкости по кадрам готового ролика (app/audio_react.py);
             # музыка — та, что ляжет в этот рендер (выбор запроса или настройки клипа).
             from app.audio_react import attach_levels

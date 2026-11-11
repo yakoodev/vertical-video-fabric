@@ -79,12 +79,16 @@ function readVoice(raw: Partial<Composition>): Pick<Composition, "voice"> {
   return Object.keys(out).length ? { voice: out } : {};
 }
 
-/** comp.levels: {voice|music|mix: {t0, fps, v [0..100]}} (app/audio_react.py) — мусор отбрасывается. */
+/**
+ * comp.levels: {voice|music|mix: {t0, fps, v [0..100]}} и `wave:<id слоя>` — звук слоёв волны
+ * (app/audio_react.py, app/waveform_levels.py) — мусор и чужие ключи отбрасываются.
+ */
 function readLevels(raw: Partial<Composition>): Pick<Composition, "levels"> {
   const v = raw.levels;
   if (!v || typeof v !== "object") return {};
   const out: NonNullable<Composition["levels"]> = {};
-  for (const source of ["voice", "music", "mix"] as const) {
+  const keys = Object.keys(v).filter((k) => k === "voice" || k === "music" || k === "mix" || /^wave:[A-Za-z0-9_-]{1,32}$/.test(k));
+  for (const source of keys) {
     const tr = (v as Record<string, Partial<LevelTrack>>)[source];
     if (!tr || !Array.isArray(tr.v)) continue;
     const fps = Number(tr.fps);

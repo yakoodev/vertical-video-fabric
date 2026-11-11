@@ -189,7 +189,10 @@ react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0
   (огибающую считает сервис; music — фоновый трек клипа). Не больше 1–2 «дышащих» слоёв на сцену
 3D: у слоя z (глубина, опорн. px: −300 ближе … 600 дальше; задана — слой в сцене, едет с камерой), rotX/rotY (наклон
   с перспективой, °; ключи z/rotX/rotY); у ключа камеры z (dolly), rotX/rotY (наклон/облёт ±12°), fov (40), baseZ (видео, 1000).
-  Проще camera_preset(preset, start): parallax_push, orbit, dolly_zoom, tilt_reveal, float, card_flip (layer_id)
+  Проще camera_preset(preset, start): parallax_push, orbit, dolly_zoom, tilt_reveal, float, card_flip (layer_id),
+  screen_tilt (группа layer_ids / layer_prefix — блоки страницы «wp<id>_»: наклон экрана + наезд в точку x/y).
+  pivot {{x, y}} (доли кадра) у слоя — rotX/rotY и ключи scale вокруг этой точки: одинаковые pivot и ключи у группы
+  слоёв — наклон и наезд группы как одного экрана
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
 props по типу:
   text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
@@ -221,7 +224,21 @@ props по типу:
          (или asset_id картинки), size (px, ±45%), spread (радиус/полуширина области, px), duration (жизнь/цикл, с; burst 1.2,
          confetti 3, sparkle 1.6, rise 3), gravity (px/с², burst 500, confetti 900), repeat (burst/confetti каждые duration),
          glow (свечение), seed (раскладка; нет — от id). ОДИН слой рисует все частицы — кульминация, «вау», итог промо
-  counter: from, to, decimals, prefix, suffix, thousands + стили text; рост по progress (по умолч. первая половина)
+  counter: from, to, decimals, prefix, suffix, thousands + стили text; рост по progress (по умолч. первая половина);
+         roll: true — одометр (каждая цифра крутится барабаном, stagger 0.06 с между разрядами, laps 2 лишних оборота)
+  РЕКЛАМНЫЙ ПАКЕТ (промо продукта/сервиса; готовое — list_motion_templates(category: "Реклама") → add_motion_template).
+         Значки icon — свои: {', '.join(motion.AD_ICONS)} или 1–3 буквы (эмодзи нельзя); картинки — id файла / sticker:…;
+         theme dark|light, accent (#6c5cff), font (Manrope):
+  bubbles: items [{{label, value (число, считает от 0), prefix, suffix, icon|image, color}}] ≤12, w, h (рамка облака 960),
+         seed (раскладка без наложений), stagger 0.12, float 12, focus (номер; растёт ×focusScale, остальные гаснут), focusAt, style glass|solid
+  carousel: cards [{{image, title, subtitle, meta («1,2 млн прослушиваний»), metaIcon (play)}}] ≤12, cardW 600, cardH 780,
+         interval 1.8 или switchAt [секунды слоя], switchDur, sideScale 0.8, sideOpacity 0.5, halo (кольца за центральной), wrap
+  waveform: source auto (audio_layer — id звукового слоя / asset_id — файл; иначе образец) | voice | music | mix | fake,
+         style bars|wave|dots, motion center|scroll, bars 36, w 820, h 220, color, gradient, glow, sensitivity, span
+  tile_wall: images [id…] (пусто — свои плитки-значки), tile 230, gap, tiltX 26, tiltZ −16, speed 46 px/с, angle −45,
+         overlay 0.55 (затемнение под текст) — фон сцены во весь кадр (на видео закрывает его — только на холсте/заставке)
+  flow_diagram: nodes [{{label, sub, icon|image}}] 2..6, center (щит с замком), layout row|column, stepGap 0.8 (шаги
+         появления), done «Готово» (плашка с галочкой в конце; "" — без), doneAt, w 1000, h 620
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w

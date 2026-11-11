@@ -4,7 +4,7 @@
  * Своя реализация скругления вместо `ctx.roundRect`: его нет в старом Safari, а
  * форма плашки должна совпадать пиксель в пиксель в превью и в рендере.
  */
-import type { CaptionWord, ChatMessage, Ctx2D, ImageLike, Layer, LevelTrack, ReactSource, RenderEnv, ScratchCanvas, VoiceTrack } from "../types";
+import type { CaptionWord, ChatMessage, Ctx2D, ImageLike, Layer, LevelTrack, RenderEnv, ScratchCanvas, VoiceTrack } from "../types";
 import type { LayerState } from "../animate";
 
 /** Что знает кадр целиком: клиповое время, слова речи (субтитры), чат, голос (PNGtuber) и громкость (react). */
@@ -13,7 +13,7 @@ export type FrameInfo = {
   words: CaptionWord[];
   chat: ChatMessage[];
   voice?: Record<string, VoiceTrack>;
-  levels?: Partial<Record<ReactSource, LevelTrack>>;
+  levels?: { [source: string]: LevelTrack | undefined };
 };
 
 /** Слой в своей системе координат: опорные px, якорь (центр) в (0, 0). */

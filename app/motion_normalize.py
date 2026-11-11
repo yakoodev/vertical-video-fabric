@@ -404,6 +404,14 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.text", "у карточки нет ни текста, ни имени — пустая карточка")
     elif ltype == "page" and not props["page_id"]:
         rep(f"{where}.props.page_id", "у слоя страницы нет page_id — сначала page_snapshot (list_pages)")
+    elif ltype in ("bubbles", "carousel", "flow_diagram"):
+        key = {"bubbles": "items", "carousel": "cards", "flow_diagram": "nodes"}[ltype]
+        if not props.get(key):
+            rep(f"{where}.props.{key}", f"пустой список {key} — слой ничего не покажет")
+        elif ltype == "flow_diagram" and len(props[key]) < 2:
+            rep(f"{where}.props.nodes", "у схемы нужно хотя бы 2 узла")
+    elif ltype == "waveform" and props.get("audio_layer") and props.get("asset_id"):
+        rep(f"{where}.props", "волна: audio_layer и asset_id сразу — берётся audio_layer, asset_id лишний")
     elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":
         rep(f"{where}.props.handle", "у плашки канала нет ни ника (handle), ни площадки — слой ничего не покажет")
 

@@ -52,6 +52,8 @@ class LevelsPayload(BaseModel):
     sources: list[str] | None = None
     fps: float | None = None
     scale: str | None = None
+    # Слои для волн со своим звуком (waveform audio_layer/asset_id → wave:<id>); нет — сохранённые.
+    layers: list | None = None
 
 
 class CameraPresetPayload(BaseModel):
@@ -66,6 +68,12 @@ class CameraPresetPayload(BaseModel):
     layers: list[Any] | None = None
     clip_duration: float | None = None
     motion_blur: float | None = None
+    # screen_tilt: группа слоёв (id или префикс id), точка наезда (доли кадра) и наезд.
+    layer_ids: list[str] | None = None
+    layer_prefix: str | None = None
+    x: float | None = None
+    y: float | None = None
+    zoom: float | None = None
 
 
 class TrackPayload(BaseModel):
@@ -109,7 +117,9 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         try:
             return apply_preset(payload.preset, payload.start, payload.duration, payload.intensity,
                                 camera=payload.camera, layers=payload.layers, layer_id=payload.layer_id,
-                                clip_duration=payload.clip_duration, motion_blur=payload.motion_blur)
+                                clip_duration=payload.clip_duration, motion_blur=payload.motion_blur,
+                                layer_ids=payload.layer_ids, layer_prefix=payload.layer_prefix,
+                                point={"x": payload.x, "y": payload.y}, zoom=payload.zoom)
         except PresetError as exc:
             raise HTTPException(status_code=400, detail={"error": str(exc), "hints": exc.hints}) from exc
 
@@ -281,13 +291,16 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
             plan = store.get_clip_plan(clip_plan_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        saved = normalize_render_settings(plan.get("render_settings") or {})["layers"]
         if payload and payload.sources is not None:
             sources = [s for s in REACT_SOURCES if s in set(payload.sources)]
         else:
-            sources = react_sources(normalize_render_settings(plan.get("render_settings") or {})["layers"])
+            sources = react_sources(saved)
+        # Волны со своим звуком (wave:<id>): слои из запроса (несохранённые правки) или сохранённые.
+        layers = normalize_layers(payload.layers) if payload and payload.layers is not None else saved
         fps = max(5.0, min(60.0, float(payload.fps or 30))) if payload and payload.fps else 30.0
         scale = "final" if payload and payload.scale == "final" else "clip"
-        levels, notes = plan_levels(store, plan, sources, fps, scale)
+        levels, notes = plan_levels(store, plan, sources, fps, scale, layers=layers)
         return {"levels": levels, "notes": notes, "scale": scale}
 
     def _asset_path(asset_id: int):

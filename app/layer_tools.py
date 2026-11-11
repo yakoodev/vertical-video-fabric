@@ -483,15 +483,23 @@ def tools() -> list[Tool]:
             "camera_preset", "3D-движение камеры",
             "3D-движение одной командой (псевдо-3D: глубина z слоёв, перспектива): preset parallax_push (наезд с "
             "параллаксом, держится) | orbit (облёт ±10°) | dolly_zoom (Хичкок, держится) | tilt_reveal (раскрытие "
-            "наклоном) | float (дыхание камеры) | card_flip (переворот слоя layer_id); start — с, duration? (по "
+            "наклоном) | float (дыхание камеры) | card_flip (переворот слоя layer_id) | screen_tilt (экран группой: "
+            "слои layer_ids или layer_prefix — блоки страницы page_to_layers «wp<id>_», макет интерфейса — наклонены "
+            "в 3D на 24°·intensity и выпрямляются, пока наезжают ×zoom (1.3) в точку x/y, доли кадра; нет точки — "
+            "центр группы; им ставится общий pivot); start — с, duration? (по "
             "умолчанию свой у пресета), intensity 0.2..2 (1). Ключи камеры внутри отрезка заменяются. Параллакс "
             "виден у слоёв с z (−300…600) или followCamera; без z слой стоит на экране. Не чаще одного 3D-движения "
             "на 5–8 с, для промо, интро и ярких моментов. motionBlur 0..1 — motion blur ключей движения (быстрые "
             "куски облёта/наезда смазаны); нет — как у клипа. / Camera 3D move preset.",
             _obj({"preset": {"type": "string", "enum": ["parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float",
-                                                        "card_flip"]},
+                                                        "card_flip", "screen_tilt"]},
                   "start": {"type": "number"}, "duration": {"type": "number"}, "intensity": {"type": "number"},
                   "layer_id": {"type": "string"},
+                  "layer_ids": {"type": "array", "items": {"type": "string"}, "description": "screen_tilt: слои группы"},
+                  "layer_prefix": {"type": "string", "description": "screen_tilt: все слои с id на этот префикс"},
+                  "x": {"type": "number", "description": "screen_tilt: точка наезда, доля кадра"},
+                  "y": {"type": "number", "description": "screen_tilt: точка наезда, доля кадра"},
+                  "zoom": {"type": "number", "description": "screen_tilt: наезд, раз (1.3)"},
                   "motionBlur": {"type": "number", "description": "затвор 0..1 у ключей движения"}},
                  ["preset", "start"]),
             h_camera_preset, mutating=True,

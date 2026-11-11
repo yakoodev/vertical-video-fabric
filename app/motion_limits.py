@@ -32,6 +32,8 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
     "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social", "page",
+    # Рекламный пакет (frontend/src/motion/layers/{bubbles,carousel,waveform,tilewall,flow}.ts).
+    "bubbles", "carousel", "waveform", "tile_wall", "flow_diagram",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -99,6 +101,22 @@ SOCIAL_MAX_LINES = 8
 PAGE_MAX_KEYS = 24
 PAGE_MAX_ZOOM = 6
 PAGE_EASES = ("inOut", "linear", "out", "in")
+# Рекламный пакет (промо продукта и сервиса): свои векторные значки (layers/adicons.ts — без эмодзи и чужих
+# логотипов), темы, пределы списков и виды. Одометр — у counter (roll/stagger/laps, layers/odometer.ts).
+AD_ICONS = ("shield", "lock", "check", "user", "users", "store", "card", "star", "bolt", "heart", "chat", "music", "play",
+            "cart", "gift", "bell", "mic", "coin", "globe", "phone", "headphones", "sparkle", "trend", "game")
+AD_THEMES = ("dark", "light")
+AD_ACCENT = "#6c5cff"
+AD_FONT = "Manrope"
+BUBBLES_MAX = 12
+BUBBLE_STYLES = ("glass", "solid")
+CAROUSEL_MAX = 12
+WAVE_SOURCES = ("auto", "voice", "music", "mix", "fake")
+WAVE_STYLES = ("bars", "wave", "dots")
+WAVE_MOTIONS = ("center", "scroll")
+TILE_WALL_MAX_IMAGES = 24
+FLOW_MAX = 6
+FLOW_LAYOUTS = ("row", "column")
 # Плашка канала (frontend/src/motion/layers/nameplate.ts): площадка — свой векторный значок,
 # вид — стекло с обводкой или заливка акцентом; высота пилюли по умолчанию — как на шортсах.
 NAMEPLATE_PLATFORMS = ("twitch", "youtube", "tiktok", "telegram", "kick", "none")

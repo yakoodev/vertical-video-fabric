@@ -264,6 +264,16 @@ export function layerTitle(layer: Layer): string {
       return FX_TITLES[layer.props.kind ?? "vhs"] ?? "Эффект";
     case "scene":
       return "3D-сцена";
+    case "bubbles":
+      return "Облако пузырей";
+    case "carousel":
+      return layer.props.cards?.[0]?.title ? `Карусель: ${layer.props.cards[0].title}` : "Карусель карточек";
+    case "waveform":
+      return "Волна голоса";
+    case "tile_wall":
+      return "Стена плиток";
+    case "flow_diagram":
+      return "Схема сделки";
     default:
       return "Слой";
   }
@@ -289,6 +299,11 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   pngtuber: "🗣",
   fx: "✺",
   scene: "🧊",
+  bubbles: "◎",
+  carousel: "▥",
+  waveform: "≋",
+  tile_wall: "▦",
+  flow_diagram: "⇄",
 };
 
 /** Подписи видов эффекта кадра (fx). */

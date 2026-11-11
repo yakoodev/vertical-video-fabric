@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useModules } from "@/hooks/useModules";
-import { reframeBetween, type AssetSizes, type ChatMessage, type Layer, type PngtuberLayer, type CameraKey } from "@/motion";
+import { reframeBetween, type AssetSizes, type ChatMessage, type Layer, type PngtuberLayer, type WaveformLayer, type CameraKey } from "@/motion";
 import { motionApi } from "@/api/motion";
 import { layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { type MontageAsset } from "@/api/assets";
@@ -80,11 +80,18 @@ export function useLayerPreviewData({
   });
   // Реакция на звук (react): огибающие громкости клипа считает сервер один раз — по нужным
   // источникам (голос / музыка / весь звук); сменились источники или музыка клипа — пересчёт.
-  const reactSources = [...new Set(layers.filter((l) => l.react && !l.hidden).map((l) => l.react?.source ?? "voice"))].sort();
+  // Волна голоса (waveform): source voice/music/mix — огибающие клипа, свой звук (audio_layer/asset_id) —
+  // огибающая wave:<id> по слою волны и её звуковому слою; сменились они — пересчёт.
+  const waveLayers = layers.filter((l): l is WaveformLayer => l.type === "waveform" && !l.hidden);
+  const waveSources = waveLayers.map((l) => l.props?.source ?? "auto").filter((s) => s === "voice" || s === "music" || s === "mix");
+  const reactSources = [...new Set([...layers.filter((l) => l.react && !l.hidden).map((l) => l.react?.source ?? "voice"), ...waveSources])].sort();
+  const ownWaves = waveLayers.filter((l) => (l.props?.source ?? "auto") === "auto" && (l.props?.audio_layer || l.props?.asset_id));
+  const waveAudio = layers.filter((l) => l.type === "audio" && ownWaves.some((w) => w.props?.audio_layer === l.id));
+  const waveKey = JSON.stringify([...ownWaves, ...waveAudio].map((l) => [l.id, l.start, l.end, l.props]));
   const planLevels = useQuery({
-    queryKey: ["plan-levels", editorPlanId, reactSources.join(","), musicOn, trackId],
-    queryFn: () => motionApi.levels(Number(editorPlanId), reactSources),
-    enabled: Boolean(editorPlanId && reactSources.length),
+    queryKey: ["plan-levels", editorPlanId, reactSources.join(","), musicOn, trackId, waveKey],
+    queryFn: () => motionApi.levels(Number(editorPlanId), reactSources, 30, "clip", ownWaves.length ? [...ownWaves, ...waveAudio] : undefined),
+    enabled: Boolean(editorPlanId && (reactSources.length || ownWaves.length)),
     staleTime: 300_000,
   });
   const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });

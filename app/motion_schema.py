@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.scene_engine import SceneSpec
+from app.motion_schema_ads import AD_PROPS, COUNTER_ROLL, PIVOT
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
     BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
@@ -183,6 +184,7 @@ PROPS: dict[str, dict] = {
         "suffix": Text("", 20),
         "thousands": Text("", 3),
         **TEXT_STYLE,
+        **COUNTER_ROLL,
     },
     "progress": {
         "w": Num(800, 20, 2160, 1),
@@ -408,6 +410,8 @@ PROPS["scene"] = {
     "scene": SceneSpec(),
 }
 
+PROPS.update(AD_PROPS)
+
 ANIM = {"type": Choice("none", ANIMATIONS), "duration": Num(0.3, MIN_ANIM_SEC, MAX_ANIM_SEC, 3)}
 LOOP = {"type": Choice("none", LOOPS), "speed": Num(1, 0.1, 5, 3), "amount": Num(1, 0, 3, 3)}
 # Реакция на громкость клипа: source — чья огибающая, prop — что «дышит», amount 0..3, smooth 0..1
@@ -443,6 +447,9 @@ LAYER_FIELDS: dict = {
     "z": Opt(Num(0, -Z_NEAR_LIMIT, Z_FAR_LIMIT, 1)),
     "rotX": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
     "rotY": Opt(Num(0, -ROT3D_LIMIT, ROT3D_LIMIT, 2)),
+    # Точка наклона и наезда (доли кадра): rotX/rotY и ключи scale — вокруг неё, а не центра слоя. Одинаковый
+    # pivot и ключи у группы (блоки страницы) — наклон и наезд всей группы как одного экрана.
+    "pivot": Opt(PIVOT),
     # Motion blur, затвор 0..1 (доля интервала кадра; 0.5 — «180°»): быстрый слой смазан по пути
     # (frontend/src/motion/motionblur.ts). Нет — значение клипа render.motion_blur; 0 — резко.
     "motionBlur": Opt(Num(0, 0, 1, 3)),

@@ -41,6 +41,11 @@ import { sceneRenderer, sceneViewport } from "./layers/scene";
 import { shapeRenderer } from "./layers/shape";
 import { socialRenderer } from "./layers/social";
 import { pageRenderer } from "./layers/page";
+import { bubblesRenderer } from "./layers/bubbles";
+import { carouselRenderer } from "./layers/carousel";
+import { flowRenderer } from "./layers/flow";
+import { tileWallRenderer } from "./layers/tilewall";
+import { waveformRenderer } from "./layers/waveform";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import { drawFx } from "./layers/fx";
@@ -66,6 +71,11 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   chat: chatRenderer as LayerRenderer,
   pngtuber: pngtuberRenderer as LayerRenderer,
   scene: sceneRenderer as LayerRenderer,
+  bubbles: bubblesRenderer as LayerRenderer,
+  carousel: carouselRenderer as LayerRenderer,
+  waveform: waveformRenderer as LayerRenderer,
+  tile_wall: tileWallRenderer as LayerRenderer,
+  flow_diagram: flowRenderer as LayerRenderer,
 };
 
 const NO_WORDS: CaptionWord[] = [];
@@ -273,7 +283,7 @@ function layerCorners(layer: Layer, st: LayerState, size: { w: number; h: number
   });
   const scene = inScene(layer);
   if (has3dFields(layer) || (scene && cam3)) {
-    const pl = layerPlane(st, env);
+    const pl = layerPlane(st, env, layer);
     const proj = makeProjector(scene ? cam3 : null, W, H, unit, scene ? cam : null);
     return local.map(([dx, dy]) => proj(...planePoint(pl, dx, dy, W, H)) ?? [pl.cx + dx, pl.cy + dy]);
   }
@@ -378,9 +388,29 @@ export function has3dFields(layer: Layer): boolean {
   );
 }
 
-/** Плоскость слоя в мире (px кадра) в его состоянии `st`. */
-function layerPlane(st: LayerState, env: RenderEnv): Plane {
-  return { cx: st.x * env.width, cy: st.y * env.height, z: st.z * layerUnit(env), rotX: st.rotX, rotY: st.rotY };
+/**
+ * Плоскость слоя в мире (px кадра) в его состоянии `st`. С `pivot` наклоны rotX/rotY вращают слой
+ * вокруг этой точки (на плоскости кадра), а не вокруг его центра: центр уезжает по дуге, наклон —
+ * тот же. Группа слоёв с одним pivot и одинаковыми ключами наклоняется как одна плоскость.
+ */
+export function layerPlane(st: LayerState, env: RenderEnv, layer?: Layer): Plane {
+  const unit = layerUnit(env);
+  const pl: Plane = { cx: st.x * env.width, cy: st.y * env.height, z: st.z * unit, rotX: st.rotX, rotY: st.rotY };
+  const pv = layer?.pivot;
+  if (!pv || (!st.rotX && !st.rotY)) return pl;
+  const px = (Number.isFinite(pv.x) ? pv.x : 0.5) * env.width;
+  const py = (Number.isFinite(pv.y) ? pv.y : 0.5) * env.height;
+  // Вектор от точки к центру слоя — теми же поворотами, что planePoint (сначала rotX, потом rotY).
+  const ax = (st.rotX * Math.PI) / 180;
+  const ay = (st.rotY * Math.PI) / 180;
+  const dx = pl.cx - px;
+  const dy = pl.cy - py;
+  const dz = pl.z;
+  const y1 = dy * Math.cos(ax) + dz * Math.sin(ax);
+  const z1 = -dy * Math.sin(ax) + dz * Math.cos(ax);
+  const x2 = dx * Math.cos(ay) - z1 * Math.sin(ay);
+  const z2 = dx * Math.sin(ay) + z1 * Math.cos(ay);
+  return { ...pl, cx: px + x2, cy: py + y1, z: z2 };
 }
 
 /**
@@ -395,7 +425,7 @@ function drawLayer3D(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, data: 
   const W = env.width;
   const H = env.height;
   const unit = layerUnit(env);
-  const pl = layerPlane(st, env);
+  const pl = layerPlane(st, env, layer);
   const proj = makeProjector(cam3, W, H, unit, m2d);
   if (isAffinePlane(pl, cam3)) {
     const A = affinePlaneMatrix(pl, proj, W, H);
@@ -420,10 +450,13 @@ function drawLayer3D(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, data: 
   const hh = (size.h / 2) * k + margin;
   const ex = hw * Math.abs(Math.cos(a)) + hh * Math.abs(Math.sin(a));
   const ey = hw * Math.abs(Math.sin(a)) + hh * Math.abs(Math.cos(a));
-  const x0 = Math.floor(Math.max(-W / 2, pl.cx - ex));
-  const y0 = Math.floor(Math.max(-H / 2, pl.cy - ey));
-  const x1 = Math.ceil(Math.min(W * 1.5, pl.cx + ex));
-  const y1 = Math.ceil(Math.min(H * 1.5, pl.cy + ey));
+  // Плоский рисунок — вокруг центра слоя (с pivot плоскость в мире уехала, а рисунок нет).
+  const fx = st.x * W;
+  const fy = st.y * H;
+  const x0 = Math.floor(Math.max(-W / 2, fx - ex));
+  const y0 = Math.floor(Math.max(-H / 2, fy - ey));
+  const x1 = Math.ceil(Math.min(W * 1.5, fx + ex));
+  const y1 = Math.ceil(Math.min(H * 1.5, fy + ey));
   if (x1 <= x0 || y1 <= y0) return;
   const buf = envBuffer(env, "plane", x1 - x0, y1 - y0);
   if (!buf) {
@@ -447,7 +480,7 @@ function drawLayer3D(ctx: Ctx2D, layer: Layer, t: number, env: RenderEnv, data: 
   // Наложение — уже при переносе на кадр: на прозрачном холсте оно бессмысленно.
   drawLayer(p, layer.blend && layer.blend !== "normal" ? ({ ...layer, blend: "normal" } as Layer) : layer, t, env, data);
   p.setTransform(1, 0, 0, 1, 0, 0);
-  const world = (u: number, v: number) => planePoint(pl, u + x0 - pl.cx, v + y0 - pl.cy, W, H);
+  const world = (u: number, v: number) => planePoint(pl, u + x0 - fx, v + y0 - fy, W, H);
   const [skX, skY] = depthSkew((u, v) => cameraDepth(cam3, H, unit, ...world(u, v)), 0, 0, bw, bh);
   warpImage(ctx, env, buf.canvas as unknown as CanvasImageSource, 0, 0, bw, bh, (u, v) => proj(...world(u, v)), skX, skY, {
     composite: BLEND[layer.blend ?? "normal"] ?? "source-over",
@@ -504,16 +537,20 @@ export function layerBox(
   const size = r.measure(ctx, layer, st, env, frame);
   ctx.restore();
   let z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
+  let cx = st.x * env.width;
+  let cy = st.y * env.height;
   if (has3dFields(layer)) {
-    // Глубина: рамка — по проекции центра плоскости (наклон рамка не показывает).
-    const pl = layerPlane(st, env);
+    // Глубина: рамка — по проекции центра плоскости (наклон рамка не показывает; с pivot центр уехал).
+    const pl = layerPlane(st, env, layer);
     const A = affinePlaneMatrix({ ...pl, rotX: 0, rotY: 0 }, makeProjector(null, env.width, env.height, layerUnit(env), inScene(layer) ? cam : null), env.width, env.height);
     if (A) z = { scale: A[0], tx: A[4], ty: A[5] };
+    cx = pl.cx;
+    cy = pl.cy;
   }
   const k = layerUnit(env) * st.scale * z.scale;
   return {
-    cx: st.x * env.width * z.scale + z.tx,
-    cy: st.y * env.height * z.scale + z.ty,
+    cx: cx * z.scale + z.tx,
+    cy: cy * z.scale + z.ty,
     w: size.w * k,
     h: size.h * k,
     rotation: st.rotation,

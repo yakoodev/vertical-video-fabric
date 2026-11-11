@@ -122,6 +122,15 @@ function pictureSize(layer: Obj, sizes: AssetSizes | null): [number, number] {
   return [w + 2 * border, h + 2 * border];
 }
 
+/** Рамка слоёв рекламного пакета по умолчанию: ширина, высота и какое поле props — высота. */
+const AD_BOXES: Record<string, [number, number, string]> = {
+  bubbles: [960, 960, "h"],
+  carousel: [1080, 780, "cardH"],
+  waveform: [820, 220, "h"],
+  tile_wall: [1080, 1920, "h"],
+  flow_diagram: [1000, 620, "h"],
+};
+
 /** Оценка ширины и высоты слоя в опорных px (без scale); null — звук и прочее без места. */
 export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number, number] | null {
   const kind = layer.type;
@@ -160,6 +169,11 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
   }
   if (kind === "shape" || kind === "progress" || kind === "chart")
     return [num(props.w, 400), num(props.h, kind !== "progress" ? 400 : 40)];
+  // Слои рекламного пакета: рамка w×h (у карусели — ширина ленты и высота карточки), как app/aspect.layer_size.
+  if (Object.prototype.hasOwnProperty.call(AD_BOXES, kind)) {
+    const [w, h, hKey] = AD_BOXES[kind];
+    return [num(props.w, w), num(props[hKey], h)];
+  }
   // Сцена: вьюпорт w×h; без них — весь кадр любого формата (движок берёт опорный кадр формата),
   // переносить нечего — как app/aspect.layer_size.
   if (kind === "scene") return props.w || props.h ? [num(props.w, 1080), num(props.h, 1920)] : null;
@@ -212,7 +226,7 @@ export function isTransient(layer: Obj): boolean {
 
 /** Фон во всю ширину кадра: картинка/видео/фигура ≥ 98 % ширины опорного кадра. */
 export function isFullBleed(layer: Obj, sizes: AssetSizes | null = null, ref: Ref | null = null): boolean {
-  if (!["image", "video", "shape"].includes(layer.type)) return false;
+  if (!["image", "video", "shape", "tile_wall"].includes(layer.type)) return false;
   const size = layerSize(layer, sizes);
   const sw = refOf(ref)[0];
   const limit = sw === REF_W ? FULL_BLEED_W : FULL_BLEED_FRAC * sw;
@@ -418,14 +432,19 @@ function reframeLayer(
   if (!fullBleed) k = scale;
   else if (growth[0] !== 1.0 || growth[1] !== 1.0) {
     const props: Obj = layer.props || {};
-    if (layer.type === "shape") {
-      out.props = { ...props, w: pyRound(num(props.w, 400) * growth[0], 1) };
-      if (growth[1] > 1.0) out.props.h = pyRound(num(props.h, 400) * growth[1], 1);
+    if (layer.type === "shape" || layer.type === "tile_wall") {
+      // Фигуру и стену плиток тянем по сторонам — толщина ленты и размер плитки не растут.
+      const [dw, dh] = layer.type === "tile_wall" ? [1080, 1920] : [400, 400];
+      out.props = { ...props, w: pyRound(num(props.w, dw) * growth[0], 1) };
+      if (growth[1] > 1.0) out.props.h = pyRound(num(props.h, dh) * growth[1], 1);
     } else {
       k = Math.max(growth[0], growth[1]);
     }
   }
   out.scale = pyRound(num(layer.scale, 1.0) * k, 4);
+  // Точка наклона/наезда группы едет вместе со слоями — иначе группа в новом кадре наклоняется вокруг чужой точки.
+  if (isObj(layer.pivot))
+    out.pivot = { ...layer.pivot, x: mapX(num(layer.pivot.x, 0.5), scale, width, refW, cx), y: mapY(num(layer.pivot.y, 0.5), scale, center, height, refH) };
   const keys: Obj = isObj(layer.keys) ? layer.keys : {};
   if (Object.keys(keys).length) {
     const fresh: Obj = { ...keys };

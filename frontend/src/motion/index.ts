@@ -9,6 +9,7 @@ export { EASINGS, EASING_NAMES, DEFAULT_EASE, ease, easingFn, cubicBezier, clamp
 export { interpolateKeys, noise1, hashString, rand01 } from "./keys";
 export {
   resolveLayer,
+  layerProgress,
   clampCrop,
   isLayerActive,
   layerDuration,
@@ -47,7 +48,7 @@ export {
   type Plane,
   type Projector,
 } from "./space3d";
-export { drawFrame, drawLayer, inScene, has3dFields, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
+export { drawFrame, drawLayer, inScene, has3dFields, layerPlane, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
 export {
   MOTION_BLUR_MIN_SAMPLES,
   MOTION_BLUR_MAX_SAMPLES,
@@ -112,10 +113,21 @@ export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, PLATFORM_ICONS, p
 export { socialRenderer, formatSocialCount, socialLikes, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, SOCIAL_IMAGE_RATIO } from "./layers/social";
 export { pageRenderer, pageRef, pageRegion, pageWindow, pageKeyValue, activeTaps, PAGE_DEFAULT_WIDTH } from "./layers/page";
 export { parsePageParam } from "./templates/page";
+export { parseRows, AD_CATEGORY } from "./templates/ads";
+export { screenTiltKeys } from "./templates/ads2";
 export { roughen, scribblePts, cursorPts, sketchOutline, BOIL_RATE } from "./layers/sketch";
 export { parsePath, parseTimes } from "./templates/sketch";
 export { nameplateRenderer, nameplateAccent, nameplateMotion, PLATFORM_COLORS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, type NameplateMotion } from "./layers/nameplate";
 export { formatCounter, counterValue } from "./layers/counter";
+export { odometerPlan, odometerCells, ROLL_STAGGER, ROLL_LAPS, type OdometerPlan } from "./layers/odometer";
+export { AD_ICONS, AD_ICON_LABELS, isAdIcon, drawAdIcon } from "./layers/adicons";
+export { AD_ACCENT, AD_FONT, AD_PALETTES, accentTone, hueShift, mixHex, compactNumber } from "./layers/adkit";
+export { bubblesRenderer, bubbleLayout, bubblePoses, bubbleFocus, bubbleAppearAt, BUBBLES_MAX, type BubbleSpot } from "./layers/bubbles";
+export { carouselRenderer, carouselIndex, carouselOffset, carouselSwitches, CAROUSEL_MAX } from "./layers/carousel";
+export { waveformRenderer, waveHeights, waveTrack, fakeVoice, WAVE_STYLES, WAVE_SOURCES } from "./layers/waveform";
+export { tileWallRenderer, wallProject, wallShift, TILE_COLORS } from "./layers/tilewall";
+export { flowRenderer, flowGeometry, flowTimes, FLOW_MAX, type FlowGeo } from "./layers/flow";
+export { waveLevelKey } from "./levels";
 export { DEFAULT_PALETTE } from "./layers/chart";
 export {
   CAPTION_STYLES,
