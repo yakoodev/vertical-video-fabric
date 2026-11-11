@@ -77,7 +77,9 @@ def test_small_failed_and_encoded_stay_as_is(tmp_path):
     headers = {"Accept-Encoding": "gzip"}
     assert "content-encoding" not in client.get("/small", headers=headers).headers
     assert "content-encoding" not in client.get("/fail", headers=headers).headers
-    assert client.get("/done", headers=headers).headers["content-encoding"] == "br"
+    # Тело-заглушка не настоящий brotli: смотрим только заголовки, не распаковывая (brotli есть с yt-dlp[default]).
+    with client.stream("GET", "/done", headers=headers) as done:
+        assert done.headers["content-encoding"] == "br"
 
 
 def test_video_and_range_keep_exact_bytes(tmp_path):
