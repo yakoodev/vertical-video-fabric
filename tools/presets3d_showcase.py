@@ -36,9 +36,9 @@ SHOTS = [
      "perf": "happy", "out": "glitch"},
     {"room": "city_rooftop", "look": "anime_soft", "mood": "night_rain", "camera": {"move": "handheld", "target": "hero:chest", "distance": 2.6, "yaw": 15},
      "perf": "sad", "out": "iris"},
-    {"room": "forest_clearing", "look": "watercolor", "light": "golden_hour", "fx": ["fireflies", "light_leak"], "camera": {"move": "truck", "target": "hero:chest", "distance": 3.4, "travel": 1.4},
+    {"room": "forest_clearing", "look": "watercolor", "light": "golden_hour", "fx": ["fireflies", "light_leak"], "camera": {"move": "truck", "target": "hero:chest", "distance": 3.6, "travel": 0.8},
      "perf": "thinking", "out": "film_burn"},
-    {"room": "kitchen_night", "look": "psx", "mood": "horror_flicker", "camera": {"move": "dolly_zoom", "target": "hero", "distance": 1.4},
+    {"room": "kitchen_night", "look": "psx", "mood": "horror_flicker", "light": {"name": "horror_lamp", "intensity": 1.6}, "camera": {"move": "dolly_zoom", "target": "hero", "distance": 1.4},
      "perf": "shocked", "perf_t": 1.4, "out": "smash"},
     {"room": "studio_cyclorama", "look": "clay", "light": "studio_3pt", "camera": {"move": "punch_in", "target": "hero", "distance": 2.6, "at": 0.45},
      "perf": "smug", "out": "dip_white"},
@@ -65,9 +65,11 @@ def shot_spec(i: int, s: dict) -> dict:
     return spec
 
 
-def label(s: dict) -> str:
-    parts = [s["look"], s.get("mood") or s.get("light"), s["room"], s["camera"]["move"], s["perf"], *(s.get("fx") or [])]
-    return " · ".join(p for p in parts if p)
+def label(s: dict) -> tuple[str, str]:
+    """Две строки подписи: стиль · свет/настроение · окружение; камера · игра · эффекты."""
+    light = s.get("mood") or (s["light"]["name"] if isinstance(s.get("light"), dict) else s.get("light"))
+    return (" · ".join(p for p in (s["look"], light, s["room"]) if p),
+            " · ".join(p for p in (s["camera"]["move"], s["perf"], *(s.get("fx") or [])) if p))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -97,9 +99,10 @@ def main(argv: list[str] | None = None) -> int:
     draws = []
     for i, s in enumerate(SHOTS):
         t0, t1 = i * DUR + 0.25, (i + 1) * DUR - 0.25
-        txt = label(s).replace(":", "\\:").replace("'", "")
-        draws.append(f"drawtext=fontfile='{font}':text='{txt}':fontsize=34:fontcolor=white@0.92:box=1:boxcolor=black@0.45:boxborderw=14:"
-                     f"x=(w-text_w)/2:y=h-250:enable='between(t,{t0:.2f},{t1:.2f})'")
+        for row, txt in enumerate(label(s)):
+            txt = txt.replace(":", "\\:").replace("'", "")
+            draws.append(f"drawtext=fontfile='{font}':text='{txt}':fontsize=36:fontcolor=white@0.92:box=1:boxcolor=black@0.45:boxborderw=12:"
+                         f"x=(w-text_w)/2:y=h-300+{row * 66}:enable='between(t,{t0:.2f},{t1:.2f})'")
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(joined), "-vf", ",".join(draws), "-c:v", "libx264",
                     "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(out)], check=True)
     print("шоурил:", out)
