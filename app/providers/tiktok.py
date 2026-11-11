@@ -17,6 +17,7 @@ from requests_auth_aws_sigv4 import AWSSigV4
 
 from app.cookies import CookieRecord, tiktok_caption, tiktok_full_caption
 from app.providers.base import Provider, ProviderResult, safe_provider_error
+from app.session_cookies import jar_items, rotated_values
 from app.proxy_config import masked
 from app.publish_format import TIKTOK_UNLISTED, publish_plan
 from app.settings import settings
@@ -63,6 +64,25 @@ def _user_agent(account_user_agent: str = "") -> str:
     return account_user_agent.strip() or settings.tiktok_user_agent or _UA
 
 
+def _new_session(cookies: list[CookieRecord], proxy_url: str, user_agent: str = "") -> requests.Session:
+    """Сессия загрузки: cookie, UA и прокси аккаунта. Её банка cookie после шагов — свежие значения TikTok."""
+    session = requests.Session()
+    session.verify = True
+    # Иначе HTTP(S)_PROXY окружения перекрывает прокси аккаунта: в requests запрос сильнее сессии.
+    session.trust_env = False
+    session.headers.update({"User-Agent": _user_agent(user_agent), "Accept": "application/json, text/plain, */*"})
+    if proxy_url:
+        session.proxies = {"http": proxy_url, "https": proxy_url}
+    for cookie in cookies:
+        session.cookies.set(
+            cookie.name,
+            cookie.value,
+            domain=cookie.domain or ".tiktok.com",
+            path=cookie.path or "/",
+        )
+    return session
+
+
 class TikTokProvider(Provider):
     platform = "tiktok"
 
@@ -88,9 +108,25 @@ class TikTokProvider(Provider):
         del thumbnail_path
         if privacy not in ("public", "private"):
             return ProviderResult(status="failed", error=TIKTOK_UNLISTED)  # иначе «по ссылке» ушло бы всем
+        session = _new_session(cookies, proxy_url, user_agent)
+        result = self._upload_steps(
+            session=session, cookies=cookies, file_path=file_path, title=title, description=description,
+            privacy=privacy, allow_comments=allow_comments, account_label=account_label, proxy_url=proxy_url,
+            video_format=video_format, user_agent=user_agent, cover_sec=cover_sec,
+        )
+        # Свежие cookie из банки сессии — и при отказе шага: TikTok уже сменил msToken/ttwid, старые потом не пустят.
+        # Отказ входа (needs_reauth) — нет: вход мёртв, его ответ ничего полезного не выдал.
+        if result.status != "needs_reauth":
+            result.refreshed_cookies = rotated_values("tiktok", cookies, jar_items(getattr(session, "cookies", None)))
+        return result
+
+    def _upload_steps(self, *, session: requests.Session, cookies: list[CookieRecord], file_path: Path, title: str,
+                      description: str, privacy: str, allow_comments: bool, account_label: str, proxy_url: str,
+                      video_format: str, user_agent: str, cover_sec: float | None) -> ProviderResult:
         try:
             self._ensure_signature_helper()
             result = self._upload_and_post(
+                session=session,
                 cookies=cookies,
                 file_path=file_path,
                 title=title,
@@ -132,22 +168,10 @@ class TikTokProvider(Provider):
         proxy_url: str,
         user_agent: str = "",
         cover_sec: float | None = None,
+        session: requests.Session | None = None,
     ) -> ProviderResult:
-        session = requests.Session()
-        session.verify = True
-        # Иначе HTTP(S)_PROXY окружения перекрывает прокси аккаунта: в requests запрос сильнее сессии.
-        session.trust_env = False
+        session = session if session is not None else _new_session(cookies, proxy_url, user_agent)
         user_agent = _user_agent(user_agent)
-        session.headers.update({"User-Agent": user_agent, "Accept": "application/json, text/plain, */*"})
-        if proxy_url:
-            session.proxies = {"http": proxy_url, "https": proxy_url}
-        for cookie in cookies:
-            session.cookies.set(
-                cookie.name,
-                cookie.value,
-                domain=cookie.domain or ".tiktok.com",
-                path=cookie.path or "/",
-            )
 
         if not _cookie_value(session, "sessionid"):
             return ProviderResult(status="needs_reauth", error="TikTok sessionid cookie is missing")

@@ -11,7 +11,9 @@
 //
 // node tiktok-studio.cjs <папка playwright-chromium> [id,id,...]
 // Без id — только узнать ник аккаунта (страница /tiktokstudio). Ответ — одна строка JSON в stdout:
-// {"status":"ok","handle":"…","login_required":false,"videos":{"<id>":{"ok":true,"insight":{…}}|{"ok":false,"error":"…"}}}
+// {"status":"ok","handle":"…","login_required":false,"videos":{"<id>":{"ok":true,"insight":{…}}|{"ok":false,"error":"…"}},
+//  "cookies":[{name,value,domain}]} — cookie контекста (только tiktok.com) после прохода: TikTok меняет их на ходу,
+//  сервис пишет свежие обратно (app/session_cookies.py).
 const path = require("path");
 
 // Поля ответа insight, которые разбирает Python (app/tiktok_studio.py parse_insight). Остальное не нужно.
@@ -67,6 +69,17 @@ function videoInfo(info) {
   };
 }
 
+async function tiktokCookies(context) {
+  if (!context) return [];
+  try {
+    return (await context.cookies())
+      .filter((c) => /(^|\.)tiktok\.com$/i.test(String(c.domain || "").replace(/^\./, "")))
+      .map((c) => ({ name: c.name, value: c.value, domain: c.domain }));
+  } catch {
+    return [];
+  }
+}
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const firstLine = (err) => String((err && err.message) || err).split("\n")[0].slice(0, 300);
 
@@ -82,9 +95,10 @@ const firstLine = (err) => String((err && err.message) || err).split("\n")[0].sl
     executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || undefined,
     args: ["--no-sandbox"],
   });
-  const out = { status: "ok", handle: "", login_required: false, videos: {} };
+  const out = { status: "ok", handle: "", login_required: false, videos: {}, cookies: [] };
+  let context = null;
   try {
-    const context = await browser.newContext({
+    context = await browser.newContext({
       locale: "ru-RU",
       viewport: { width: 1400, height: 1000 },
       userAgent: process.env.TT_STUDIO_UA || undefined,
@@ -152,12 +166,18 @@ const firstLine = (err) => String((err && err.message) || err).split("\n")[0].sl
       }
       current = null;
     }
+    out.cookies = await tiktokCookies(context);
+  } catch (err) {
+    // Сбой посреди прохода — cookie всё равно отдаём (ответ с ошибкой), ниже их разберёт Python.
+    out.cookies = await tiktokCookies(context);
+    throw Object.assign(err, { partial: out });
   } finally {
     await browser.close();
   }
   console.log(JSON.stringify(out));
 })().catch((err) => {
   // Только первая строка: в журнале Playwright дальше идёт вся команда запуска браузера.
+  if (err && err.partial) console.log(JSON.stringify({ ...err.partial, status: "error" }));
   console.error(firstLine(err));
   process.exit(1);
 });
