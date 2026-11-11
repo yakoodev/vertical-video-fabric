@@ -39,6 +39,23 @@ function errorText(error) {
   return String(error && error.message ? error.message : error).slice(0, 300);
 }
 
+// youtubei.js на не-2xx бросает InnertubeError('… status code 400', <тело ответа>): само сообщение
+// без тела («Request contains an invalid argument» и какое именно поле) ничего не объясняет, поэтому
+// в журнал/результат кладём и тело. Тело ответа — ошибка сервера, cookie и заголовков в нём нет.
+export function errorDetail(error) {
+  const base = errorText(error);
+  const info = error && error.info;
+  if (!info) return base;
+  let text;
+  try {
+    text = typeof info === 'string' ? info : JSON.stringify(info);
+  } catch {
+    return base;
+  }
+  text = String(text).replace(/\s+/g, ' ').trim().slice(0, 700);
+  return text ? `${base} | ${text}` : base;
+}
+
 // Google rotates a few session cookies (notably __Secure-1PSIDTS/3PSIDTS) on
 // almost every request; if we never persist them the stored jar goes stale in
 // days. Capture every Set-Cookie we see and report the fresh values so the
@@ -162,7 +179,7 @@ export async function run(payload, { createClient, readFile = fs.readFile, sleep
       await yt.studio.updateVideoMetadata(videoId, update);
       extra.metadataSet = update;
     } catch (error) {
-      extra.metadataError = errorText(error);
+      extra.metadataError = errorDetail(error);
     }
   }
   // Обычное (горизонтальное 16:9) видео: обложка — миниатюрой.
@@ -172,7 +189,7 @@ export async function run(payload, { createClient, readFile = fs.readFile, sleep
       await yt.studio.updateVideoMetadata(videoId, { thumbnail: new Uint8Array(thumbnail) });
       extra.thumbnailSet = true;
     } catch (error) {
-      extra.thumbnailError = errorText(error);
+      extra.thumbnailError = errorDetail(error);
     }
   }
   return {
