@@ -5,6 +5,9 @@
 og-картинке сайта), «vtubika.store» и слоган сайта «Купить VTuber-модель / с оплатой в рублях». Никаких других
 обещаний. Звук — мягкий «стинг» (звуки паков или свои записи бренда, CC0), музыка истории затихает под карточкой.
 
+Строка промокода — только по заказу владельца: поле ``end_card.promo`` плана («Промокод Free10 — скидка 10%») рисует
+плашку под слоганом (``promo_block``); в общих настройках её нет, у остальных историй карточка прежняя.
+
 * ``settings(plan)`` — настройки карточки (``app.vtubika.END_CARD`` + поле плана ``end_card``; ``false`` — без неё).
 * ``card_svg(cfg)`` — SVG с CSS-анимацией (чистая функция, тестируется без браузера).
 * ``render(cfg, work)`` — SVG → кадры headless Chromium (``node/svg-to-webm.mjs``, покадрово, детерминированно) →
@@ -137,6 +140,23 @@ def _particles(seed: int, n: int, dur: float) -> list[str]:
     return out
 
 
+def promo_block(cfg: dict) -> str:
+    """Строка промокода под слоганом (``cfg["promo"]``, например «Промокод Free10 — скидка 10%»): плашка с обводкой
+    цвета бренда. По умолчанию выключена (в ``END_CARD`` поля нет) — включается в плане истории по заказу владельца;
+    пустая строка — без плашки. Текст ровно такой, какой задан: ни суммы, ни условия карточка не добавляет."""
+    promo = str(cfg.get("promo") or "").strip()
+    if not promo:
+        return ""
+    cy = float(cfg.get("promo_y", 1560))
+    delay = float(cfg.get("promo_delay", 1.55))
+    style = f"font-family:{FONT_FAMILY};font-weight:{FONT_WEIGHT};font-kerning:none"
+    return (f'<g class="in" style="animation-delay:{delay:.2f}s">'
+            f'<rect x="60" y="{cy - 62:.0f}" width="960" height="124" rx="62" fill="{ORANGE}" fill-opacity=".16" '
+            f'stroke="{ORANGE}" stroke-width="3"/>'
+            f'<text x="{W / 2}" y="{cy + 20:.0f}" text-anchor="middle" data-fit="880" style="{style};font-size:58px;'
+            f'fill:{INK}">{_esc(promo)}</text></g>')
+
+
 def card_svg(cfg: dict) -> str:
     """SVG 1080×1920 с CSS-анимацией на ``cfg["duration"]`` секунд."""
     dur = float(cfg["duration"])
@@ -152,6 +172,7 @@ def card_svg(cfg: dict) -> str:
         f'<text x="{W / 2}" y="{1262 + i * 84}" text-anchor="middle" data-fit="960" class="in" '
         f'style="{text_style};font-size:66px;fill:{INK if i == 0 else ORANGE};animation-delay:{1.25 + i * 0.12:.2f}s">'
         f"{_esc(line)}</text>" for i, line in enumerate(slogan))
+    promo_svg = promo_block(cfg)
     css = f"""
 .in{{animation:fadeup .45s cubic-bezier(.2,.8,.2,1) both;transform-box:fill-box;transform-origin:center}}
 .logo{{animation:pop {_css_s(LOGO_POP["dur"])}s linear {_css_s(LOGO_POP["delay"])}s both;transform-box:fill-box;transform-origin:center}}
@@ -206,6 +227,7 @@ def card_svg(cfg: dict) -> str:
         f'<rect x="{W / 2 - 60}" y="1160" width="120" height="6" rx="3" fill="{ORANGE}" class="in" '
         f'style="animation-delay:1.15s;opacity:.85"/>',
         slogan_svg,
+        *([promo_svg] if promo_svg else []),
         # Без наплыва (crossfade 0) карточка проявляется из чёрного; с наплывом истории — сразу своим фоном.
         "" if float(cfg.get("crossfade") or 0) > 0 else f'<rect width="{W}" height="{H}" fill="#000" class="veil"/>',
         "</svg>",

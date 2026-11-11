@@ -34,7 +34,11 @@ export interface SiteScreen {
   title?: string;
   price?: string;
   file?: string;
+  /** Размер файла на экране «пришло» (пустая строка — без размера). */
   size?: string;
+  /** Что пришло: заголовок экрана (по умолчанию «Модель пришла») и метка на значке файла (по умолчанию «VRM»). */
+  deliveredTitle?: string;
+  fileKind?: string;
   clock?: string;
 }
 
@@ -232,7 +236,7 @@ function ownScreen(g: CanvasRenderingContext2D, W: number, H: number, s: SiteScr
     g.stroke();
     g.fillStyle = INK;
     g.font = hf(900, 32 * k);
-    g.fillText("Модель пришла", cx, cardY + 190 * k);
+    g.fillText(s.deliveredTitle || "Модель пришла", cx, cardY + 190 * k);
     // Файл.
     g.fillStyle = BG;
     roundRect(g, 36 * k, cardY + 220 * k, (PAGE_W - 72) * k, 72 * k, 14 * k);
@@ -245,14 +249,17 @@ function ownScreen(g: CanvasRenderingContext2D, W: number, H: number, s: SiteScr
     g.fill();
     g.fillStyle = BG;
     g.font = sf(800, 13 * k);
-    g.fillText("VRM", 72 * k, cardY + 261 * k);
+    g.fillText(s.fileKind || "VRM", 72 * k, cardY + 261 * k);
     g.textAlign = "left";
     g.fillStyle = INK;
     g.font = sf(800, 16 * k);
-    g.fillText(s.file || "model_vrm.zip", 108 * k, cardY + 252 * k);
-    g.fillStyle = MUTED;
-    g.font = sf(500, 13 * k);
-    g.fillText(s.size || "64 МБ", 108 * k, cardY + 272 * k);
+    const size = s.size ?? "64 МБ";
+    g.fillText(s.file || "model_vrm.zip", 108 * k, cardY + (size ? 252 : 262) * k);
+    if (size) {
+      g.fillStyle = MUTED;
+      g.font = sf(500, 13 * k);
+      g.fillText(size, 108 * k, cardY + 272 * k);
+    }
     // Кнопка в цвет главной кнопки сайта (нарисована нами).
     g.textAlign = "center";
     g.fillStyle = ORANGE;

@@ -14,7 +14,7 @@
 фразы. События (``do``):
 
 * герой: ``act`` (процедурный клип, voxelclips.ts; одноразовый — поверх текущего), ``face``, ``pose`` (+``dur``);
-* монитор: ``screen`` (режим stream/draw/shop/rig), ``avatar`` (fox/wolf/silhouette), ``mouth`` (closed/open/talk),
+* монитор: ``decor`` (оформление эфира: retro/studio/studio_ember/plain — ``DECORS``), ``screen`` (режим stream/draw/shop/rig), ``avatar`` (fox/wolf/silhouette), ``mouth`` (closed/open/talk),
   ``chat`` ({user, text, color, big}), ``alert`` ({title, amount, note, dur}), ``viewers`` (+``label``),
   ``declined``, ``fix``, ``draw`` (+``until``/``dur``: окно рисования — монитор и планшет), ``wolf_blink``,
   ``wag`` (сила хвоста), ``wolf_laugh`` (+``dur``), ``squint`` (bool);
@@ -52,6 +52,9 @@ FPS = 30
 SHOT_MIN = 0.7
 AUTO_SFX = {"coin": "coin", "alert": "donate", "declined": "error", "decline": "error", "paid": "success",
             "chat": "pop", "draw": "pen"}
+# Оформление окна эфира (событие ``decor``, node/scene3d/src/ui_deco.ts): plain — обычный; retro — чёрный фон, рамка
+# вебки в огне, «тот самый шрифт»; studio — музыкальная комната и попкорн; studio_ember — то же и огонёк в углу.
+DECORS = ("plain", "retro", "studio", "studio_ember")
 CHAT_COLORS = ["#7ee0ff", "#ffd35c", "#ff8ad8", "#9dff7e", "#c9a0ff", "#ffb07e"]
 
 
@@ -92,6 +95,8 @@ def validate_plan(plan: dict) -> None:
                 raise PlanError(f"фраза {n + 1}: нет выражения «{ev['face']}»")
             if "sfx" in ev and ev["sfx"] not in U.SFX:
                 raise PlanError(f"фраза {n + 1}: нет звука «{ev['sfx']}»")
+            if "decor" in ev and ev["decor"] not in DECORS:
+                raise PlanError(f"фраза {n + 1}: оформление эфира «{ev['decor']}» — одно из {', '.join(DECORS)}")
 
 
 def narration_text(plan: dict) -> str:
@@ -223,6 +228,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 screen["avatars"].append({"t": t, "kind": ev["avatar"]})
             if "title" in ev:
                 screen["titles"].append({"t": t, "title": ev["title"]})
+            if "decor" in ev:
+                screen.setdefault("decor", []).append({"t": t, "kind": ev["decor"]})
             if "mouth" in ev:
                 screen["mouth"].append({"t": t, "m": ev["mouth"]})
             if "chat" in ev:
