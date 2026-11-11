@@ -208,7 +208,7 @@ export const CAMERA_MOVES: Record<string, MoveDef> = {
     fn: (u, c) => {
       const k = easeIO(u), tr = c.p.travel ?? 1.6;
       const side = local(c.heading + c.yaw, [tr * (k - 0.5), 0, 0]);
-      return { position: add3(still(c), side), target: add3(c.target, [side[0] * 0.55, 0, side[2] * 0.55]), fov: c.fov, roll: 0 };
+      return { position: add3(still(c), side), target: add3(c.target, [side[0] * 0.8, 0, side[2] * 0.8]), fov: c.fov, roll: 0 };
     },
   },
   match_cut: {

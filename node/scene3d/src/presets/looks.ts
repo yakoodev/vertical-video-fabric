@@ -54,14 +54,14 @@ export const LOOKS: Record<string, LookDef> = {
     env: { toneMapping: "neutral", fogPull: 0.55, shadowSoft: 0.3,
       matstyle: { kind: "psx", snap: 150, flat: false },
       post: { ao: 0, bloom: false, vignette: 0.28, grain: 0, ca: 0, grade: GR({ saturation: 0.95, contrast: 1.04 }) },
-      stylize: { pixel: 3, posterize: 32, dither: 1 } },
+      stylize: { pixel: 4, posterize: 24, dither: 1 } },
     quality: { antialias: false, shadowSize: 512 },
   },
   clay: {
     meta: { name: "clay", title: "Пластилин", ru: "Матовая лепка с отпечатками пальцев, мягкий обволакивающий свет, тёмные щели, малая глубина резкости — как кукольная анимация.", tags: ["stopmotion", "cute"] },
     env: { toneMapping: "agx", exposure: 1.1, shadowSoft: 2.2,
-      matstyle: { kind: "clay", bump: 0.65, wrap: 0.45, saturation: 1.15 },
-      post: { ao: 1.25, aoRadius: 0.22, bloom: { strength: 0.12, radius: 0.4, threshold: 0.9 }, dof: true, grade: GR({ gain: [1.04, 1.0, 0.95], saturation: 1.05 }), vignette: 0.32, grain: 0.03, ca: 0.4 } },
+      matstyle: { kind: "clay", bump: 1.1, wrap: 0.45, saturation: 1.15 },
+      post: { ao: 1.25, aoRadius: 0.22, bloom: { strength: 0.12, radius: 0.4, threshold: 0.9 }, dof: true, grade: GR({ gain: [1.04, 1.0, 0.95], saturation: 1.12, contrast: 1.06 }), vignette: 0.32, grain: 0.03, ca: 0.4 } },
     dof: 1.6,
   },
   watercolor: {
@@ -83,7 +83,7 @@ export const LOOKS: Record<string, LookDef> = {
     meta: { name: "flat_vector", title: "Плоский вектор", ru: "Плоские заливки в два тона, без бликов и фактуры, ровная тёмная обводка — как моушн-дизайн и инфографика.", tags: ["motion", "clean"] },
     env: { toneMapping: "neutral",
       matstyle: { kind: "cel", tones: 2, soft: 0.0, shade: 0.74, shadeTint: "#5e5aa8", rim: 0, spec: 0, flatColor: true, outline: { width: 3.0, color: "#1d1b2b" } },
-      post: { ao: 0, bloom: false, vignette: 0, grain: 0, ca: 0, grade: GR({ saturation: 1.15, contrast: 1.04 }) } },
+      post: { ao: 0, bloom: false, vignette: 0, grain: 0, ca: 0, grade: GR({ saturation: 1.12, contrast: 1.02, split: 0 }) } },
   },
   noir: {
     meta: { name: "noir", title: "Нуар", ru: "Чёрно-белое кино: жёсткий свет, глубокие тени, зерно плёнки, тёмные углы. Детектив, драма, мрачный юмор.", tags: ["cinema", "drama"] },
@@ -95,14 +95,14 @@ export const LOOKS: Record<string, LookDef> = {
   vhs_found: {
     meta: { name: "vhs_found", title: "VHS-кассета (found footage)", ru: "Запись со старой камеры: расплывшийся цвет, строки развёртки, полоса трекинга, дата в углу. Найденная плёнка, крипи, «90-е».", tags: ["retro", "horror"] },
     env: { toneMapping: "aces",
-      post: { ao: 0, bloom: { strength: 0.45, radius: 0.6, threshold: 0.7 }, grade: GR({ saturation: 0.82, lift: [0.04, 0.03, 0.05], contrast: 1.06 }), vignette: 0.42, grain: 0.07, ca: 1.5 },
+      post: { ao: 0, bloom: { strength: 0.3, radius: 0.6, threshold: 0.82 }, grade: GR({ saturation: 0.82, lift: [0.04, 0.03, 0.05], contrast: 1.06 }), vignette: 0.42, grain: 0.07, ca: 1.5 },
       stylize: { vhs: 1, scanlines: 0.3, stamp: "PLAY ▶\nNOV.12 1998  03:17", softness: 1.2 } },
   },
   neon_cyber: {
     meta: { name: "neon_cyber", title: "Неоновый киберпанк", ru: "Тёмные глянцевые поверхности, кислотная обводка-неон по краям, сильное свечение, малиново-бирюзовый раскол цвета.", tags: ["neon", "night"] },
     env: { toneMapping: "aces", exposure: 1.1,
-      matstyle: { kind: "neon", darken: 0.5, roughness: 0.32, rimA: "#ff3cc8", rimB: "#2ee6ff", rim: 0.9 },
-      post: { ao: 0.6, aoRadius: 0.3, bloom: { strength: 1.0, radius: 0.65, threshold: 0.55 }, grade: GR({ shadows: "#1a2a6a", highlights: "#ff6ad8", split: 0.5, saturation: 1.2, contrast: 1.1 }), vignette: 0.45, grain: 0.035, ca: 2.2 },
+      matstyle: { kind: "neon", darken: 0.42, roughness: 0.32, rimA: "#ff3cc8", rimB: "#2ee6ff", rim: 0.55 },
+      post: { ao: 0.6, aoRadius: 0.3, bloom: { strength: 0.75, radius: 0.55, threshold: 0.7 }, grade: GR({ shadows: "#1a2a6a", highlights: "#ff6ad8", split: 0.3, saturation: 1.15, contrast: 1.18 }), vignette: 0.5, grain: 0.035, ca: 2.0 },
       stylize: { scanlines: 0.06 } },
   },
   cinematic: {

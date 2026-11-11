@@ -95,7 +95,7 @@ export const LIGHT_RIGS: Record<string, RigDef> = {
       return {
         lights: [
           { type: "hemisphere", id: "night", color: "#2a2f5a", ground: "#120c1c", intensity: 0.35 * k(c) },
-          { type: "point", id: "neon_a", color: "#ff2fa8", intensity: 4 * k(c), position: at(c, [1.3 * s, 0.6, 0.5]), distance: 7, decay: 2 },
+          { type: "point", id: "neon_a", color: "#ff2fa8", intensity: 2.4 * k(c), position: at(c, [1.3 * s, 0.6, 0.5]), distance: 7, decay: 2 },
           { type: "point", id: "neon_b", color: "#22d8ff", intensity: 4.5 * k(c), position: at(c, [-1.4 * s, 0.9, -0.9]), distance: 7, decay: 2 },
           { type: "spot", id: "street", color: "#ffa04a", intensity: 26 * k(c), position: at(c, [0.4 * s, 3.6, 1.2]), target: at(c, [0, -1.2, 0.3]), angle: 34, penumbra: 0.7, castShadow: true,
             beam: { length: 4.2, opacity: 0.12 }, halo: { size: 0.35, opacity: 0.7 } },
@@ -109,12 +109,12 @@ export const LIGHT_RIGS: Record<string, RigDef> = {
   horror_lamp: {
     meta: { name: "horror_lamp", title: "Одна лампа (хоррор)", ru: "Голая лампочка над героем и чернота вокруг; свет иногда вздрагивает. Хоррор, допрос, тревога.", params: [PI, { name: "flicker", type: "number", default: 1, min: 0, max: 1, ru: "сила мерцания" }], tags: ["horror", "dark"] },
     fn: (c) => {
-      const base = 4.5 * k(c);
+      const base = 3.2 * k(c);
       const f = c.p.flicker ?? 1;
       return {
         lights: [
           { type: "ambient", id: "dark", color: "#1b2026", intensity: 0.08 * k(c) },
-          { type: "point", id: "bulb", color: "#ffd7a0", intensity: base, position: at(c, [0.15, 1.05, 0.35]), distance: 6, decay: 2, castShadow: true, shadow: { size: 1024, radius: 1.5, far: 9 },
+          { type: "point", id: "bulb", color: "#ffd7a0", intensity: base, position: at(c, [0.25, 1.35, 0.1]), distance: 6, decay: 2, castShadow: true, shadow: { size: 1024, radius: 1.5, far: 9 },
             halo: { size: 0.28, opacity: 0.85 }, keys: f > 0 ? flickerKeys(c.duration, base, 0.18 * f, 13, 12) : undefined,
             flicker: f > 0 ? [{ t: c.duration * 0.42, amount: 0.85 * f, duration: 0.5 }, { t: c.duration * 0.78, amount: 0.6 * f, duration: 0.35 }] : undefined },
         ],
@@ -178,7 +178,7 @@ export const LIGHT_RIGS: Record<string, RigDef> = {
   campfire: {
     meta: { name: "campfire", title: "Костёр", ru: "Тёплый живой свет снизу, дрожащий как пламя, и холодная луна в спину. Лагерь, страшилки у огня, уют.", params: [PI], tags: ["night", "warm", "outdoor"] },
     fn: (c) => {
-      const base = 6 * k(c);
+      const base = 4.2 * k(c);
       const fire = at(c, [0, -c.subject[1] + 0.35, 1.0]);
       return {
         lights: [

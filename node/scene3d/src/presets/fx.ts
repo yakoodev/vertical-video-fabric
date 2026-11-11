@@ -61,7 +61,7 @@ export const FX: Record<string, FxDef> = {
   },
   god_rays: {
     meta: { name: "god_rays", title: "Божественные лучи", ru: "Видимые лучи света от солнца/окна/лампы, расходящиеся в воздухе.", params: [AMT(), { name: "from", type: "string", default: "auto", ru: "откуда: id лампы, sun или auto (самая яркая)" }] },
-    fn: (p) => ({ stylize: { rays: { strength: 0.55 * p.amount, from: p.from } } }),
+    fn: (p) => ({ stylize: { rays: { strength: 0.65 * p.amount, from: p.from } } }),
   },
   lens_flare: {
     meta: { name: "lens_flare", title: "Блики объектива", ru: "Кольца и полоса блика, когда в кадре яркая лампа или солнце. Летнее, «киношное».", params: [AMT(), { name: "from", type: "string", default: "auto", ru: "от какой лампы: id, sun или auto" }] },
@@ -88,7 +88,7 @@ export const MOODS: Record<string, MoodDef> = {
   },
   foggy_morning: {
     meta: { name: "foggy_morning", title: "Туманное утро", ru: "Молочный рассеянный свет, слои тумана, пылинки. Тихо, сонно, немного грустно." },
-    light: "overcast_soft", fx: [{ name: "fog_layers", amount: 1.4 }, { name: "dust_motes", amount: 0.6 }, { name: "film_grain", amount: 0.6 }], grade: { saturation: 0.85, lift: [0.04, 0.045, 0.05] },
+    light: "overcast_soft", lightParams: { intensity: 0.85 }, fx: [{ name: "fog_layers", amount: 0.7 }, { name: "dust_motes", amount: 0.6 }, { name: "film_grain", amount: 0.6 }], grade: { saturation: 0.88, contrast: 1.05 },
   },
   snowy_evening: {
     meta: { name: "snowy_evening", title: "Снежный вечер", ru: "Синий зимний вечер, медленный снег, тёплые огни вдали. Новогоднее, уютное." },
@@ -104,7 +104,7 @@ export const MOODS: Record<string, MoodDef> = {
   },
   dreamy_pastel: {
     meta: { name: "dreamy_pastel", title: "Пастельный сон", ru: "Мягкий свет, засветки плёнки, свечение, приподнятые пастельные тени. Мечта, флешбэк." },
-    light: "overcast_soft", fx: [{ name: "light_leak", color: "#ff9ad0" }, { name: "bloom", amount: 1.2 }, { name: "depth_of_field", amount: 0.8 }], grade: { lift: [0.07, 0.05, 0.08], saturation: 0.9 },
+    light: "golden_hour", lightParams: { intensity: 0.75 }, fx: [{ name: "light_leak", amount: 0.7, color: "#ff9ad0" }, { name: "bloom", amount: 1.1 }, { name: "depth_of_field", amount: 0.8 }], grade: { lift: [0.05, 0.035, 0.06], saturation: 0.92 },
   },
   summer_noon: {
     meta: { name: "summer_noon", title: "Летний полдень", ru: "Яркое солнце, блики объектива, тёплые засветки. Каникулы, жара." },

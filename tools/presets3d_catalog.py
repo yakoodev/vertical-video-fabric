@@ -111,31 +111,36 @@ def base_spec(duration: float = 4.0) -> dict:
     return {"width": W, "height": H, "fps": 30, "duration": duration, "characters": [json.loads(json.dumps(HERO))]}
 
 
+def _in_room(s: dict, room: str, *, look: str, light: str | None) -> dict:
+    """Опорная сцена «герой в окружении room» с общим планом из suggest.camera окружения."""
+    sug = (presets3d.get("room", room) or {}).get("suggest") or {}
+    cam = {"move": "static", "target": "hero:chest", "distance": 4.2, "height": 0.6, "yaw": 25, **(sug.get("camera") or {})}
+    s["presets"] = {"room": room, "look": look, "camera": [cam], **({"light": light} if light else {})}
+    return s
+
+
 def reference_spec(category: str, name: str) -> tuple[dict, list[float]]:
     """Сцена-образец пресета и моменты кадров (1 кадр — пресет-«картинка», 3 — движение)."""
     s = base_spec()
     look_room = {"room": "studio_cyclorama"}
     if category == "look":
-        s["objects"] = _props_showcase()
-        s["presets"] = {"look": name, "light": "golden_hour" if name in ("clay", "watercolor", "toon_ink", "lowpoly_toy") else "studio_3pt",
-                        **look_room, "camera": [{"move": "static", "target": "hero:chest", "distance": 3.3, "height": 0.25, "yaw": 18}]}
-        if name in ("neon_cyber",):
-            s["presets"]["light"] = "night_neon"
-        if name in ("vhs_found", "noir"):
-            s["presets"]["light"] = "horror_lamp" if name == "vhs_found" else "stage_spot"
+        # Один и тот же уютный стол и тот же кадр — меняется только стиль (свет — родной для стиля).
+        light = {"neon_cyber": "monitor_glow", "vhs_found": "monitor_glow", "noir": "moonlight", "psx": "moonlight"}.get(name, "golden_hour")
+        s["presets"] = {"look": name, "light": light, "room": "cozy_desk",
+                        "camera": [{"move": "static", "target": "hero:chest", "distance": 3.7, "height": 0.55, "yaw": -14, "fov": 40}]}
         return s, [1.5]
     if category == "light":
-        s["objects"] = _props_showcase()
-        room = {"room": "void_stage"} if name in ("stage_spot", "horror_lamp", "campfire", "night_neon", "moonlight", "underwater") else {}
-        s["presets"] = {"look": "cinematic", "light": name, **room, "camera": [{"move": "static", "target": "hero:chest", "distance": 3.2, "height": 0.3, "yaw": 22}]}
-        if not room:
-            s["objects"].insert(0, {"id": "ground", "primitive": "cylinder", "position": [0, -0.02, 0], "params": {"size": [30, 0.02], "color": "#8a8478", "segments": 48}})
-        return s, [1.5]
+        # Схема в «своём» окружении (улица — лес, ночь города — крыша, экран — RGB-комната…) и родным общим планом.
+        room = {"golden_hour": "forest_clearing", "overcast_soft": "forest_clearing", "noon_sun": "forest_clearing",
+                "campfire": "forest_clearing", "moonlight": "city_rooftop", "night_neon": "city_rooftop", "studio_3pt": "studio_cyclorama",
+                "stage_spot": "void_stage", "horror_lamp": "kitchen_night", "monitor_glow": "gamer_rgb", "sunrise_window": "cozy_desk",
+                "underwater": "forest_clearing"}.get(name, "studio_cyclorama")
+        return _in_room(s, room, look="anime_soft", light=name), [1.5]
     if category == "camera":
         s["objects"] = _props_showcase()
         mv: dict = {"move": name, "t0": 0, "t1": 4, "target": "hero"}
         if name == "over_shoulder":
-            s["characters"].append({**json.loads(json.dumps(HERO)), "id": "friend", "at": None, "position": [0.2, 0, 1.8], "yaw": 180,
+            s["characters"].append({**json.loads(json.dumps(HERO)), "id": "friend", "at": None, "position": [0.25, 0, 2.5], "yaw": 180,
                                     "voxel": {**HERO["voxel"], "top": "#ef8354", "hair": "#c98b4b"}})
             mv = {"move": name, "t0": 0, "t1": 4, "who": "hero", "target": "friend"}
         if name == "whip_pan":
@@ -143,20 +148,23 @@ def reference_spec(category: str, name: str) -> tuple[dict, list[float]]:
         s["presets"] = {"look": "anime_soft", "light": "studio_3pt", **look_room, "camera": [mv]}
         return s, [0.05, 2.0, 3.95]
     if category == "fx":
-        s["objects"] = _props_showcase()
-        light = {"rain": "night_neon", "snow": "moonlight", "dust_motes": "sunrise_window", "god_rays": "sunrise_window",
-                 "fireflies": "campfire", "lens_flare": "golden_hour", "light_leak": "golden_hour", "fog_layers": "moonlight",
-                 "bloom": "night_neon"}.get(name, "studio_3pt")
-        cam = {"move": "static", "target": "hero:chest", "distance": 3.4, "height": 0.2, "yaw": 20}
+        room, light = {"rain": ("city_rooftop", "night_neon"), "snow": ("city_rooftop", "moonlight"), "dust_motes": ("cozy_desk", "sunrise_window"),
+                       "god_rays": ("cozy_desk", "sunrise_window"), "fireflies": ("forest_clearing", "campfire"), "lens_flare": ("forest_clearing", "golden_hour"),
+                       "light_leak": ("forest_clearing", "golden_hour"), "fog_layers": ("forest_clearing", "moonlight"), "bloom": ("gamer_rgb", "monitor_glow"),
+                       "depth_of_field": ("cozy_desk", "golden_hour"), "film_grain": ("kitchen_night", "moonlight"),
+                       "chromatic": ("gamer_rgb", "night_neon"), "vignette": ("train_station", "moonlight")}.get(name, ("studio_cyclorama", "studio_3pt"))
+        s = _in_room(s, room, look="anime_soft", light=light)
+        s["presets"]["fx"] = [name]
         if name in ("lens_flare", "god_rays"):
-            cam = {"move": "static", "target": "hero:chest", "distance": 3.4, "height": -0.2, "yaw": 150}
-        s["presets"] = {"look": "cinematic", "light": light, "fx": [name], "camera": [cam]}
-        s["objects"].insert(0, {"id": "ground", "primitive": "cylinder", "position": [0, -0.02, 0], "params": {"size": [30, 0.02], "color": "#6f6a62", "segments": 48}})
+            # Источник в кадре: камера смотрит против света.
+            s["presets"]["camera"] = [{"move": "static", "target": "hero:chest", "distance": 3.6, "height": 0.1, "yaw": 55 if name == "lens_flare" else -70, "fov": 42}]
         return s, [2.0]
     if category == "mood":
-        s["objects"] = _props_showcase()
-        s["objects"].insert(0, {"id": "ground", "primitive": "cylinder", "position": [0, -0.02, 0], "params": {"size": [30, 0.02], "color": "#6f6a62", "segments": 48}})
-        s["presets"] = {"look": "cinematic", "mood": name, "camera": [{"move": "static", "target": "hero:chest", "distance": 3.4, "height": 0.25, "yaw": 25}]}
+        room = {"night_rain": "city_rooftop", "foggy_morning": "forest_clearing", "snowy_evening": "city_rooftop", "dusty_attic": "cozy_desk",
+                "horror_flicker": "kitchen_night", "dreamy_pastel": "forest_clearing", "summer_noon": "forest_clearing", "cyber_night": "city_rooftop",
+                "cozy_evening": "cozy_desk", "campfire_tales": "forest_clearing"}.get(name, "studio_cyclorama")
+        s = _in_room(s, room, look="anime_soft", light=None)
+        s["presets"]["mood"] = name
         return s, [2.0]
     if category == "room":
         meta = presets3d.get("room", name) or {}

@@ -95,7 +95,7 @@ const RIM_GLSL = /* glsl */ `
 
 function celMaterial(m: any, ms: MatStyle, grad: THREE.DataTexture): THREE.Material {
   const t = new THREE.MeshToonMaterial({
-    color: m.color?.clone() ?? new THREE.Color("#cccccc"), map: ms.flatColor ? null : m.map ?? null, gradientMap: grad,
+    color: m.color?.clone() ?? new THREE.Color("#cccccc"), map: ms.flatColor && !m.transparent && !(m.alphaTest > 0) ? null : m.map ?? null, gradientMap: grad,
     emissive: m.emissive?.clone() ?? new THREE.Color(0), emissiveMap: m.emissiveMap ?? null, emissiveIntensity: m.emissiveIntensity ?? 1,
     transparent: !!m.transparent, opacity: m.opacity ?? 1, alphaTest: m.alphaTest ?? 0, side: m.side ?? THREE.FrontSide, alphaMap: m.alphaMap ?? null,
     vertexColors: !!m.vertexColors,

@@ -119,9 +119,9 @@ export function cameraKeys(moves: Record<string, any>[], ctx: ExpandCtx, fps: nu
     const heading = m.heading ?? tg.heading;
     if (m.move === "over_shoulder" && typeof m.who === "string" && ctx.chars[m.who]) {
       // Плечо героя ведёт сам движок (follow): камера держит рост и долю кадра, смотрит в цель.
-      const base = { follow: m.who, look: tg.point, side: m.side ?? 1, fov: m.fov ?? 38, framing: m.framing ?? 0.3, ...(dof !== undefined ? { dof } : {}) };
-      keys.push({ t: t0, ...base, ...(m.cut !== false ? { cut: true } : {}) });
-      keys.push({ t: t1, ...base, distance: (m.distance ?? 1.6) * (1 - 0.12 * (m.strength ?? 1)), ease: "inOutSine" });
+      const base = { follow: m.who, look: tg.point, side: m.side ?? 1, fov: m.fov ?? 40, framing: m.framing ?? 0.16, height: m.height ?? 1.0, ...(dof !== undefined ? { dof } : {}) };
+      keys.push({ t: t0, ...base, distance: m.distance ?? 2.0, ...(m.cut !== false ? { cut: true } : {}) });
+      keys.push({ t: t1, ...base, distance: (m.distance ?? 2.0) * (1 - 0.12 * (m.strength ?? 1)), ease: "inOutSine" });
       prev = undefined;
       return;
     }

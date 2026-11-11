@@ -1561,7 +1561,7 @@
     "name": "dreamy_pastel",
     "title": "Пастельный сон",
     "ru": "Мягкий свет, засветки плёнки, свечение, приподнятые пастельные тени. Мечта, флешбэк.",
-    "light": "overcast_soft",
+    "light": "golden_hour",
     "fx": [
      "light_leak",
      "bloom",

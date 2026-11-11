@@ -63,10 +63,10 @@ function particles(spec: AtmosSpec, focus: THREE.Vector3, H: number): THREE.Poin
   const amt = Math.max(0, spec.amount ?? 1);
   const kind = spec.kind;
   const cfg = {
-    rain: { n: 2600, cell: 9, size: 110, speed: 7.5, sway: 0, color: "#c8d4ea", alpha: 0.42, blend: THREE.NormalBlending, twinkle: 0 },
-    snow: { n: 1700, cell: 9, size: 30, speed: 0.75, sway: 0.25, color: "#ffffff", alpha: 0.9, blend: THREE.NormalBlending, twinkle: 0 },
-    dust: { n: 650, cell: 5, size: 7, speed: 0.025, sway: 0.18, color: "#ffe9c4", alpha: 0.75, blend: THREE.AdditiveBlending, twinkle: 0.8 },
-    fireflies: { n: 90, cell: 8, size: 26, speed: -0.04, sway: 0.6, color: spec.color || "#ffe27a", alpha: 1, blend: THREE.AdditiveBlending, twinkle: 1 },
+    rain: { n: 16000, cell: 15, size: 170, speed: 7.5, sway: 0, color: "#d6e0f2", alpha: 0.62, blend: THREE.NormalBlending, twinkle: 0 },
+    snow: { n: 11000, cell: 15, size: 58, speed: 0.75, sway: 0.25, color: "#ffffff", alpha: 0.9, blend: THREE.NormalBlending, twinkle: 0 },
+    dust: { n: 2000, cell: 7, size: 16, speed: 0.025, sway: 0.18, color: "#ffe9c4", alpha: 0.9, blend: THREE.AdditiveBlending, twinkle: 0.8 },
+    fireflies: { n: 380, cell: 12, size: 80, speed: -0.04, sway: 0.6, color: spec.color || "#ffe27a", alpha: 2.2, blend: THREE.AdditiveBlending, twinkle: 1 },
   }[kind as "rain"]!;
   const n = Math.round(cfg.n * amt);
   const rnd = seeded(spec.seed ?? (kind === "rain" ? 11 : kind === "snow" ? 23 : kind === "dust" ? 37 : 41));

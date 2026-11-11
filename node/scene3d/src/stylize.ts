@@ -116,10 +116,10 @@ void main() {
     for (int i = 0; i < 40; i++) {
       p -= d;
       vec3 c = tex(p);
-      acc += max(c - 0.62, 0.0) * decay;
-      decay *= 0.965;
+      acc += max(c - 0.58, 0.0) * decay;
+      decay *= 0.975;
     }
-    col += acc / 40.0 * raysK * 3.2 * lightVis;
+    col += acc / 40.0 * raysK * 2.2 * lightVis;
   }
   // --- акварель: растекание и края заливок ---
   if (watercolor > 0.0) {
