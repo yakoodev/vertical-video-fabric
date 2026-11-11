@@ -414,6 +414,14 @@ export interface Account {
   proxy_display: string;
   /** TikTok — ник из TikTok Studio; YouTube — канал для загрузки (UC… или @ник), пусто — по умолчанию. */
   handle?: string;
+  /** Браузер аккаунта держит вход: своё значение (null — по умолчанию) и что действует. */
+  keepalive?: boolean | null;
+  keepalive_on?: boolean;
+  keepalive_at?: string | null;
+  /** '' — не смотрели, ok — вход живой, needs_reauth — вылетел, captcha — просит проверку, error — заход не удался. */
+  session_state?: string;
+  session_reason?: string;
+  session_checked_at?: string | null;
   updated_at: string;
 }
 

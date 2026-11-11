@@ -71,8 +71,28 @@ class AccountRead(BaseModel):
     user_agent: str = ""
     # TikTok — ник, узнанный в TikTok Studio; YouTube — канал для загрузки (UC… или @ник).
     handle: str = ""
+    # Поддержка входа браузером (app/session_keepalive.py): keepalive — своё значение аккаунта (None — по
+    # умолчанию), keepalive_on — что действует; session_state — ok / needs_reauth / captcha / error / '' (не смотрели).
+    keepalive: bool | None = None
+    keepalive_on: bool = False
+    keepalive_at: str | None = None
+    session_state: str = ""
+    session_reason: str = ""
+    session_checked_at: str | None = None
     created_at: str
     updated_at: str
+
+
+class AccountKeepalive(BaseModel):
+    enabled: bool | None = Field(
+        default=None, description="true/false — включить или выключить; null — по умолчанию (включено при своём прокси).")
+
+
+class KeepaliveSettings(BaseModel):
+    enabled: bool | None = None
+    interval_hours: float | None = Field(default=None, description="Как часто заходить браузером (часы, 1–48).")
+    fresh_before_upload_hours: float | None = Field(
+        default=None, description="Перед загрузкой зайти, если прошлый заход старше (часы, 0 — не заходить).")
 
 
 class JobTargetRead(BaseModel):
@@ -230,6 +250,35 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
             return get_store().set_account_channel(account_id, payload.channel)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.put(
+        "/api/accounts/{account_id}/keepalive",
+        response_model=AccountRead,
+        tags=["Accounts"],
+        summary="Turn the keep-alive browser visits on or off for an account",
+        description="Read-only visits of the platform from the account's own browser profile keep the session alive.",
+    )
+    def api_set_account_keepalive(account_id: int, payload: AccountKeepalive, _auth: auth_dep) -> dict:
+        try:
+            return get_store().set_account_keepalive(account_id, payload.enabled)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.get("/api/settings/session-keepalive", tags=["Accounts"],
+                summary="Keep-alive browser settings (interval, freshness before upload)")
+    def api_keepalive_settings(_auth: auth_dep) -> dict:
+        from app import session_keepalive
+
+        return {**session_keepalive.get_settings(get_store()), "status": session_keepalive.status()}
+
+    @router.put("/api/settings/session-keepalive", tags=["Accounts"], summary="Change keep-alive browser settings")
+    def api_save_keepalive_settings(payload: KeepaliveSettings, _auth: auth_dep) -> dict:
+        from app import session_keepalive
+
+        try:
+            return session_keepalive.save_settings(get_store(), payload.model_dump(exclude_none=True))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

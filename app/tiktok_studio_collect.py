@@ -189,9 +189,12 @@ def run_session(store: Any, account_id: int, video_ids: list[str],
     Cookie, прокси и user agent — окружением процесса, в аргументах только id роликов."""
     from app.proxy_config import mask_secrets
 
+    from app.browser_lock import BROWSER_LOCK
+
     account = store.get_account(int(account_id))
+    stored = store.get_account_cookies(int(account_id))
     env = {key: value for key, value in os.environ.items() if key not in _SECRET_ENV}
-    env["TT_STUDIO_COOKIES"] = json.dumps(playwright_cookies(store.get_account_cookies(int(account_id))))
+    env["TT_STUDIO_COOKIES"] = json.dumps(playwright_cookies(stored))
     proxy = store.get_account_proxy_url(int(account_id))
     if proxy:
         env["TT_STUDIO_PROXY"] = proxy
@@ -201,23 +204,54 @@ def run_session(store: Any, account_id: int, video_ids: list[str],
     env["TT_STUDIO_PAUSE_MS"] = str(int(pause_seconds() * 1000))
     timeout = NODE_TIMEOUT_BASE + NODE_TIMEOUT_PER_VIDEO * len(video_ids)
     try:
-        proc = runner([settings.node_bin, str(_SCRIPT), str(_playwright_dir()), ",".join(video_ids)],
-                      text=True, capture_output=True, timeout=timeout, check=False, env=env)
+        # Один Chromium на сервис (app/browser_lock.py). В очередь тяжёлых задач проход не встаёт: он длинный
+        # (до 15 роликов с паузами), рендеры его не ждут.
+        with BROWSER_LOCK:
+            proc = runner([settings.node_bin, str(_SCRIPT), str(_playwright_dir()), ",".join(video_ids)],
+                          text=True, capture_output=True, timeout=timeout, check=False, env=env)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"TikTok Studio не ответил за {timeout} с") from None
     except OSError as exc:
         raise RuntimeError(f"node не запустился: {exc}") from None
+    data = _last_json(proc.stdout)
     if proc.returncode != 0:
+        _save_cookies(store, int(account_id), stored, data)  # сбой посреди прохода: ротации не теряем
         tail = [line for line in (proc.stderr or "").splitlines() if line.strip()][-1:]
         raise RuntimeError(mask_secrets(" ".join(tail) or f"код {proc.returncode}")[:300])
-    try:
-        data = json.loads((proc.stdout or "").strip().splitlines()[-1])
-    except (ValueError, IndexError):
-        raise RuntimeError("скрипт TikTok Studio вернул не JSON") from None
-    if not isinstance(data, dict):
+    if data is None:
         raise RuntimeError("скрипт TikTok Studio вернул не JSON")
+    _save_cookies(store, int(account_id), stored, data)
+    if data.get("login_required"):
+        try:  # то же состояние входа и одно сообщение владельцу, что у браузера аккаунта (app/session_health.py)
+            from app import session_health
+
+            session_health.record(store, int(account_id), "needs_reauth", "TikTok Studio перекинул на вход",
+                                  source="tiktok-studio")
+        except Exception:  # noqa: BLE001
+            pass
     data.setdefault("videos", {})
     return data
+
+
+def _last_json(stdout: str | None) -> dict | None:
+    try:
+        data = json.loads((stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_cookies(store: Any, account_id: int, stored: list, data: dict | None) -> list[str]:
+    """Cookie контекста Studio — обратно аккаунту (app/session_cookies.py). Studio перекинул на вход — не пишем:
+    гостевые cookie живой вход не заменят. Из ответа cookie убираются в любом случае."""
+    from app.session_cookies import save_rotated
+
+    if not isinstance(data, dict):
+        return []
+    fresh = data.pop("cookies", None)
+    if data.get("login_required") or not isinstance(fresh, list):
+        return []
+    return save_rotated(store, account_id, "tiktok", stored, fresh, source="tiktok-studio")
 
 
 def _save_handle(store: Any, account_id: int, handle: str) -> None:

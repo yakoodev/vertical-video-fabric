@@ -129,6 +129,7 @@ export function AccountsSettings() {
                 <span>прокси: {acc.proxy_display}</span>
                 {acc.missing_cookies ? <span style={{ color: "var(--warn)" }}>не хватает: {acc.missing_cookies}</span> : null}
               </div>
+              {acc.platform === "youtube" || acc.platform === "tiktok" ? <AccountSessionRow account={acc} /> : null}
               {acc.platform === "youtube" ? <AccountChannelForm account={acc} /> : null}
               <AccountProxyForm account={acc} />
               <div>
@@ -140,6 +141,48 @@ export function AccountsSettings() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+const SESSION_TEXT: Record<string, string> = {
+  ok: "вход живой",
+  needs_reauth: "вылетел — обнови куки расширением",
+  captcha: "просит проверку (капча)",
+  error: "заход не удался",
+};
+
+/** Вход аккаунта: что увидел браузер сервиса и переключатель «держать вход». */
+function AccountSessionRow({ account }: { account: Account }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const state = account.session_state ?? "";
+  const save = useMutation({
+    mutationFn: (enabled: boolean) => accountsApi.setKeepalive(account.id, enabled),
+    onSuccess: (acc) => {
+      toast.success(acc.keepalive_on ? "Браузер будет держать вход" : "Браузер больше не заходит");
+      qc.invalidateQueries({ queryKey: qk.accounts });
+    },
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
+  });
+  const bad = state === "needs_reauth" || state === "captcha";
+  return (
+    <div className="muted" style={{ fontSize: 13, display: "grid", gap: 4 }}>
+      {state ? (
+        <span style={bad ? { color: "var(--warn)" } : undefined} title={account.session_reason || undefined}>
+          {SESSION_TEXT[state] ?? state}
+          {account.session_checked_at ? ` · ${account.session_checked_at} UTC` : ""}
+        </span>
+      ) : null}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={Boolean(account.keepalive_on)}
+          disabled={save.isPending}
+          onChange={(e) => save.mutate(e.target.checked)}
+        />
+        <span>Держать вход живым (браузер сервиса заходит раз в 4–6 ч)</span>
+      </label>
     </div>
   );
 }

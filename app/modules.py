@@ -346,9 +346,9 @@ MODULES: list[Module] = [
         "Аккаунты и выкладка на YouTube, TikTok, Instagram: очередь заданий и фоновый работник выкладки.",
         cost=("network",), cost_note="загрузка роликов на площадки",
         routes=("/api/posts", "POST /ui/posts", "POST /api/clips/{id}/posts", "POST /api/clips/posts-batch", "/api/accounts*", "/api/jobs*",
-                "/api/clips/{id}/publish-check"),
+                "/api/clips/{id}/publish-check", "/api/settings/session-keepalive"),
         ui=("пункты меню «Публикации» и «Аккаунты», кнопки «Опубликовать»",),
-        workers=("job-worker",),
+        workers=("job-worker", "session-keeper"),
     ),
     Module(
         "publish_meta", "ИИ-заголовки и описания", "publish",

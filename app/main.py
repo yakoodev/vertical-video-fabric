@@ -43,6 +43,9 @@ seed_music(store)
 seed_default_brand(store)
 worker = JobWorker(store)
 stats_collector = StatsCollector(store)
+from app.session_keepalive import SessionKeeper  # noqa: E402 - браузер аккаунтов: держит вход живым
+
+session_keeper = SessionKeeper(store)
 from app.autopilot import AutopilotWorker  # noqa: E402 - автопилот: карточки, Telegram, сводки
 
 autopilot_worker = AutopilotWorker(store)
@@ -70,6 +73,7 @@ AuthDep = Annotated[None, Depends(require_auth)]
 # через лямбды: тесты подменяют app.main.store / worker / … на свои.
 modules.bind_store(lambda: store)
 modules.register_worker("publishing", "job-worker", lambda: worker)
+modules.register_worker("publishing", "session-keeper", lambda: session_keeper)
 modules.register_worker("platform_stats", "stats-collector", lambda: stats_collector)
 modules.register_worker("autopilot", "autopilot", lambda: autopilot_worker)
 modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)

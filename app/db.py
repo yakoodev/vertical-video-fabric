@@ -382,6 +382,19 @@ class Database:
             # Ник аккаунта на площадке (TikTok — без @, маленькими): сервис узнаёт его сам в TikTok Studio
             # и по нему находит аккаунт видео, выложенного руками (app/tiktok_studio_collect.py).
             self._ensure_column(conn, "accounts", "handle", "TEXT NOT NULL DEFAULT ''")
+            # Живость входа (app/session_keepalive.py, app/session_health.py). cookies_set_at — когда владелец
+            # сам прислал cookie (не ротация): по нему профиль браузера аккаунта засевается заново.
+            # keepalive: NULL — по умолчанию (включено, если у аккаунта свой прокси), 1 — вкл, 0 — выкл.
+            # session_state: '' (не проверяли) / ok / needs_reauth / captcha / error; session_alerted — о каком
+            # состоянии уже написали в Telegram (одно сообщение на случай).
+            self._ensure_column(conn, "accounts", "cookies_set_at", "TEXT")
+            self._ensure_column(conn, "accounts", "keepalive", "INTEGER")
+            self._ensure_column(conn, "accounts", "keepalive_at", "TEXT")
+            self._ensure_column(conn, "accounts", "keepalive_next_at", "TEXT")
+            self._ensure_column(conn, "accounts", "session_state", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "accounts", "session_reason", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(conn, "accounts", "session_checked_at", "TEXT")
+            self._ensure_column(conn, "accounts", "session_alerted", "TEXT NOT NULL DEFAULT ''")
             # Запрос поста ушёл, а ответа нет: ролик мог выйти (app/store_jobs.py не даст повторить молча).
             self._ensure_column(conn, "job_targets", "maybe_posted", "INTEGER NOT NULL DEFAULT 0")
             # Content crop rect (JSON {x,y,w,h} normalized 0..1) to strip letter/pillarbox bars.

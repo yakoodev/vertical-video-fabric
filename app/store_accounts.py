@@ -115,7 +115,9 @@ class AccountsStore:
                 """
                 UPDATE accounts
                 SET encrypted_cookies = ?, encrypted_proxy_url = ?, user_agent = ?, cookie_count = ?,
-                    has_required_cookies = ?, missing_cookies = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP
+                    has_required_cookies = ?, missing_cookies = ?, deleted_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                    cookies_set_at = CURRENT_TIMESTAMP, keepalive_next_at = NULL,
+                    session_state = '', session_reason = '', session_alerted = ''
                 WHERE id = ?
                 """,
                 (encrypted, encrypted_proxy_url, user_agent, len(cookies), int(ok), ",".join(missing),
@@ -127,8 +129,8 @@ class AccountsStore:
                 """
                 INSERT INTO accounts
                     (platform, label, encrypted_cookies, encrypted_proxy_url, user_agent, cookie_count,
-                     has_required_cookies, missing_cookies)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     has_required_cookies, missing_cookies, cookies_set_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 (platform, label, encrypted, encrypted_proxy_url, user_agent, len(cookies), int(ok),
                  ",".join(missing)),
@@ -140,7 +142,8 @@ class AccountsStore:
         rows = self.db.query_all(
             """
             SELECT id, platform, label, encrypted_proxy_url, user_agent, handle, cookie_count, has_required_cookies,
-                   missing_cookies, created_at, updated_at
+                   missing_cookies, created_at, updated_at, keepalive, keepalive_at, session_state, session_reason,
+                   session_checked_at
             FROM accounts
             WHERE deleted_at IS NULL
             ORDER BY platform, label
@@ -193,6 +196,14 @@ class AccountsStore:
             "UPDATE accounts SET handle = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (youtube_channel(channel), account_id),
         )
+        return self.get_account(account_id)
+
+    def set_account_keepalive(self, account_id: int, enabled: bool | None) -> dict:
+        """Поддержка входа браузером для аккаунта (app/session_keepalive.py): True/False; None — по умолчанию
+        (включена, если у аккаунта свой прокси)."""
+        self.get_account(account_id)
+        value = None if enabled is None else int(bool(enabled))
+        self.db.execute("UPDATE accounts SET keepalive = ?, keepalive_next_at = NULL WHERE id = ?", (value, account_id))
         return self.get_account(account_id)
 
     def get_account_cookies(self, account_id: int):
@@ -268,6 +279,12 @@ class AccountsStore:
             proxy_url = str(self.cipher.decrypt_json(encrypted_proxy_url)).strip()
         data["has_required_cookies"] = bool(data["has_required_cookies"])
         data["proxy_configured"] = bool(proxy_url)
+        if "keepalive" in data:
+            # Своё значение аккаунта или по умолчанию: браузер поддерживает вход, если у аккаунта свой прокси.
+            own = data["keepalive"]
+            data["keepalive"] = None if own is None else bool(own)
+            data["keepalive_on"] = bool(own) if own is not None else bool(proxy_url)
+        data.pop("session_alerted", None)
         # Тот же запасной прокси, что берёт get_account_proxy_url (настройка сервиса, затем env).
         data["proxy_display"] = _redact_proxy_url(proxy_url) if proxy_url else (
             "global proxy" if self.get_global_proxy_url() else "direct"

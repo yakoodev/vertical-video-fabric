@@ -23,12 +23,12 @@ import os
 import shutil
 import subprocess
 import tempfile
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from app.browser_lock import BROWSER_LOCK, browser_slot
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -84,8 +84,8 @@ CHROME_CANDIDATES = (
     "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
     "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe", "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
 )
-# Один Chromium за раз на весь процесс (памяти мало): снимки и правки страниц идут по очереди.
-_BROWSER_LOCK = threading.Lock()
+# Один Chromium за раз на весь процесс (памяти мало): общий замок со заходами браузера аккаунтов (app/browser_lock.py).
+_BROWSER_LOCK = BROWSER_LOCK
 
 
 class WebPageError(RuntimeError):
@@ -282,9 +282,7 @@ def _run_node(args: list[str], timeout: int, script: Path = SCRIPT) -> subproces
 def _browser(args: list[str], label: str, timeout: int = 150, runner: Runner | None = None,
              script: Path = SCRIPT) -> dict:
     """Запустить снимок/правку/разбор в Chromium (по одному на процесс и в общей очереди тяжёлых задач)."""
-    from app.heavy_queue import heavy_slot
-
-    with heavy_slot("webpage", label), _BROWSER_LOCK:
+    with browser_slot("webpage", label):
         try:
             proc = runner(args, timeout) if runner else _run_node(args, timeout, script)
         except subprocess.TimeoutExpired as exc:

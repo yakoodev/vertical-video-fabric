@@ -17,5 +17,8 @@ export const accountsApi = {
   setProxy: (id: number, proxy_url: string) => api.put<Account>(`/api/accounts/${id}/proxy`, { proxy_url }),
   /** Канал YouTube для загрузки (UC… или @ник); пустая строка — канал по умолчанию у входа. */
   setChannel: (id: number, channel: string) => api.put<Account>(`/api/accounts/${id}/channel`, { channel }),
+  /** Браузер аккаунта держит вход: true/false; null — по умолчанию (включён, если у аккаунта свой прокси). */
+  setKeepalive: (id: number, enabled: boolean | null) =>
+    api.put<Account>(`/api/accounts/${id}/keepalive`, { enabled }),
   remove:(id: number | string) => api.del<{ deleted: boolean }>(`/api/accounts/${id}`),
 };
