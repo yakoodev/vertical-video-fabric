@@ -42,7 +42,16 @@ test("одна и та же реплика — та же заплатка (об�
       assert.deepEqual(perfPatch(cue, eng), perfPatch({ ...cue }, eng), `${n}/${eng}`);
     }
   }
-  assert.deepEqual(perfPatch({ who: "bot", preset: "happy", t: 0 }, "deskbot"), {});
+  // Робот мем-пилота: поза и лицо, края окна — нейтральная поза.
+  for (const n of NAMES) {
+    const bot = perfPatch({ who: "bot", preset: n, t: 1, dur: 2 }, "deskbot");
+    assert.ok(bot.pose.length >= 3 && bot.face.length >= 2, n);
+    assert.equal(bot.pose[0].t, 1, n);
+    assert.equal(bot.pose.at(-1).t, 3, n);
+    for (const k of [bot.pose[0], bot.pose.at(-1)]) assert.ok(k.lean === 0 && k.turn === 0 && k.armL === "rest" && k.armR === "rest", n);
+    assert.equal(bot.face.at(-1).expr, "neutral", n);
+    assert.ok(bot.pose.every((k, i) => i === 0 || k.t >= bot.pose[i - 1].t), n);
+  }
 });
 
 test("voxel: клипы — слои из VOXEL_CLIPS, лица — из VOXEL_FACES, ключи лица на время внутри окна", () => {

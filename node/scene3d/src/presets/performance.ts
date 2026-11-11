@@ -9,11 +9,11 @@
  * ``{t, face, dur}``: ключ с dur действует только своё время, потом лицо снова прежнее (voxel.ts).
  * VRM-герой — presets/performance_vrm.ts (ключи с ``hold``: тоже возвращаются к прежнему).
  *
- * Слот на будущее: движок ``deskbot`` (робот-мем, делается в другой ветке) — третья функция пресета рядом с
- * voxel/vrm; пока его нет, реплики для робота пропускаются (perfPatch вернёт пустую заплатку).
+ * Робот мем-пилота (`style: "deskbot"`, deskbot.ts) — ключи pose/face из performance_deskbot.ts.
  */
 import { r4, withDefaults, type Meta, type Param } from "./meta.ts";
 import { VRM_PERF } from "./performance_vrm.ts";
+import { DESKBOT_PERF } from "./performance_deskbot.ts";
 
 export interface PerfCue { who: string; preset: string; t: number; dur?: number; [k: string]: any }
 
@@ -23,6 +23,9 @@ export interface PerfPatch {
   actions?: Record<string, any>[];
   /** VRM (node/vrm sequence.ts): добавки к timeline. */
   timeline?: Record<string, any[]>;
+  /** deskbot (робот мем-пилота): ключи позы и лица. */
+  pose?: Record<string, any>[];
+  face?: Record<string, any>[];
 }
 
 export interface PerfDef {
@@ -31,7 +34,7 @@ export interface PerfDef {
   dur: number;
   voxel?: (t0: number, dur: number, p: Record<string, any>) => PerfPatch;
   vrm?: (t0: number, dur: number, p: Record<string, any>) => PerfPatch;
-  // deskbot?: (t0, dur, p) => PerfPatch — робот-мем (другая ветка): слот движка, здесь не реализован.
+  // deskbot — performance_deskbot.ts (DESKBOT_PERF по тем же именам).
 }
 
 /** Лица героя из примитивов (pixel.ts / voxelfaces.ts), которые пресеты могут ставить. */
@@ -173,11 +176,17 @@ export function perfDef(name: string): PerfDef | undefined {
   return EMOTIONS[name] || GESTURES[name];
 }
 
-/** Заплатка персонажа по реплике игры (engine: voxel; vrm — для node/vrm; deskbot — слот, пусто). */
+/** Заплатка персонажа по реплике игры (engine: voxel; vrm — для node/vrm; deskbot — робот мем-пилота). */
 export function perfPatch(cue: PerfCue, engine: "voxel" | "vrm" | "deskbot"): PerfPatch {
   const def = perfDef(cue.preset);
   if (!def) throw new Error(`нет пресета игры «${cue.preset}»`);
-  const fn = engine === "vrm" ? def.vrm : engine === "voxel" ? def.voxel : undefined;
+  const p = withDefaults(def.meta, cue);
+  if (engine === "deskbot") {
+    // Робот мем-пилота (deskbot.ts): ключи pose/face из performance_deskbot.ts.
+    const bot = DESKBOT_PERF[cue.preset];
+    return bot ? bot(cue.t, cue.dur ?? def.dur, p) : {};
+  }
+  const fn = engine === "vrm" ? def.vrm : def.voxel;
   if (!fn) return {};
-  return fn(cue.t, cue.dur ?? def.dur, withDefaults(def.meta, cue));
+  return fn(cue.t, cue.dur ?? def.dur, p);
 }

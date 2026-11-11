@@ -87,6 +87,7 @@ def run_render(args: list[str], out_dir: Path, timeout: float = 600, allow_black
         proc = subprocess.run(["node", str(RENDER), *args, "--gl", "gpu", "--packs", PACKS], capture_output=True, text=True,
                               encoding="utf-8", timeout=timeout, cwd=str(ROOT))
     # Код 3 — «чёрные кадры»: у переходов через чёрное (ирис, затемнение) они задуманы — тогда это не ошибка.
+    if proc.returncode != 0 and not (allow_black and proc.returncode == 3):
         raise RuntimeError((proc.stderr or proc.stdout).strip()[-800:])
     line = (proc.stdout or "").strip().splitlines()[-1]
     return json.loads(line)

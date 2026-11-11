@@ -20,6 +20,7 @@ import { FX, fxPatch, MOODS } from "./fx.ts";
 import { ROOMS, buildRoomPreset, type Anchor } from "./rooms.ts";
 import { EMOTIONS, GESTURES, perfPatch, type PerfCue } from "./performance.ts";
 import { TRANSITIONS, type TransitionSpec } from "./transitions.ts";
+import { DESKBOT_PERF } from "./performance_deskbot.ts";
 
 export { CATEGORIES, CATEGORY_RU };
 
@@ -39,7 +40,7 @@ export function presetCatalog() {
     out[c] = {
       title: CATEGORY_RU[c], field: PLAN_FIELD[c],
       presets: Object.values(REG[c]).map((d) => ({ ...d.meta, ...(c === "mood" ? { light: (d as any).light, fx: (d as any).fx.map((f: any) => nameOf(f)) } : {}),
-        ...(c === "transition" ? { duration: (d as any).duration } : {}), ...(c === "room" ? roomInfo(d.meta.name) : {}), ...(c === "emotion" || c === "gesture" ? { duration: (d as any).dur, engines: ["voxel", "vrm"].filter((e) => (d as any)[e]) } : {}) })),
+        ...(c === "transition" ? { duration: (d as any).duration } : {}), ...(c === "room" ? roomInfo(d.meta.name) : {}), ...(c === "emotion" || c === "gesture" ? { duration: (d as any).dur, engines: [...["voxel", "vrm"].filter((e) => (d as any)[e]), ...(DESKBOT_PERF[d.meta.name] ? ["deskbot"] : [])] } : {}) })),
     };
   }
   return out;
@@ -285,7 +286,9 @@ export function expandPresets<T extends Record<string, any>>(spec: T): T {
       const c = chars[cue.who] || first;
       if (!c) { warnings.push("игра: нет персонажа"); continue; }
       if (!EMOTIONS[cue.preset] && !GESTURES[cue.preset]) { warnings.push(`нет пресета игры «${cue.preset}»`); continue; }
-      const patch = perfPatch(cue, c.style === "vrm" ? "vrm" : "voxel");
+      const patch = perfPatch(cue, c.style === "vrm" ? "vrm" : c.style === "deskbot" ? "deskbot" : "voxel");
+      if (patch.pose) c.pose = [...(c.pose || []), ...patch.pose].sort((a, b) => a.t - b.t);
+      if (patch.face) c.face = [...(c.face || []), ...patch.face].sort((a, b) => a.t - b.t);
       if (patch.faces) c.faces = [...(c.faces || []), ...patch.faces].sort((a, b) => a.t - b.t);
       if (patch.actions) c.actions = [...(c.actions || []), ...patch.actions].sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
       if (patch.timeline) {

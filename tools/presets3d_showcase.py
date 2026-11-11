@@ -44,7 +44,7 @@ SHOTS = [
      "perf": "smug", "out": "dip_white"},
     {"room": "train_station", "look": "noir", "light": "moonlight", "fx": ["snow", "film_grain"], "camera": {"move": "crane_reveal", "target": "hero:chest", "distance": 2.2, "rise": 1.6},
      "perf": "sigh", "out": "whip"},
-    {"room": "void_stage", "look": "anime_soft", "light": "stage_spot", "fx": ["dust_motes"], "camera": {"move": "pull_out", "target": "hero:chest", "distance": 2.0},
+    {"room": "void_stage", "look": "toon_ink", "light": "stage_spot", "fx": ["dust_motes"], "camera": {"move": "pull_out", "target": "hero:chest", "distance": 2.0},
      "perf": "wave", "out": "dip_black"},
 ]
 
