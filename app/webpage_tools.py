@@ -152,7 +152,7 @@ def h_view_page(ctx: ToolContext, args: dict) -> ImageResult:
                                                       "h": round(crop.shape[0] / scale), "page_height": meta.get("shot_height")})
 
 
-_PROJECT_ARG = {"project_id": {"type": "integer", "description": "проект (list_channel_projects); нет — проект клипа"}}
+_PROJECT_ARG = {"project_id": {"type": "integer", "description": "проект-серия (list_channel_projects); нет — проект клипа"}}
 
 
 def tools() -> list[Tool]:
