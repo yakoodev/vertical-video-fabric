@@ -2326,12 +2326,816 @@
  "emotion": {
   "title": "Эмоция персонажа",
   "field": "performance",
-  "presets": []
+  "presets": [
+   {
+    "name": "happy",
+    "title": "Радость",
+    "ru": "Сияет: глаза-дужки, кулачки к груди «ура», пара подскоков и покачивание головой. Хорошая новость, донат, победа.",
+    "tags": [
+     "joy"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 2.4,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "sad",
+    "title": "Грусть",
+    "ru": "Медленно оседает: брови домиком, слёзы на глазах, плечи опускаются, голова клонится; два тихих всхлипа.",
+    "tags": [
+     "drama"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 3,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "angry",
+    "title": "Злость",
+    "ru": "Взгляд исподлобья, стиснутые зубы, кулаки сжаты и дрожат, плечи вверх; стоя — топает ногой. Чат опять спойлерит.",
+    "tags": [
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 2.4,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "offended",
+    "title": "Обиделась",
+    "ru": "«Хмф!»: резко отворачивается с подбородком вверх, руки скрещены, глаза закрыты, щёки красные.",
+    "tags": [
+     "meme",
+     "cute"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "left",
+      "ru": "куда отвернуться (left / right — сторона персонажа)"
+     }
+    ],
+    "duration": 2.6,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "shocked",
+    "title": "Шок",
+    "ru": "Дёрнулся назад, глаза-плошки, рот «О», ладони перед грудью — и замер. Неожиданный поворот, огромный донат.",
+    "tags": [
+     "meme",
+     "drama"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 2,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "smug",
+    "title": "Самодовольство",
+    "ru": "Руки в боки (сидя — скрещены), корпус откинут, подбородок вверх, ухмылка уголком и «хе-хе» плечами.",
+    "tags": [
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "left",
+      "ru": "куда наклонить голову"
+     }
+    ],
+    "duration": 2.6,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "tired",
+    "title": "Усталость",
+    "ru": "Сутулится, веки тяжёлые; зевает, прикрыв рот, потом клюёт носом и вздрагивает. Ночной стрим.",
+    "tags": [
+     "cozy"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 3.4,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "thinking",
+    "title": "Задумалась",
+    "ru": "Кулак под подбородком, другая рука держит локоть, взгляд вверх, голова набок, постукивает пальцем.",
+    "tags": [
+     "cozy"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "right",
+      "ru": "какой рукой (left / right — рука персонажа)"
+     }
+    ],
+    "duration": 3,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "panic",
+    "title": "Паника",
+    "ru": "Машет руками, потом хватается за голову и мотает ею; зрачки-точки, рот волной, капли пота. Сломался стрим, горит дедлайн.",
+    "tags": [
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 2.6,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   }
+  ]
  },
  "gesture": {
   "title": "Жест персонажа",
   "field": "performance",
-  "presets": []
+  "presets": [
+   {
+    "name": "sigh",
+    "title": "Вздох",
+    "ru": "Глубокий вдох — плечи вверх, и долгий выдох — плечи падают, голова вниз, глаза закрыты.",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "sigh",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2.2,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "eye_roll",
+    "title": "Закатывает глаза",
+    "ru": "Зрачки под веко, голова откидывается дугой — «ну конечно». Реакция на глупый вопрос.",
+    "tags": [
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "eyeroll",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.8,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "facepalm",
+    "title": "Рука-лицо",
+    "ru": "Ладонь к лицу, голова клонится в ладонь и медленно качается. Когда нет слов.",
+    "tags": [
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "right",
+      "ru": "какой рукой (left / right — рука персонажа)"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "wince",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2.6,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "shrug",
+    "title": "Пожимает плечами",
+    "ru": "Плечи вверх, локти у боков, ладони вверх, голова набок — «ну не знаю».",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "meh",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.8,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "point",
+    "title": "Показывает",
+    "ru": "Прямая рука с лёгким тычком туда, куда смотрит; голова и корпус — следом. «Смотри!»",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "right",
+      "ru": "какой рукой (left / right — рука персонажа)"
+     },
+     {
+      "name": "dir",
+      "type": "enum",
+      "options": [
+       "forward",
+       "camera",
+       "side",
+       "up",
+       "down",
+       "across"
+      ],
+      "default": "forward",
+      "ru": "куда показать: вперёд/в камеру, в сторону руки, вверх, вниз, через себя"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "talk",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "wave",
+    "title": "Машет рукой",
+    "ru": "Рука у головы, кисть качается от локтя, улыбка, голова к руке. Привет зрителям, пока-пока.",
+    "tags": [
+     "cute"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "right",
+      "ru": "какой рукой (left / right — рука персонажа)"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "happy",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2.2,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "typing",
+    "title": "Печатает",
+    "ru": "Сидя — пальцы по клавиатуре, голова к монитору; стоя — набирает сообщение в телефоне большими пальцами.",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "none",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 3,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "nod",
+    "title": "Кивает",
+    "ru": "Пара коротких кивков «да-да» и обратно.",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "n",
+      "type": "number",
+      "default": 2,
+      "min": 1,
+      "max": 5,
+      "ru": "сколько кивков"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "none",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.2,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "head_shake",
+    "title": "Мотает головой",
+    "ru": "«Нет-нет-нет»: голова из стороны в сторону, к концу тише.",
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "n",
+      "type": "number",
+      "default": 3,
+      "min": 1,
+      "max": 6,
+      "ru": "сколько поворотов"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "frown",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.4,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   },
+   {
+    "name": "flinch",
+    "title": "Вздрогнул (скример)",
+    "ru": "Рывком назад, плечи к ушам, руки закрывают лицо, голова в сторону, зажмурился; потом медленно отходит.",
+    "tags": [
+     "horror",
+     "meme"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "side",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "left",
+      "ru": "куда отвернуть голову"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "wince",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.8,
+    "engines": [
+     "voxel",
+     "vrm"
+    ]
+   }
+  ]
  },
  "transition": {
   "title": "Переход между кадрами",

@@ -174,7 +174,7 @@ def reference_spec(category: str, name: str) -> tuple[dict, list[float]]:
         dur = float(meta.get("duration") or 2.0)
         s["duration"] = dur + 1.0
         s["presets"] = {"look": "anime_soft", "light": "studio_3pt", **look_room, "performance": [{"who": "hero", "preset": name, "t": 0.4}],
-                        "camera": [{"move": "static", "target": "hero:chest", "distance": 2.4, "height": 0.15, "yaw": 15}]}
+                        "camera": [{"move": "static", "target": "hero:chest", "distance": 2.6, "height": 0.15, "yaw": -18}]}
         return s, [0.4 + dur * 0.25, 0.4 + dur * 0.5, 0.4 + dur * 0.8]
     if category == "transition":
         s["objects"] = _props_showcase()

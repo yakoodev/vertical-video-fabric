@@ -176,6 +176,8 @@ function shotAt(t: number): { shot: Shot; local: number } {
 
 /** Поза на время: ролик — по ключам spec.poses (+ рот в окнах речи), стопкадр — поза плана. */
 let clips: Record<string, Clip> = {};
+/** Клипы CMU в паке (D:/vvf-offload/vtubika/vrm/vendor/cmu/clips, tools/cmu_to_vrm.py). */
+const CMU_CLIPS = ["wave", "laugh", "stretch_yawn", "waiting", "chin", "typing", "comb", "sit"];
 /** Самый малый зазор пальцев над поверхностями за все отрисованные кадры. */
 const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0,
   chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "" } };
@@ -332,7 +334,12 @@ async function load(s: Spec) {
   applyLook(vrm, s.look);
   scene.add(vrm.scene);
   rig = new Rig(vrm);
-  if (s.timeline) clips = await loadClips("http://scene3d.local/packs", s.timeline.clips);
+  if (s.timeline) {
+    // Дорожки пресетов игры (wave, laugh, stretch_yawn…) ссылаются на клипы CMU по имени — их не надо перечислять в clips.
+    const map: Record<string, string> = { ...(s.timeline.clips || {}) };
+    for (const tr of s.timeline.tracks || []) if (!map[tr.clip] && CMU_CLIPS.includes(tr.clip)) map[tr.clip] = `cmu/clips/${tr.clip}.json`;
+    clips = await loadClips("http://scene3d.local/packs", map);
+  }
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
   if (s.timeline && s.handCheck !== false) hands = new HandCheck(vrm, rig);
   backdrop = new Backdrop(W, H, s.stream || {});
