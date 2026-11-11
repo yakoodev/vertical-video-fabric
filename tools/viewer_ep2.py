@@ -101,11 +101,10 @@ def hits_ep2(events: dict, glitch_times: list[float], total: float) -> list[tupl
            ("tick", pack("kenney-interface/click_002.ogg"), ev["pov1"] - 0.02, ""),
            ("sub", pack("freesound/bass-drop.ogg"), ev["pov1"] - 0.1, slow(0.6, 320)),
            ("braam", pack("freesound/impact-low.ogg"), ev["pov1"] + 0.05, slow(0.7, 900))]
-    # Рывок вперёд в коридоре: мокрые щелчки суставов на шагах стоп-моушена и тяжёлый шаг.
+    # В проёме: голова медленно валится набок — мокрые щелчки шеи (без шагов: она стоит).
     for i, dt in enumerate((0.0, 0.14, 0.43, 0.71)):
         out.append(("wet", pack(f"kenney-impact/impactSoft_medium_00{i % 5}.ogg"), ev["lurch"] + dt, slow(1.3) + ",highpass=f=250"))
         out.append(("bone", pack(f"kenney-interface/click_00{1 + i % 5}.ogg"), ev["lurch"] + dt + 0.03, slow(0.55, 2500)))
-    out.append(("stomp2", pack("kenney-impact/footstep_concrete_002.ogg"), ev["lurch"] + 0.45, slow(0.75, 1100)))
     # Пока крутится кубик: сердце (тук-тук) и неровные шаги за кадром — он идёт к лампе.
     t = ev["roll"] + 0.3
     while t < ev["land"] + 0.3:
@@ -133,37 +132,80 @@ def hits_ep2(events: dict, glitch_times: list[float], total: float) -> list[tupl
 
 def sheet_marks(ev: dict, total: float, step: float = 2.0) -> list[tuple[float, str]]:
     """Кадр каждые ~step секунд (и 0.0 — обложка); подпись — последнее событие до кадра."""
-    names = [(0.0, "обложка"), (0.04, "помехи"), (0.37, "титр"), (ev["card0"], "комментарий"), (ev["her0"], "её шёпот"),
+    names = [(0.0, "обложка"), (0.03, "помехи"), (1.08, "титр"), (ev["card0"], "комментарий"), (ev["her0"], "её шёпот"),
              (ev["raise"], "за будкой"), (ev["pov1"], "видоискатель"), (ev["roll"], "бросок"), (ev["pov2"], "под лампой"),
              (ev["zoom0"], "наезд"), (ev["zoom1"], "её лицо"), (ev["eye"], "глазами"), (ev["pov3"], "видоискатель"),
-             (ev["beep"], "БАТАРЕЯ"), (ev["snap"], "рывок"), (ev["tear"], "срыв"), (ev["final"], "ближе"), (ev["choice"], "меню"),
+             (ev["beep"], "БАТАРЕЯ"), (ev["snap"], "на звук"), (ev["tear"], "срыв"), (ev["final"], "ближе"), (ev["choice"], "меню"),
              (ev["cta"], "призыв"), (ev["static_end"], "помехи")]
     names.sort()
-    marks, t = [(0.0, "обложка"), (0.17, "помехи")], 1.0
-    while t < total - 0.2:
+    # Начало — каждые 2 кадра первые 1.5 с (видно, как нарастают и растворяются помехи), конец — каждые 3 кадра.
+    marks = [(round(i * 2 / 30, 3), "обложка" if i == 0 else "помехи") for i in range(23)]
+    t = 2.0
+    while t < ev["static_end"] - 0.2:
         marks.append((round(t, 2), next(n for tt, n in reversed(names) if tt <= t + 1e-6)))
         t += step
-    for extra, lab in ((ev["zoom1"] + 0.2, "её лицо"), (ev["snap"] + 0.25, "рывок"), (total - 0.15, "конец")):
+    for extra, lab in ((ev["zoom1"] + 0.2, "её лицо"), (ev["eye"] - 0.3, "щель"), (ev["snap"] + 0.25, "на звук"),
+                       (ev["tear"] - 0.1, "к объективу")):
         marks.append((round(extra, 2), lab))
-    return sorted(marks)
+    n_end = int(round((total - ev["static_end"]) * 10)) + 1
+    marks += [(round(min(total - 0.07, ev["static_end"] + i * 0.1), 3), "в помехи") for i in range(n_end)]
+    return sorted(set(marks))
 
 
-def static_frames(mp4: Path, n_head: int = 16, n_tail: int = 18) -> dict:
-    """Сколько кадров помех в начале (после обложки) и в конце: кадр-помеха — мелкий шум по всему кадру (большая
-    разница соседних пикселей) при средней яркости ~ серой."""
+def _gray(mp4: Path, w: int, h: int, flags: str = "area"):
     import subprocess
 
     import numpy as np
 
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(mp4), "-vf", "scale=90:160:flags=neighbor,format=gray", "-f", "rawvideo", "-"],
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(mp4), "-vf", f"scale={w}:{h}:flags={flags},format=gray", "-f", "rawvideo", "-"],
                          capture_output=True, check=True).stdout
-    fr = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 160, 90).astype(np.float32)
-    hf = np.abs(np.diff(fr, axis=2)).mean(axis=(1, 2))  # мелкий шум по горизонтали
-    is_static = hf > 30.0
-    head = [int(i) for i in np.nonzero(is_static[:n_head])[0]]
-    tail = [int(i) for i in np.nonzero(is_static[-n_tail:])[0] + len(fr) - n_tail]
-    return {"frames": int(len(fr)), "head": head, "tail": tail, "head_count": len(head), "tail_count": len(tail),
-            "hf_cover": round(float(hf[0]), 1), "hf_static_min": round(float(hf[is_static].min()) if is_static.any() else 0, 1)}
+    return np.frombuffer(raw, dtype=np.uint8).reshape(-1, h, w)
+
+
+def static_profile(mp4: Path, head_s: float = 1.6, tail_s: float = 1.0) -> dict:
+    """Помехи по кадрам в начале и в конце (0..1): мелкий шум по горизонтали, нормированный на полный «снег».
+    Отчёт: где помехи начались, достигли максимума и растворились — должно быть плавно, не блоком."""
+    import numpy as np
+
+    fr = _gray(mp4, 90, 160, "neighbor").astype(np.float32)
+    hf = np.abs(np.diff(fr, axis=2)).mean(axis=(1, 2))
+    full = float(np.percentile(hf, 99.5))
+    base = float(np.median(hf))
+    lv = np.clip((hf - base) / max(1e-3, full - base), 0, 1)
+    n, fps = len(lv), 30.0
+    head = [round(float(v), 2) for v in lv[: int(head_s * fps)]]
+    tail = [round(float(v), 2) for v in lv[n - int(tail_s * fps):]]
+    peak = int(np.argmax(lv[: int(head_s * fps)]))
+    clear = next((i for i in range(peak, int(head_s * fps)) if lv[i] < 0.05), None)
+    rise = next((i for i in range(n - int(tail_s * fps), n) if lv[i] > 0.05), None)
+    jumps = [round(float(abs(lv[i + 1] - lv[i])), 2) for i in range(int(head_s * fps))]
+    return {"frames": n, "cover_level": head[0], "head": head, "tail": tail, "head_peak_s": round(peak / fps, 3),
+            "head_clear_s": round(clear / fps, 3) if clear is not None else None,
+            "tail_rise_s": round(rise / fps, 3) if rise is not None else None, "max_step_head": max(jumps[1:]) if len(jumps) > 1 else 0}
+
+
+def motion_check(mp4: Path, spec: dict) -> dict:
+    """«Нет лага»: соседние кадры внутри планов (без склеек ±1 кадр) — сколько совпадают байт в байт и сколько
+    почти совпадают по картинке без зерна (уменьшение с усреднением 54×96: зерно гасится, движение остаётся)."""
+    import numpy as np
+
+    fps = float(spec.get("fps", 30))
+    full = _gray(mp4, 135, 240, "neighbor")  # каждый второй пиксель: зерно своё у каждого — совпадение видно
+    low = _gray(mp4, 54, 96, "area").astype(np.float32)
+    cuts = sorted(int(round(c * fps)) for c in spec.get("cuts", []))
+    shots = []
+    for sh in spec["shots"]:
+        a, b = int(round(sh["t0"] * fps)), min(len(full), int(round(min(sh["t1"], spec["duration"]) * fps)))
+        pairs = [i for i in range(a, b - 1) if not any(abs(i - c) <= 1 or abs(i + 1 - c) <= 1 for c in cuts)]
+        if not pairs:
+            continue
+        same = sum(1 for i in pairs if np.array_equal(full[i], full[i + 1]))
+        d = [float(np.abs(low[i + 1] - low[i]).mean()) for i in pairs]
+        still = sum(1 for x in d if x < 0.05)
+        shots.append({"shot": sh["name"], "pairs": len(pairs), "identical": same, "near_identical": still,
+                      "min_diff": round(min(d), 3), "median_diff": round(float(np.median(d)), 3)})
+    return {"identical_total": sum(x["identical"] for x in shots), "near_identical_total": sum(x["near_identical"] for x in shots),
+            "pairs_total": sum(x["pairs"] for x in shots), "shots": shots}
 
 
 def write_script(path: Path, script: list[dict], beats: list[dict], roll: dict, ev: dict, total: float) -> None:
@@ -209,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--preview", default="")
     ap.add_argument("--tag", default="")
     ap.add_argument("--skip-render", action="store_true")
+    ap.add_argument("--suffix", default="", help="версия выпуска: ep2<suffix>_tiktok.mp4, sheet_<suffix>.jpg; рендер — в work/<suffix>")
     a = ap.parse_args(argv)
     work = a.out / "work"
     work.mkdir(parents=True, exist_ok=True)
@@ -254,20 +297,24 @@ def main(argv: list[str] | None = None) -> int:
     shifted = [{"word": w["word"], "start": w["start"], "end": w["end"]} for b in beats for w in b["words"]]
     spec = E2.build_ep2_spec(E.scene_base("street"), beats, shifted, total, env, roll, her_len, her_env, her_words)
     events = spec.pop("_events")
-    spec_path = work / "spec.json"
+    sfx = a.suffix
+    rwork = work / sfx if sfx else work  # рендер и склейки версии — отдельно; озвучка (кэш) — общая в work
+    rwork.mkdir(exist_ok=True)
+    tag = f"_{sfx}" if sfx else ""
+    spec_path = rwork / "spec.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=1), "utf-8")
-    write_script(a.out / "script.md", script, beats, roll, events, total)
+    write_script(a.out / f"script{tag}.md", script, beats, roll, events, total)
     if a.preview:
         pts = a.preview if a.preview != "marks" else ",".join(str(t) for t, _ in sheet_marks(events, total))
-        res = render(spec_path, a.out, a.gl, pts, work / (f"preview_{a.tag}" if a.tag else "preview"))
+        res = render(spec_path, a.out, a.gl, pts, rwork / (f"preview_{a.tag}" if a.tag else "preview"))
         print(json.dumps({"previews": [p["file"] for p in res.get("previews", [])], "events": events, "total": total}, ensure_ascii=False))
         return 0
-    silent = work / "silent.mp4"
+    silent = rwork / "silent.mp4"
     res: dict = {}
     fps = spec.get("fps", 30)
     if not a.skip_render:
         shot_cuts = [int(round(s["t0"] * fps)) for s in spec["shots"][1:]]
-        res = V.render_chunks(spec_path, silent, a.gl, int(round(total * fps)), work, shot_cuts)
+        res = V.render_chunks(spec_path, silent, a.gl, int(round(total * fps)), rwork, shot_cuts)
         log(f"рендер: {res['frames']} кадров, чёрных {len(res['black_frames'])}")
         if res["black_frames"]:
             raise SystemExit(f"чёрные кадры: {res['black_frames'][:10]}")
@@ -285,16 +332,16 @@ def main(argv: list[str] | None = None) -> int:
     import viewer_ep_audio as A
 
     A.UNDER.update({"sub": 9.0, "wet": 12.0, "bone": 13.0, "heart": 11.0, "riser": 14.0})
-    final = a.out / "ep2.mp4"
+    final = a.out / f"ep2{sfx}.mp4"
     glitch = sorted(set(round(g, 2) for g in spec["cuts"] if g > 0.5))
     extras = [{"name": "her", "path": her_wav, "at": events["her0"], "rel_db": -3.0}]
-    mixed = A.mix(silent, voice, E2.LEAD, total, events, spec["fx"]["keys"], glitch[:9], final, work, hits_fn=hits_ep2, extras=extras)
+    mixed = A.mix(silent, voice, E2.LEAD, total, events, spec["fx"]["keys"], glitch[:9], final, rwork, hits_fn=hits_ep2, extras=extras)
     # Для TikTok: постоянные 30 к/с, поток ограничен (серия 1 без этого лагала), ключевой кадр раз в секунду.
-    tiktok = a.out / "ep2_tiktok.mp4"
+    tiktok = a.out / f"ep2{sfx}_tiktok.mp4"
     run(["ffmpeg", "-y", "-v", "error", "-i", str(final), "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-fps_mode", "cfr",
          "-r", "30", "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high", "-level", "4.2", "-g", "30", "-pix_fmt", "yuv420p",
          "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(tiktok)], "файл для TikTok")
-    tg = a.out / "ep2_tg.mp4"
+    tg = a.out / f"ep2{sfx}_tg.mp4"
     kbps = int((19.0 * 8 * 1000) / total) - 160  # ≤ 19 МБ: видео + 128 кбит/с звука
     run(["ffmpeg", "-y", "-v", "error", "-i", str(final), "-vf", "scale=720:-2", "-c:v", "libx264", "-preset", "slow", "-b:v",
          f"{min(2400, kbps)}k", "-maxrate", f"{min(2800, kbps + 300)}k", "-bufsize", "4000k", "-fps_mode", "cfr", "-r", "30",
@@ -302,20 +349,22 @@ def main(argv: list[str] | None = None) -> int:
     from vtubika_story import tile
 
     marks = sheet_marks(events, total)
-    frames = [V.frame_at(tiktok, t, work / f"sheet_{i:02d}.png", "scale=360:640:flags=neighbor") for i, (t, _) in enumerate(marks)]
-    tile(frames, a.out / "sheet.jpg", cols=6, labels=[f"{t:.2f} {lab}" for t, lab in marks])
-    V.frame_at(tiktok, 0.0, a.out / "cover.png")
+    frames = [V.frame_at(tiktok, t, rwork / f"sheet_{i:02d}.png", "scale=360:640:flags=neighbor") for i, (t, _) in enumerate(marks)]
+    tile(frames, a.out / f"sheet{tag}.jpg", cols=8, labels=[f"{t:.2f} {lab}" for t, lab in marks])
+    V.frame_at(tiktok, 0.0, a.out / f"cover{tag}.png")
     (a.out / "caption.txt").write_text(CAPTION + "\n", "utf-8")
-    statics = static_frames(tiktok)
+    statics = static_profile(tiktok)
+    motion = motion_check(tiktok, spec)
     probe = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                  "stream=r_frame_rate,avg_frame_rate,nb_frames,profile,level,bit_rate", "-of", "json", str(tiktok)], "ffprobe").stdout
     report = {"final": str(tiktok), "mixed": str(final), "tg": str(tg), "tg_mb": round(tg.stat().st_size / 1e6, 1),
               "tiktok_mb": round(tiktok.stat().st_size / 1e6, 1), "duration": total, "frames": res.get("frames"),
-              "presence": res.get("presence"), "cuts": cuts, "static": statics, "tiktok_stream": json.loads(probe)["streams"][0],
+              "presence": res.get("presence"), "cuts": cuts, "static": statics, "motion": motion, "tiktok_stream": json.loads(probe)["streams"][0],
               "tts": tts, "her_tts": her_tts, "mix": mixed, "events": events,
               "roll": {k: v for k, v in roll.items() if k != "heroine"}, "text": text, "her_text": E2.HER_TEXT}
-    (a.out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
+    (a.out / f"report{tag}.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps({k: report[k] for k in ("final", "tg", "tg_mb", "tiktok_mb", "duration", "frames", "static", "cuts")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in motion.items()}, ensure_ascii=False))
     return 0
 
 

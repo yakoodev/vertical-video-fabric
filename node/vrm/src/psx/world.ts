@@ -478,7 +478,7 @@ function paintLcd(t: number, frame: number) {
     view3d(t, true, true);
     const fx = { ...spec.fx, ...R.fx };
     post.scene(gl.domElement, (d, w, h) => {
-      grade(d, w, h, fx, 0, frame >> 1);
+      grade(d, w, h, fx, 0, frame);
       vhs(d, w, h, 1.9, 1.0, 0, t, frame);
     });
     const [y0, hh] = R.lcdCrop ?? [60, 202];
@@ -512,10 +512,10 @@ function render(t: number) {
   const ot = full ? t : time; // интерфейс и субтитры идут по времени ролика, не по времени записи
   const lv = fxAt(spec.fx, t);
   const fx = full ? { ...spec.fx, ...R!.fx } : spec.fx;
-  // Зерно меняется раз в 2 кадра (15 в секунду): как плёнка, и ролик вдвое легче; помехи — каждый кадр.
+  // Зерно и помехи — свои на каждом кадре (зерно раз в 2 кадра выглядело «лагом»: соседние кадры совпадали).
   const blur = focusBlur(spec.vhs, t);
   post.scene(gl.domElement, fx || kv > 0 ? (d, w, h) => {
-    if (fx) grade(d, w, h, fx, lv.black, frame >> 1);
+    if (fx) grade(d, w, h, fx, lv.black, frame);
     if (kv > 0) vhs(d, w, h, kv, blur, tearAt(spec.vhs, t), t, frame);
   } : undefined);
   const hud = spec.hud;

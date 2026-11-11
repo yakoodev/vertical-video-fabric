@@ -135,8 +135,8 @@ export function buildDie(u: PsxUniforms, s: DieSpec): Die {
     update(t: number) {
       group.visible = t >= s.t0 && (s.until === undefined || t < s.until);
       if (!group.visible) return;
-      const tq = Math.floor(t * 24) / 24;
-      const k = Math.max(0, Math.min(1, (tq - s.t0) / T));
+      // Плавно на каждом кадре (раньше — ступеньки 24 к/с: при 30 к/с каждый пятый кадр повторялся).
+      const k = Math.max(0, Math.min(1, (t - s.t0) / T));
       let y = ground;
       if (k < 0.45) {
         const a = k / 0.45;

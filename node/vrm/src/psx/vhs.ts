@@ -49,11 +49,11 @@ export function focusBlur(s: VhsSpec | undefined, t: number): number {
   return b;
 }
 
-/** Срыв трекинга 0..1: резкий вход, плавный выход. */
+/** Срыв трекинга 0..1: быстрый, но не мгновенный вход (~2 кадра, плавно), плавный выход. */
 export function tearAt(s: VhsSpec | undefined, t: number): number {
   let v = 0;
   for (const [a, b] of s?.tears || []) {
-    if (t >= a && t < b) v = Math.max(v, 1);
+    if (t >= a && t < b) v = Math.max(v, Math.min(1, (t - a) / 0.07) ** 1.5);
     else if (t >= b && t < b + 0.25) v = Math.max(v, 1 - (t - b) / 0.25);
   }
   return v;

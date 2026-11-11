@@ -124,7 +124,7 @@ export function wispGlow(s: WispSpec, t: number): number {
   const ap = s.appear ?? 0, fi = s.fadeIn ?? 1;
   if (t < ap) return 0;
   const on = Math.min(1, (t - ap) / fi);
-  const flick = 0.9 + 0.1 * Math.sin(Math.floor(t * 10) * 2.7);
+  const flick = 0.9 + 0.1 * Math.sin(t * 27);
   let k = 1;
   for (const [a, b, m] of s.dim || []) if (t >= a && t < b) k *= m;
   return on * k * (flick + (s.voicePower ?? 0.9) * voiceAt(s, t));
@@ -182,7 +182,7 @@ export function buildWisp(u: PsxUniforms, s: WispSpec): Wisp {
       const grow = Math.min(1, (t - ap) / Math.max(0.2, (s.fadeIn ?? 1) * 0.7));
       const v = voiceAt(s, t);
       // Моргает раз в ~2.7 с на 0.12 с.
-      flameMat.map = (t % 2.7 < 0.12 ? blinks : frames)[Math.floor(t * 10) % 4];
+      flameMat.map = (t % 2.7 < 0.12 ? blinks : frames)[Math.floor(t * 15) % 4];
       // Пламя растёт с голосом ступенькой (×1.0 / ×1.15 / ×1.3) — «говорит», как спрайт.
       const talk = 1 + Math.round(v * 2) * 0.15;
       for (const m of [flame, halo, haze]) {
@@ -197,7 +197,7 @@ export function buildWisp(u: PsxUniforms, s: WispSpec): Wisp {
       for (let i = 0; i < NT; i++) {
         const tt = t - (i + 1) * 0.045;
         const p = wispAt(s, tt);
-        const jig = Math.sin(i * 12.9 + Math.floor(t * 12)) * 0.015;
+        const jig = Math.sin(i * 12.9 + t * 12) * 0.015;
         tp[i * 3] = p[0] + jig;
         tp[i * 3 + 1] = p[1] - 0.04 + i * 0.006;
         tp[i * 3 + 2] = p[2] - jig;

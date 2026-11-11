@@ -54,6 +54,8 @@ export interface OnryoSpec {
   dress?: { colors?: [string, string]; hem?: number };
   /** Её лицо за щелью: множитель цвета (темнее — меньше «плоской картинки»). */
   faceTint?: string;
+  /** Контровой ободок: цвет и сила по времени [t, сила] (линейно); нет — без ободка. */
+  rim?: { color?: string; keys: [number, number][] };
 }
 
 export interface Onryo {
@@ -123,10 +125,45 @@ function strandTex(): THREE.Texture {
   return t;
 }
 
-function keyAt(keys: OnryoKey[], t: number): OnryoKey {
-  let k = keys[0];
-  for (const x of keys) if (x.t <= t) k = x;
-  return k;
+/** Поза на время t: между соседними ключами — плавно (smoothstep): место, поворот корпуса, наклон и поворот
+ * головы, щель. Мгновенная смена (на склейке) — два ключа почти в одно время. Кости — от левого ключа. */
+export function keyAt(keys: OnryoKey[], t: number): OnryoKey {
+  let i = 0;
+  while (i + 1 < keys.length && keys[i + 1].t <= t) i++;
+  const a = keys[i], b = keys[i + 1];
+  if (!b || t <= a.t) return a;
+  const u = Math.min(1, (t - a.t) / Math.max(1e-6, b.t - a.t)), e = u * u * (3 - 2 * u);
+  const L = (x: number, y: number) => x + (y - x) * e;
+  const yaw = (k: OnryoKey) => {
+    const f = k.face || [0, 0];
+    return Math.atan2(f[0] - k.pos[0], f[1] - k.pos[2]);
+  };
+  let ya = yaw(a), yb = yaw(b);
+  if (yb - ya > Math.PI) yb -= 2 * Math.PI;
+  if (ya - yb > Math.PI) yb += 2 * Math.PI;
+  const pos = a.pos.map((v, j) => L(v, b.pos[j])) as V3;
+  const y = L(ya, yb);
+  return { t, pos, face: [pos[0] + Math.sin(y), pos[2] + Math.cos(y)], tilt: L(a.tilt ?? 28, b.tilt ?? 28), nod: L(a.nod ?? 0, b.nod ?? 0),
+    turn: L(a.turn ?? 0, b.turn ?? 0), part: L(a.part ?? 0, b.part ?? 0), bones: a.bones };
+}
+
+/** Контровой свет (ободок) для материалов онрё: прибавка к цвету после альбедо, сильнее на краях силуэта —
+ * тёмная голова читается на тёмном фоне. Общий uniform: сила меняется по времени (spec.rim). */
+function addRim(m: THREE.Material, rim: { value: THREE.Color }) {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    prev.call(m, sh, r);
+    sh.uniforms.psxRim = rim;
+    sh.vertexShader = sh.vertexShader
+      .replace("varying vec3 vPsxLight;", "uniform vec3 psxRim; varying vec3 vPsxRimC; varying vec3 vPsxLight;")
+      .replace("vPsxLight = mix(vec3(1.0), lit, psxLit);",
+        "vPsxRimC = psxRim * pow(1.0 - abs(dot(n, normalize(-mvPosition.xyz))), 2.2); vPsxLight = mix(vec3(1.0), lit, psxLit);");
+    sh.fragmentShader = sh.fragmentShader
+      .replace("varying vec3 vPsxLight;", "varying vec3 vPsxRimC; varying vec3 vPsxLight;")
+      .replace("vec3 outgoingLight = reflectedLight.indirectDiffuse * vPsxLight;",
+        "vec3 outgoingLight = reflectedLight.indirectDiffuse * vPsxLight + vPsxRimC * (1.0 - vPsxFog * 0.6);");
+  };
+  m.customProgramCacheKey = () => "psx2rim";
 }
 
 /** Её лицо для щели: снимок героини → темнее, холоднее, в зерне (пиксели PS1 остаются). */
@@ -299,6 +336,14 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
   hg.setAttribute("uv", new THREE.BufferAttribute(huv, 2));
   // Мокрые волосы слегка блестят и в темноте (lit < 1): иначе чёрная голова сливается с чёрным залом.
   const hairMat = psxMaterial(u, { map: strandTex(), vertexColors: true, side: THREE.DoubleSide, lit: 0.8, alphaTest: 0.5 });
+  const rimU = { value: new THREE.Color(0, 0, 0) }, rimHairU = { value: new THREE.Color(0, 0, 0) };
+  const rimCol = new THREE.Color(s.rim?.color || "#7a988a");
+  if (s.rim) {
+    const mats = new Set<THREE.Material>([dress.material as THREE.Material]);
+    vrm.scene.traverse((o: any) => o.isMesh && (Array.isArray(o.material) ? o.material : [o.material]).forEach((m: THREE.Material) => m.visible !== false && mats.add(m)));
+    for (const m of mats) addRim(m, /Hair/.test(m.name) ? rimHairU : rimU);
+    addRim(hairMat, rimHairU); // волосы — слабее: только край копны
+  }
   const hair = new THREE.Mesh(hg, hairMat);
   hair.frustumCulled = false;
   group.add(hair);
@@ -308,7 +353,7 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
   let faceMesh: THREE.Mesh | null = null;
   const headRaw = raw("head")!;
 
-  let curKey: OnryoKey | null = null;
+  let lastPos: V3 | null = null;
   let lastT = NaN;
   const headW = new THREE.Vector3();
   const _v = new THREE.Vector3(), _w = new THREE.Vector3(), _c = new THREE.Vector3();
@@ -406,20 +451,31 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
     group.rotation.set(0, Math.atan2(f[0] - key.pos[0], f[1] - key.pos[2]), 0);
     group.updateMatrixWorld(true);
     pose(key);
-    // Пружины волос модели: прогрев на месте, когда сменился ключ или время прыгнуло; подряд — шаг.
+    // Пружины волос модели: прогрев на месте, когда время прыгнуло или она переставлена (склейка); подряд — шаг.
     const dt = 1 / 30;
-    if (key !== curKey || Math.abs(t - lastT - dt) > 1e-4) {
+    const jump = !lastPos || Math.hypot(key.pos[0] - lastPos[0], key.pos[2] - lastPos[2]) > 0.25;
+    if (jump || Math.abs(t - lastT - dt) > 1e-4) {
       vrm.springBoneManager?.reset();
       for (let i = 0; i < 45; i++) vrm.update(dt);
     } else vrm.update(dt);
-    curKey = key;
+    lastPos = key.pos;
     lastT = t;
+    if (s.rim) {
+      const ks = s.rim.keys;
+      let v = ks[0][1];
+      for (let i = 0; i < ks.length; i++) {
+        if (t >= ks[i][0]) v = ks[i][1];
+        if (i + 1 < ks.length && t >= ks[i][0] && t < ks[i + 1][0]) v = ks[i][1] + (ks[i + 1][1] - ks[i][1]) * ((t - ks[i][0]) / (ks[i + 1][0] - ks[i][0]));
+      }
+      rimU.value.copy(rimCol).multiplyScalar(v);
+      rimHairU.value.copy(rimCol).multiplyScalar(v * 0.45);
+    }
     headFrame();
     // Куда наводится видоискатель: её левый глаз (там щель) — в осях головы.
     headW.set(0.039 * k, 0.052 * k, 0.12 * k).applyQuaternion(_hq).add(_ho);
     hang(key);
-    if (faceMesh) faceMesh.visible = (key.part ?? 0) > 0;
-    for (const m of faceMats) m.visible = !((key.part ?? 0) > 0 && faceMesh);
+    if (faceMesh) faceMesh.visible = (key.part ?? 0) > 0.02;
+    for (const m of faceMats) m.visible = !((key.part ?? 0) > 0.02 && faceMesh);
   }
 
   /** Ленты прядей поворачиваются к камере вокруг своей оси (ширина видна с любого ракурса). */
@@ -427,6 +483,7 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
     if (!group.visible) return;
     const inv = new THREE.Matrix4().copy(group.matrixWorld).invert();
     camera.getWorldPosition(_c);
+    const headC = new THREE.Vector3(0, 0.09 * k, 0.02 * k).applyQuaternion(_hq).add(_ho);
     let o = 0;
     strands.forEach((st, si) => {
       const p = paths[si];
@@ -441,7 +498,10 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
         const sa = side(a, taper(j)), sb = side(b, taper(j + 1));
         const quad = [a.clone().sub(sa), a.clone().add(sa), b.clone().add(sb), a.clone().sub(sa), b.clone().add(sb), b.clone().sub(sb)];
         // Нормаль — к камере и вверх: лампа сверху даёт мокрый блик на макушке, низ прядей темнее.
-        const n = _w.copy(_c).sub(a).normalize().multiplyScalar(0.7).add(new THREE.Vector3(0, 0.45, 0)).normalize();
+        // Нормаль — в основном к камере и вверх (мокрый блик от лампы), с примесью «наружу» от центра головы или
+        // оси тела: ободок (rim) ложится только на край копны, а не на всю — иначе голова серая, «шар».
+        const out = j < 6 ? new THREE.Vector3().subVectors(a, headC) : new THREE.Vector3(a.x - group.position.x, 0, a.z - group.position.z);
+        const n = _w.copy(_c).sub(a).normalize().multiplyScalar(0.7).add(new THREE.Vector3(0, 0.4, 0)).addScaledVector(out.normalize(), 0.35).normalize();
         const nl = n.clone().transformDirection(inv);
         for (const q of quad) {
           q.applyMatrix4(inv);
