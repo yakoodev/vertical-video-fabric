@@ -111,3 +111,4 @@ jobs:
           --test-skip-pattern="^субтитры: эмфаза слова"
           node/motion.test.mjs
           node/motion-blocks.test.mjs
+          node/motion-page.test.mjs

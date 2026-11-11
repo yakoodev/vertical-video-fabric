@@ -110,6 +110,8 @@ export {
 } from "./layers/particles";
 export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, PLATFORM_ICONS, platformIcon, drawPlatformIcon, type DecorGlyph, type PlatformIcon } from "./glyphs";
 export { socialRenderer, formatSocialCount, socialLikes, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, SOCIAL_IMAGE_RATIO } from "./layers/social";
+export { pageRenderer, pageRef, pageRegion, pageWindow, pageKeyValue, activeTaps, PAGE_DEFAULT_WIDTH } from "./layers/page";
+export { parsePageParam } from "./templates/page";
 export { roughen, scribblePts, cursorPts, sketchOutline, BOIL_RATE } from "./layers/sketch";
 export { parsePath, parseTimes } from "./templates/sketch";
 export { nameplateRenderer, nameplateAccent, nameplateMotion, PLATFORM_COLORS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, type NameplateMotion } from "./layers/nameplate";

@@ -142,6 +142,16 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
     return [size, size];
   }
   if (kind === "image" || kind === "video") return pictureSize(layer, sizes);
+  if (kind === "page") {
+    // Страница: окно region (CSS px) шириной w, высота по его пропорции; без окна — экран 9:19.5 (как app/aspect.layer_size).
+    const w = num(props.w, 560);
+    const region = isObj(props.region) ? props.region : null;
+    const ratio = region ? num(region.h, 844) / Math.max(1.0, num(region.w, 390)) : PHONE_SCREEN_RATIO;
+    const h = w * ratio;
+    if (props.device === "phone") return [w * (1 + 2 * PHONE_EDGE), h + 2 * PHONE_EDGE * w];
+    const border = isObj(props.border) ? num(props.border.width, 0) : 0;
+    return [w + 2 * border, h + 2 * border];
+  }
   if (kind === "pngtuber") {
     // Аватар: ширина w, высота — по пропорции idle (как app/aspect.layer_size).
     const w = num(props.w, 300);

@@ -424,6 +424,25 @@ export type SocialProps = {
   font?: string;
 };
 
+/**
+ * Страница сайта (layers/page.ts): кадр версии снимка app/webpages.py (`webpage:<page_id>:<version>`). Окно
+ * `region` — в CSS px страницы; `scroll` двигает верх окна, `zoom` приближает (центр cx/cy — доли окна),
+ * `taps` — касание пальцем (волна) в точке страницы. Время ключей — секунды слоя.
+ */
+export type PageEase = "inOut" | "linear" | "out" | "in";
+export type PageRegion = { x: number; y: number; w: number; h: number };
+export type PageProps = PictureProps & {
+  page_id: number;
+  version?: number;
+  /** Ширина снимка в CSS px (390 — телефон, 1280 — компьютер): масштаб PNG = ширина картинки / pageWidth. */
+  pageWidth?: number;
+  region?: PageRegion | null;
+  scroll?: { t: number; y: number; ease?: PageEase }[];
+  zoom?: { t: number; z: number; cx?: number; cy?: number; ease?: PageEase }[];
+  taps?: { t: number; x: number; y: number }[];
+  tapColor?: string;
+};
+
 export type AudioProps = {
   asset_id: string;
   /**
@@ -675,6 +694,7 @@ export type LayerPropsMap = {
   callout: CalloutProps;
   nameplate: NameplateProps;
   social: SocialProps;
+  page: PageProps;
   captions: CaptionsProps;
   chat: ChatProps;
   audio: AudioProps;
@@ -769,6 +789,7 @@ export type ChartLayer = LayerOf<"chart">;
 export type CalloutLayer = LayerOf<"callout">;
 export type NameplateLayer = LayerOf<"nameplate">;
 export type SocialLayer = LayerOf<"social">;
+export type PageLayer = LayerOf<"page">;
 export type CaptionsLayer = LayerOf<"captions">;
 export type ChatLayer = LayerOf<"chat">;
 export type AudioLayer = LayerOf<"audio">;
@@ -789,6 +810,7 @@ export type Layer =
   | CalloutLayer
   | NameplateLayer
   | SocialLayer
+  | PageLayer
   | CaptionsLayer
   | ChatLayer
   | AudioLayer
