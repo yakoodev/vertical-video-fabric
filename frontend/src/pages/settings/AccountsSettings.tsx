@@ -149,18 +149,20 @@ const SESSION_TEXT: Record<string, string> = {
   ok: "вход живой",
   needs_reauth: "вылетел — обнови куки расширением",
   captcha: "просит проверку (капча)",
-  error: "заход не удался",
+  error: "проверка не удалась",
 };
 
-/** Вход аккаунта: что увидел браузер сервиса и переключатель «держать вход». */
+/** Вход аккаунта: что увидела проверка сервиса и переключатель «держать вход».
+ * TikTok — браузер сервиса, YouTube — без браузера (тем же клиентом, что загрузка). */
 function AccountSessionRow({ account }: { account: Account }) {
   const qc = useQueryClient();
   const toast = useToast();
   const state = account.session_state ?? "";
+  const viaBrowser = account.platform !== "youtube";
   const save = useMutation({
     mutationFn: (enabled: boolean) => accountsApi.setKeepalive(account.id, enabled),
     onSuccess: (acc) => {
-      toast.success(acc.keepalive_on ? "Браузер будет держать вход" : "Браузер больше не заходит");
+      toast.success(acc.keepalive_on ? "Вход будет проверяться" : "Вход больше не проверяется");
       qc.invalidateQueries({ queryKey: qk.accounts });
     },
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось сохранить"),
@@ -181,7 +183,11 @@ function AccountSessionRow({ account }: { account: Account }) {
           disabled={save.isPending}
           onChange={(e) => save.mutate(e.target.checked)}
         />
-        <span>Держать вход живым (браузер сервиса заходит раз в 4–6 ч)</span>
+        <span>
+          {viaBrowser
+            ? "Держать вход живым (браузер сервиса заходит раз в 4–6 ч)"
+            : "Держать вход живым (сервис проверяет вход раз в 4–6 ч, без браузера)"}
+        </span>
       </label>
     </div>
   );
