@@ -10,6 +10,10 @@
 после кадра-обложки и 12 в конце (проверяется по кадрам), файл для TikTok — CFR 30 с ограничением потока,
 копия ≤ 20 МБ для Telegram. Озвучка и рендер кэшируются в ``out/work``. Итог: ``ep2.mp4`` (сведено), ``ep2_tiktok.mp4``
 (заливать), ``ep2_tg.mp4``, ``sheet.jpg``, ``cover.png``, ``script.md``, ``caption.txt``, ``report.json``.
+
+v3: реплики из ``TAKE_LINES`` озвучиваются отдельно и вклеиваются в дубль v2 (``redub``); каждая проверяется
+faster-whisper small (все слова верно и с вероятностью > 0.7), в отчёте — распознанные первые 12 с итога со словами и
+вероятностями. ``--sheet-to 8`` — лист только первых секунд.
 """
 
 from __future__ import annotations
@@ -90,6 +94,145 @@ def her_live(raw: Path, words: list[dict], work: Path) -> tuple[Path, float, lis
     return out, dur, shifted
 
 
+def _rms_db(x, rate: int, t: float, win: float = 0.02) -> float:
+    import numpy as np
+
+    s = x[int(t * rate):int((t + win) * rate)]
+    return float(20 * np.log10(np.sqrt((s.astype(np.float64) ** 2).mean()) + 1e-9)) if len(s) else -120.0
+
+
+def voiced_end(x, rate: int, t: float, limit: float, floor: float = -40.0, run_s: float = 0.06) -> float:
+    """Где речь правда кончилась (от t вперёд — первые run_s с тише floor дБ), не дальше limit. Whisper ставит конец
+    слова раньше: «голос» в дубле — 1.92 по словам, а «с» звучит до 2.08."""
+    step = 0.02
+    k, t0 = 0, t
+    while t0 < limit:
+        if _rms_db(x, rate, t0) < floor:
+            k += 1
+            if k * step >= run_s - 1e-9:
+                return round(t0 - (k - 1) * step, 3)
+        else:
+            k = 0
+        t0 += step
+    return round(limit, 3)
+
+
+def voiced_start(x, rate: int, t: float, limit: float, floor: float = -30.0) -> float:
+    """Где речь правда началась (от t вперёд — первое окно громче floor), не дальше limit."""
+    step = 0.02
+    t0 = t
+    while t0 < limit:
+        if _rms_db(x, rate, t0) >= floor:
+            return round(t0, 3)
+        t0 += step
+    return round(t, 3)
+
+
+def _read(path: Path, rate: int):
+    import subprocess
+
+    import numpy as np
+
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", str(rate), "-"],
+                         capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.float32)
+
+
+def _n_words(text: str) -> int:
+    return len([w for w in text.split() if any(ch.isalnum() for ch in w)])
+
+
+def redub(take: Path, take_words: list[dict], take_script: list[dict], lines: dict[str, tuple[Path, list[dict]] | None],
+          work: Path, gap: float = 0.6, rate: int = 24000) -> tuple[Path, list[dict], dict]:
+    """Дубль огонька + отдельно озвученные реплики: каждая дописывается в конец дубля через gap с тишины (громкость —
+    как у дубля), её слова встают на это место вместо слов роли в дубле (None — роль выброшена, слов нет). Края
+    соседних фраз дубля — по звуку (voiced_end/voiced_start): в v2 кусок ника начинался с хвоста «голос-с», а
+    «Ты — Сара» — с хвоста «Флуд»."""
+    import wave
+
+    import numpy as np
+
+    from app.stories_3d import voice_lufs
+
+    x = _read(take, rate)
+    words = [dict(w) for w in take_words]
+    spans, i = {}, 0
+    for s in take_script:
+        n = _n_words(s["text"])
+        spans[s["beat"]] = (i, i + n)
+        i += n
+    if i != len(words):
+        raise SystemExit(f"в дубле {len(words)} слов, а в сценарии дубля {i}")
+    take_lufs = voice_lufs(take)
+    parts, t_end, info = [x], len(x) / rate, {}
+    inserted: dict[str, list[dict]] = {}
+    for beat, line in lines.items():
+        a, b = spans[beat]
+        if a > 0:  # конец фразы перед ролью — по звуку, но не дальше конца первого слова роли
+            words[a - 1]["end"] = max(words[a - 1]["end"], voiced_end(x, rate, words[a - 1]["end"], words[a]["end"]))
+        if b < len(words):  # начало фразы после роли — по звуку, но не дальше конца её первого слова
+            words[b]["start"] = voiced_start(x, rate, words[b]["start"], words[b]["end"])
+        if line is None:
+            inserted[beat] = []
+            info[beat] = {"dropped": True}
+            continue
+        wav, lw = line
+        y = _read(wav, rate)
+        g = take_lufs - voice_lufs(wav)
+        y = y * 10 ** (g / 20)
+        lw = [dict(w) for w in lw]
+        lw[0]["start"] = voiced_start(y, rate, max(0.0, lw[0]["start"] - 0.25), lw[0]["end"])
+        lw[-1]["end"] = voiced_end(y, rate, lw[-1]["end"], len(y) / rate)
+        off = t_end + gap
+        parts += [np.zeros(int(gap * rate), np.float32), y]
+        inserted[beat] = [{**w, "start": round(w["start"] + off, 3), "end": round(w["end"] + off, 3)} for w in lw]
+        info[beat] = {"wav": str(wav), "gain_db": round(g, 2), "at": round(off, 3), "words": inserted[beat]}
+        t_end = off + len(y) / rate
+    out_words: list[dict] = []
+    for s in take_script:
+        a, b = spans[s["beat"]]
+        out_words += inserted.get(s["beat"], words[a:b])
+    pcm = (np.clip(np.concatenate(parts), -1, 1) * 32767).astype(np.int16)
+    key = "_".join(Path(v[0]).stem.replace("voice_", "") if v else f"no{b}" for b, v in lines.items())
+    out = work / f"{take.stem}_redub_{key}.wav"
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(pcm.tobytes())
+    return out, out_words, info
+
+
+def asr_words(path: Path, t0: float = 0.0, t1: float | None = None) -> list[dict]:
+    """faster-whisper small, ru: слова с вероятностями (для проверки реплик и итога; модель — из кэша huggingface)."""
+    import subprocess
+
+    import numpy as np
+    from faster_whisper import WhisperModel
+
+    cut = ["-t", f"{t1 - t0}"] if t1 else []
+    args = ["ffmpeg", "-v", "error", "-ss", f"{t0}", "-i", str(path), *cut, "-map", "0:a", "-f", "s16le", "-ac", "1", "-ar", "16000", "-"]
+    audio = np.frombuffer(subprocess.run(args, capture_output=True, check=True).stdout, np.int16).astype(np.float32) / 32768.0
+    model = WhisperModel("small", device="cpu", compute_type="int8", download_root=str(Path.home() / ".cache/huggingface/hub"))
+    segs, _ = model.transcribe(audio, language="ru", word_timestamps=True, beam_size=5)
+    out = [{"word": w.word.strip(), "start": round(w.start + t0, 2), "end": round(w.end + t0, 2), "p": round(w.probability, 3)}
+           for s in segs for w in s.words]
+    del model
+    return out
+
+
+def _norm(w: str) -> str:
+    return "".join(ch for ch in w.casefold().replace("ё", "е") if ch.isalnum())
+
+
+def line_heard(text: str, heard: list[dict], p_min: float = 0.7) -> dict:
+    """Реплика распознана верно: те же слова по порядку, у каждого вероятность > p_min."""
+    want = [_norm(w) for w in text.split() if _norm(w)]
+    got = [_norm(w["word"]) for w in heard if _norm(w["word"])]
+    ok = got == want and all(w["p"] > p_min for w in heard if _norm(w["word"]))
+    return {"ok": ok, "want": want, "heard": " ".join(w["word"] for w in heard), "p": [w["p"] for w in heard]}
+
+
 def hits_ep2(events: dict, glitch_times: list[float], total: float) -> list[tuple[str, Path, float, str]]:
     """Звуки серии — только записи паков: карточка, кнопка записи, сердце, шаги и щелчки Сборщика (ниже, медленнее,
     «мокрые»), гул на появлении, мотор наезда, писк батареи, хруст шеи на рывке, помехи."""
@@ -97,7 +240,12 @@ def hits_ep2(events: dict, glitch_times: list[float], total: float) -> list[tupl
 
     slow = lambda k, lp=0: f"aresample={RATE},asetrate={int(RATE * k)},aresample={RATE}" + (f",lowpass=f={lp}" if lp else "")  # noqa: E731
     ev = events
-    out = [("chime_soft", pack("freesound/triangle.ogg"), ev["card0"] + 0.05, slow(0.84) + ",aecho=0.8:0.6:160:0.3"),
+    # Звон карточки (v3): в паузе между фразами — с её появлением, обрезан и затухает за 0.15 с до «Спасибо, Неко»,
+    # без эха (хвост эха лез под голос); на 4 дБ тише v2 (UNDER chime_soft 18 вместо 14 — в main).
+    t_ch = ev["card0"] + 0.02
+    d_ch = round(max(0.2, ev["nick0"] - 0.15 - t_ch), 3)
+    out = [("chime_soft", pack("freesound/triangle.ogg"), t_ch,
+            slow(0.84) + f",atrim=0:{d_ch},afade=t=out:st={max(0.0, d_ch - 0.18):.3f}:d=0.18"),
            ("tick", pack("kenney-interface/click_002.ogg"), ev["pov1"] - 0.02, ""),
            ("sub", pack("freesound/bass-drop.ogg"), ev["pov1"] - 0.1, slow(0.6, 320)),
            ("braam", pack("freesound/impact-low.ogg"), ev["pov1"] + 0.05, slow(0.7, 900))]
@@ -251,6 +399,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--preview", default="")
     ap.add_argument("--tag", default="")
     ap.add_argument("--skip-render", action="store_true")
+    ap.add_argument("--sheet-to", type=float, default=0.0, help="лист только до этой секунды (0 — весь)")
+    ap.add_argument("--drop", default="", help="роли без реплики через запятую (nick — пока новую реплику не озвучить)")
     ap.add_argument("--suffix", default="", help="версия выпуска: ep2<suffix>_tiktok.mp4, sheet_<suffix>.jpg; рендер — в work/<suffix>")
     a = ap.parse_args(argv)
     work = a.out / "work"
@@ -273,22 +423,37 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     roll = E2.ep2_roll()
     r = roll["result"]
-    script = E2.ep2_script(roll)
+    drop = tuple(x for x in a.drop.split(",") if x)
+    script = E2.ep2_script(roll, drop)
     text = " ".join(s["text"] for s in script)
     log(f"бросок: {r['die']} + {r['bonus']} = {r['total']} против {r['dc']} → {'успех' if r['ok'] else 'провал'}; текст: {text}")
     her_raw, her_tts = V.narrate(E2.HER_TEXT, work, E2.HER_VOICE)
-    voice, tts = V.narrate(text, work, E.WISP_VOICE)
-    log(f"озвучка: огонёк {tts}, она {her_tts}")
+    # Дубль огонька — как в v2 (роли из TAKE_LINES в нём звучат по-старому); новые реплики — отдельно.
+    take_script = [{**s, "text": E2.TAKE_LINES.get(s["beat"], s["text"])} for s in E2.ep2_script(roll)]
+    take_text = " ".join(s["text"] for s in take_script)
+    take, tts = V.narrate(take_text, work, E.WISP_VOICE)
+    redubs = {s["beat"]: (s["text"], *V.narrate(s["text"], work, E.WISP_VOICE)) for s in script if s["beat"] in E2.TAKE_LINES}
+    log(f"озвучка: огонёк {tts}, она {her_tts}, отдельно: {[(t, i) for t, _, i in redubs.values()]}")
     if a.tts_only:
-        print(json.dumps({"wisp": str(voice), "her": str(her_raw), "tts": tts, "her_tts": her_tts}, ensure_ascii=False))
+        print(json.dumps({"wisp": str(take), "her": str(her_raw), "redub": {b: str(w) for b, (_, w, _) in redubs.items()},
+                          "tts": tts, "her_tts": her_tts}, ensure_ascii=False))
         return 0
+    checks = {}
+    for beat, (line, wav, _) in redubs.items():
+        checks[beat] = line_heard(line, asr_words(wav))
+        log(f"проверка «{line}»: {checks[beat]}")
+        if not checks[beat]["ok"]:
+            raise SystemExit(f"реплика «{line}» распознаётся плохо: {checks[beat]} — удалите {wav.name} или смените текст")
     V.use_cached_whisper()
     her_words_raw = V.words_aligned(E2.HER_TEXT, her_raw, work)
     her_wav, her_len, her_words = her_live(her_raw, her_words_raw, work)
     her_env = E.envelope(V.voice_samples(her_wav), 16000, 30)
-    words = V.words_aligned(text, voice, work)
-    if words[0]["start"] > 2.0:
-        raise SystemExit(f"речь начинается на {words[0]['start']:.1f} с — модель зачитала указание к голосу; удалите {voice.name}")
+    take_words = V.words_aligned(take_text, take, work)
+    if take_words[0]["start"] > 2.0:
+        raise SystemExit(f"речь начинается на {take_words[0]['start']:.1f} с — модель зачитала указание к голосу; удалите {take.name}")
+    lines: dict = {b: (wav, V.words_aligned(line, wav, work)) for b, (line, wav, _) in redubs.items()}
+    lines.update({b: None for b in drop if b in E2.TAKE_LINES})
+    voice, words, redub_info = redub(take, take_words, take_script, lines, work) if lines else (take, take_words, {})
     segs, speed, beats = E2.ep2_beats(script, words, her_len)
     voice = V.paced_voice(voice, segs, work, speed)
     total = round(round((beats[-1]["t1"] + E2.TAIL) * E2.FPS) / E2.FPS, 4)
@@ -331,11 +496,14 @@ def main(argv: list[str] | None = None) -> int:
         log(f"склейки (разница кадров): {e}")
     import viewer_ep_audio as A
 
-    A.UNDER.update({"sub": 9.0, "wet": 12.0, "bone": 13.0, "heart": 11.0, "riser": 14.0})
+    A.UNDER.update({"sub": 9.0, "wet": 12.0, "bone": 13.0, "heart": 11.0, "riser": 14.0, "chime_soft": 18.0})
     final = a.out / f"ep2{sfx}.mp4"
     glitch = sorted(set(round(g, 2) for g in spec["cuts"] if g > 0.5))
     extras = [{"name": "her", "path": her_wav, "at": events["her0"], "rel_db": -3.0}]
-    mixed = A.mix(silent, voice, E2.LEAD, total, events, spec["fx"]["keys"], glitch[:9], final, rwork, hits_fn=hits_ep2, extras=extras)
+    # v3: v2 гнал серию к −14 LUFS, и ограничитель давил пики голоса на 5–8 дБ четверть ролика (качал подложку) —
+    # пики голоса ограничены на нём самом (+10 LU), подложки на 3 дБ тише, общее усиление — сколько позволяет потолок.
+    mixed = A.mix(silent, voice, E2.LEAD, total, events, spec["fx"]["keys"], glitch[:9], final, rwork, hits_fn=hits_ep2, extras=extras,
+                  voice_peak_lu=10.0, bus_db=-3.0, headroom=1.0, release_ms=150)
     # Для TikTok: постоянные 30 к/с, поток ограничен (серия 1 без этого лагала), ключевой кадр раз в секунду.
     tiktok = a.out / f"ep2{sfx}_tiktok.mp4"
     run(["ffmpeg", "-y", "-v", "error", "-i", str(final), "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-fps_mode", "cfr",
@@ -348,7 +516,7 @@ def main(argv: list[str] | None = None) -> int:
          "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tg)], "копия для Telegram")
     from vtubika_story import tile
 
-    marks = sheet_marks(events, total)
+    marks = [m for m in sheet_marks(events, total) if not a.sheet_to or m[0] <= a.sheet_to]
     frames = [V.frame_at(tiktok, t, rwork / f"sheet_{i:02d}.png", "scale=360:640:flags=neighbor") for i, (t, _) in enumerate(marks)]
     tile(frames, a.out / f"sheet{tag}.jpg", cols=8, labels=[f"{t:.2f} {lab}" for t, lab in marks])
     V.frame_at(tiktok, 0.0, a.out / f"cover{tag}.png")
@@ -361,7 +529,8 @@ def main(argv: list[str] | None = None) -> int:
               "tiktok_mb": round(tiktok.stat().st_size / 1e6, 1), "duration": total, "frames": res.get("frames"),
               "presence": res.get("presence"), "cuts": cuts, "static": statics, "motion": motion, "tiktok_stream": json.loads(probe)["streams"][0],
               "tts": tts, "her_tts": her_tts, "mix": mixed, "events": events,
-              "roll": {k: v for k, v in roll.items() if k != "heroine"}, "text": text, "her_text": E2.HER_TEXT}
+              "roll": {k: v for k, v in roll.items() if k != "heroine"}, "text": text, "her_text": E2.HER_TEXT,
+              "redub": redub_info, "line_checks": checks, "asr_head_12s": asr_words(tiktok, 0.0, 12.0)}
     (a.out / f"report{tag}.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps({k: report[k] for k in ("final", "tg", "tg_mb", "tiktok_mb", "duration", "frames", "static", "cuts")}, ensure_ascii=False))
     print(json.dumps({k: v for k, v in motion.items()}, ensure_ascii=False))
