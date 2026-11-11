@@ -59,7 +59,8 @@ def build_autopilot_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRo
                         description=str(payload.get("description") or ""), tags=payload.get("tags"),
                         platforms=payload.get("platforms"), when=payload.get("when"),
                         content_type=payload.get("content_type") or "",
-                        submitted_by="agent" if is_agent_request(request) else "ui")
+                        submitted_by="agent" if is_agent_request(request) else "ui",
+                        cover_sec=payload.get("cover_sec"))
         if not payload.get("project_id"):
             raise HTTPException(status_code=400, detail="нужен clip_plan_id или project_id")
         return call(A.submit_card, int(payload["project_id"]), str(payload.get("kind") or "other"),

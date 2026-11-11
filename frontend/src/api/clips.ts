@@ -9,6 +9,8 @@ export interface PublishRequest {
   allow_comments?: boolean;
   scheduled_at?: string;
   allow_repost?: boolean;
+  /** Обложка TikTok — кадр ролика на этой секунде; не задано — выбранная обложка клипа или кадр TikTok по умолчанию. */
+  cover_sec?: number;
 }
 
 export const clipsApi = {

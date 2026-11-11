@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from app.ai.publish_meta import apply_ai_metadata
 from app.agent_settings_api import owner_only
 from app.api_common import _normalize_schedule_text
+from app.publish_format import COVER_SEC_MAX, normalize_cover_sec
 from app.store_jobs import RepostNeedsConfirm
 
 
@@ -113,6 +114,7 @@ class JobRead(BaseModel):
     result_json: str
     targets: list[JobTargetRead]
     made_by: str = ""  # 'agent' — поставила настройка проекта «Публиковать самому»
+    cover_sec: float | None = None  # секунда кадра-обложки TikTok; None — кадр TikTok по умолчанию
 
 
 class ClipPostRequest(BaseModel):
@@ -124,6 +126,8 @@ class ClipPostRequest(BaseModel):
     scheduled_at: str = ""
     # Владелец подтвердил: выложить ещё раз то, что на этом аккаунте уже вышло или могло выйти.
     allow_repost: bool = False
+    # Обложка TikTok — кадр ролика на этой секунде; пусто — выбранная обложка клипа или кадр TikTok по умолчанию.
+    cover_sec: float | None = Field(None, ge=0, le=COVER_SEC_MAX)
 
 
 class ClipPostBatchRequest(BaseModel):
@@ -276,6 +280,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 payload.allow_comments,
                 scheduled_at=_schedule_text(payload.scheduled_at),
                 allow_repost=payload.allow_repost,
+                cover_sec=payload.cover_sec,
             )
         except RepostNeedsConfirm as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -362,9 +367,11 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         allow_comments: Annotated[bool, Form(description="Whether comments should be enabled where supported.")] = True,
         scheduled_at: Annotated[str, Form(description="Optional UTC datetime for delayed publication (or with offset).")] = "",
         allow_repost: Annotated[bool, Form(description="Post again what this account already has.")] = False,
+        cover_sec: Annotated[str, Form(description="TikTok cover: second of the video to use as the cover frame. "
+                                                   "Empty — TikTok's default frame.")] = "",
     ) -> dict:
         return await _create_post_from_upload(file, title, description, targets, privacy, allow_comments, scheduled_at,
-                                              allow_repost)
+                                              allow_repost, cover_sec)
 
     @router.get(
         "/api/jobs",
@@ -412,6 +419,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
         allow_comments: bool,
         scheduled_at: str = "",
         allow_repost: bool = False,
+        cover_sec: str = "",
     ) -> dict:
         try:
             job = get_store().create_job(
@@ -424,6 +432,7 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
                 allow_comments,
                 scheduled_at=_schedule_text(scheduled_at),
                 allow_repost=allow_repost,
+                cover_sec=normalize_cover_sec(cover_sec),
             )
         except RepostNeedsConfirm as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc

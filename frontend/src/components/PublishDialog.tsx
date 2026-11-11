@@ -9,6 +9,7 @@ import { ApiError } from "@/api/client";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { CoverVariants } from "@/components/CoverVariants";
+import { TikTokCoverField, coverSecValue } from "@/components/TikTokCoverField";
 import { useModules } from "@/hooks/useModules";
 import { localInputToUtc } from "@/lib/time";
 
@@ -24,6 +25,8 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
   const [privacy, setPrivacy] = useState("public");
   const [targets, setTargets] = useState<number[]>([]);
   const [scheduledAt, setScheduledAt] = useState("");
+  const [coverSec, setCoverSec] = useState("");
+  const tiktokChosen = (accounts.data ?? []).some((a) => a.platform === "tiktok" && targets.includes(a.id));
 
   const publish = useMutation({
     mutationFn: (body: PublishRequest) => clipsApi.publishConfirmed(clip.id, body),
@@ -159,6 +162,11 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
                 onChange={(e) => setScheduledAt(e.target.value)}
               />
             </label>
+            {tiktokChosen ? (
+              <div style={{ flex: 1 }}>
+                <TikTokCoverField value={coverSec} onChange={setCoverSec} maxSec={clip.duration_sec} />
+              </div>
+            ) : null}
           </div>
         </div>
         </div>
@@ -176,6 +184,7 @@ export function PublishDialog({ clip, versionLabel, onClose }: { clip: Clip; ver
                 targets,
                 privacy,
                 scheduled_at: scheduledAt ? localInputToUtc(scheduledAt) : undefined,
+                cover_sec: tiktokChosen ? coverSecValue(coverSec) : undefined,
               })
             }
           >
