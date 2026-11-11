@@ -1622,7 +1622,7 @@
    {
     "name": "void_stage",
     "title": "Пустая сцена с лучом",
-    "ru": "Чёрная пустота, круглый подиум и пятно света. Монолог, признание, стендап, «герой наедине с мыслью».",
+    "ru": "Чёрная пустота, двухъярусный круглый подиум со светящейся кромкой, рампа, бархатный занавес в дымке, позади — стойка микрофона и барный стул. Монолог, признание, стендап, «герой наедине с мыслью». Чистый подиум — hide: mic, stool.",
     "params": [
      {
       "name": "colors",
@@ -1646,28 +1646,46 @@
     ],
     "suggest": {
      "light": "stage_spot",
-     "look": "anime_soft"
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 4,
+      "height": 0.5,
+      "yaw": 12,
+      "fov": 40
+     }
     },
     "props": [
      "floor",
      "stage",
-     "stage_rim"
+     "footlights",
+     "curtain",
+     "mic",
+     "stool"
     ],
     "anchors": [
      "hero",
-     "focus"
+     "focus",
+     "mic",
+     "stool"
     ],
     "palette": {
      "floor": "#17161c",
      "stage": "#24222b",
      "rim": "#3a3646",
+     "glow": "#8a7cff",
+     "bulb": "#ffd59a",
+     "curtain": "#3a0f1c",
+     "curtain2": "#4a1424",
+     "stool": "#7a4a32",
      "haze": "#0b0b10"
     }
    },
    {
     "name": "studio_cyclorama",
     "title": "Студийная циклорама",
-    "ru": "Бесшовный белый (или цветной) фон-«бесконечность» студии: пол плавно переходит в стену. Продукт, интервью, чистый показ героя.",
+    "ru": "Бесшовный белый (или цветной) фон-«бесконечность» студии: пол плавно переходит в стену; по бокам — софтбоксы на треногах, золотой рефлектор, ящики, метка на полу. Продукт, интервью, чистый показ героя.",
     "params": [
      {
       "name": "colors",
@@ -1691,21 +1709,616 @@
     ],
     "suggest": {
      "light": "studio_3pt",
-     "look": "anime_soft"
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 4.6,
+      "height": 0.6,
+      "yaw": 18,
+      "fov": 42
+     }
     },
     "props": [
      "cyc",
-     "light_stand_l",
-     "softbox_l"
+     "softbox_l",
+     "softbox_r",
+     "reflector",
+     "appleboxes",
+     "mark",
+     "cable"
     ],
     "anchors": [
      "hero",
-     "focus"
+     "focus",
+     "mark",
+     "softbox"
     ],
     "palette": {
      "sweep": "#e9e6e1",
      "floor": "#dedad3",
-     "stand": "#2b2d33"
+     "stand": "#2b2d33",
+     "gold": "#e0b45a",
+     "wood": "#c49a6c",
+     "tape": "#ff6a3d"
+    }
+   },
+   {
+    "name": "cozy_desk",
+    "title": "Уютный стол стримера",
+    "ru": "Тёплый угол вечером: стол с монитором, лампой и кружкой, за спиной — окно с ночным городом, стеллаж с книгами, полка с плющом, рамки, гирлянда, торшер. Герой сидит лицом к зрителю. Стрим, разговор, «что я понял».",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "home",
+     "indoor",
+     "cozy",
+     "night"
+    ],
+    "suggest": {
+     "light": "golden_hour",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 3.7,
+      "height": 0.55,
+      "yaw": -14,
+      "fov": 40
+     }
+    },
+    "props": [
+     "desk",
+     "chair",
+     "kb",
+     "monitor",
+     "lamp",
+     "mug",
+     "cactus",
+     "notebook",
+     "deskbooks",
+     "rug",
+     "bookcase",
+     "shelf",
+     "art1",
+     "art2",
+     "art3",
+     "neon",
+     "lights",
+     "lights2",
+     "floorlamp",
+     "plant",
+     "snake"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "desk",
+     "screen",
+     "window",
+     "bookcase",
+     "lamp"
+    ],
+    "palette": {
+     "wall": "#e7d8c4",
+     "accent": "#4b5a7c",
+     "floor": "#8a6446",
+     "wood": "#c9a27a",
+     "frame": "#2b2a2e",
+     "chair": "#3d4b63",
+     "accent2": "#d98b6f",
+     "curtain": "#dcc9ad",
+     "rug": "#e8dcc6",
+     "rug2": "#c27c63",
+     "screen": "#8fb4ff",
+     "warm": "#ffc27a",
+     "bulbs": "#ffcf86",
+     "lamp": "#2f3a4a",
+     "shade": "#efe2c8",
+     "plant": "#4f8a5b",
+     "pot": "#e9dfd0",
+     "mug": "#f1c4b0",
+     "neon": "#ff9ec4"
+    }
+   },
+   {
+    "name": "gamer_rgb",
+    "title": "Игровая комната в RGB",
+    "ru": "Тёмная комната геймера: стол с двумя мониторами (игра и эфир), системник со светящимися вентиляторами, соты светопанелей, неон-молния, LED под потолком, игровое кресло, кресло-мешок. Герой стоит перед сетапом. Гейминг, стрим, техно-обзор.",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "home",
+     "indoor",
+     "night",
+     "neon"
+    ],
+    "suggest": {
+     "light": "monitor_glow",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 3.6,
+      "height": 0.45,
+      "yaw": 14,
+      "fov": 42
+     }
+    },
+    "props": [
+     "desk",
+     "monitor_l",
+     "monitor_r",
+     "kb",
+     "pc",
+     "speaker_l",
+     "pad",
+     "can",
+     "hex",
+     "bolt",
+     "shelf",
+     "cove",
+     "poster",
+     "poster2",
+     "chair",
+     "beanbag",
+     "rug"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "seat",
+     "desk_seat",
+     "desk",
+     "screen",
+     "wall"
+    ],
+    "palette": {
+     "wall": "#2a2838",
+     "accent": "#1f1d2c",
+     "floor": "#3a3036",
+     "desk": "#1c1c22",
+     "frame": "#121216",
+     "chair": "#22222a",
+     "screen": "#7f9cff",
+     "screen2": "#c58cff",
+     "neon": "#ff3cc8",
+     "neon2": "#2ee6ff",
+     "neon3": "#ffd23c",
+     "beanbag": "#3e2f6e",
+     "rug": "#2a2440"
+    }
+   },
+   {
+    "name": "kitchen_night",
+    "title": "Ночная кухня",
+    "ru": "Кухня ночью: шкафы с подсветкой столешницы, плита с вытяжкой и тёплой лампой, окно с луной над мойкой, приоткрытый холодильник льёт холодный свет, обеденный столик с подвесной лампой. «Ночной перекус», разговор по душам, бытовая комедия.",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "home",
+     "indoor",
+     "night"
+    ],
+    "suggest": {
+     "light": "moonlight",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 3.6,
+      "height": 0.5,
+      "yaw": -12,
+      "fov": 42
+     }
+    },
+    "props": [
+     "counter",
+     "stove",
+     "counter2",
+     "upper",
+     "tiles",
+     "fridge",
+     "plant",
+     "board",
+     "jars",
+     "toaster",
+     "mug",
+     "mug2",
+     "herbs",
+     "bowl",
+     "spice",
+     "clock",
+     "table",
+     "pendant",
+     "rug"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "counter",
+     "stove",
+     "fridge",
+     "window",
+     "table"
+    ],
+    "palette": {
+     "wall": "#9fb3a6",
+     "cabinet": "#e9e3d6",
+     "stone": "#d8d4cc",
+     "metal": "#b9bcc2",
+     "tile": "#f2efe8",
+     "floor": "#8d7a68",
+     "wood": "#b88a5e",
+     "fridge": "#a8d8c8",
+     "cold": "#cfe6ff",
+     "warm": "#ffc47a",
+     "stove": "#c9cdd2",
+     "kettle": "#e86a5a",
+     "mug": "#f2b84b",
+     "bowl": "#3f6d8c",
+     "pendant": "#2f4f5f",
+     "rug": "#e8e2d4"
+    }
+   },
+   {
+    "name": "office_openspace",
+    "title": "Опенспейс днём",
+    "ru": "Светлый офис: ряды столов с мониторами и перегородками, подвесные световые панели, большие окна с небом, кадки с растениями, диванная зона, доска со стикерами. Работа, корпоративная комедия, «мой первый день».",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "office",
+     "indoor",
+     "day"
+    ],
+    "suggest": {
+     "light": "overcast_soft",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 4.2,
+      "height": 0.6,
+      "yaw": -10,
+      "fov": 42
+     }
+    },
+    "props": [
+     "desks",
+     "sofa",
+     "coffeetable",
+     "planters",
+     "ceil",
+     "ceillamp",
+     "whiteboard",
+     "art"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "seat",
+     "desk",
+     "window",
+     "sofa",
+     "whiteboard"
+    ],
+    "palette": {
+     "wall": "#eceae6",
+     "floor": "#9a948c",
+     "desk": "#e8dfd0",
+     "leg": "#3a3c42",
+     "panel": "#7fa3a0",
+     "chair": "#2f3a4a",
+     "screen": "#9fc4ff",
+     "sofa": "#5f7f9a",
+     "planter": "#3a3c42"
+    }
+   },
+   {
+    "name": "train_station",
+    "title": "Платформа вокзала",
+    "ru": "Платформа под навесом вечером: жёлтая линия у края, рельсы уходят вдаль, ряды колонн, скамейки, фонари, табло отправлений с жёлтыми строками, часы, за путями — город. Ожидание, расставание, «уезжаю».",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "city",
+     "outdoor",
+     "night"
+    ],
+    "suggest": {
+     "light": "moonlight",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 4,
+      "height": 0.5,
+      "yaw": -16,
+      "fov": 42
+     }
+    },
+    "props": [
+     "platform",
+     "rails",
+     "wire",
+     "pillars",
+     "roof",
+     "lamps",
+     "benches",
+     "train",
+     "board",
+     "clock",
+     "hall",
+     "poster",
+     "town"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "edge",
+     "bench",
+     "board",
+     "track",
+     "clock"
+    ],
+    "palette": {
+     "concrete": "#9a958c",
+     "line": "#f2c230",
+     "ballast": "#6b6560",
+     "sleeper": "#4a3a30",
+     "wall": "#6d6a66",
+     "metal": "#3a3d44",
+     "pillar": "#d8d2c6",
+     "roof": "#4a4e57",
+     "lamp": "#ffd9a0",
+     "wood": "#a0703f",
+     "board": "#ffb52e",
+     "hall": "#b8a890",
+     "town": "#3a4152",
+     "train": "#d9dde2",
+     "trainStripe": "#c8433a",
+     "trainDoor": "#8e959e",
+     "trainWin": "#ffe6b8"
+    }
+   },
+   {
+    "name": "city_rooftop",
+    "title": "Крыша с видом на город",
+    "ru": "Ночная крыша: парапет, за ним — город с горящими окнами до горизонта, водонапорный бак, антенна с красным огоньком, кондиционеры, гирлянды на шестах над столиком, неон. Признание, мечты, разговор под звёздами.",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "city",
+     "outdoor",
+     "night"
+    ],
+    "suggest": {
+     "light": "moonlight",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 3.8,
+      "height": 0.35,
+      "yaw": -14,
+      "fov": 44
+     }
+    },
+    "props": [
+     "roof",
+     "parapet",
+     "tower",
+     "antenna",
+     "ac",
+     "vent",
+     "poles",
+     "lights",
+     "lights2",
+     "chairs",
+     "table",
+     "planters",
+     "neon",
+     "city"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "parapet",
+     "seat",
+     "seat2",
+     "table",
+     "skyline",
+     "tower"
+    ],
+    "palette": {
+     "floor": "#6f6a66",
+     "wall": "#8a7f76",
+     "cap": "#b1a79c",
+     "metal": "#4a4d54",
+     "wood": "#7a5a3e",
+     "unit": "#c9ccd0",
+     "chair": "#c97b5a",
+     "planter": "#5a4a3e",
+     "bulbs": "#ffcf86",
+     "neon": "#ff5fa8",
+     "city": "#262b3a",
+     "city2": "#1c2030"
+    }
+   },
+   {
+    "name": "forest_clearing",
+    "title": "Лесная поляна",
+    "ru": "Поляна в лоу-поли лесу: ели и лиственные деревья кольцом, тропинка в чащу, камни со мхом, бревно-скамья, пень с топориком, грибы, цветы, костёр в кольце камней с живым огнём. Поход, сказка, страшилки у костра.",
+    "params": [
+     {
+      "name": "colors",
+      "type": "string",
+      "ru": "палитра: {ключ: \"#цвет\"} поверх палитры окружения"
+     },
+     {
+      "name": "hide",
+      "type": "string",
+      "ru": "какие вещи убрать: список id (см. props окружения)"
+     },
+     {
+      "name": "seed",
+      "type": "number",
+      "default": 1,
+      "ru": "вариант раскладки мелочей"
+     }
+    ],
+    "tags": [
+     "nature",
+     "outdoor"
+    ],
+    "suggest": {
+     "light": "golden_hour",
+     "look": "anime_soft",
+     "camera": {
+      "move": "static",
+      "target": "hero:chest",
+      "distance": 4.6,
+      "height": 0.55,
+      "yaw": -18,
+      "fov": 42
+     }
+    },
+    "props": [
+     "ground",
+     "path",
+     "trees",
+     "bushes",
+     "rocks",
+     "log",
+     "stump",
+     "mushrooms",
+     "flowers",
+     "grass",
+     "fire"
+    ],
+    "anchors": [
+     "hero",
+     "focus",
+     "fire",
+     "log",
+     "stump",
+     "path",
+     "forest"
+    ],
+    "palette": {
+     "grass": "#7da35a",
+     "grass2": "#94b865",
+     "moss": "#5f8a45",
+     "path": "#8f7d58",
+     "pine": "#3f6b45",
+     "pine2": "#4f7f50",
+     "leaf": "#6f9a48",
+     "leaf2": "#89ad52",
+     "bark": "#6a4a36",
+     "cut": "#d9b98a",
+     "stone": "#9a968e",
+     "cap": "#d9483a",
+     "flower": "#ff9ec4",
+     "flower2": "#ffd166",
+     "fire": "#ff8a2a",
+     "fire2": "#ffc23a"
     }
    }
   ]

@@ -161,10 +161,13 @@ def reference_spec(category: str, name: str) -> tuple[dict, list[float]]:
     if category == "room":
         meta = presets3d.get("room", name) or {}
         sug = meta.get("suggest") or {}
-        s["presets"] = {"room": name, "look": sug.get("look", "anime_soft"), "light": sug.get("light", "studio_3pt"),
-                        "camera": [{"move": "static", "target": "hero:chest", "distance": 4.2, "height": 0.6, "yaw": 25}]}
+        # Общий план окружения: камера из suggest.camera окружения ({move, target, distance, height, yaw, fov}).
+        cam = {"move": "static", "target": "hero:chest", "distance": 4.2, "height": 0.6, "yaw": 25, **(sug.get("camera") or {})}
+        s["presets"] = {"room": name, "look": sug.get("look", "anime_soft"), "light": sug.get("light", "studio_3pt"), "camera": [cam]}
         if sug.get("fx"):
             s["presets"]["fx"] = sug["fx"]
+        if sug.get("mood"):
+            s["presets"]["mood"] = sug["mood"]
         return s, [1.5]
     if category in ("emotion", "gesture"):
         meta = presets3d.get(category, name) or {}
@@ -252,8 +255,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--sheets-only", action="store_true")
+    ap.add_argument("--exec", nargs=argparse.REMAINDER, help="выполнить команду под замком рендера и проверкой памяти")
     a = ap.parse_args(argv)
     OUT = Path(a.out)
+    if a.exec:
+        cmd = a.exec[1:] if a.exec[0] == "--" else a.exec
+        wait_memory()
+        with RenderLock(OUT / ".render.lock"):
+            return subprocess.run(cmd, cwd=str(ROOT)).returncode
     cats = presets3d.CATEGORIES if a.category == "all" else tuple(a.category.split(","))
     only = {x for x in a.only.split(",") if x}
     for cat in cats:
