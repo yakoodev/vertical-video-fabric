@@ -7,6 +7,9 @@
  * (запросы обслуживает node/scene3d/render.mjs через CDP Fetch — сеть браузеру закрыта).
  */
 import * as THREE from "three";
+// Пресеты: presets/index.ts — имена → поля сцены до init; presets_runtime.ts — стиль, атмосфера, переходы после.
+import { expandPresets, presetCatalog } from "./presets/index.ts";
+import { PresetRuntime } from "./presets_runtime.ts";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildRoom, cutawayFor, type RoomBuild, type RoomSpec } from "./room.ts";
@@ -279,6 +282,7 @@ class Engine {
     if (spec.overlays?.length) this.overlays = new Overlays(spec.overlays, W, H);
     if (env.post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, env.post, spec.quality?.antialias === false ? 0 : 4);
     this.renderer.compile(this.scene, this.camera);
+    (this as any).presetRt = new PresetRuntime(this);
     return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
   }
 
@@ -485,6 +489,7 @@ class Engine {
     const ordered = this.objects.slice().sort((a, b) => depth(a.spec, this.objects) - depth(b.spec, this.objects));
     for (const o of ordered) this.placeObject(o, t);
     this.placeCamera(t);
+    (this as any).presetRt?.update(t);
   }
 
   placeObject(o: Engine["objects"][number], t: number) {
@@ -826,8 +831,11 @@ function blobShadow(p: Record<string, any>): Prop {
 const engine = new Engine();
 (window as any).__scene3d = {
   async load(spec: SceneSpec) {
-    return engine.init(spec);
+    return engine.init(expandPresets(spec));
   },
+  /** Справка по пресетам (каталог) и развёртка блока presets без рендера. */
+  presets: () => presetCatalog(),
+  expand: (spec: SceneSpec) => expandPresets(spec),
   render(t: number) {
     return engine.render(t);
   },

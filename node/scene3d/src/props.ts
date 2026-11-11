@@ -242,7 +242,17 @@ export function primitive(kind: string, opts: PrimitiveOpts = {}): Prop {
     emissive: opts.emissive || "#000000", emissiveIntensity: baseGlow, flatShading: !!opts.flat });
   let geo: THREE.BufferGeometry;
   const seg = Math.max(3, Math.min(64, Math.round(opts.segments ?? 32)));
-  if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], seg);
+  const o = opts as Record<string, any>;
+  if (kind === "cyclorama") return cyclorama(o, mat);
+  if (kind === "cylinder" && o.top !== undefined) geo = new THREE.CylinderGeometry((s[0] / 2) * o.top, s[0] / 2, s[1], seg);
+  else if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], seg);
+  else if (kind === "cone") geo = new THREE.ConeGeometry(s[0] / 2, s[1], seg);
+  else if (kind === "capsule") geo = new THREE.CapsuleGeometry(s[0] / 2, Math.max(0.001, s[1] - s[0]), 6, seg);
+  else if (kind === "torus") geo = new THREE.TorusGeometry(s[0] / 2, o.tube ?? s[0] * 0.08, 12, seg);
+  else if (kind === "plane") {
+    geo = new THREE.PlaneGeometry(s[0], s[1]);
+    mat.side = THREE.DoubleSide;
+  }
   else if (kind === "sphere") geo = new THREE.SphereGeometry(s[0] / 2, seg, Math.max(2, Math.round(seg / 2)));
   else if (kind === "rounded_box") {
     const d = s[2] ?? s[0];
@@ -259,6 +269,47 @@ export function primitive(kind: string, opts: PrimitiveOpts = {}): Prop {
       if (state.glow !== undefined) mat.emissiveIntensity = baseGlow * Number(state.glow);
     },
   };
+}
+
+/**
+ * Студийная циклорама: пол плавно (дугой радиуса radius) переходит в заднюю стену — фон без угла и горизонта.
+ * Начало координат — низ задней стены по центру, пол уходит на depth вперёд (+z), стена — на height вверх.
+ */
+function cyclorama(o: Record<string, any>, mat: THREE.MeshStandardMaterial): Prop {
+  const w = o.width ?? 8, h = o.height ?? 4, d = o.depth ?? 6, r = Math.min(o.radius ?? 1.2, h, d);
+  const prof: number[][] = [[0, d]];
+  for (let i = 0; i <= 16; i++) {
+    const a = (i / 16) * (Math.PI / 2);
+    prof.push([r - r * Math.cos(a), r - r * Math.sin(a)]);
+  }
+  prof.push([h, 0]);
+  const pos: number[] = [], idx: number[] = [], uv: number[] = [];
+  let len = 0;
+  prof.forEach(([y, z], i) => {
+    if (i) len += Math.hypot(y - prof[i - 1][0], z - prof[i - 1][1]);
+    pos.push(-w / 2, y, z, w / 2, y, z);
+    uv.push(0, len / (d + h), 1, len / (d + h));
+    if (i) {
+      const a = (i - 1) * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // Лицом к зрителю: нормали вверх (пол) и вперёд (стена).
+  if (g.attributes.normal.getY(0) < 0) {
+    g.setIndex(idx.map((_, i) => idx[i - (i % 3) + (2 - (i % 3))]));
+    g.computeVertexNormals();
+  }
+  const m = new THREE.Mesh(g, mat);
+  m.receiveShadow = true;
+  m.castShadow = false;
+  const grp = new THREE.Group();
+  grp.add(m);
+  return { object: grp };
 }
 
 /**
