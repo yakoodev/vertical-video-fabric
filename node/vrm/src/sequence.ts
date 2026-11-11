@@ -4,14 +4,20 @@
  * моргание (и на поворотах головы), руки на клавиатуре/столе — IK с плавным весом против мокапа, пресеты
  * пальцев с пределами суставов, выражения с наплывом, рот слогами в окнах речи. Всё — функция t.
  */
-import type { ArmSpec, FingerSpec, PoseSpec, Surface, V3 } from "./rig.ts";
+import type { ArmSpec, FingerSpec, Point, PoseSpec, Surface, V3 } from "./rig.ts";
 import { mocapAt, type Clip, type Track } from "./mocap.ts";
 import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
 import { speechMouth } from "./anim.ts";
 import { chinArm, mouseArm, mouthArm, typingArm, waveArm } from "./typing.ts";
 import type { ChairSpec } from "./body.ts";
+import { holdKeys, perfBones, type PerfLayers } from "./perf.ts";
+import { perfArm } from "./perfarms.ts";
 
-export interface Timeline {
+/**
+ * Ключи faces / look / arms / hands могут быть «на время» (hold, out — perf.ts): после hold возвращается прежнее.
+ * Слои игры (shakes, shrugs, flinches, sighs, postures — perf.ts) складываются с позой, как кивки.
+ */
+export interface Timeline extends PerfLayers {
   clips: Record<string, string>;
   tracks: Track[];
   /** IK рук: пресет typing / rest / null (руку ведёт мокап); переход за dur. */
@@ -104,7 +110,19 @@ function armPreset(name: string | null | undefined, side: 1 | -1, t: number): Ar
   if (name === "wave") return side < 0 ? waveArm(t) : restHand(side);
   if (name === "mouse") return side < 0 ? mouseArm(t) : typingArm(side, t);
   if (name === "mouth") return side < 0 ? mouthArm(t) : typingArm(side, t, 0, true);
-  return null;
+  return perfArm(name, side, t);
+}
+
+/** Где примерно точка (для дуги перехода): от кости — от её места у сидящей героини. */
+function approxPoint(p: Point): V3 {
+  if (Array.isArray(p)) return p;
+  if ("mix" in p) {
+    const a = approxPoint(p.mix[0]), b = approxPoint(p.mix[1]);
+    return [lerp(a[0], b[0], p.w) + (p.add?.[0] ?? 0), lerp(a[1], b[1], p.w) + (p.add?.[1] ?? 0), lerp(a[2], b[2], p.w) + (p.add?.[2] ?? 0)];
+  }
+  const at: V3 = p.bone === "head" ? HEAD : p.bone === "chest" ? [0, 1.2, 0] : p.bone === "rightUpperArm" ? [-0.11, 1.27, -0.03] : p.bone === "leftUpperArm" ? [0.11, 1.27, -0.03] : [0, 1.2, 0];
+  const o = p.off || [0, 0, 0], d = p.add || [0, 0, 0];
+  return [at[0] + o[0] + d[0], at[1] + o[1] + d[1], at[2] + o[2] + d[2]];
 }
 
 function mixArm(a: ArmSpec | null, b: ArmSpec | null, w: number): ArmSpec | null {
@@ -115,7 +133,8 @@ function mixArm(a: ArmSpec | null, b: ArmSpec | null, w: number): ArmSpec | null
   const ca = a.curl as number[], cb = b.curl as number[];
   // Переход между далёкими точками (клавиатура ↔ рот, ↔ взмах) — дугой вперёд, перед грудью и лицом, а не по
   // прямой сквозь корпус: выгиб — половина пути (до 14 см), наибольший в середине перехода.
-  const ta = a.target as V3, tb = b.target as V3;
+  // Цели от кости (пресеты игры у лица) — на переходе приблизительно (голова в покое), сама точка — смесь (rig.point).
+  const ta = approxPoint(a.target), tb = approxPoint(b.target);
   const far = Math.hypot(ta[0] - tb[0], ta[1] - tb[1], ta[2] - tb[2]);
   const target = v(ta, tb);
   // Дуга вперёд и вверх (до 10 см): к клавиатуре кисть опускается сверху, не въезжает в клавиши и остаётся в
@@ -130,8 +149,10 @@ function mixArm(a: ArmSpec | null, b: ArmSpec | null, w: number): ArmSpec | null
   // Локоть на переходе — в сторону (полюс наружу): предплечье не чиркает по боку и груди.
   const pole = v(a.pole as V3, b.pole as V3);
   pole[0] += Math.sign(tb[0] || ta[0]) * Math.min(0.3, far) * Math.sin(Math.PI * w);
+  const exact = Array.isArray(a.target) && Array.isArray(b.target);
+  const arcAdd: V3 = [target[0] - lerp(ta[0], tb[0], w), target[1] - lerp(ta[1], tb[1], w), target[2] - lerp(ta[2], tb[2], w)];
   return {
-    ...b, target, pole,
+    ...b, target: exact ? target : { mix: [a.target, b.target], w, add: arcAdd }, pole,
     fingers: v(a.fingers as V3, b.fingers as V3), palm: v(a.palm as V3, b.palm as V3),
     // Пальцы: раскрываются в первой половине перехода, сжимаются — во второй (на середине пути не «когти»).
     curl: ca.map((c, i) => lerp(c, cb[i], cb[i] < c ? smooth(Math.min(1, w * 6)) : smooth(Math.max(0, w * 2.2 - 1.2)))),
@@ -184,7 +205,9 @@ export function armChain(keys: Timeline["arms"], side: 1 | -1, t: number): ArmSp
 
 const HEAD: V3 = [0, 1.39, -0.02];
 
-export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: number): PoseSpec {
+export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: number): PoseSpec {
+  // Ключи «на время» (пресеты игры) — развёрнуты в обычные с возвратом к прежнему.
+  const tl: Timeline = { ...tl0, ...holdKeys(tl0) };
   const bones: Record<string, V3> = { ...seated(t, tl.lean ?? 3) };
   // Взгляд: глаза почти сразу, голова догоняет (0.28 с), корпус ещё позже (0.6 с) и чуть-чуть.
   const eyes = lookPoint(tl.look, t, 0.05);
@@ -207,6 +230,7 @@ export function sequencePose(tl: Timeline, clips: Record<string, Clip>, t: numbe
     add("spine", [nb.spine, 0, 0]);
     add("chest", [nb.chest, 0, 0]);
   }
+  for (const [n, v] of Object.entries(perfBones(tl, t))) add(n, v);
   const mocap = mocapAt(clips, tl.tracks, t);
   // Руки: IK-пресеты с плавным весом против мокапа.
   const arm = (side: 1 | -1) => armChain(tl.arms, side, t);

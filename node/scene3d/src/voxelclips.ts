@@ -6,6 +6,8 @@
  * плечу персонажа); у левой руки z+ — наружу, у правой z− — наружу. Значения в градусах, складываются с позами.
  */
 
+import { layerClips, type LayerClip } from "./voxelgestures.ts";
+
 export type Rot = Record<string, number[]>;
 
 export const SIT: Rot = { thigh_l: [-90, -5, 0], thigh_r: [-90, 5, 0], calf_l: [88, 0, 0], calf_r: [88, 0, 0], foot_l: [2, 0, 0], foot_r: [2, 0, 0] };
@@ -26,7 +28,10 @@ const breath = (t: number, k = 1): Rot => ({ spine_03: [1.4 * k * sin(t / 4), 0,
 /** Руки спокойно на столе (сидя). */
 const DESK: Rot = { upperarm_l: [-38, 0, 6], upperarm_r: [-38, 0, -6], lowerarm_l: [-48, 0, 0], lowerarm_r: [-48, 0, 0] };
 
-export const VOXEL_CLIPS: Record<string, { dur: number; pose: (t: number) => Rot }> = {
+/** Клип: поза — функция локального времени; layer — клип-слой эмоции/жеста (voxelgestures.ts) поверх текущей позы. */
+export interface VoxelClip { dur: number; pose: (t: number) => Rot; layer?: LayerClip["layer"] }
+
+export const VOXEL_CLIPS: Record<string, VoxelClip> = {
   Idle_Loop: { dur: 8, pose: (t) => add(breath(t), { upperarm_l: [0, 0, 4 + sin(t / 4)], upperarm_r: [0, 0, -4 - sin(t / 4)] }) },
   Sit_Loop: { dur: 8, pose: (t) => add(SIT, breath(t), DESK) },
   Typing_Loop: {
@@ -206,3 +211,6 @@ export const VOXEL_CLIPS: Record<string, { dur: number; pose: (t: number) => Rot
     }),
   },
 };
+
+// Эмоции и жесты пресетов игры (Emo_*, Gest_*): слои поверх позы — сидя, стоя, за клавиатурой.
+Object.assign(VOXEL_CLIPS, layerClips((t) => VOXEL_CLIPS.Idle_Loop.pose(t)));

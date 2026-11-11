@@ -30,7 +30,7 @@ def test_hero_rejects_unknown_shape_clip_face():
     with pytest.raises(ValueError):
         V.voxel_hero(actions=[{"clip": "Dance_Loop", "start": 0}])
     with pytest.raises(ValueError):
-        V.voxel_hero(faces=[{"t": 0, "face": "angry"}])
+        V.voxel_hero(faces=[{"t": 0, "face": "disgust"}])
     faces = V.voxel_hero(faces=[{"t": 2, "face": "wide"}, {"t": 0, "face": "sleep"}])["faces"]
     assert [f["t"] for f in faces] == [0, 2]
 

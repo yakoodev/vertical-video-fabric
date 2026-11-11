@@ -7,13 +7,16 @@
  *   block — пиксель-арт 16×16 во всю переднюю грань кубической головы (кожа, чёлка, брови, глаза, рот);
  *   soft  — «аниме»-наклейка 128×128 с прозрачным фоном: большие глаза с бликами, тонкие брови, румянец;
  *           кладётся поверх скруглённой головы цвета кожи.
- * Выражения: neutral, blink, sleep, wide (проснулся/ахнула, глаза круглые), happy, frown, laugh, talk.
+ * Выражения: neutral, blink, sleep, wide (проснулся/ахнула, глаза круглые), happy, frown, laugh, talk, tired, yawn;
+ * эмоции пресетов игры (angry, sad, smug, pout, think, panic, shock, eyeroll, sigh, wince, meh) — voxelfaces.ts.
  */
 import * as THREE from "three";
 import { rng } from "./timeline.ts";
+import { blockEmotionFace, EMOTION_FACES, softEmotionFace, type EmotionFace } from "./voxelfaces.ts";
 
-export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy" | "frown" | "laugh" | "talk" | "tired" | "yawn";
-export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk", "tired", "yawn"];
+export type VoxelFace = "neutral" | "blink" | "sleep" | "wide" | "happy" | "frown" | "laugh" | "talk" | "tired" | "yawn" | EmotionFace;
+export const VOXEL_FACES: VoxelFace[] = ["neutral", "blink", "sleep", "wide", "happy", "frown", "laugh", "talk", "tired", "yawn", ...EMOTION_FACES];
+const isEmotion = (f: string): f is EmotionFace => (EMOTION_FACES as readonly string[]).includes(f);
 
 function canvas(w: number, h: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const c = document.createElement("canvas");
@@ -97,7 +100,7 @@ export interface FacePalette {
  * Пиксельное лицо 16×16 (блок): кожа с шумом, чёлка рваным краем, брови, глаза 3×2 (белок + радужка),
  * нос тенью, рот. Возвращает канвас — текстуру во всю переднюю грань.
  */
-export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElement {
+export function blockFaceCanvas(face: VoxelFace, p: FacePalette, blink = false): HTMLCanvasElement {
   const [c, g] = canvas(16, 16);
   const r = rng(77);
   const px = (x: number, y: number, col: string) => {
@@ -115,7 +118,8 @@ export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElem
   const nose = shade(p.skin, 0.84);
   px(7, 10, nose);
   px(8, 10, nose);
-  if (face === "sleep" || face === "blink") {
+  if (isEmotion(face)) blockEmotionFace(px, face, p, blink);
+  else if (face === "sleep" || face === "blink") {
     for (const x0 of [3, 10]) {
       for (let x = 0; x < 3; x++) px(x0 + x, 8, dark);
       px(x0 === 3 ? 3 : 12, 7, shade(p.skin, 0.86));
@@ -172,7 +176,7 @@ export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElem
       px(13, 6, dark);
     }
   }
-  if (p.blush) {
+  if (p.blush && !isEmotion(face)) {
     px(2, 10, p.blush);
     px(13, 10, p.blush);
   }
@@ -185,8 +189,12 @@ export function blockFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElem
  * Выражения: neutral, blink, sleep (закрытые глаза-дуги, рот приоткрыт), wide (круглые глаза, рот «о»),
  * happy (^^), frown (брови домиком к переносице, рот дугой вниз), laugh (^^ и открытый смех), talk (рот открыт).
  */
-export function softFaceCanvas(face: VoxelFace, p: FacePalette): HTMLCanvasElement {
+export function softFaceCanvas(face: VoxelFace, p: FacePalette, blink = false): HTMLCanvasElement {
   const [c, g] = canvas(128, 128);
+  if (isEmotion(face)) {
+    softEmotionFace(c, face, p, blink);
+    return c;
+  }
   const ink = p.eyes ? shade(p.eyes, 0.42) : "#20152c";
   const iris = p.eyes || "#7a4bd6";
   const brow = shade(p.hair, 0.85);

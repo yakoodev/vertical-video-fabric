@@ -15,6 +15,10 @@
  * Sleep_Desk_Loop, Startle, Walk_Loop), поверх — ``poses`` (``rotate``: кость → добавочный локальный
  * поворот [x, y, z]°; ``wiggle``), лицо — ключи ``faces: [{t, face}]`` (neutral/happy — с морганием,
  * sleep — над головой всплывают «Z»). ``seat`` — высота сиденья: герой сидит всю сцену.
+ *
+ * Эмоции и жесты (пресеты игры): клипы-слои Emo_* / Gest_* (voxelgestures.ts) ложатся поверх остальных действий
+ * (стоит, сидит, печатает), ключ лица с ``dur`` действует только своё время, эмоции с открытыми глазами моргают
+ * своей закрытой версией (voxelfaces.ts), у жеста «показывает» появляется указательный палец.
  */
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
@@ -22,6 +26,9 @@ import { actionStates, facingYaw, samplePath, windowWeight, type Action, type Ke
 import { blockFaceCanvas, noiseTexture, pixelTexture, sleepZCanvas, softFaceCanvas, VOXEL_FACES } from "./pixel.ts";
 import type { Character, PoseSpec } from "./character.ts";
 import { VOXEL_CLIPS, type Rot } from "./voxelclips.ts";
+import { voxelDims } from "./voxeldims.ts";
+import { isLayerClip, layerActions } from "./voxelgestures.ts";
+import { BLINKING_FACES } from "./voxelfaces.ts";
 
 export interface VoxelLook {
   /** block — кубики, soft — скруглённый лоу-поли «чиби». */
@@ -68,7 +75,7 @@ export interface VoxelCharacterSpec {
 }
 
 const D2R = Math.PI / 180;
-export { VOXEL_CLIPS };
+export { VOXEL_CLIPS, voxelDims };
 
 /** Геометрия «кубика» с UV в пикселях (texel м): шум ложится одинаковыми квадратами на любой грани. */
 function voxBox(w: number, h: number, d: number, texel: number, keepFront = false): THREE.BoxGeometry {
@@ -95,27 +102,10 @@ function bone(name: string, parent: THREE.Object3D, pos: number[]): THREE.Bone {
   return b;
 }
 
-/** Размеры в метрах для роста H0 (block — 1.6 м, 32 «пикселя»; soft — 1.5 м). */
-function dims(shape: "block" | "soft") {
-  if (shape === "block") {
-    const u = 0.05;
-    return {
-      H0: 1.6, u, hipY: 12 * u, hipX: 2 * u, thigh: 6 * u, calf: 6 * u, foot: 0, legW: 4 * u,
-      torso: [8 * u, 12 * u, 4 * u], pelvis: null as number[] | null, neck: 0, shoulderX: 6 * u, shoulderDrop: 2 * u,
-      upper: 4.5 * u, fore: 3.5 * u, hand: 2 * u, armW: 4 * u, head: [8 * u, 8 * u, 8 * u],
-    };
-  }
-  return {
-    H0: 1.5, u: 0.04, hipY: 0.6, hipX: 0.085, thigh: 0.27, calf: 0.27, foot: 0.06, legW: 0.13,
-    torso: [0.34, 0.4, 0.22], pelvis: [0.32, 0.17, 0.22], neck: 0.06, shoulderX: 0.205, shoulderDrop: 0.06,
-    upper: 0.23, fore: 0.2, hand: 0.09, armW: 0.1, head: [0.4, 0.38, 0.37],
-  };
-}
-
 export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   const look = spec.voxel || {};
   const shape = look.shape === "soft" ? "soft" : "block";
-  const D = dims(shape);
+  const D = voxelDims(shape);
   const height = spec.height ?? D.H0;
   const k = height / D.H0;
   const block = shape === "block";
@@ -226,6 +216,16 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
       box(hd, [0.028, 0.05, 0.03], mat(skin), [-s * 0.035, -0.035, 0.02], 0.45, [0, 0, s * 25]); // большой палец
     }
   }
+  // Указательный палец (жест «показывает», Gest_Point): тонкий брусок из кисти, виден только во время жеста.
+  const fingers: Record<string, THREE.Mesh> = {};
+  for (const s of [1, -1]) {
+    const side = s > 0 ? "l" : "r";
+    const fw = block ? D.armW * 0.32 : 0.024, fl = block ? D.hand * 0.9 : 0.065;
+    const f = box(bones[`hand_${side}`], [fw, fl, fw], mat(skin), [-s * (block ? D.armW * 0.22 : 0.014), -D.hand - fl / 2 + fw * 0.4, block ? D.armW * 0.2 : 0.01], 0.45);
+    f.name = `voxel:finger_${side}`;
+    f.visible = false;
+    fingers[side] = f;
+  }
   // Ноги: штаны, кеды (носок вперёд).
   for (const s of [1, -1]) {
     const side = s > 0 ? "l" : "r";
@@ -250,15 +250,15 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   headMesh.name = "voxel:head";
   const pal = { skin, hair: hairC, eyes: look.eyes, blush: look.blush, lashes: !!look.lashes, eyebags: look.eyebags };
   const faces: Record<string, THREE.Texture> = {};
-  for (const f of VOXEL_FACES) {
-    if (block) faces[f] = pixelTexture(blockFaceCanvas(f, pal));
-    else {
-      const t = new THREE.CanvasTexture(softFaceCanvas(f, pal));
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 4;
-      faces[f] = t;
-    }
-  }
+  const faceTex = (f: (typeof VOXEL_FACES)[number], blink = false) => {
+    if (block) return pixelTexture(blockFaceCanvas(f, pal, blink));
+    const t = new THREE.CanvasTexture(softFaceCanvas(f, pal, blink));
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return t;
+  };
+  for (const f of VOXEL_FACES) faces[f] = faceTex(f);
+  for (const f of BLINKING_FACES) faces[`${f}~blink`] = faceTex(f as (typeof VOXEL_FACES)[number], true);
   const faceMat = new THREE.MeshStandardMaterial({ map: faces.neutral, roughness: block ? 0.86 : 0.6, transparent: !block,
     alphaTest: block ? 0 : 0.02, polygonOffset: true, polygonOffsetFactor: -2 });
   const fw = block ? hw : hw * 0.8;
@@ -317,6 +317,8 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
   const yawAt = (t: number) => facingYaw(path, spec.facing, t, spec.yaw ?? 0);
   const durations = Object.fromEntries(Object.entries(VOXEL_CLIPS).map(([n, c]) => [n, c.dur]));
   const faceKeys = (spec.faces || []).slice().sort((a, b) => a.t - b.t);
+  const baseActions = (spec.actions || []).filter((a) => !isLayerClip(a.clip));
+  const layerActs = (spec.actions || []).filter((a) => isLayerClip(a.clip));
   const euler = new THREE.Euler();
 
   const update = (t: number) => {
@@ -338,9 +340,16 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
         rot[name] = [o[0] + v[0] * w, o[1] + v[1] * w, o[2] + v[2] * w];
       }
     };
-    const states = actionStates(spec.actions || [], t, durations);
+    const states = actionStates(baseActions, t, durations);
     if (!states.length) mix(VOXEL_CLIPS[spec.seat !== undefined ? "Sit_Loop" : "Idle_Loop"].pose(t), 1);
     for (const st of states) mix((VOXEL_CLIPS[st.clip] || VOXEL_CLIPS.Idle_Loop).pose(st.time), st.weight);
+    // Эмоции и жесты (Emo_*, Gest_*) — слоями поверх того, что герой делает; сдвиги костей (плечи, таз) — к позиции.
+    if (layerActs.length) {
+      const move: Rot = {};
+      const flags = layerActions(layerActs, t, rot, move, spec.seat !== undefined, shape);
+      for (const [name, v] of Object.entries(move)) bones[name]?.position.add(new THREE.Vector3(v[0], v[1], v[2]));
+      for (const [side, f] of Object.entries(fingers)) f.visible = flags.has(`point_${side}`);
+    }
     for (const pose of spec.poses || []) {
       const w = windowWeight(t, pose.start, pose.end, pose.fade ?? 0.35, pose.fadeOut ?? pose.fade ?? 0.35);
       if (w <= 0) continue;
@@ -358,7 +367,8 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
     // Лицо: последний ключ; открытые глаза моргают (детерминированно от t).
     let face = "neutral";
     let faceT = 0;
-    for (const f of faceKeys) if (f.t <= t + 1e-9) {
+    // Ключ с dur — на время (эмоция пресета): после него лицо возвращается к прежнему ключу.
+    for (const f of faceKeys) if (f.t <= t + 1e-9 && (f.dur == null || t < f.t + f.dur)) {
       face = f.face;
       faceT = f.t;
     }
@@ -367,7 +377,12 @@ export function createVoxelCharacter(spec: VoxelCharacterSpec): Character {
     if (face === "blink_once") face = t - faceT < 0.16 ? "blink" : "neutral";
     // Авто-моргание — только у нейтрального лица и когда говорит: выражение (радость, хмурится) глаза не закрывает.
     if ((face === "neutral" || face === "talk") && ((t + 0.4) % 3.3) < 0.11) face = "blink";
-    faceMat.map = faces[face] || faces.neutral;
+    // Эмоции с открытыми глазами моргают своей закрытой версией (брови и рот те же).
+    if (BLINKING_FACES.includes(face) && ((t + 1.1) % 3.7) < 0.12) face = `${face}~blink`;
+    // Материал берётся у наклейки каждый кадр: стиль картинки (matstyle.ts) мог заменить его своим (toon и т. п.).
+    const fm = decal.material as THREE.MeshStandardMaterial;
+    const tex = faces[face] || faces.neutral;
+    if (fm.map !== tex) fm.map = tex;
     // «Z»: всплывают по очереди со стороны макушки и тают.
     const sleeping = face === "sleep";
     // Над центром головы в мире (голова может лежать на боку), уходят вверх и вбок.
@@ -404,7 +419,7 @@ type BoxFn = (parent: THREE.Object3D, size: number[], m: THREE.Material | THREE.
 type MatFn = (color: string, opts?: { rough?: number; emissive?: string; glow?: number }) => THREE.MeshStandardMaterial;
 
 /** Волосы: block — шапка блоками, затылок, виски, рваная чёлка и вихры; soft — скруглённые пряди. */
-function buildHair(head: THREE.Bone, D: ReturnType<typeof dims>, style: string, color: string, block: boolean, box: BoxFn, mat: MatFn) {
+function buildHair(head: THREE.Bone, D: ReturnType<typeof voxelDims>, style: string, color: string, block: boolean, box: BoxFn, mat: MatFn) {
   const [hw, hh, hd] = D.head;
   const m = mat(color, { rough: block ? 0.9 : 0.55 });
   const m2 = mat(color, { rough: 0.9 });
@@ -465,7 +480,7 @@ function buildHair(head: THREE.Bone, D: ReturnType<typeof dims>, style: string, 
 }
 
 /** Наушники: дуга через макушку и чашки на ушах, на чашках — светящееся кольцо (RGB, как у стримеров). */
-function buildHeadphones(head: THREE.Bone, D: ReturnType<typeof dims>, color: string, glow: string, block: boolean, box: BoxFn,
+function buildHeadphones(head: THREE.Bone, D: ReturnType<typeof voxelDims>, color: string, glow: string, block: boolean, box: BoxFn,
   cyl: (parent: THREE.Object3D, r0: number, r1: number, len: number, m: THREE.Material, pos: number[], rot?: number[]) => THREE.Mesh,
   mat: MatFn) {
   const [hw, hh] = D.head;

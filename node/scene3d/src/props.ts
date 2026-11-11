@@ -242,7 +242,18 @@ export function primitive(kind: string, opts: PrimitiveOpts = {}): Prop {
     emissive: opts.emissive || "#000000", emissiveIntensity: baseGlow, flatShading: !!opts.flat });
   let geo: THREE.BufferGeometry;
   const seg = Math.max(3, Math.min(64, Math.round(opts.segments ?? 32)));
-  if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], seg);
+  const o = opts as Record<string, any>;
+  if (kind === "cyclorama") return cyclorama(o, mat);
+  if (kind === "facade") return facade(o, mat);
+  if (kind === "cylinder" && o.top !== undefined) geo = new THREE.CylinderGeometry((s[0] / 2) * o.top, s[0] / 2, s[1], seg);
+  else if (kind === "cylinder") geo = new THREE.CylinderGeometry(s[0] / 2, s[0] / 2, s[1], seg);
+  else if (kind === "cone") geo = new THREE.ConeGeometry(s[0] / 2, s[1], seg);
+  else if (kind === "capsule") geo = new THREE.CapsuleGeometry(s[0] / 2, Math.max(0.001, s[1] - s[0]), 6, seg);
+  else if (kind === "torus") geo = new THREE.TorusGeometry(s[0] / 2, o.tube ?? s[0] * 0.08, 12, seg);
+  else if (kind === "plane") {
+    geo = new THREE.PlaneGeometry(s[0], s[1]);
+    mat.side = THREE.DoubleSide;
+  }
   else if (kind === "sphere") geo = new THREE.SphereGeometry(s[0] / 2, seg, Math.max(2, Math.round(seg / 2)));
   else if (kind === "rounded_box") {
     const d = s[2] ?? s[0];
@@ -259,6 +270,116 @@ export function primitive(kind: string, opts: PrimitiveOpts = {}): Prop {
       if (state.glow !== undefined) mat.emissiveIntensity = baseGlow * Number(state.glow);
     },
   };
+}
+
+/**
+ * Студийная циклорама: пол плавно (дугой радиуса radius) переходит в заднюю стену — фон без угла и горизонта.
+ * Начало координат — низ задней стены по центру, пол уходит на depth вперёд (+z), стена — на height вверх.
+ */
+function cyclorama(o: Record<string, any>, mat: THREE.MeshStandardMaterial): Prop {
+  const w = o.width ?? 8, h = o.height ?? 4, d = o.depth ?? 6, r = Math.min(o.radius ?? 1.2, h, d);
+  const prof: number[][] = [[0, d]];
+  for (let i = 0; i <= 16; i++) {
+    const a = (i / 16) * (Math.PI / 2);
+    prof.push([r - r * Math.cos(a), r - r * Math.sin(a)]);
+  }
+  prof.push([h, 0]);
+  const pos: number[] = [], idx: number[] = [], uv: number[] = [];
+  let len = 0;
+  prof.forEach(([y, z], i) => {
+    if (i) len += Math.hypot(y - prof[i - 1][0], z - prof[i - 1][1]);
+    pos.push(-w / 2, y, z, w / 2, y, z);
+    uv.push(0, len / (d + h), 1, len / (d + h));
+    if (i) {
+      const a = (i - 1) * 2;
+      idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+    }
+  });
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  // Лицом к зрителю: нормали вверх (пол) и вперёд (стена).
+  if (g.attributes.normal.getY(0) < 0) {
+    g.setIndex(idx.map((_, i) => idx[i - (i % 3) + (2 - (i % 3))]));
+    g.computeVertexNormals();
+  }
+  const m = new THREE.Mesh(g, mat);
+  m.receiveShadow = true;
+  m.castShadow = false;
+  const grp = new THREE.Group();
+  grp.add(m);
+  return { object: grp };
+}
+
+/**
+ * Фасад дома для дальнего плана (primitive "facade"): короб size [w, h, d], на передней грани (+z) — сетка окон
+ * канвасом: горящие (цвета win, светятся через emissiveMap, сила glow) и тёмные стёкла. Окна — текстура, а не
+ * объекты: сотни окон за один меш. cols/rows — сетка (по умолчанию окно ~1.6 × 2.8 м в единицах size),
+ * lit — доля горящих, bands — офисные ленты этажей вместо окон, seed — раскладка.
+ */
+function facade(o: Record<string, any>, mat: THREE.MeshStandardMaterial): Prop {
+  const s = o.size || [10, 30, 8];
+  const cols = Math.max(1, Math.min(64, Math.round(o.cols ?? s[0] / 1.6))), rows = Math.max(1, Math.min(128, Math.round(o.rows ?? s[1] / 2.8)));
+  const cw = 8, ch = 10;
+  const mk2 = () => {
+    const c = document.createElement("canvas");
+    c.width = cols * cw;
+    c.height = rows * ch;
+    return [c, c.getContext("2d")!] as const;
+  };
+  const [cc, g] = mk2(), [ec, e] = mk2();
+  g.fillStyle = o.color || "#2a2e3a";
+  g.fillRect(0, 0, cc.width, cc.height);
+  e.fillStyle = "#000000";
+  e.fillRect(0, 0, ec.width, ec.height);
+  const r = rng(o.seed ?? 7);
+  const win: string[] = o.win || ["#ffcf8a", "#ffd9a0", "#ffb870", "#ffe6b8", "#bcd6ff"];
+  const lit = o.lit ?? 0.3;
+  const glass = o.glass || "#151a26";
+  for (let j = 0; j < rows; j++) {
+    const y = j * ch;
+    if (o.bands) {
+      g.fillStyle = glass;
+      g.fillRect(0, y + ch * 0.2, cc.width, ch * 0.6);
+      if (r() < lit * 1.5) {
+        const len = cc.width * (0.25 + r() * 0.75), x = r() * (cc.width - len);
+        const col = r() < 0.7 ? "#d6e4ff" : "#ffe2b0";
+        for (const ctx of [g, e]) {
+          ctx.fillStyle = col;
+          ctx.fillRect(x, y + ch * 0.25, len, ch * 0.5);
+        }
+      }
+      continue;
+    }
+    for (let i = 0; i < cols; i++) {
+      const x = i * cw;
+      const on = r() < lit;
+      const col = on ? win[Math.floor(r() * win.length)] : glass;
+      g.fillStyle = col;
+      g.fillRect(x + cw * 0.22, y + ch * 0.2, cw * 0.56, ch * 0.56);
+      if (on) {
+        e.fillStyle = col;
+        e.fillRect(x + cw * 0.22, y + ch * 0.2, cw * 0.56, ch * 0.56);
+      }
+    }
+  }
+  const tex = (c: HTMLCanvasElement) => {
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return t;
+  };
+  const front = new THREE.MeshStandardMaterial({ map: tex(cc), emissive: "#ffffff", emissiveMap: tex(ec), emissiveIntensity: o.glow ?? 1.6,
+    roughness: mat.roughness, metalness: mat.metalness });
+  const m = new THREE.Mesh(new THREE.BoxGeometry(s[0], s[1], s[2] ?? s[0]), [mat, mat, mat, mat, front, mat]);
+  m.position.y = s[1] / 2;
+  m.castShadow = !o.noShadow;
+  m.receiveShadow = true;
+  const grp = new THREE.Group();
+  grp.add(m);
+  return { object: grp };
 }
 
 /**

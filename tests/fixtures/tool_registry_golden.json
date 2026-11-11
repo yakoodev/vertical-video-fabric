@@ -287,6 +287,28 @@
 "label": true
 },
 {
+"name": "list_3d_presets",
+"title": "Смотрю 3D-пресеты",
+"description": "cae092a0ee4ff44a",
+"parameters": "dd2cd19a0caedfc7",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_list_3d_presets",
+"label": true
+},
+{
+"name": "check_3d_plan",
+"title": "Проверяю 3D-план",
+"description": "5f644685f971a02d",
+"parameters": "41408ebe6a072aee",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_check_3d_plan",
+"label": true
+},
+{
 "name": "list_fonts",
 "title": "Смотрю шрифты",
 "description": "af285f7eb29c4919",

@@ -11,7 +11,9 @@ import { chairGap, type ChairSpec } from "./body.ts";
 export type V3 = [number, number, number];
 
 /** Точка: числа в пространстве модели или {bone, off, add} — от кости: off в осях кости, add в осях модели. */
-export type Point = V3 | { bone: string; off?: V3; add?: V3 };
+export type Point = V3 | { bone: string; off?: V3; add?: V3 } | MixPoint;
+/** Точка между двумя (переход руки между пресетами, у которых цель — от кости): a→b с весом w, плюс add (дуга). */
+export interface MixPoint { mix: [Point, Point]; w: number; add?: V3 }
 
 export interface ArmSpec {
   target: Point;
@@ -140,6 +142,10 @@ export class Rig {
 
   point(p: Point): THREE.Vector3 {
     if (Array.isArray(p)) return new THREE.Vector3(...p);
+    if ("mix" in p) {
+      const v = this.point(p.mix[0]).lerp(this.point(p.mix[1]), p.w);
+      return p.add ? v.add(new THREE.Vector3(...p.add)) : v;
+    }
     const base = this.pos(p.bone);
     if (p.off) {
       // Сдвиг — в осях кости (голова наклонилась — точка у рта едет вместе с ней).

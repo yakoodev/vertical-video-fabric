@@ -237,6 +237,10 @@ bearer_token_env_var = "VVF_TOKEN"
   (`roll`), `bubbles`, `carousel`, `waveform`, `tile_wall`, `flow_diagram`; значки — свои (`icon: "shield"`…), не
   эмодзи. Наклонить блоки страницы как один экран — `camera_preset(preset: "screen_tilt", start, layer_prefix:
   "wp<id>_", x, y, zoom)`. Стена плиток закрывает кадр — только на холсте или как заставка.
+- **3D-сцены и эпизоды (пресеты)**: `list_3d_presets` — готовые стили картинки, свет, движения камеры, атмосфера,
+  настроения, окружения, эмоции/жесты героя и переходы с русскими описаниями (`category`/`q` — с параметрами);
+  блок `presets` сцены (`{look, light, room, mood, fx, camera, transitions, performance}`) проверяй `check_3d_plan`
+  до рендера. Каталог картинками и правила — docs/3d/presets.md.
 - Вход/выход: `pop`, `words`, `typewriter`, `rise`, `slideUp`, `zoom`, `draw`…; постоянное: `pulse`, `wiggle`, `shake`.
   `rise` (только текст) — каждое слово по очереди выезжает снизу из-под невидимой маски своей строки
   (с плашкой — из-под её края) с проявлением: «дорогие» титры промо; на выходе — уходит под маску.
