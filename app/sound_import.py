@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.settings import settings
+from app.ytdlp_net import PRINT_TITLE_ARGS, title_from_output
 
 MAX_SOUND_SEC = 6.0
 MAX_SOURCE_SEC = 15 * 60  # yt-dlp: ролики длиннее не трогаем (это не звук, а фильм)
@@ -74,7 +75,7 @@ def build_ytdlp_sound_args(url: str, output_template: Path, start: float = 0.0) 
     return [
         "yt-dlp", "--no-playlist", "-f", "bestaudio/best", "-x", "--audio-format", "mp3",
         "--match-filter", f"duration < {MAX_SOURCE_SEC}", "--download-sections", f"*{start:.2f}-{end:.2f}",
-        "--print", "after_move:%(title)s", "--no-simulate", "-o", str(output_template), url,
+        *PRINT_TITLE_ARGS, "--no-simulate", "-o", str(output_template), url,
     ]
 
 
@@ -116,14 +117,25 @@ def import_sound_from_url(store, url: str, label: str = "", start: float = 0.0, 
             description += f" · лицензия: {info['license'] or 'не указана'}"
             cut_start = start
         else:
-            proc = subprocess.run(build_ytdlp_sound_args(url, work / "dl.%(ext)s", start),
-                                  capture_output=True, text=True, timeout=10 * 60, check=False)
+            from app.proxy_config import download_proxy
+            from app.ytdlp_net import is_youtube_url, plain_runner, run_routes
+
+            def clean() -> None:
+                for leftover in work.glob("dl.*"):
+                    leftover.unlink(missing_ok=True)
+
+            # Напрямую → прокси сервиса → аккаунт для скачивания (app/ytdlp_net.py); отрезок качает ffmpeg.
+            routes = run_routes(plain_runner(10 * 60), build_ytdlp_sound_args(url, work / "dl.%(ext)s", start)[1:],
+                                url=url, proxy=download_proxy(), before_retry=clean, needs_ffmpeg=True)
+            proc = routes.proc
             files = sorted(work.glob("dl.*"))
             if proc.returncode != 0 or not files:
                 tail = [line for line in (proc.stderr or proc.stdout or "").splitlines() if line.strip()][-2:]
-                raise ValueError("не удалось скачать звук: " + (" ".join(tail)[:300] or "yt-dlp ничего не скачал"))
+                hint = routes.hint("YouTube" if is_youtube_url(url) else "")
+                raise ValueError("не удалось скачать звук: " + (f"{hint} — " if hint else "")
+                                 + (" ".join(tail)[:300] or "yt-dlp ничего не скачал"))
             raw = files[0]
-            title = next((line.strip() for line in (proc.stdout or "").splitlines() if line.strip()), "")
+            title = title_from_output(proc.stdout)
             cut_start = 0.0  # yt-dlp уже скачал с нужной секунды
         name = f"{_slug(label or title or 'sound')}.mp3"
         dest = assets_dir() / f"{uuid4().hex}-{name}"

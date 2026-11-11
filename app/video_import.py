@@ -4,9 +4,9 @@
 руками, резали ffmpeg'ом и отдельно вынимали звук. Здесь — только отрезок
 ``start..end`` (yt-dlp ``--download-sections``, не дольше MAX_SECTION_SEC, не выше
 1080p) тем же механизмом, что загрузка источников (app/ingest.py): yt-dlp через
-``_run_ytdlp`` и, если напрямую не вышло, повтор через прокси сервиса
-(``proxy_config.download_proxy``). Файл приводится к h264 + AAC со звуком — звук
-слоя ``video`` включает ``props.audio`` (см. docs/AGENTS.md).
+``_run_ytdlp`` по маршрутам ``app/ytdlp_net.run_routes``: напрямую → через прокси сервиса
+(``proxy_config.download_proxy``) → YouTube просит вход — с аккаунтом для скачивания.
+Файл приводится к h264 + AAC со звуком — звук слоя ``video`` включает ``props.audio`` (см. docs/AGENTS.md).
 
 Только по ссылке владельца: агент сам ролики в интернете не ищет.
 """
@@ -20,6 +20,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from app.settings import settings
+from app.ytdlp_net import is_youtube_url
 
 MAX_SECTION_SEC = 180.0
 MAX_HEIGHT = 1080
@@ -39,6 +40,9 @@ def build_ytdlp_section_args(url: str, output_template: Path, start: float, end:
         "--socket-timeout", "20",
         "--retries", "5",
         "--newline",
+        # --print сам включает «тихий» режим, а тихий yt-dlp запускает ffmpeg с -loglevel quiet: в ошибке
+        # остаётся одно «ffmpeg exited with code 1», и не понять, что провайдер рвёт соединение.
+        "--no-quiet",
         "--print", f"after_move:{TITLE_MARK}%(title)s",
         "--no-simulate",
         "-o", str(output_template),
@@ -77,19 +81,20 @@ def _slug(text: str) -> str:
 
 def _download(url: str, template: Path, start: float, end: float):
     """yt-dlp тем же путём, что загрузка источников: напрямую, не вышло — через прокси сервиса."""
-    from app.ingest import _run_ytdlp
+    from app.ingest import _ytdlp_route_runner
     from app.proxy_config import download_proxy
+    from app.ytdlp_net import run_routes
 
-    args = build_ytdlp_section_args(url, template, start, end)
-    proc = _run_ytdlp(args)
-    proxy = download_proxy()
-    if proc.returncode != 0 and proxy:
-        # Напрямую не вышло (CDN режет соединение) — повтор через прокси (настройки сервиса →
-        # «Прокси», запасной — DOWNLOAD_PROXY_URL); из одинаковых по высоте — меньший битрейт.
+    def clean() -> None:
         for leftover in template.parent.glob("dl.*"):
             leftover.unlink(missing_ok=True)
-        proc = _run_ytdlp(["-S", "res,fps,+br", *args], proxy=proxy)
-    return proc
+
+    # Напрямую → через прокси сервиса (настройки → «Прокси», запасной — DOWNLOAD_PROXY_URL; из
+    # одинаковых по высоте — меньший битрейт) → YouTube просит вход — с аккаунтом для скачивания.
+    # Отрезок качает ffmpeg: прокси он берёт из окружения (http_proxy), а не из argv.
+    args = build_ytdlp_section_args(url, template, start, end)
+    return run_routes(_ytdlp_route_runner, args, url=url, proxy=download_proxy(), before_retry=clean,
+                      needs_ffmpeg=True)
 
 
 def import_video_from_url(store, url: str, start: object, end: object, label: str = "",
@@ -105,13 +110,16 @@ def import_video_from_url(store, url: str, start: object, end: object, label: st
     work = settings.tmp_dir / f"video-url-{uuid4().hex}"
     work.mkdir(parents=True, exist_ok=True)
     try:
-        proc = _download(url, work / "dl.%(ext)s", a, b)
+        routes = _download(url, work / "dl.%(ext)s", a, b)
+        proc = routes.proc
         files = sorted(f for f in work.glob("dl.*") if not f.name.endswith((".part", ".ytdl", ".temp")))
         output = proc.stdout or proc.stderr or ""
         if proc.returncode != 0 or not files:
             tail = [line for line in output.splitlines() if "ERROR" in line] or \
                    [line for line in output.splitlines() if line.strip()][-2:]
-            raise ValueError("не удалось скачать отрезок: " + (" ".join(tail)[:300] or "yt-dlp ничего не скачал"))
+            hint = routes.hint("YouTube" if is_youtube_url(url) else "")
+            raise ValueError("не удалось скачать отрезок: " + (f"{hint} — " if hint else "")
+                             + (" ".join(tail)[:300] or "yt-dlp ничего не скачал"))
         title = next((line.split(TITLE_MARK, 1)[1].strip() for line in output.splitlines() if TITLE_MARK in line), "")
         name = f"{_slug(label or title or 'video')}-{a:.0f}-{b:.0f}.mp4"
         dest = assets_dir() / f"{uuid4().hex}-{name}"

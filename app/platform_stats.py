@@ -60,7 +60,10 @@ def platform_of_url(url: str) -> str:
 
 def build_ytdlp_stats_args(url: str) -> list[str]:
     # Прокси — окружением процесса (proxy_config.proxy_env), не --proxy: креды видно в ps.
-    return ["yt-dlp", "--dump-json", "--skip-download", "--no-playlist", "--no-warnings", url]
+    # JS-рантайм и PO-токены — общие для всех запусков yt-dlp (app/ytdlp_net.py).
+    from app.ytdlp_net import common_args
+
+    return ["yt-dlp", *common_args(), "--dump-json", "--skip-download", "--no-playlist", "--no-warnings", url]
 
 
 def _count(info: dict, *keys: str) -> int | None:

@@ -130,18 +130,16 @@ def test_import_from_url_marks_new_track(tmp_path, monkeypatch):
 
     store = _store(tmp_path, monkeypatch)
 
-    class Proc:
-        returncode, stdout, stderr = 0, "Upbeat\n", ""
-
     def fake_run(args, **kwargs):
         out = args[args.index("-o") + 1].replace("%(ext)s", "mp3")
         open(out, "wb").write(b"mp3")
-        return Proc()
+        return subprocess.CompletedProcess(args, 0, "Upbeat\n", "")
 
     class Meta:
         duration_sec = 59.0
 
-    monkeypatch.setattr(music_import.subprocess, "run", fake_run)
+    # yt-dlp запускает общий раннер (app/ytdlp_net.plain_runner).
+    monkeypatch.setattr("app.ytdlp_net.subprocess.run", fake_run)
     monkeypatch.setattr("app.ingest.probe_media", lambda p: Meta())
     monkeypatch.setattr(E, "track_fields", lambda p: {"energy_start_sec": 10.4, "drop_sec": 29.5, "bpm": None,
                                                      "energy_version": E.ENERGY_VERSION})

@@ -21,6 +21,19 @@ const proxyApi = {
   test: (url: string) => api.post<ProxyTest>("/api/settings/proxy/test", { url }),
 };
 
+interface DownloadAccountStatus {
+  account_id: number | null;
+  label: string;
+  own_proxy: boolean;
+  accounts: { id: number; label: string; has_required_cookies: boolean }[];
+}
+
+const downloadAccountApi = {
+  get: () => api.get<DownloadAccountStatus>("/api/settings/download-account"),
+  save: (account_id: number | null) =>
+    request<DownloadAccountStatus>("/api/settings/download-account", { method: "PUT", body: { account_id } }),
+};
+
 const TEST_LABELS: Record<string, string> = { twitch_vod: "Видео Twitch (VOD)", google: "Google / Gemini" };
 
 /**
@@ -142,6 +155,57 @@ export function ProxySettings() {
           </div>
         ) : null}
       </div>
+      <DownloadAccountPanel />
+    </div>
+  );
+}
+
+/**
+ * Аккаунт YouTube «для скачивания»: когда YouTube просит вход («подтвердите, что вы не бот» —
+ * адрес прокси помечен), загрузка повторяется с его cookie. По умолчанию — никакой: аккаунты
+ * публикаций сервис для скачивания сам не берёт, только если владелец отметит здесь.
+ */
+function DownloadAccountPanel() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const status = useQuery({ queryKey: ["download-account"], queryFn: downloadAccountApi.get });
+  const save = useMutation({
+    mutationFn: (id: number | null) => downloadAccountApi.save(id),
+    onSuccess: (s) => {
+      qc.setQueryData(["download-account"], s);
+      toast.success(s.account_id ? `Для скачивания: ${s.label}` : "Аккаунт для скачивания не используется");
+    },
+    onError: (e: unknown) => toast.error(e instanceof ApiError ? e.message : "Не получилось"),
+  });
+  const data = status.data;
+  return (
+    <div className="panel" style={{ display: "grid", gap: 12 }}>
+      <strong>Аккаунт YouTube для скачивания</strong>
+      <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+        Если YouTube отвечает «подтвердите, что вы не бот», сервис повторит загрузку с cookie этого аккаунта
+        (через его прокси, если задан, иначе через прокси выше). Лучше завести отдельный аккаунт: Google может
+        выкинуть из сессии, и с аккаунта публикаций пропадут заливки. Добавить аккаунт — в «Аккаунты».
+      </p>
+      <label className="field" style={{ margin: 0 }}>
+        <span>Аккаунт</span>
+        <select
+          className="input"
+          value={data?.account_id ?? ""}
+          disabled={!data || save.isPending}
+          onChange={(e) => save.mutate(e.target.value ? Number(e.target.value) : null)}
+        >
+          <option value="">Не использовать (по умолчанию)</option>
+          {(data?.accounts ?? []).map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.label}
+              {a.has_required_cookies ? "" : " — cookie неполные"}
+            </option>
+          ))}
+        </select>
+      </label>
+      {data && data.accounts.length === 0 ? (
+        <span className="muted" style={{ fontSize: 13 }}>Аккаунтов YouTube пока нет.</span>
+      ) : null}
     </div>
   );
 }

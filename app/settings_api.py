@@ -13,7 +13,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
-from app import proxy_config
+from app import download_account, proxy_config
 from app.agent_settings_api import owner_only
 from app.ai.schema import ANALYSIS_RESPONSE_SCHEMA
 from app.api_common import _safe_next, _setting_int
@@ -80,6 +80,10 @@ class ProxySettingsRequest(BaseModel):
     for_gemini: bool = True
 
 
+class DownloadAccountRequest(BaseModel):
+    account_id: int | None = Field(default=None, description="id аккаунта YouTube для скачивания; пусто — не брать никакой")
+
+
 class ProxyTestRequest(BaseModel):
     url: str = Field(default="", max_length=500)
 
@@ -113,6 +117,19 @@ def build_settings_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
     def api_test_proxy(_auth: auth_dep, payload: ProxyTestRequest | None = None) -> dict:
         try:
             return proxy_config.test((payload.url if payload else "") or None)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/api/settings/download-account", tags=["Settings"],
+                summary="Аккаунт YouTube для скачивания (когда YouTube просит вход)")
+    def api_get_download_account(_auth: auth_dep) -> dict:
+        return download_account.status(get_store())
+
+    @router.put("/api/settings/download-account", tags=["Settings"],
+                summary="Выбрать аккаунт YouTube для скачивания (null — никакой)")
+    def api_put_download_account(payload: DownloadAccountRequest, _auth: auth_dep) -> dict:
+        try:
+            return download_account.set_account(get_store(), payload.account_id)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
