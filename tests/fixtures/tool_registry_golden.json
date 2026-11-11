@@ -1277,6 +1277,17 @@
 "label": true
 },
 {
+"name": "page_to_layers",
+"title": "Разбираю страницу на слои",
+"description": "5b38cc4082717741",
+"parameters": "736d40354049d1e5",
+"mutating": true,
+"scope": "clip",
+"module": "web_pages",
+"handler": "h_page_to_layers",
+"label": true
+},
+{
 "name": "list_pages",
 "title": "Смотрю снимки страниц",
 "description": "33e0339bcb314c39",

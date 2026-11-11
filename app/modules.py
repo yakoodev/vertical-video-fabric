@@ -307,11 +307,12 @@ MODULES: list[Module] = [
     Module(
         "web_pages", "Страницы сайтов", "library",
         "Поиск в интернете и снимки страниц сайтов (только просмотр): копия HTML, правки через HTML (подсветка, "
-        "цена, обрезка), версии и слой «страница» в ролике — агент сам находит сайт для рекламы.",
+        "цена, обрезка), версии, слой «страница» в ролике и разбор страницы на отдельные слои-блоки — агент сам "
+        "находит сайт для рекламы.",
         cost=("network", "ram"), cost_note="поиск Gemini/DuckDuckGo, headless Chromium на время снимка",
-        tools=("web_search", "page_snapshot", "page_edit", "list_pages", "view_page"),
+        tools=("web_search", "page_snapshot", "page_edit", "list_pages", "view_page", "page_to_layers"),
         routes=("/api/web-pages*", "POST /api/web-search"),
-        ui=("вкладка «Страницы» в редакторе",),
+        ui=("вкладка «Страницы» в редакторе", "«Разобрать на слои» в карточке снимка"),
     ),
     Module(
         "asset_ai", "ИИ для файлов монтажа", "library",

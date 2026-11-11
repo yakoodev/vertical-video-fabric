@@ -32,7 +32,7 @@ export const VIEWPORTS = {
 };
 const MOBILE_UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1";
 // Один кадр Chromium — не выше этого числа пикселей (большой кадр GPU-текстурой не снимается).
-const TILE_PX = 4000;
+export const TILE_PX = 4000;
 const MAX_ASSET_BYTES = 15 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 80 * 1024 * 1024;
 const MAX_ASSETS = 600;
@@ -78,7 +78,7 @@ function chromePath() {
 }
 
 /** Браузер с пустым временным профилем; offline — сеть закрыта (копия отдаётся через Fetch). */
-async function openBrowser(offline) {
+export async function openBrowser(offline) {
   const work = mkdtempSync(join(tmpdir(), "vvf-webpage-"));
   const args = [
     "--headless=new", "--remote-debugging-pipe", `--user-data-dir=${join(work, "profile")}`, "--no-first-run",
@@ -124,7 +124,7 @@ async function openBrowser(offline) {
   return { cdp, s, sessionId, evaluate, close };
 }
 
-async function setViewport(b, name) {
+export async function setViewport(b, name) {
   const vp = VIEWPORTS[name];
   await b.s("Emulation.setDeviceMetricsOverride", vp);
   // «Меньше движения»: многие сайты тогда сразу показывают блоки без анимации входа — кадр не ловит их на полпути.
@@ -168,7 +168,7 @@ async function networkIdle(inflight, quietMs, cap) {
 const SCROLL_THROUGH = `(async () => { const H = Math.min(document.documentElement.scrollHeight, MAXH);
   for (let y = 0; y < H; y += Math.round(innerHeight * 0.7)) { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 180)); }
   window.scrollTo(0, 0); await new Promise(r => setTimeout(r, 200)); return true; })()`;
-const WAIT_IMAGES = `Promise.all([...document.images].filter(i => !i.complete).map(i => new Promise(r => { i.onload = i.onerror = r; setTimeout(r, 4000); })))
+export const WAIT_IMAGES = `Promise.all([...document.images].filter(i => !i.complete).map(i => new Promise(r => { i.onload = i.onerror = r; setTimeout(r, 4000); })))
   .then(() => document.fonts ? document.fonts.ready : null).then(() => true)`;
 const PAGE_SIZE = `(() => ({ w: document.documentElement.scrollWidth, h: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), title: document.title, url: location.href }))()`;
 
@@ -177,7 +177,7 @@ const PAGE_SIZE = `(() => ({ w: document.documentElement.scrollWidth, h: Math.ma
 //    animation-timeline: view()) — сразу в конечном виде, без переходов: на кадре нет полупрозрачных «недоехавших» блоков;
 // 2) полосы, прибитые к низу экрана (cookie, «Купить» внизу), на кадре легли бы после первого экрана посреди
 //    страницы — ставим их в самый низ, как при прокрутке до конца.
-const PIN_BOTTOM_BARS = `(() => {
+export const PIN_BOTTOM_BARS = `(() => {
   const still = document.createElement("style");
   still.id = "vvf-still-frame";
   still.textContent = "*,*::before,*::after{content-visibility:visible!important;animation-timeline:auto!important;" +
@@ -336,7 +336,7 @@ async function capture(opts) {
 }
 
 /** Отдать файл копии страницы (только из её папки, только чтение). */
-function serveLocal(root, url) {
+export function serveLocal(root, url) {
   if (!url.startsWith(LOCAL_ORIGIN + "/")) return null;
   const rel = url.slice(LOCAL_ORIGIN.length + 1).split(/[?#]/)[0];
   const file = safeJoin(root, rel);

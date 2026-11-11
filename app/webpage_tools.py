@@ -1,10 +1,12 @@
 """Инструменты агента для страниц сайтов (app/webpages.py, app/web_search.py): найти в интернете, снять страницу,
-поправить её копию через HTML, посмотреть кадр. Один реестр для ИИ-монтажёра и MCP (app/agent_tools.py).
+поправить её копию через HTML, посмотреть кадр, разобрать ключевой экран на отдельные слои. Один реестр для
+ИИ-монтажёра и MCP (app/agent_tools.py).
 
 Заказ «реклама <X>»: web_search("<X> официальный сайт") → page_snapshot главной, страницы товара и цен →
 list_pages / view_page (карта outline: селекторы и рамки кнопок, цен, заголовков) → page_edit (подсветка кнопки,
 убрать баннер cookie, crop_to блока с ценой) → слой ``page`` в клипе (готовый — поле ``layer`` ответа) через
-add_layers. Ссылки у владельца не спрашивать, пока поиск хоть что-то находит.
+add_layers, а ключевой экран — page_to_layers: фон и каждый блок своим слоем (карточку приблизить, кнопку
+«нажать», цену «выпрыгнуть»). Ссылки у владельца не спрашивать, пока поиск хоть что-то находит.
 """
 
 from __future__ import annotations
@@ -26,6 +28,63 @@ def _project(ctx: ToolContext, args: dict) -> int | None:
         except (TypeError, ValueError) as exc:
             raise ToolError(f"проекта {args['project_id']} нет — см. list_channel_projects") from exc
     return _assets_project(ctx, args)
+
+
+LAYERS_HINT = ("блоки — отдельные слои клипа (id в blocks[].layer_id): анимируй их update_layer — карточку приблизь "
+               "(keys.scale 1 → 1.35 и x/y к центру), кнопку «нажми» (keys.scale 1 → 0.92 → 1 за 0.2 с + слой-касание), "
+               "цену «выпрыгни» (loop pulse или stomp); остальное можно притушить (keys.opacity). Проверь view_frame")
+
+
+def h_page_to_layers(ctx: ToolContext, args: dict) -> dict:
+    from app import webpage_layers_clip as LC
+    from app.layer_tools import MAX_LAYERS_PER_CALL, h_add_layers
+
+    page_id = args.get("page_id")
+    if page_id in (None, ""):
+        raise ToolError("нужен page_id (list_pages)")
+    version = args.get("version")
+    try:
+        built = LC.page_to_layers(
+            ctx.store, int(page_id), int(version) if version not in (None, "") else None, ctx.plan_id,
+            args.get("region"), float(args.get("at_sec") or 0), str(args.get("layout") or "fit_width"),
+            args.get("stagger"), args.get("blocks"), args.get("as_text"), bool(args.get("plate", True)),
+            float(args.get("duration") or LC.DEFAULT_DURATION), int(args.get("max_layers") or 40), insert=False,
+            focus=args.get("focus"))
+    except KeyError as exc:
+        raise ToolError(str(exc)) from exc
+    except (ValueError, W.WebPageError) as exc:
+        raise ToolError(str(exc)) from exc
+    layers = built["layers"]
+    added: list[dict] = []
+    skipped: list[str] = []
+    warnings: list[str] = []
+    for i in range(0, len(layers), MAX_LAYERS_PER_CALL):
+        try:
+            res = h_add_layers(ctx, {"layers": layers[i:i + MAX_LAYERS_PER_CALL]})
+        except ToolError as exc:
+            skipped += [str(exc), *exc.problems]
+            continue
+        added += res.get("added") or []
+        skipped += res.get("skipped") or []
+        warnings += res.get("warnings") or []
+    if not added:
+        raise ToolError("слои страницы не встали", skipped)
+    ids = {str(a.get("id")) for a in added}
+    out = {
+        "ok": True, "page_id": int(page_id), "version": built["decomposition"]["version"], "layout": built["layout"],
+        "scale": built["scale"], "region": built["decomposition"]["region"],
+        "blocks": [b for b in built["blocks"] if b["layer_id"] in ids],
+        "hint": LAYERS_HINT,
+    }
+    if skipped:
+        out["skipped"] = skipped
+    if warnings:
+        out["warnings"] = warnings[:12]
+    if built.get("focus"):
+        out["focus"] = built["focus"]
+    if built["notes"]:
+        out["notes"] = built["notes"]
+    return out
 
 
 def _page_brief(page: dict, outline_limit: int = 0) -> dict:
@@ -189,6 +248,32 @@ def tools() -> list[Tool]:
                   "base_version": {"type": "integer", "description": "от какой версии (нет — текущая)"}}, ["page_id"]),
             h_page_edit, scope="global", label=lambda a: f"Правлю страницу {a.get('page_id')}: "
                                                           f"{str(a.get('instruction') or 'правки списком')[:50]}",
+        ),
+        Tool(
+            "page_to_layers", "Разбираю страницу на слои",
+            "Снимок страницы → отдельные слои клипа: фон страницы и каждый блок (шапка, заголовки, текст, кнопки, цены, "
+            "значки, картинки, карточки товара с детьми) своей прозрачной картинкой на своём месте; вход лесенкой "
+            "(фон, затем блоки сверху вниз через stagger, по умолчанию 0.1 с). Дальше анимируй блоки по одному "
+            "(update_layer): приблизь карточку, «нажми» кнопку, «выпрыгни» цену — вместо плоской прокрутки скриншота. "
+            "region: нет — окно crop_to версии или вся страница (до 3000 px); {x,y,w,h} в CSS px; селектор из outline; "
+            "\"screen\" — первый экран. layout fit_width (блоки вписаны в кадр, по умолчанию) | as_page (страница во "
+            "всю ширину кадра). blocks — только эти (id b3 из ответа или виды card/price/button…). as_text — простой "
+            "текст живым текстом (true или список id), если шрифт подключается; иначе картинкой. focus — наезд на блок "
+            "вместе с детьми (карточка товара): id блока или {block, at — секунда клипа, zoom}, остальное притухает. "
+            "Ответ: blocks [{id, layer_id, name, kind, as}]. / Decompose a page snapshot into per-block motion layers.",
+            _obj({"page_id": {"type": "integer"}, "version": {"type": "integer", "description": "нет — текущая"},
+                  "region": {"description": "{x,y,w,h} CSS px | селектор | \"screen\" | \"page\""},
+                  "at_sec": {"type": "number", "description": "секунда клипа, с которой входит фон"},
+                  "layout": {"type": "string", "enum": ["fit_width", "as_page"]},
+                  "stagger": {"type": "number", "minimum": 0, "maximum": 1},
+                  "duration": {"type": "number", "description": "сколько секунд слои на экране (5)"},
+                  "blocks": {"type": "array", "items": {"type": "string"}},
+                  "as_text": {"description": "true | список id блоков"},
+                  "plate": {"type": "boolean", "description": "ставить фон страницы (по умолчанию да)"},
+                  "focus": {"description": "наезд на блок с детьми: id (b5) или {block, at, zoom}"},
+                  "max_layers": {"type": "integer", "minimum": 1, "maximum": 80}}, ["page_id"]),
+            h_page_to_layers, mutating=True, scope="clip",
+            label=lambda a: f"Разбираю страницу {a.get('page_id')} на слои",
         ),
         Tool(
             "list_pages", "Смотрю снимки страниц",

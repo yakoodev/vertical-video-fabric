@@ -274,18 +274,19 @@ def image_path(store: Any, ref: str) -> Path | None:
 Runner = Callable[[list[str], int], subprocess.CompletedProcess]
 
 
-def _run_node(args: list[str], timeout: int) -> subprocess.CompletedProcess:
-    return subprocess.run([settings.node_bin, str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8",
+def _run_node(args: list[str], timeout: int, script: Path = SCRIPT) -> subprocess.CompletedProcess:
+    return subprocess.run([settings.node_bin, str(script), *args], capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout)
 
 
-def _browser(args: list[str], label: str, timeout: int = 150, runner: Runner | None = None) -> dict:
-    """Запустить снимок/правку в Chromium (по одному на процесс и в общей очереди тяжёлых задач)."""
+def _browser(args: list[str], label: str, timeout: int = 150, runner: Runner | None = None,
+             script: Path = SCRIPT) -> dict:
+    """Запустить снимок/правку/разбор в Chromium (по одному на процесс и в общей очереди тяжёлых задач)."""
     from app.heavy_queue import heavy_slot
 
     with heavy_slot("webpage", label), _BROWSER_LOCK:
         try:
-            proc = (runner or _run_node)(args, timeout)
+            proc = runner(args, timeout) if runner else _run_node(args, timeout, script)
         except subprocess.TimeoutExpired as exc:
             raise WebPageError("страница не успела открыться (браузер остановлен по времени)") from exc
         except FileNotFoundError as exc:
