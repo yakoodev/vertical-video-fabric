@@ -242,6 +242,18 @@ def test_fake_decompose_names_trim_and_api_insert(tmp_path, monkeypatch):
     # Без клипа и insert — только слои (вкладка «Страницы» ставит их сама).
     dry = client.post(f"/api/web-pages/{page_id}/to-layers", json={"insert": False, "plate": False})
     assert dry.status_code == 200 and "inserted" not in dry.json() and len(dry.json()["layers"]) == 2
+    # Наезд на карточку: карточка и её кнопка едут к середине и растут вместе, фон притухает.
+    zoomed = client.post(f"/api/web-pages/{page_id}/to-layers", json={"insert": False, "focus": {"block": "b0", "at": 3, "zoom": 2}})
+    assert zoomed.status_code == 200, zoomed.text
+    zl = zoomed.json()["layers"]
+    bgk, cardk, btnk = zl[0]["keys"], zl[1]["keys"], zl[2]["keys"]
+    assert bgk["opacity"][-1]["v"] == 0.25 and "scale" not in bgk and zl[1]["track"] == zl[0]["track"] + 1
+    assert cardk["scale"][-1]["v"] == 2 and btnk["scale"][-1]["v"] == 2
+    assert cardk["x"][-1]["v"] == pytest.approx(0.5) and cardk["y"][-1]["v"] == pytest.approx(0.5)
+    # Кнопка держит место внутри карточки: смещение от центра карточки выросло вдвое.
+    assert btnk["y"][-1]["v"] - 0.5 == pytest.approx(2 * (zl[2]["y"] - zl[1]["y"]), abs=1e-3)
+    assert cardk["scale"][0]["t"] == pytest.approx(3 - zl[1]["start"], abs=1e-3)
+    assert motion.normalize_layers(zl)[1]["keys"]["scale"][-1]["v"] == 2
     bad = client.post(f"/api/web-pages/{page_id}/to-layers", json={"blocks": ["nope"]})
     assert bad.status_code == 400 and "b0" in bad.json()["detail"]
     assert client.get(f"/api/web-pages/{page_id}/versions/1/layers/{dec['key']}/b0.png").status_code == 200

@@ -48,7 +48,8 @@ def h_page_to_layers(ctx: ToolContext, args: dict) -> dict:
             ctx.store, int(page_id), int(version) if version not in (None, "") else None, ctx.plan_id,
             args.get("region"), float(args.get("at_sec") or 0), str(args.get("layout") or "fit_width"),
             args.get("stagger"), args.get("blocks"), args.get("as_text"), bool(args.get("plate", True)),
-            float(args.get("duration") or LC.DEFAULT_DURATION), int(args.get("max_layers") or 40), insert=False)
+            float(args.get("duration") or LC.DEFAULT_DURATION), int(args.get("max_layers") or 40), insert=False,
+            focus=args.get("focus"))
     except KeyError as exc:
         raise ToolError(str(exc)) from exc
     except (ValueError, W.WebPageError) as exc:
@@ -79,6 +80,8 @@ def h_page_to_layers(ctx: ToolContext, args: dict) -> dict:
         out["skipped"] = skipped
     if warnings:
         out["warnings"] = warnings[:12]
+    if built.get("focus"):
+        out["focus"] = built["focus"]
     if built["notes"]:
         out["notes"] = built["notes"]
     return out
@@ -255,8 +258,9 @@ def tools() -> list[Tool]:
             "region: нет — окно crop_to версии или вся страница (до 3000 px); {x,y,w,h} в CSS px; селектор из outline; "
             "\"screen\" — первый экран. layout fit_width (блоки вписаны в кадр, по умолчанию) | as_page (страница во "
             "всю ширину кадра). blocks — только эти (id b3 из ответа или виды card/price/button…). as_text — простой "
-            "текст живым текстом (true или список id), если шрифт подключается; иначе картинкой. Ответ: blocks "
-            "[{id, layer_id, name, kind, as}]. / Decompose a page snapshot into per-block motion layers.",
+            "текст живым текстом (true или список id), если шрифт подключается; иначе картинкой. focus — наезд на блок "
+            "вместе с детьми (карточка товара): id блока или {block, at — секунда клипа, zoom}, остальное притухает. "
+            "Ответ: blocks [{id, layer_id, name, kind, as}]. / Decompose a page snapshot into per-block motion layers.",
             _obj({"page_id": {"type": "integer"}, "version": {"type": "integer", "description": "нет — текущая"},
                   "region": {"description": "{x,y,w,h} CSS px | селектор | \"screen\" | \"page\""},
                   "at_sec": {"type": "number", "description": "секунда клипа, с которой входит фон"},
@@ -266,6 +270,7 @@ def tools() -> list[Tool]:
                   "blocks": {"type": "array", "items": {"type": "string"}},
                   "as_text": {"description": "true | список id блоков"},
                   "plate": {"type": "boolean", "description": "ставить фон страницы (по умолчанию да)"},
+                  "focus": {"description": "наезд на блок с детьми: id (b5) или {block, at, zoom}"},
                   "max_layers": {"type": "integer", "minimum": 1, "maximum": 80}}, ["page_id"]),
             h_page_to_layers, mutating=True, scope="clip",
             label=lambda a: f"Разбираю страницу {a.get('page_id')} на слои",

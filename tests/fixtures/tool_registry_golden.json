@@ -1279,8 +1279,8 @@
 {
 "name": "page_to_layers",
 "title": "Разбираю страницу на слои",
-"description": "87b47fb31f30305e",
-"parameters": "7216a9bf9325ccd9",
+"description": "5b38cc4082717741",
+"parameters": "736d40354049d1e5",
 "mutating": true,
 "scope": "clip",
 "module": "web_pages",

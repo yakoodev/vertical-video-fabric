@@ -139,7 +139,8 @@ def build_webpages_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
                     float(payload.get("at_sec") or 0), str(payload.get("layout") or "fit_width"), payload.get("stagger"),
                     payload.get("blocks"), payload.get("as_text"), bool(payload.get("plate", True)),
                     float(payload.get("duration") or LC.DEFAULT_DURATION),
-                    int(payload.get("max_layers") or L.DEFAULT_MAX_LAYERS), bool(payload.get("insert", True))))
+                    int(payload.get("max_layers") or L.DEFAULT_MAX_LAYERS), bool(payload.get("insert", True)),
+                    focus=payload.get("focus")))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

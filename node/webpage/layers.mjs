@@ -24,6 +24,9 @@ import { LOCAL_ORIGIN, PIN_BOTTOM_BARS, TILE_PX, VIEWPORTS, WAIT_IMAGES, openBro
 class UsageError extends Error {}
 const idleTimer = (ms) => new Promise((r) => setTimeout(r, ms).unref());
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const LOAD_FONTS = `(async () => { const all = [...document.fonts];
+  await Promise.all(all.map((f) => (f.status === "loaded" ? null : f.load().catch(() => null))));
+  await document.fonts.ready; await new Promise((r) => setTimeout(r, 60)); return all.length; })()`;
 
 export function parseArgs(argv) {
   const out = {};
@@ -88,8 +91,14 @@ async function decompose(opts) {
         b.s("Fetch.failRequest", { requestId: p.requestId, errorReason: "BlockedByClient" }).catch(() => {});
         return;
       }
+      // font-display optional/swap: шрифт, который пришёл через перехват чуть позже ~100 мс, страница не берёт
+      // вовсе (optional) или перерисовывает потом — кадры блоков шли то с ним, то с запасным, строки и высоты
+      // плясали. block — ждать шрифт; всё равно ждём их загрузки до кадров.
+      const body = /^text\/(css|html)/.test(hit.mime)
+        ? Buffer.from(hit.body.toString("utf8").replace(/font-display\s*:\s*(optional|swap|fallback|auto)/gi, "font-display:block"))
+        : hit.body;
       b.s("Fetch.fulfillRequest", {
-        requestId: p.requestId, responseCode: 200, body: hit.body.toString("base64"),
+        requestId: p.requestId, responseCode: 200, body: body.toString("base64"),
         responseHeaders: [{ name: "Content-Type", value: hit.mime }, { name: "Access-Control-Allow-Origin", value: "*" }],
       }).catch(() => {});
     });
@@ -100,6 +109,9 @@ async function decompose(opts) {
     await b.s("Page.navigate", { url: `${LOCAL_ORIGIN}/${fromRel}` });
     await Promise.race([loaded, idleTimer(20000)]);
     await b.evaluate(WAIT_IMAGES);
+    // Все шрифты страницы — сразу и целиком: иначе часть подмножеств (unicode-range) догружается позже, а пока
+    // буквы невидимы (font-display: block) и строки переносятся запасным шрифтом — блоки ехали бы по высоте.
+    await b.evaluate(LOAD_FONTS);
     await sleep(150);
     // Кадр как у снимка: полосы низа экрана — в самый низ, анимации — в конечном виде; плюс верх прибит.
     await b.evaluate(PIN_BOTTOM_BARS);

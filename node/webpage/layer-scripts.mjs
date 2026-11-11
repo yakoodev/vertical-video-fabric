@@ -183,6 +183,14 @@ export function pickBlocks(opts) {
   for (const n of live) n.parent = liveParent(n);
 
   // Не закрыт ли блок целиком: 5 точек, сверху должен оказаться сам блок или его содержимое.
+  const paintsOver = (el) => {
+    const tag = el.tagName.toLowerCase();
+    if (["img", "svg", "video", "canvas", "picture", "iframe"].includes(tag) || el.hasAttribute("data-vvf-iframe")) return true;
+    const cs = getComputedStyle(el);
+    if (Number(cs.opacity) < 0.5) return false;
+    const c = parse(cs.backgroundColor);
+    return Boolean((c && c.a >= 0.6) || bgImageUrl(cs));
+  };
   const pe = document.createElement("style");
   pe.textContent = "*{pointer-events:auto!important}";
   document.head.appendChild(pe);
@@ -194,10 +202,12 @@ export function pickBlocks(opts) {
       const px = x + w * fx - scrollX;
       const py = y + h * fy - scrollY;
       if (px < 0 || py < 0 || px >= innerWidth || py >= innerHeight) return false; // вне экрана — не проверить, считаем видимым
-      const top = document.elementFromPoint(px, py);
-      if (!top || n.el === top || n.el.contains(top)) return false;
-      // Сверху — прозрачная обёртка (предок блока)? тогда тоже видно.
-      if (top.contains(n.el)) return false;
+      // Сверху вниз по стопке: прозрачные накладки (ссылка-растяжка на всю карточку, градиент без заливки) не
+      // закрывают; закрывает только то, что само рисует непрозрачное — картинка или плотная заливка.
+      for (const top of document.elementsFromPoint(px, py)) {
+        if (n.el === top || n.el.contains(top) || top.contains(n.el)) return false;
+        if (paintsOver(top)) break;
+      }
     }
     return true;
   };

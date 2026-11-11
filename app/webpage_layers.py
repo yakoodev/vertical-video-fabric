@@ -29,7 +29,7 @@ from app.settings import settings
 
 LAYERS_SCRIPT = Path(settings.root_dir) / "node" / "webpage" / "layers.mjs"
 # Версия алгоритма разбора: меняется — старые разборы не берутся из кэша.
-ALGO = 2
+ALGO = 5
 DEFAULT_MAX_LAYERS = 40
 MAX_LAYERS_LIMIT = 80
 # Область разбора не выше (CSS px): кадр фона в DPR 3 — до ~9000 px в высоту.
