@@ -26,11 +26,8 @@ PAGES = ("catalog", "product")
 STEPS = ("product", "tap", "delivered")
 
 
-def shots(plan: dict) -> dict | None:
-    """Снимки сайта плана: {dir, catalog: {url, scroll, tap}, product: {…}} или None (нет поля или файлов)."""
-    raw = plan.get("site_shots")
-    if not isinstance(raw, dict) or not raw.get("dir"):
-        return None
+def _pages(raw: dict) -> dict | None:
+    """Каталог и товар из описания {dir, catalog, product}; нет файла на диске — None."""
     base = Path(raw["dir"])
     out: dict[str, Any] = {"dir": str(base)}
     for name in PAGES:
@@ -45,23 +42,59 @@ def shots(plan: dict) -> dict | None:
     return out
 
 
+def shots(plan: dict) -> dict | None:
+    """Снимки сайта плана: {dir, catalog: {url, scroll, tap}, product: {…}} или None (нет поля или файлов).
+    Дополнительные покупки истории — ``site_shots.sets``: {имя: {catalog, product}} (каталог и товар другого раздела,
+    файлы — в той же папке ``dir``); в ответе они лежат под ``sets``, недостающего файла быть не должно."""
+    raw = plan.get("site_shots")
+    if not isinstance(raw, dict) or not raw.get("dir"):
+        return None
+    out = _pages(raw)
+    if out is None:
+        return None
+    sets: dict[str, Any] = {}
+    for name, extra in (raw.get("sets") or {}).items():
+        got = _pages({**extra, "dir": raw["dir"]})  # рендер отдаёт одну папку снимков (--site): набор — в ней же
+        if got is None:
+            return None
+        sets[name] = got
+    if sets:
+        out["sets"] = sets
+    return out
+
+
 def apply(overlays: list[dict], plan: dict) -> dict | None:
-    """Телефоны «shop» → «site» на снимках сайта (если они есть); вернуть снимки (для ``--site`` рендера)."""
+    """Телефоны «shop» → «site» на снимках сайта (если они есть); вернуть снимки (для ``--site`` рендера).
+
+    Телефон выбирает набор снимков полем ``siteSet`` (имя из ``site_shots.sets``; нет поля — основной набор), а на
+    экране «Скачать» подписывает покупку полем ``store.kind`` («Фон», «Попкорн» …) вместо «VRM» и заголовком
+    ``store.delivered`` вместо «Модель пришла»."""
     site = shots(plan)
     if not site:
         return None
-    used = False
+    used: list[str] = []
     for o in overlays:
         if o.get("kind") != "phone" or o.get("screen") != "shop":
             continue
         store = o.get("store") or {}
+        which = o.pop("siteSet", None)
+        pages = site if which is None else (site.get("sets") or {}).get(which)
+        if pages is None:
+            raise ValueError(f"нет набора снимков сайта «{which}» в site_shots.sets")
         steps = list(o.pop("steps", []) or [])
         if store.get("paidAt") is not None:
             steps.append({"t": float(store["paidAt"]), "step": "paid"})
         msg = o.get("message") or {}
         o["screen"] = "site"
-        o["site"] = {"catalog": site["catalog"], "product": site["product"], "steps": sorted(steps, key=lambda s: s["t"]),
+        o["site"] = {"catalog": pages["catalog"], "product": pages["product"], "steps": sorted(steps, key=lambda s: s["t"]),
                      "title": store.get("title"), "price": store.get("price"),
                      "file": msg.get("file", "model_vrm.zip"), "size": msg.get("size", "64 МБ")}
-        used = True
-    return site if used else None
+        for key, dst in (("kind", "fileKind"), ("delivered", "deliveredTitle")):
+            if store.get(key):
+                o["site"][dst] = store[key]
+        used += [pages["catalog"]["url"], pages["product"]["url"]]
+    if not used:
+        return None
+    # Снимки для рендера (--site, загрузка страниц): только реально использованные, без повторов.
+    site["urls"] = list(dict.fromkeys(used))
+    return site

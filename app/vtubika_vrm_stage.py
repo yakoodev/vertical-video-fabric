@@ -45,6 +45,14 @@ HEROINES: dict[str, dict[str, Any]] = {
                       "repaint": {"Hair": ["#c4963c", "#fff2c0"], "Tops": ["#0e5a5a", "#6fe0d0"], "EyeIris": ["#0a3a3a", "#6adfc8"]}}},
 }
 
+ZHENYA_HEADSET = {"kind": "headphones", "color": "#3b3a46", "accent": "#ff8a2b", "ring": 0.02, "scale": 1.06, "lift": 0.035}
+ZHENYA_LOOK = {"outline": 0.0034, "shade": "#a49ab8", "toony": 0.97, "shift": -0.05, "rim": "#ffb070", "rimPower": 4,
+               "skin": "^(face|body)", "skinShade": "#e8a898", "tint": {"Hair": "#ffffff"},
+               "repaint": {"Hair": ["#3a1206", "#f08a3c"], "Tops": ["#101a3e", "#6c8ee0"], "EyeIris": ["#0a3a20", "#6adf8a"]}}
+# Женя, стримит с 2014-го: медно-рыжие волосы, джинсовая синяя кофта, зелёные глаза, серая гарнитура с оранжевым кольцом.
+# Модель та же, что у Веры и Ники (руки Twist-модели при печати проходят сквозь корпус), другой цвет.
+HEROINES["zhenya"] = {"model": GIRL, "chair_y": 0.775, "headphones": ZHENYA_HEADSET, "look": ZHENYA_LOOK}
+
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
 # свой персонаж Веры (сиреневые волосы, белый верх, звезда-заколка, фиолетовые глаза).
 AVATARS: dict[str, dict[str, Any]] = {
@@ -67,11 +75,16 @@ AVATARS: dict[str, dict[str, Any]] = {
              "accessories": [{"kind": "ears", "color": "#14122a", "accent": "#ff6a7a", "scale": 1.0}]},
 }
 
+# «Вебка» Жени: она сама на мониторе (трекинг повторяет её движения), в той же гарнитуре.
+AVATARS["zhenya_cam"] = {"model": GIRL, "look": {**ZHENYA_LOOK, "outline": 0.004}, "accessories": [ZHENYA_HEADSET]}
+
 # Камеры сцены аватара (модель стоит в начале координат, рост ≈ 1.55 м): весь рост, по колено, по грудь, двое.
 AV_CAMS: dict[str, dict] = {
     "full": {"pos": [0, 0.95, 3.7], "target": [0, 0.84, 0], "fov": 30},
     "mid": {"pos": [0, 1.2, 2.7], "target": [0, 1.08, 0], "fov": 30},
     "close": {"pos": [0, 1.36, 1.7], "target": [0, 1.3, 0], "fov": 30},
+    # Вебка: плечи и голова крупно (героиня-стример в рамке эфира, а не весь рост).
+    "bust": {"pos": [0, 1.4, 1.3], "target": [0, 1.35, 0], "fov": 30},
     "two": {"pos": [0, 1.02, 4.3], "target": [0, 0.92, 0], "fov": 30},
 }
 LOOKS = {"webcam": [0.0, 1.5, 1.1], "monitor": [0, 1.43, 1.15], "chat": [-0.5, 1.36, 0.9], "down": [0.05, 1.08, 0.4]}

@@ -17,6 +17,8 @@ export interface InsertSpec {
   t1: number;
   push?: number;
   roll?: number;
+  /** Монитор: свой масштаб вместо 1.0 (monitor) / 1.75 (monitor_close) — «крупнее, но с краями окна эфира». */
+  zoom?: number;
   /** Банка: моменты падения монет и сколько монет было до первой. */
   drops?: number[];
   coins?: number;
@@ -92,7 +94,7 @@ function monitor(g: G, W: number, H: number, s: InsertSpec, t: number, stream: S
   const close = s.kind === "monitor_close";
   const w = 1000, h = (w * 9) / 16, x = (W - w) / 2, y = H * 0.42 - h / 2;
   g.save();
-  camera(g, W, H, s, t, close ? W / 2 : W / 2, close ? y + h * 0.55 : y + h / 2, close ? 1.75 : 1.0);
+  camera(g, W, H, s, t, W / 2, close && !s.zoom ? y + h * 0.55 : y + h / 2, s.zoom ?? (close ? 1.75 : 1.0));
   g.globalCompositeOperation = "lighter";
   glow(g, W / 2, y + h / 2, w * 0.75, h * 1.0, "#9cc4ff", 0.22);
   g.globalCompositeOperation = "source-over";

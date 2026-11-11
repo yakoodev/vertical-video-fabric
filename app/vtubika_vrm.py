@@ -105,6 +105,8 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
                 ins.update({"drops": jar.get("drops", []), "coins": jar.get("coins", 10)})
             if sh.get("sketch"):
                 ins["sketch"] = True
+            if sh.get("zoom"):
+                ins["zoom"] = float(sh["zoom"])
             shots.append({"name": f"{i:02d}_{cam}", "t0": t0, "t1": t1, "cam": CAMS["face"],
                           "plate": {"kind": "front", "insert": ins}, "props": props, "light": LIGHT})
             continue
@@ -181,7 +183,7 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
 
     site = SITE.apply(out["overlays"], plan)
     if site:
-        out["siteShots"] = [site["catalog"]["url"], site["product"]["url"]]
+        out["siteShots"] = site["urls"]  # страницы всех покупок истории (основной набор и site_shots.sets)
         out["siteDir"] = site["dir"]
     return out
 

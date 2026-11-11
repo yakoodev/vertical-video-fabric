@@ -12,6 +12,7 @@ import { drawSite, type SiteScreen } from "./ui_site.ts";
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
 import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
+import { decorAt, drawDecorBack, drawDecorFront, retroFamily } from "./ui_deco.ts";
 import { drawDeclined, drawDrawApp, drawForeignShop, drawFox, drawMessenger, drawRig, drawStoreCard, drawWolf, wolfPose } from "./ui_pages.ts";
 
 export const UI_FONT = "VvfUi";
@@ -82,7 +83,10 @@ export function loadUiFonts(): Promise<void> {
   return fontsLoading;
 }
 
-const font = (weight: number, px: number, num = false) => `${weight} ${Math.round(px)}px ${num ? UI_NUM : UI_FONT}, Arial, sans-serif`;
+/** Семейство шрифта вместо интерфейсного на время отрисовки экрана (ui_deco: «тот самый шрифт» старого эфира). */
+let familyOverride: string | null = null;
+const font = (weight: number, px: number, num = false) =>
+  `${weight} ${Math.round(px)}px ${familyOverride && !num ? familyOverride : `${num ? UI_NUM : UI_FONT}, Arial, sans-serif`}`;
 
 export function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   const rr = Math.min(r, w / 2, h / 2);
@@ -156,6 +160,10 @@ export interface StreamScreen {
   declines?: number[];
   /** Шапка эфира — в средней половине ширины (монитор снимается по центру). */
   centerHeader?: boolean;
+  /** Оформление эфира по времени (ui_deco.ts): retro — чёрный фон, рамка вебки в огне, «тот самый шрифт»; studio —
+   * анимированная музыкальная комната и попкорн (хлопает на каждое сообщение чата); studio_ember — то же и маленький
+   * огонёк в углу: [{t, kind}]. */
+  decor?: { t: number; kind: string }[];
 }
 
 /** Режим экрана, аватар, рот лисички, кукла волчонка — на момент t. */
@@ -168,7 +176,8 @@ function screenState(s: StreamScreen, t: number) {
   const open = m === "open" || (m === "talk" && Math.floor((t - mt) * 7) % 3 !== 2);
   const wolf = wolfPose(t, s.wolf || {});
   const anim = mode === "rig" || mode === "shop" || mode === "shops" || mode === "draw"
-    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch"));
+    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch"
+      || decorAt(s.decor, t) !== "plain"));
   return { mode, avatar, open, wolf, anim };
 }
 
@@ -183,8 +192,19 @@ export function streamSignature(s: StreamScreen, t: number): string {
 }
 
 export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
+  // Старый эфир (retro) — «тот самый шрифт» на всём экране; остальное — прежний интерфейсный.
+  familyOverride = decorAt(s.decor, t) === "retro" ? retroFamily(g) : null;
+  try {
+    drawStreamBody(g, W, H, s, t);
+  } finally {
+    familyOverride = null;
+  }
+}
+
+function drawStreamBody(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
   const u = W / 1000;
   const st = screenState(s, t);
+  const decor = decorAt(s.decor, t);
   if (st.mode === "draw") return drawDrawApp(g, W, H, progressAt(s, t));
   if (st.mode === "shop") {
     drawForeignShop(g, W, H, t, st.wolf);
@@ -197,41 +217,44 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
     return drawRig(g, W, H, t, { ...st.wolf, squint: fix < 0.6 }, ease("inOutSine", fix));
   }
   const bg = g.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, "#1a1030");
-  bg.addColorStop(1, "#0b0814");
+  bg.addColorStop(0, decor === "retro" ? "#000000" : "#1a1030");
+  bg.addColorStop(1, decor === "retro" ? "#000000" : "#0b0814");
   g.fillStyle = bg;
   g.fillRect(0, 0, W, H);
   // Шапка: LIVE, время эфира, зрители (centerHeader — только LIVE и зрители в средней трети ширины: в вертикальном
   // кадре монитор снимается по центру, и шапка целиком в кадре).
   const hx = s.centerHeader ? W * 0.33 - 24 * u : 0, hr = s.centerHeader ? W * 0.33 - 26 * u : 0;
-  g.fillStyle = "#ff2d55";
-  roundRect(g, hx + 24 * u, 22 * u, 110 * u, 46 * u, 10 * u);
-  g.fill();
-  g.fillStyle = "#ffffff";
-  g.font = font(900, 28 * u);
-  g.textBaseline = "middle";
-  g.textAlign = "center";
-  g.fillText("LIVE", hx + 79 * u, 46 * u);
-  g.textAlign = "left";
-  g.fillStyle = "#b9a8dc";
-  g.font = font(700, 26 * u);
-  if (!s.centerHeader) g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, hx + 152 * u, 46 * u);
   const v = stepValue(s.viewers, t, "value", 0);
   const label = stepValue<string | undefined>(s.viewers, t, "label", undefined) ?? `${v}`;
-  g.textAlign = "right";
-  g.fillStyle = "#ffffff";
-  g.font = font(800, 32 * u);
-  g.fillText(label, W - hr - 26 * u, 46 * u);
-  const lw = g.measureText(label).width;
-  g.strokeStyle = "#ff5c7a";
-  g.lineWidth = 5 * u;
-  g.beginPath();
-  g.ellipse(W - hr - 26 * u - lw - 30 * u, 46 * u, 17 * u, 10 * u, 0, 0, Math.PI * 2);
-  g.stroke();
-  g.fillStyle = "#ff5c7a";
-  g.beginPath();
-  g.arc(W - hr - 26 * u - lw - 30 * u, 46 * u, 6 * u, 0, Math.PI * 2);
-  g.fill();
+  // В старом эфире (retro) шапки нет: над рамкой в огне — чёрное поле, зрители — строкой внизу окна.
+  if (decor !== "retro") {
+    g.fillStyle = "#ff2d55";
+    roundRect(g, hx + 24 * u, 22 * u, 110 * u, 46 * u, 10 * u);
+    g.fill();
+    g.fillStyle = "#ffffff";
+    g.font = font(900, 28 * u);
+    g.textBaseline = "middle";
+    g.textAlign = "center";
+    g.fillText("LIVE", hx + 79 * u, 46 * u);
+    g.textAlign = "left";
+    g.fillStyle = "#b9a8dc";
+    g.font = font(700, 26 * u);
+    if (!s.centerHeader) g.fillText(`в эфире ${clock((s.uptime ?? 0) + t)}`, hx + 152 * u, 46 * u);
+    g.textAlign = "right";
+    g.fillStyle = "#ffffff";
+    g.font = font(800, 32 * u);
+    g.fillText(label, W - hr - 26 * u, 46 * u);
+    const lw = g.measureText(label).width;
+    g.strokeStyle = "#ff5c7a";
+    g.lineWidth = 5 * u;
+    g.beginPath();
+    g.ellipse(W - hr - 26 * u - lw - 30 * u, 46 * u, 17 * u, 10 * u, 0, 0, Math.PI * 2);
+    g.stroke();
+    g.fillStyle = "#ff5c7a";
+    g.beginPath();
+    g.arc(W - hr - 26 * u - lw - 30 * u, 46 * u, 6 * u, 0, Math.PI * 2);
+    g.fill();
+  }
   // Слева — окно эфира с аватаром, справа — колонка чата.
   const vx = 24 * u, vy = 86 * u, vw = s.noChat ? W - 48 * u : W * 0.6, vh = H - vy - 22 * u;
   const cam = g.createLinearGradient(0, vy, 0, vy + vh);
@@ -243,6 +266,7 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
   g.save();
   roundRect(g, vx, vy, vw, vh, 14 * u);
   g.clip();
+  if (decor !== "plain") drawDecorBack(g, decor, { x: vx, y: vy, w: vw, h: vh }, u, t, s.chat || []);
   const ax = vx + vw / 2, ay = vy + vh * 0.5, as = vh * 0.5;
   if (st.avatar === "fox") drawFox(g, ax, ay, as, { mouthOpen: st.open });
   else if (st.avatar === "wolf") drawWolf(g, ax, ay, as, st.wolf);
@@ -274,8 +298,17 @@ export function drawStream(g: CanvasRenderingContext2D, W: number, H: number, s:
     g.font = font(700, 24 * u);
     g.textAlign = "left";
     g.fillText(fit(g, title, vw - 30 * u), vx + 14 * u, vy + vh - 22 * u);
+    if (decor === "retro") {
+      g.textAlign = "right";
+      g.fillStyle = "#ffb070";
+      g.fillText(`зрителей: ${v}`, vx + vw - 16 * u, vy + vh - 22 * u);
+      g.textAlign = "left";
+    }
   }
+  if (decor !== "plain") drawDecorFront(g, decor, { x: vx, y: vy, w: vw, h: vh }, u, t, s.chat || []);
   g.restore();
+  // Рамка вебки в огне — вокруг окна эфира, поверх остального (языки пламени выходят за край окна).
+  if (decor === "retro") drawDecorFront(g, "retro_frame", { x: vx, y: vy, w: vw, h: vh }, u, t, s.chat || []);
   if (s.noChat) {
     const alert0 = (s.alerts || []).find((a) => t >= a.t && t < a.t + (a.dur ?? 3));
     if (alert0) drawAlert(g, W, H, alert0, t, true);
@@ -561,11 +594,20 @@ export function chatSignature(s: StreamScreen, t: number): string {
   const msgs = (s.chat || []).filter((m) => m.t <= t);
   const last = msgs.length ? msgs[msgs.length - 1].t : -9;
   return [msgs.length, t - last < 0.3 ? Math.round((t - last) * 30) : "x", t - last < 1.4 ? "fresh" : "",
-    stepValue(s.viewers, t, "value", 0)].join("|");
+    stepValue(s.viewers, t, "value", 0), decorAt(s.decor, t) === "retro"].join("|");
 }
 
 /** Чат стрима на вертикальном мониторе: шапка с «LIVE» и зрителями, сообщения крупно, новое подсвечено. */
 export function drawChatScreen(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
+  familyOverride = decorAt(s.decor, t) === "retro" ? retroFamily(g) : null;
+  try {
+    drawChatBody(g, W, H, s, t);
+  } finally {
+    familyOverride = null;
+  }
+}
+
+function drawChatBody(g: CanvasRenderingContext2D, W: number, H: number, s: StreamScreen, t: number) {
   const u = W / 600;
   const bg = g.createLinearGradient(0, 0, 0, H);
   bg.addColorStop(0, "#1d1436");

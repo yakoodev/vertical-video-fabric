@@ -445,6 +445,7 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     bundle = ROOT / "node" / "vrm" / "dist" / "vrm.js"
     key = hashlib.sha1(spec_path.read_bytes() + bundle.read_bytes()).hexdigest()
     key_file = work / "scene_vrm.key"
+    render_report = work / "scene_vrm.report.json"
     t3d = time.time()
     if not (raw_video.is_file() and key_file.is_file() and key_file.read_text("utf-8").strip() == key):
         # Ключ — только у проверенного ролика: старый ключ при упавшем рендере принял бы испорченный файл за кэш.
@@ -455,7 +456,12 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
             raise RuntimeError(f"рендер VRM (код {r.returncode}): {r.stderr.strip()[-1200:]}")
         report["render_vrm"] = json.loads(r.stdout.strip().splitlines()[-1])
         VRM.require_render(report["render_vrm"], spec)
+        # Отчёт проверенного рендера (кадры, присутствие героини) — рядом с кэшем: повторный запуск после сбоя на
+        # последующих шагах (сведение, лист) не теряет цифры, а report.json не остаётся без них.
+        render_report.write_text(json.dumps(report["render_vrm"], ensure_ascii=False), "utf-8")
         key_file.write_text(key, "utf-8")
+    elif render_report.is_file():
+        report["render_vrm"] = json.loads(render_report.read_text("utf-8"))
     report["render3d_sec"] = round(time.time() - t3d, 1)
     chk = subprocess.run(["node", str(ROOT / "node" / "vrm" / "contact.mjs"), "--spec", str(spec_path), "--packs", args.vrm_packs,
                           "--gl", args.gl], capture_output=True, text=True, encoding="utf-8", errors="replace",
