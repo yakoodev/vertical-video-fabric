@@ -22,6 +22,7 @@ import { fxTpl, glitchRange, glitchTitle, particlesTpl, phoneScreen } from "./te
 import { cardFan, depthTitle, phoneSpace } from "./templates/space3d";
 import { cursorClicks, fingerTaps, handArrow, handCircle, handUnderline } from "./templates/sketch";
 import { commentCard, postCard } from "./templates/social";
+import { pagePhone, pageScroll } from "./templates/page";
 
 export { TEMPLATE_CATEGORIES, newLayerId } from "./templates/kit";
 export type { TemplateParamType, TemplateParam, TemplateParams, TemplateResult, MotionTemplate } from "./templates/kit";
@@ -58,6 +59,8 @@ export const TEMPLATES: MotionTemplate[] = [
   commentCard,
   postCard,
   phoneScreen,
+  pageScroll,
+  pagePhone,
   cursorClicks,
   fingerTaps,
   particlesTpl,

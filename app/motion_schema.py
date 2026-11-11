@@ -6,7 +6,8 @@ from app.scene_engine import SceneSpec
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
     BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
-    CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, NAMEPLATE_PLATFORMS,
+    CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, PAGE_MAX_KEYS, PAGE_MAX_ZOOM,
+    PAGE_EASES, NAMEPLATE_PLATFORMS,
     NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS,
     NAMEPLATE_SIZE, ALIGNS, HIGHLIGHT_STYLES, CAPTION_STYLES, DEFAULT_CAPTION_STYLE, CAPTION_ANIMATIONS,
     MAX_CAPTION_MARKS, CHAT_STYLES, MAX_CHAT_HIGHLIGHT_USERS, Z_NEAR_LIMIT, Z_FAR_LIMIT, ROT3D_LIMIT,
@@ -109,6 +110,12 @@ PICTURE: dict = {
     "statusBarColor": Opt(Color("#000000")),
     "screenGlare": Opt(Flag(False)),
 }
+
+# Окно страницы в CSS px (null — первый экран во всю ширину страницы, высота — по пропорции слоя 9:16).
+PAGE_REGION = Obj(
+    {"x": Num(0, 0, 4000, 1), "y": Num(0, 0, 200000, 1), "w": Num(390, 20, 4000, 1), "h": Num(844, 20, 200000, 1)},
+    nullable=True,
+)
 
 PROPS: dict[str, dict] = {
     "text": {"text": Text("", MAX_TEXT), **TEXT_STYLE},
@@ -238,6 +245,24 @@ PROPS: dict[str, dict] = {
         "verified": Flag(False),
         "w": Num(900, 400, 2160, 1),
         "font": FONT,
+    },
+    # Страница сайта: кадр версии снимка (webpage:<page_id>:<version>), окно region в CSS px страницы,
+    # прокрутка scroll и приближение zoom по секундам слоя, касания taps — круги-волны в точках страницы.
+    "page": {
+        "page_id": Num(0, 0, 1e9, integer=True),
+        "version": Num(1, 1, 100000, integer=True),
+        "pageWidth": Num(390, 200, 4000, 1),
+        "region": PAGE_REGION,
+        "scroll": ListOf(Obj({"t": Num(0, 0, MAX_TIME_SEC, 3), "y": Num(0, 0, 200000, 1),
+                              "ease": Opt(Choice("inOut", PAGE_EASES))}), PAGE_MAX_KEYS),
+        "zoom": ListOf(Obj({"t": Num(0, 0, MAX_TIME_SEC, 3), "z": Num(1, 1, PAGE_MAX_ZOOM, 3),
+                            "cx": Opt(Num(0.5, 0, 1, 4)), "cy": Opt(Num(0.5, 0, 1, 4)),
+                            "ease": Opt(Choice("inOut", PAGE_EASES))}), PAGE_MAX_KEYS),
+        "taps": ListOf(Obj({"t": Num(0, 0, MAX_TIME_SEC, 3), "x": Num(0, 0, 4000, 1), "y": Num(0, 0, 200000, 1)}),
+                       PAGE_MAX_KEYS),
+        "tapColor": Opt(Color("#ffffff")),
+        **{k: v for k, v in PICTURE.items() if k not in ("crop", "flipX", "content")},
+        "w": Num(560, 10, 4000, 1),
     },
     # Плашка канала: пилюля со значком площадки и ником. accent null — цвет площадки;
     # boxWidth — рамка слоя, пилюля в ней по align (бренд ставит её от края кадра).

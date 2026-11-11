@@ -84,6 +84,11 @@ export function assetUrl(ref: string): string {
   if (ref.startsWith("emoji:")) return `/api/motion/emoji/${encodeURIComponent(ref.slice(6))}.svg`;
   // Эмоуты и значки чата — прямо по их адресу (CDN Twitch / 7TV / BTTV / FFZ).
   if (ref.startsWith("url:")) return ref.slice(4);
+  // Кадр снимка страницы сайта (слой page, app/webpages.py): webpage:<id>:<версия>.
+  if (ref.startsWith("webpage:")) {
+    const [, id, v] = ref.split(":");
+    return `/api/web-pages/${encodeURIComponent(id)}/versions/${encodeURIComponent(v)}/image`;
+  }
   if (ref.startsWith("sticker:")) return `/api/motion/packs/${ref.slice(8).split("/").map(encodeURIComponent).join("/")}`;
   return `/media/montage-assets/${encodeURIComponent(ref)}`;
 }

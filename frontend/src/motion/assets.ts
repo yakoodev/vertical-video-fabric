@@ -6,6 +6,7 @@
 import { emojiRef, graphemes, isEmoji } from "./fonts";
 import { decorGlyph } from "./glyphs";
 import { sceneImageRefs } from "./scene/render";
+import { pageRef } from "./layers/page";
 import type { Layer, VideoLayer } from "./types";
 
 const PNGTUBER_STATES = ["idle", "talk", "shout"] as const;
@@ -56,6 +57,12 @@ export function collectImageRefs(layers: Layer[]): string[] {
         emojiIn(layer.props.subtitle, out);
         if (layer.props.icon) out.add(emojiRef(layer.props.icon));
         break;
+      case "page": {
+        // Кадр снимка страницы (webpage:<id>:<версия>).
+        const ref = pageRef(layer.props);
+        if (ref) out.add(ref);
+        break;
+      }
       case "social": {
         // Карточка: эмодзи в тексте и нике, эмодзи-аватар, картинки аватара и поста.
         const p = layer.props;

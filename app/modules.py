@@ -305,6 +305,15 @@ MODULES: list[Module] = [
         ui=("поиск картинок на странице «Файлы для монтажа»",),
     ),
     Module(
+        "web_pages", "Страницы сайтов", "library",
+        "Поиск в интернете и снимки страниц сайтов (только просмотр): копия HTML, правки через HTML (подсветка, "
+        "цена, обрезка), версии и слой «страница» в ролике — агент сам находит сайт для рекламы.",
+        cost=("network", "ram"), cost_note="поиск Gemini/DuckDuckGo, headless Chromium на время снимка",
+        tools=("web_search", "page_snapshot", "page_edit", "list_pages", "view_page"),
+        routes=("/api/web-pages*", "POST /api/web-search"),
+        ui=("вкладка «Страницы» в редакторе",),
+    ),
+    Module(
         "asset_ai", "ИИ для файлов монтажа", "library",
         "Gemini рисует недостающие стикеры и сам описывает загруженные файлы (что на них и когда уместны).",
         cost=("network",), cost_note="Gemini API (картинки — модель изображений)",

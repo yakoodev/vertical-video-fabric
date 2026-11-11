@@ -169,7 +169,7 @@
 "name": "add_layers",
 "title": "Добавляю слои",
 "description": "e29ac6101baabacb",
-"parameters": "6934557184510ea6",
+"parameters": "10ebba8b43bd626e",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -1241,6 +1241,61 @@
 "scope": "clip",
 "module": null,
 "handler": "h_lint_clip",
+"label": true
+},
+{
+"name": "web_search",
+"title": "Ищу в интернете",
+"description": "89824f0c439f8e8c",
+"parameters": "dbed68b2ce77a317",
+"mutating": false,
+"scope": "global",
+"module": "web_pages",
+"handler": "h_web_search",
+"label": true
+},
+{
+"name": "page_snapshot",
+"title": "Снимаю страницу сайта",
+"description": "89e209b82921c93f",
+"parameters": "7a4384502ce54dba",
+"mutating": false,
+"scope": "global",
+"module": "web_pages",
+"handler": "h_page_snapshot",
+"label": true
+},
+{
+"name": "page_edit",
+"title": "Правлю страницу",
+"description": "2fd583e041b8e194",
+"parameters": "a3ae27668d287b21",
+"mutating": false,
+"scope": "global",
+"module": "web_pages",
+"handler": "h_page_edit",
+"label": true
+},
+{
+"name": "list_pages",
+"title": "Смотрю снимки страниц",
+"description": "33e0339bcb314c39",
+"parameters": "f1fa9c653feca5d4",
+"mutating": false,
+"scope": "global",
+"module": "web_pages",
+"handler": "h_list_pages",
+"label": false
+},
+{
+"name": "view_page",
+"title": "Смотрю страницу",
+"description": "4a33a9c4796d783a",
+"parameters": "2f8c03853db75847",
+"mutating": false,
+"scope": "global",
+"module": "web_pages",
+"handler": "h_view_page",
 "label": true
 }
 ],

@@ -159,6 +159,11 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
         rep(where, "слой должен быть объектом — отброшен")
         return None
     ltype = raw.get("type")
+    if ltype in ("webpage", "site", "web_page", "screenshot_page"):
+        # Агенты зовут слой страницы по-разному — это наш page.
+        rep(f"{where}.type", f"{ltype!r} — это 'page', заменено")
+        raw = {**raw, "type": "page"}
+        ltype = "page"
     if ltype not in LAYER_TYPES:
         rep(where, f"тип {ltype!r} неизвестен — слой отброшен; есть: {', '.join(LAYER_TYPES)}")
         return None
@@ -397,6 +402,8 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.scene.nodes", "пустая сцена — слой ничего не покажет (get_scene_reference)")
     elif ltype == "social" and not props["text"].strip() and not props["name"].strip():
         rep(f"{where}.props.text", "у карточки нет ни текста, ни имени — пустая карточка")
+    elif ltype == "page" and not props["page_id"]:
+        rep(f"{where}.props.page_id", "у слоя страницы нет page_id — сначала page_snapshot (list_pages)")
     elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":
         rep(f"{where}.props.handle", "у плашки канала нет ни ника (handle), ни площадки — слой ничего не покажет")
 

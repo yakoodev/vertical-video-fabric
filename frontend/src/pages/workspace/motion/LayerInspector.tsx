@@ -15,7 +15,7 @@ import { CaptionsSection } from "./inspector/CaptionsSection";
 import { CalloutSection, ChartSection, NameplateSection, SocialSection } from "./inspector/DataSections";
 import { FxSection, ParticlesSection } from "./inspector/EffectSections";
 import { Section } from "./inspector/fields";
-import { MediaSection, ProgressSection, ShapeSection } from "./inspector/MediaSections";
+import { MediaSection, PageSection, ProgressSection, ShapeSection } from "./inspector/MediaSections";
 import { PositionSection } from "./inspector/PositionSection";
 import { CounterSection, EmojiSection, TextSection } from "./inspector/TextSections";
 import { AnimationSection, ShadowSection, TimeSection } from "./inspector/TimingSections";
@@ -107,6 +107,8 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
       {layer.type === "callout" ? <CalloutSection layer={layer} refWidth={refWidth} patchProps={patchProps} /> : null}
 
       {layer.type === "nameplate" ? <NameplateSection layer={layer} patchProps={patchProps} /> : null}
+
+      {layer.type === "page" ? <PageSection layer={layer} patchProps={patchProps} /> : null}
 
       {layer.type === "social" ? <SocialSection layer={layer} refWidth={refWidth} patchProps={patchProps} /> : null}
 
