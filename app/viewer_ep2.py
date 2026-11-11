@@ -149,6 +149,78 @@ def monster_spec(base: dict) -> tuple[dict[str, Any], list[tuple[float, str]]]:
     return spec, marks
 
 
+# --------------------------------------------------------------------------- Сборщик v3 (онрё) — проба стопкадрами
+
+# Владелец про v2: «кринжовый» (коробки, гладкая голова-шар, плоское аниме-лицо). v3 — настоящая VRM-модель (не
+# героиня: VRM1_Constraint_Twist_Sample из vendor, pixiv, изменения разрешены), перекрашена в онрё: серо-зелёная
+# кожа, чёрные мокрые волосы занавесом на всё лицо, грязное тёмное платье до пят, босая; выше человека, руки
+# длиннее, шея длиннее, плечи подняты, голова завалена набок. Лицо видно только в щели — кусок её лица (Сары).
+ONRYO_MODEL = "VRM1_Constraint_Twist_Sample.vrm"
+ONRYO_SKIN = ["#3a443d", "#aab5a5"]  # кожа: рампа по яркости текстуры (тень, свет) — бледная серо-зелёная
+ONRYO_LOOK = {
+    "repaint": {"Hair": ["#020303", "#1e2421"], "Body": ONRYO_SKIN, "Face_00": ["#161b18", "#59645a"],
+                "Tops": ["#0a0908", "#2e2a25"], "Bottoms": ["#090807", "#26231f"], "EyeIris": ["#000000", "#0b0c0b"],
+                "FaceBrow": ["#0b0c0b", "#232825"], "FaceEyeline": ["#090a09", "#1d211e"], "FaceMouth": ["#141614", "#454c46"]},
+    "stains": {"Tops": {"colors": ["#1d1a15", "#3a352c", "#120f0c", "#2b2e26"], "n": 70, "seed": 13, "size": 0.035},
+               "Body": {"colors": ["#4a5248", "#2c332d", "#6a7266"], "n": 50, "seed": 4, "size": 0.012}},
+}
+ONRYO_PSX = {"maxTex": 128, "texFor": {"Face": 128, "Tops": 128}, "unlit": ["__нет__"], "tint": {"EyeWhite": "#262a27"},
+             "decimate": 0.03, "decimateUv": 0.08, "decimateOnly": "Hair"}
+ONRYO_STILLS = [(1.0, "далеко, в коридоре"), (3.0, "REC под лампой"), (5.0, "в рост"), (7.0, "крупно, волосы"),
+                (9.0, "REC щель, её лицо"), (11.0, "из-за будки"), (13.0, "снизу"), (15.0, "REC в проёме")]
+
+
+def onryo(keys: list[dict], show: list[list[float]] | None = None, **kw) -> dict:
+    """Онрё для world.ts (spec.onryo): модель, перекраска, ключи позы (где стоит, наклон головы, щель в волосах)."""
+    return {"model": ONRYO_MODEL, "keys": keys, "show": show or [[0, 999]], "scale": 1.2, "arms": [1.15, 1.26, 1.1],
+            "neck": 1.3, "look": deepcopy(ONRYO_LOOK), "heroine": deepcopy(ONRYO_PSX), "hide": ["EyeHighlight", "Shoes"],
+            "hair": {"front": 150, "side": 110, "length": 0.62, "colors": ["#080a09", "#6a7a72"]}, "dress": {"colors": ["#0b0a09", "#29261f"], "hem": 0.07},
+            "faceTint": "#d0dacd", **kw}
+
+
+def onryo_spec(base: dict) -> tuple[dict[str, Any], list[tuple[float, str]]]:
+    """Проба Сборщика v3 стопкадрами (без анимации): 8 планов по 2 с в зале серии 2, кадр — в середине плана."""
+    spec = base_spec(base)
+    S = SPOTS
+    me = [0.0, 0.0]
+    lamp = S["lamp"]
+    door = [-0.35, 0.0, 6.9]  # в проёме на платформы: против бледного света — только силуэт
+    keys = [{"t": 0, "pos": S["corridor"], "face": me, "tilt": 24},
+            {"t": 2, "pos": lamp, "face": me, "tilt": 30},
+            {"t": 4, "pos": lamp, "face": [0.6, 1.4], "tilt": 34},
+            {"t": 6, "pos": lamp, "face": me, "tilt": 22, "nod": -14},
+            {"t": 8, "pos": lamp, "face": LENS[::2], "tilt": 24, "nod": -8, "part": 1},
+            {"t": 10, "pos": lamp, "face": me, "tilt": 30},
+            {"t": 12, "pos": lamp, "face": me, "tilt": 40, "nod": -4},
+            {"t": 14, "pos": door, "face": LENS[::2], "tilt": 34, "nod": 10, "turn": -10}]
+    shoulder = [-0.12, 1.62, -0.9]
+    shots = [
+        {"name": "далеко", "t0": 0, "t1": 2, "pov": True, "free": True, "camKeys": [pov_key(0, [-0.12, 1.52, 0.25], [-0.3, 1.25, 10], 34)]},
+        {"name": "pov лампа", "t0": 2, "t1": 4, "pov": True, "free": True, "camKeys": [pov_key(0, LENS, [lamp[0], 1.2, lamp[2]], 48)]},
+        {"name": "в рост", "t0": 4, "t1": 6, "free": True, "pov": True, "camKeys": [pov_key(0, [1.05, 1.0, 1.95], [lamp[0], 0.98, lamp[2]], 52)]},
+        {"name": "крупно", "t0": 6, "t1": 8, "free": True, "pov": True, "aimHead": 1, "camKeys": [pov_key(0, [-0.75, 1.55, 1.7], [lamp[0], 1.65, lamp[2]], 44)]},
+        {"name": "pov щель", "t0": 8, "t1": 10, "pov": True, "free": True, "aimHead": 1, "camKeys": [pov_key(0, LENS, [lamp[0], 1.8, lamp[2]], 11)]},
+        {"name": "из-за будки", "t0": 10, "t1": 12, "free": True, "camKeys": [pov_key(0, shoulder, [lamp[0] + 0.35, 1.35, lamp[2]], 56)]},
+        {"name": "снизу", "t0": 12, "t1": 14, "free": True, "pov": True, "camKeys": [pov_key(0, [-0.45, 0.35, 1.75], [lamp[0], 1.5, lamp[2]], 50)]},
+        {"name": "pov голова", "t0": 14, "t1": 16, "pov": True, "free": True, "aimHead": 0.35, "camKeys": [pov_key(0, LENS, [door[0], 1.15, door[2]], 22)]},
+    ]
+    spec["shots"] = shots
+    spec["duration"] = 16
+    spec["holds"] = {"object": "camcorder", "keys": [{"t": -1, "mode": "film", "blend": 0.05}]}
+    spec["look_at"] = [{"t": -5, "target": [lamp[0], 1.6, lamp[2]], "head": 0.5}]
+    spec["onryo"] = onryo(keys)
+    spec["flashlight"] = {"pos": [LAMP[0], 4.3, LAMP[1]], "dir": [0, -1, 0.05], "color": "#d8ffe4", "cone": 28, "range": 7.0, "power": 1.8}
+    # Плёнка: видоискатель — полный VHS и REC, глазами — легче (зерно и виньетка остаются от тона зала).
+    spec["vhs"] = {"keys": [[0, 0.35], [1.99, 0.35], [2, 1.0], [3.99, 1.0], [4, 0.35], [7.99, 0.35], [8, 1.0], [9.99, 1.0],
+                            [10, 0.35], [13.99, 0.35], [14, 1.0], [16, 1.0]], "shake": 0.006}
+    spec["cam"] = [{"t0": 2, "t1": 4, "mode": "rec", "stamp": STAMP, "sec0": 5, "date": DATE},
+                   {"t0": 8, "t1": 10, "mode": "rec", "stamp": STAMP, "sec0": 9, "date": DATE},
+                   {"t0": 14, "t1": 16, "mode": "rec", "stamp": STAMP, "sec0": 14, "date": DATE, "lowAt": 14.0, "lowText": "БАТАРЕЯ"}]
+    spec["fx"] = {**spec["fx"], "grain": 18, "vignette": 0.55}
+    spec["wisp"] = {**spec.get("wisp", {}), **WISP_HIDE, "keys": [{"t": 0, "pos": WISP_BACK}], "appear": 99}
+    return spec, list(ONRYO_STILLS)
+
+
 # --------------------------------------------------------------------------- серия
 
 LEAD = 0.45  # до первой фразы: обложка + 10 кадров помех + титр на лице (с)

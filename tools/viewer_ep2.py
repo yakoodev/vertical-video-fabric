@@ -4,6 +4,7 @@
         [--monster] [--tts-only] [--preview 0,3.5,12] [--tag a] [--skip-render]
 
 ``--monster`` — только проба нового Сборщика: 8 стопкадров в зале → ``monster_sheet.jpg`` (до рендера серии).
+``--onryo`` — проба Сборщика v3 (VRM-онрё, без анимации): 8 стопкадров → ``monster_v2/*.png`` и ``monster_v2_sheet.jpg``.
 ``--tts-only`` — только озвучка (бесплатный Gemini: огонёк Enceladus, она — Leda), без Whisper и рендера.
 Конвейер серии 1 v2 (озвучка → Whisper-слова → темп → рендер кусками → склейки → звук), плюс: ровно 10 кадров помех
 после кадра-обложки и 12 в конце (проверяется по кадрам), файл для TikTok — CFR 30 с ограничением потока,
@@ -46,6 +47,33 @@ def monster_sheet(out: Path, gl: str, tag: str) -> Path:
     sheet = out / "monster_sheet.jpg"
     tile(files, sheet, cols=4, labels=[f"{t:.1f} {lab}" for t, lab in marks])
     log(f"лист Сборщика: {sheet}; яркость {[p['luma'] for p in res['previews']]}")
+    return sheet
+
+
+def onryo_sheet(out: Path, gl: str, tag: str) -> Path:
+    """Стопкадры онрё в зале серии 2 (с тоном, зерном, VHS и REC): каждый — отдельным файлом, плюс лист 4×2."""
+    import shutil
+
+    from app import viewer_ep as E
+    from app import viewer_ep2 as E2
+    from vtubika_story import tile
+
+    work = out / "work" / "onryo"
+    work.mkdir(parents=True, exist_ok=True)
+    spec, marks = E2.onryo_spec(E.scene_base("street"))
+    sp = work / "spec.json"
+    sp.write_text(json.dumps(spec, ensure_ascii=False, indent=1), "utf-8")
+    res = render(sp, out, gl, ",".join(str(t) for t, _ in marks), work / (tag or "stills"))
+    stills = out / "monster_v2"
+    stills.mkdir(exist_ok=True)
+    files = []
+    for i, (p, (_, lab)) in enumerate(zip(res["previews"], marks)):
+        f = stills / f"{i + 1}_{lab.replace(',', '').replace(' ', '_')}.png"
+        shutil.copyfile(p["file"], f)
+        files.append(f)
+    sheet = out / "monster_v2_sheet.jpg"
+    tile(files, sheet, cols=4, labels=[f"{i + 1}. {lab}" for i, (_, lab) in enumerate(marks)])
+    log(f"лист онрё: {sheet}; яркость {[p['luma'] for p in res['previews']]}")
     return sheet
 
 
@@ -176,6 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--env", type=Path, default=ROOT.parent.parent.parent / ".env")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--monster", action="store_true")
+    ap.add_argument("--onryo", action="store_true")
     ap.add_argument("--tts-only", action="store_true")
     ap.add_argument("--preview", default="")
     ap.add_argument("--tag", default="")
@@ -193,6 +222,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if not a.tts_only:
         run(["npm", "run", "build:psx"], "сборка", cwd=ROOT, shell=sys.platform == "win32")
+    if a.onryo:
+        print(onryo_sheet(a.out, a.gl, a.tag))
+        return 0
     if a.monster:
         print(monster_sheet(a.out, a.gl, a.tag))
         return 0
