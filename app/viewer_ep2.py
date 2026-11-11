@@ -13,8 +13,10 @@
 6. Камера пищит «БАТАРЕЯ» → «они идут на звук» → Сборщик рывком сворачивает голову к будке → срыв в помехи.
 7. Меню «1 — БЕЖАТЬ / 2 — ЗАМЕРЕТЬ / 3 — СВОЁ», титр «ЧТО ДЕЛАЕТ САРА? / — В КОММЕНТЫ», помехи в конце.
 
-Сборщик переделан (владелец: «кринжовый, а не страшный») — collector.ts: тощий, 3 м, колени назад, руки до земли,
-голова свёрнута набок, пустая маска; стоп-моушен, на виду замирает, двигается за кадром; рядом с ним рвётся сигнал.
+v2 (владелец забраковал Сборщика-палочника и «лаг»): Сборщик — онрё из VRM-модели (onryo.ts): стоит не шелохнувшись,
+только голова медленно и плавно валится набок и на звук поворачивается к объективу; силуэт в проёме, щель в волосах
+с её глазом на наезде видоискателя; переходит за кадром. Всё движение — плавно на 30 к/с (без стоп-моушена), зерно —
+своё на каждом кадре. Помехи в начале и в конце нарастают и растворяются плавно (HEAD_RAMP, END_RAMP), не блоком.
 """
 
 from __future__ import annotations
@@ -149,13 +151,89 @@ def monster_spec(base: dict) -> tuple[dict[str, Any], list[tuple[float, str]]]:
     return spec, marks
 
 
+# --------------------------------------------------------------------------- Сборщик v3 (онрё) — проба стопкадрами
+
+# Владелец про v2: «кринжовый» (коробки, гладкая голова-шар, плоское аниме-лицо). v3 — настоящая VRM-модель (не
+# героиня: VRM1_Constraint_Twist_Sample из vendor, pixiv, изменения разрешены), перекрашена в онрё: серо-зелёная
+# кожа, чёрные мокрые волосы занавесом на всё лицо, грязное тёмное платье до пят, босая; выше человека, руки
+# длиннее, шея длиннее, плечи подняты, голова завалена набок. Лицо видно только в щели — кусок её лица (Сары).
+ONRYO_MODEL = "VRM1_Constraint_Twist_Sample.vrm"
+ONRYO_SKIN = ["#3a443d", "#aab5a5"]  # кожа: рампа по яркости текстуры (тень, свет) — бледная серо-зелёная
+ONRYO_LOOK = {
+    "repaint": {"Hair": ["#020303", "#1e2421"], "Body": ONRYO_SKIN, "Face_00": ["#161b18", "#59645a"],
+                "Tops": ["#0a0908", "#2e2a25"], "Bottoms": ["#090807", "#26231f"], "EyeIris": ["#000000", "#0b0c0b"],
+                "FaceBrow": ["#0b0c0b", "#232825"], "FaceEyeline": ["#090a09", "#1d211e"], "FaceMouth": ["#141614", "#454c46"]},
+    "stains": {"Tops": {"colors": ["#1d1a15", "#3a352c", "#120f0c", "#2b2e26"], "n": 70, "seed": 13, "size": 0.035},
+               "Body": {"colors": ["#4a5248", "#2c332d", "#6a7266"], "n": 50, "seed": 4, "size": 0.012}},
+}
+ONRYO_PSX = {"maxTex": 128, "texFor": {"Face": 128, "Tops": 128}, "unlit": ["__нет__"], "tint": {"EyeWhite": "#262a27"},
+             "decimate": 0.03, "decimateUv": 0.08, "decimateOnly": "Hair"}
+ONRYO_DOOR = [-0.35, 0.0, 6.9]  # в проёме на платформы: силуэт против бледного света
+ONRYO_NEAR = [-0.8, 0.0, 2.9]  # ближе к будке, на краю пятна лампы
+ONRYO_STILLS = [(1.0, "далеко, в коридоре"), (3.0, "REC под лампой"), (5.0, "в рост"), (7.0, "крупно, волосы"),
+                (9.0, "REC щель, её лицо"), (11.0, "из-за будки"), (13.0, "снизу"), (15.0, "REC в проёме")]
+
+
+def onryo(keys: list[dict], show: list[list[float]] | None = None, **kw) -> dict:
+    """Онрё для world.ts (spec.onryo): модель, перекраска, ключи позы (где стоит, наклон головы, щель в волосах)."""
+    return {"model": ONRYO_MODEL, "keys": keys, "show": show or [[0, 999]], "scale": 1.2, "arms": [1.15, 1.26, 1.1],
+            "neck": 1.3, "look": deepcopy(ONRYO_LOOK), "heroine": deepcopy(ONRYO_PSX), "hide": ["EyeHighlight", "Shoes"],
+            "hair": {"front": 150, "side": 110, "length": 0.62, "colors": ["#080a09", "#6a7a72"]}, "dress": {"colors": ["#0b0a09", "#29261f"], "hem": 0.07},
+            "faceTint": "#d0dacd", **kw}
+
+
+def onryo_spec(base: dict) -> tuple[dict[str, Any], list[tuple[float, str]]]:
+    """Проба Сборщика v3 стопкадрами (без анимации): 8 планов по 2 с в зале серии 2, кадр — в середине плана."""
+    spec = base_spec(base)
+    S = SPOTS
+    me = [0.0, 0.0]
+    lamp = S["lamp"]
+    door = [-0.35, 0.0, 6.9]  # в проёме на платформы: против бледного света — только силуэт
+    keys = [{"t": 0, "pos": S["corridor"], "face": me, "tilt": 24},
+            {"t": 2, "pos": lamp, "face": me, "tilt": 30},
+            {"t": 4, "pos": lamp, "face": [0.6, 1.4], "tilt": 34},
+            {"t": 6, "pos": lamp, "face": me, "tilt": 22, "nod": -14},
+            {"t": 8, "pos": lamp, "face": LENS[::2], "tilt": 24, "nod": -8, "part": 1},
+            {"t": 10, "pos": lamp, "face": me, "tilt": 30},
+            {"t": 12, "pos": lamp, "face": me, "tilt": 40, "nod": -4},
+            {"t": 14, "pos": door, "face": LENS[::2], "tilt": 34, "nod": 10, "turn": -10}]
+    shoulder = [-0.12, 1.62, -0.9]
+    shots = [
+        {"name": "далеко", "t0": 0, "t1": 2, "pov": True, "free": True, "camKeys": [pov_key(0, [-0.12, 1.52, 0.25], [-0.3, 1.25, 10], 34)]},
+        {"name": "pov лампа", "t0": 2, "t1": 4, "pov": True, "free": True, "camKeys": [pov_key(0, LENS, [lamp[0], 1.2, lamp[2]], 48)]},
+        {"name": "в рост", "t0": 4, "t1": 6, "free": True, "pov": True, "camKeys": [pov_key(0, [1.05, 1.0, 1.95], [lamp[0], 0.98, lamp[2]], 52)]},
+        {"name": "крупно", "t0": 6, "t1": 8, "free": True, "pov": True, "aimHead": 1, "camKeys": [pov_key(0, [-0.75, 1.55, 1.7], [lamp[0], 1.65, lamp[2]], 44)]},
+        {"name": "pov щель", "t0": 8, "t1": 10, "pov": True, "free": True, "aimHead": 1, "camKeys": [pov_key(0, LENS, [lamp[0], 1.8, lamp[2]], 11)]},
+        {"name": "из-за будки", "t0": 10, "t1": 12, "free": True, "camKeys": [pov_key(0, shoulder, [lamp[0] + 0.35, 1.35, lamp[2]], 56)]},
+        {"name": "снизу", "t0": 12, "t1": 14, "free": True, "pov": True, "camKeys": [pov_key(0, [-0.45, 0.35, 1.75], [lamp[0], 1.5, lamp[2]], 50)]},
+        {"name": "pov голова", "t0": 14, "t1": 16, "pov": True, "free": True, "aimHead": 0.35, "camKeys": [pov_key(0, LENS, [door[0], 1.15, door[2]], 22)]},
+    ]
+    spec["shots"] = shots
+    spec["duration"] = 16
+    spec["holds"] = {"object": "camcorder", "keys": [{"t": -1, "mode": "film", "blend": 0.05}]}
+    spec["look_at"] = [{"t": -5, "target": [lamp[0], 1.6, lamp[2]], "head": 0.5}]
+    spec["onryo"] = onryo(keys)
+    spec["flashlight"] = {"pos": [LAMP[0], 4.3, LAMP[1]], "dir": [0, -1, 0.05], "color": "#d8ffe4", "cone": 28, "range": 7.0, "power": 1.8}
+    # Плёнка: видоискатель — полный VHS и REC, глазами — легче (зерно и виньетка остаются от тона зала).
+    spec["vhs"] = {"keys": [[0, 0.35], [1.99, 0.35], [2, 1.0], [3.99, 1.0], [4, 0.35], [7.99, 0.35], [8, 1.0], [9.99, 1.0],
+                            [10, 0.35], [13.99, 0.35], [14, 1.0], [16, 1.0]], "shake": 0.006}
+    spec["cam"] = [{"t0": 2, "t1": 4, "mode": "rec", "stamp": STAMP, "sec0": 5, "date": DATE},
+                   {"t0": 8, "t1": 10, "mode": "rec", "stamp": STAMP, "sec0": 9, "date": DATE},
+                   {"t0": 14, "t1": 16, "mode": "rec", "stamp": STAMP, "sec0": 14, "date": DATE, "lowAt": 14.0, "lowText": "БАТАРЕЯ"}]
+    spec["fx"] = {**spec["fx"], "grain": 18, "vignette": 0.55}
+    spec["wisp"] = {**spec.get("wisp", {}), **WISP_HIDE, "keys": [{"t": 0, "pos": WISP_BACK}], "appear": 99}
+    return spec, list(ONRYO_STILLS)
+
+
 # --------------------------------------------------------------------------- серия
 
-LEAD = 0.45  # до первой фразы: обложка + 10 кадров помех + титр на лице (с)
-TAIL = 1.9  # после последней фразы: титр-призыв, потом помехи (с)
+LEAD = 0.95  # до первой фразы: обложка, помехи нарастают и растворяются в её лице с титром (с)
+TAIL = 2.2  # после последней фразы: титр-призыв, потом плавно — в помехи (с)
 FPS = 30
-HEAD_STATIC = (1, 11)  # кадры помех в начале [от, до): кадр 0 — обложка, потом ровно 10 кадров помех
-END_STATIC = 12  # последние кадры — помехи (ровно столько)
+# Помехи в начале (v2, владелец: «не блоком»): кадр 0 — чистая обложка; дальше помехи плавно (smoothstep) нарастают
+# до полных к HEAD_RAMP[0], держатся до HEAD_RAMP[1] и растворяются в картинку к HEAD_RAMP[2] (с).
+HEAD_RAMP = (0.5, 0.58, 1.08)
+END_RAMP = (0.62, 0.1)  # в конце: нарастают за 0.62 с до полных и последние 0.1 с — сплошные помехи
 POV1_LEN = 2.4  # видоискатель: он в коридоре, рывком два шага — и замер
 SPIN = 1.5  # окно броска: кубик крутится (с)
 ZOOM = 1.3  # наезд на голову (с)
@@ -231,8 +309,7 @@ def timeline(beats: list[dict], her_len: float, total: float) -> dict[str, float
     ev["choice"] = ph["choice1"]["t0"] - 0.15
     ev["cta"] = cue("choice2", 0, 0.1) - 0.1
     ev["end"] = total
-    n = int(round(total * FPS))
-    ev["static_end"] = frame_t(n - END_STATIC)
+    ev["static_end"] = round(total - END_RAMP[0] - END_RAMP[1], 3)  # отсюда помехи нарастают к концу
     if ev["final"] > ev["choice"] - 0.3:
         raise ValueError(f"срыв в помехи налезает на меню: {ev['final']:.2f} > {ev['choice']:.2f}")
     if ev["pov3"] > ev["beep"] or ev["snap"] < ev["beep"] + 0.6:
@@ -242,6 +319,15 @@ def timeline(beats: list[dict], her_len: float, total: float) -> dict[str, float
 
 def _r(x: float) -> float:
     return round(x, 3)
+
+
+def static_ramp(t0: float, t1: float, a: float, b: float, n: int = 8) -> list[dict]:
+    """Ключи помех от a до b за [t0, t1] по smoothstep (между ключами fx.ts ведёт линейно — n отрезков хватает)."""
+    out = []
+    for i in range(n + 1):
+        u = i / n
+        out.append({"t": _r(t0 + (t1 - t0) * u), "static": round(a + (b - a) * u * u * (3 - 2 * u), 4)})
+    return out
 
 
 def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: float, her_env: list[float]) -> dict[str, Any]:
@@ -255,7 +341,8 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
     def shot(name, t0, t1, keys, **kw):
         return {"name": name, "t0": _r(t0), "t1": _r(t1), "minHeight": 0.0, "camKeys": keys, **kw}
 
-    lamp_head = head_of(S["lamp"], me, raised=True)
+    lamp_head = [LAMP[0] + 0.05, 1.85, LAMP[1] - 0.25]  # голова онрё под лампой (наведение уточняет aimHead)
+    door, near = ONRYO_DOOR, ONRYO_NEAR
     shoulder = [-0.42, 1.66, -0.5]
     d_zoom = ev["zoom0"] - ev["pov2"]
     shots = [
@@ -267,42 +354,51 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
         # Прячется за будкой и поднимает камеру: сзади-справа, видно её, будку и тёмный зал.
         shot("за будкой", ev["raise"] - 0.05, ev["pov1"], [pov_key(0, [-1.5, 1.62, -1.25], [0.1, 1.35, 0.25], 50),
                                                          pov_key(ev["pov1"] - ev["raise"], [-1.35, 1.6, -1.05], [0.1, 1.35, 0.3], 48)]),
-        # Видоискатель 1: он в проходе на фоне бледного света — стоит, дёргает головой, два рывка вперёд, замер.
-        shot("видоискатель 1", ev["pov1"], ev["roll"], [pov_key(0, LENS, [-0.35, 1.55, 10], 46),
-                                                       pov_key(POV1_LEN, LENS, [-0.4, 1.5, 9], 43)], pov=True, free=True),
+        # Видоискатель 1: она в проёме на платформы — силуэт против бледного света; стоит не шелохнувшись, только
+        # голова медленно валится набок; камера медленно наезжает.
+        shot("видоискатель 1", ev["pov1"], ev["roll"], [pov_key(0, LENS, [door[0], 1.3, door[2]], 30),
+                                                       pov_key(POV1_LEN, LENS, [door[0], 1.35, door[2]], 24)], pov=True, free=True),
         # Бросок: её лицо в свете экранчика (замерла), окно броска сверху.
         shot("бросок", ev["roll"], ev["pov2"], [_key(0, -58, 1.15, 1.5, [0, 1.47, 0.05], 34),
                                                 _key(ev["pov2"] - ev["roll"], -52, 1.05, 1.5, [0, 1.47, 0.05], 34)]),
-        # Видоискатель 2: он уже под лампой (перешёл, пока она не смотрела), замер, голова поднята; наезд на лицо.
-        shot("видоискатель 2", ev["pov2"], ev["eye"], [pov_key(0, LENS, [S["lamp"][0], 1.55, S["lamp"][2]], 44),
-                                                     pov_key(d_zoom, LENS, [S["lamp"][0], 1.55, S["lamp"][2]], 44),
-                                                     pov_key(d_zoom + ZOOM, LENS, lamp_head, 16),
-                                                     pov_key(ev["eye"] - ev["pov2"], LENS, lamp_head, 15)],
-             pov=True, free=True, aimHead=[[0, 0.35], [_r(d_zoom), 0.35], [_r(d_zoom + ZOOM * 0.7), 1.0]]),
-        # Её глазами (без камеры): из-за плеча — под лампой та же фигура, на маске пусто.
-        shot("глазами", ev["eye"], ev["pov3"], [pov_key(0, shoulder, [-0.85, 1.75, 3.8], 40),
-                                               pov_key(ev["pov3"] - ev["eye"], [-0.4, 1.66, -0.45], [-0.85, 1.8, 3.8], 38)], free=True),
-        # Видоискатель 3: «БАТАРЕЯ», голова рывком к объективу — срыв.
-        shot("видоискатель 3", ev["pov3"], ev["final"], [pov_key(0, LENS, lamp_head, 20)], pov=True, free=True, aimHead=1.0),
-        # Финал: из-за плеча — он ближе, голова свёрнута к будке.
-        shot("ближе", ev["final"], end, [pov_key(0, [-0.48, 1.62, -0.62], [-0.6, 1.7, 2.5], 44),
-                                        pov_key(end - ev["final"], [-0.42, 1.6, -0.5], [-0.6, 1.72, 2.5], 42)], free=True),
+        # Видоискатель 2: она уже под лампой (перешла, пока Сара не смотрела), стоит; наезд на голову — пряди
+        # медленно расходятся, в щели — кусок лица Сары (её глаз).
+        shot("видоискатель 2", ev["pov2"], ev["eye"], [pov_key(0, LENS, [LAMP[0], 1.2, LAMP[1]], 46),
+                                                     pov_key(d_zoom, LENS, [LAMP[0], 1.25, LAMP[1]], 44),
+                                                     pov_key(d_zoom + ZOOM, LENS, lamp_head, 11),
+                                                     pov_key(ev["eye"] - ev["pov2"], LENS, lamp_head, 10)],
+             pov=True, free=True, aimHead=[[0, 0.0], [_r(d_zoom), 0.0], [_r(d_zoom + ZOOM * 0.8), 1.0]]),
+        # Её глазами (без камеры): из-за плеча — под лампой та же фигура, волосы сомкнуты, лица нет.
+        shot("глазами", ev["eye"], ev["pov3"], [pov_key(0, shoulder, [LAMP[0], 1.45, LAMP[1]], 40),
+                                               pov_key(ev["pov3"] - ev["eye"], [-0.4, 1.66, -0.45], [LAMP[0], 1.5, LAMP[1]], 37)], free=True),
+        # Видоискатель 3: «БАТАРЕЯ» — на звук голова медленно поворачивается к объективу и валится дальше набок.
+        shot("видоискатель 3", ev["pov3"], ev["final"], [pov_key(0, LENS, lamp_head, 21)], pov=True, free=True, aimHead=0.85),
+        # Финал: из-за плеча — она ближе, на краю света лампы, голова набок.
+        shot("ближе", ev["final"], end, [pov_key(0, [-0.48, 1.62, -0.62], [near[0], 1.45, near[2]], 46),
+                                        pov_key(end - ev["final"], [-0.42, 1.6, -0.5], [near[0], 1.5, near[2]], 43)], free=True),
     ]
     cuts = [s["t0"] for s in shots[1:]]
 
-    # --- Сборщик: на виду замирает, двигается за кадром (между видоискателями); в коридоре пригибается.
+    # --- Сборщик (онрё): на виду стоит не шелохнувшись — движется только голова, медленно и плавно; переходит
+    # с места на место за кадром. Ключи — плавно (onryo.ts keyAt); мгновенно — на склейках (два ключа рядом).
+    lens = [LENS[0], LENS[2]]
+    k = lambda t, pos, face, **kw: {"t": _r(t), "pos": pos, "face": face, **kw}  # noqa: E731
+    okeys = [k(-5, door, lens, tilt=16, nod=4), k(ev["pov1"], door, lens, tilt=16, nod=4),
+             k(ev["roll"], door, lens, tilt=30, nod=6),  # за 2.4 с голова медленно валится набок
+             k(ev["roll"] + 0.4, door, lens, tilt=30), k(ev["pov2"] - 0.4, S["lamp"], me, tilt=20, nod=-8),
+             k(ev["zoom0"] + 0.35, S["lamp"], me, tilt=23, nod=-8),  # стоит под лампой
+             k(ev["zoom1"] + 0.3, S["lamp"], me, tilt=26, nod=-9, part=1.0),  # на наезде пряди медленно расходятся
+             k(ev["eye"] - 0.01, S["lamp"], me, tilt=28, nod=-9, part=1.0),
+             k(ev["eye"], S["lamp"], me, tilt=28, nod=-4),  # глазами — волосы сомкнуты
+             k(ev["pov3"] - 0.01, S["lamp"], me, tilt=30, nod=-4),
+             k(ev["pov3"], S["lamp"], me, tilt=22, nod=2, turn=48),  # отвернула голову — слушает
+             k(ev["beep"] + 0.15, S["lamp"], me, tilt=23, nod=2, turn=48),
+             k(ev["tear"], S["lamp"], me, tilt=46, nod=-4, turn=0),  # на звук: медленно к объективу и набок
+             k(ev["tear"] + 0.5, S["lamp"], me, tilt=46, nod=-4), k(ev["final"] - 0.05, near, me, tilt=40, nod=0),
+             k(end, near, me, tilt=54, nod=3)]
     show = [[ev["pov1"], ev["roll"]], [ev["pov2"], ev["tear"] + 0.45], [ev["final"], end]]
-    path = [{"t": -5, "pos": S["corridor"], "face": me}, {"t": _r(ev["lurch"]), "pos": S["corridor"], "face": me},
-            {"t": _r(ev["lurch"] + 0.9), "pos": S["mouth"], "face": me}, {"t": _r(ev["roll"] + 0.6), "pos": S["mouth"], "face": me},
-            {"t": _r(ev["roll"] + 1.6), "pos": S["gate"]}, {"t": _r(ev["pov2"] - 0.3), "pos": S["lamp"], "face": me},
-            {"t": _r(ev["final"] - 0.3), "pos": S["lamp"], "face": me}, {"t": _r(ev["final"] - 0.05), "pos": S["near"], "face": me},
-            {"t": 999, "pos": S["near"], "face": me}]
-    booth_edge = [0.1, 1.45, 0.5]
-    stalker = gaunt(path, show, tilt=[[-5, 1.45], [ev["pov2"] - 0.5, 0.55], [ev["snap"], 0.75], [ev["final"] - 0.1, 1.2]],
-                    look=[{"t": -5, "target": None}, {"t": _r(ev["pov2"] - 0.5), "target": LISTEN}, {"t": _r(ev["snap"]), "target": LENS},
-                          {"t": _r(ev["final"] - 0.1), "target": booth_edge}],
-                    face=[[ev["pov1"], ev["roll"]], [ev["pov2"], ev["eye"]], [ev["pov3"], ev["tear"] + 0.45]],
-                    hunch=[[-5, 0.95], [ev["roll"] + 1.0, 0.55]])
+    rim = {"color": "#7a988a", "keys": [[0, 0.3], [_r(ev["roll"]), 0.3], [_r(ev["pov2"] - 0.1), 0.6], [_r(end), 0.6]]}
+    monster = onryo(okeys, show, rim=rim)
 
     # --- огонёк: у её лица, пока говорит про комментарий; когда он рядом — за её плечом, приглушён.
     keys = [{"t": 0, "pos": [0.04, 1.86, 0.44]}, {"t": 1.2, "pos": [0.05, 1.82, 0.42]}]  # над ней, у угла будки: светит, не закрывая лицо
@@ -335,7 +431,7 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
     cards = [{"t0": _r(ev["choice"]), "t1": _r(ev["cta"] - 0.05), "lines": CHOICE, "accent": [0], "y": 196}]
     titles = [{"t0": 0, "t1": _r(ev["card0"]), "lines": ["ЕЁ ЗОВУТ", "САРА"], "colors": ["#f8f8f8", "#f8d848"], "y": 52, "px": 24},
               {"t0": 0, "t1": _r(ev["card0"]), "lines": ["ВЫ ТАК РЕШИЛИ"], "colors": ["#f8f8f8"], "y": 124, "px": 16},
-              {"t0": _r(ev["cta"]), "t1": _r(ev["static_end"]), "lines": ["ЧТО ДЕЛАЕТ", "САРА?", "— В КОММЕНТЫ"],
+              {"t0": _r(ev["cta"]), "t1": _r(end), "lines": ["ЧТО ДЕЛАЕТ", "САРА?", "— В КОММЕНТЫ"],
                "colors": ["#f8f8f8", "#f8d848", "#f8f8f8"], "y": 176, "px": 16}]
     cam = [{"t0": _r(ev["pov1"]), "t1": _r(ev["roll"]), "mode": "rec", "stamp": STAMP, "sec0": 7, "date": DATE},
            {"t0": _r(ev["pov2"]), "t1": _r(ev["eye"]), "mode": "rec", "stamp": STAMP, "sec0": 7 + int(ev["pov2"] - ev["pov1"]), "date": DATE},
@@ -350,26 +446,24 @@ def ep2_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
            "tears": [[_r(ev["lurch"] - 0.05), _r(ev["lurch"] + 0.12)], [_r(ev["lurch"] + 0.55), _r(ev["lurch"] + 0.65)],
                      [_r(ev["zoom0"] + ZOOM * 0.55), _r(ev["zoom0"] + ZOOM * 0.55 + 0.12)], [_r(ev["beep"] + 0.3), _r(ev["beep"] + 0.38)],
                      [_r(ev["snap"]), _r(ev["snap"] + 0.12)], [_r(ev["tear"] - 0.1), _r(ev["final"])]],
-           "shake": 0.01}
+           "shake": 0.006}
     spike = lambda t, a: [{"t": _r(t - 0.05), "static": 0.0}, {"t": _r(t), "static": a},  # noqa: E731
                           {"t": _r(t + 0.1), "static": a * 0.5}, {"t": _r(t + 0.2), "static": 0.0}]
-    h0, h1 = frame_t(HEAD_STATIC[0]), frame_t(HEAD_STATIC[1])
     se = ev["static_end"]
-    fx_keys = [{"t": 0, "black": 0.0, "static": 0.0}, {"t": _r(h0 - 0.012), "static": 0.0}, {"t": _r(h0 - 0.002), "static": 1.0},
-               {"t": _r(h1 - 0.02), "static": 1.0}, {"t": _r(h1 - 0.012), "static": 0.0}]
+    fx_keys = [{"t": 0, "black": 0.0}] + static_ramp(0.0, HEAD_RAMP[0], 0.0, 1.0) + static_ramp(HEAD_RAMP[1], HEAD_RAMP[2], 1.0, 0.0)
     fx_keys += spike(ev["pov1"], 0.45) + spike(ev["lurch"] + 0.02, 0.35) + spike(ev["pov2"], 0.4) + spike(ev["pov3"], 0.35)
     fx_keys += [{"t": _r(ev["tear"] - 0.05), "static": 0.0}, {"t": _r(ev["tear"] + 0.12), "static": 0.95},
                 {"t": _r(ev["final"] - 0.05), "static": 0.9}, {"t": _r(ev["final"] + 0.12), "static": 0.0}]
-    fx_keys += [{"t": _r(se - 0.012), "static": 0.0}, {"t": _r(se - 0.002), "static": 1.0}, {"t": _r(end + 1), "static": 1.0}]
+    fx_keys += static_ramp(se, se + END_RAMP[0], 0.0, 1.0) + [{"t": _r(end + 1), "static": 1.0}]
     fx_keys.sort(key=lambda k: k["t"])
     holds = {"object": "camcorder", "keys": [{"t": -5, "mode": "chest", "blend": 0.1}, {"t": _r(ev["raise"]), "mode": "film", "blend": 0.7}]}
     lcd_glow = [{"t0": _r(ev["roll"]), "t1": _r(ev["pov2"]), "color": "#9ccaff", "power": 1.6, "range": 2.4}]
     lamp = {"pos": [LAMP[0], 4.3, LAMP[1]], "dir": [0, -1, 0.05], "color": "#d8ffe4", "cone": 30, "range": 6.5,
             "powerKeys": [[0, 1.6], [_r(ev["beep"]), 1.6], [_r(ev["beep"] + 0.08), 0.4], [_r(ev["beep"] + 0.16), 1.6],
                           [_r(ev["snap"]), 1.6], [_r(ev["snap"] + 0.06), 0.3], [_r(ev["snap"] + 0.14), 1.7], [_r(end), 1.7]]}
-    glitch = [_r(x) for x in (h0, h1, ev["pov1"], ev["lurch"], ev["pov2"], ev["pov3"], ev["snap"], ev["tear"] + 0.12, ev["final"], se)]
+    glitch = [_r(x) for x in (0.2, HEAD_RAMP[1], ev["pov1"], ev["lurch"], ev["pov2"], ev["pov3"], ev["snap"], ev["tear"] + 0.12, ev["final"], se + END_RAMP[0] * 0.5)]
     return {"shots": shots, "cuts": cuts, "look_at": look, "wisp": wisp, "comment": card, "roll": rolls, "cards": cards,
-            "titles": titles, "cam": cam, "vhs": vhs, "fx_keys": fx_keys, "stalker": stalker, "holds": holds, "lcdGlow": lcd_glow,
+            "titles": titles, "cam": cam, "vhs": vhs, "fx_keys": fx_keys, "onryo": monster, "holds": holds, "lcdGlow": lcd_glow,
             "flashlight": lamp, "objects": [], "glitch_cuts": glitch, "events": ev}
 
 

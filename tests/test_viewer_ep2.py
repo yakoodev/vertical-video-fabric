@@ -59,8 +59,35 @@ def test_scene_static_frames_and_order():
         return ks[-1]["static"]
 
     n = int(round(total * E2.FPS))
-    head = [f for f in range(20) if static(f / E2.FPS) > 0.99]
-    tail = [f for f in range(n - 30, n) if static(f / E2.FPS) > 0.99]
-    assert head == list(range(1, 11))  # кадр 0 — обложка, потом ровно 10 кадров помех
-    assert tail == list(range(n - E2.END_STATIC, n))
+    lv = [static(f / E2.FPS) for f in range(n)]
+    assert lv[0] == 0.0  # кадр 0 — чистая обложка
+    # Начало: помехи нарастают плавно (не блоком) до полных, держатся и растворяются к HEAD_RAMP[2].
+    peak = max(range(45), key=lambda f: lv[f])
+    assert lv[peak] > 0.99 and 0.4 <= peak / E2.FPS <= 0.6
+    assert all(lv[f] <= lv[f + 1] + 1e-9 for f in range(peak))
+    assert max(abs(lv[f + 1] - lv[f]) for f in range(45)) < 0.25  # без скачка «на кадр»
+    assert lv[int(E2.HEAD_RAMP[2] * E2.FPS) + 1] == 0.0
+    # Конец: так же плавно до полных к последним кадрам.
+    tail = lv[n - 30:]
+    assert tail[-1] > 0.99 and all(a <= b + 1e-9 for a, b in zip(tail, tail[1:]))
+    assert max(b - a for a, b in zip(tail, tail[1:])) < 0.25
     assert scene["titles"][0]["t0"] == 0 and scene["comment"]["style"] == "tiktok"
+    # Сборщик — онрё; старого стоп-моушена (stepFps/drop) больше нет.
+    assert "stalker" not in scene and scene["onryo"]["model"] == E2.ONRYO_MODEL
+
+
+def test_onryo_stills_spec():
+    """Проба Сборщика v3: 8 планов по 2 с, кадр — в середине плана; онрё вместо старого Сборщика; щель в волосах —
+    только в плане видоискателя «щель»; видоискатель (REC) — на планах pov с плёнкой."""
+    from app.viewer_ep import scene_base
+
+    spec, marks = E2.onryo_spec(scene_base("street"))
+    assert len(marks) == len(spec["shots"]) == 8
+    for (t, _), sh in zip(marks, spec["shots"]):
+        assert sh["t0"] <= t < sh["t1"]
+    assert "stalker" not in spec
+    on = spec["onryo"]
+    assert on["model"] == E2.ONRYO_MODEL and 1.15 <= on["scale"] <= 1.25
+    parted = [k for k in on["keys"] if k.get("part")]
+    assert len(parted) == 1 and 8 <= parted[0]["t"] < 10
+    assert {c["t0"] for c in spec["cam"]} == {2, 8, 14}

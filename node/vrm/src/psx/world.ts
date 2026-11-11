@@ -47,6 +47,7 @@ import { buildDie, type Die, type DieSpec } from "./die.ts";
 import { buildStation, type StationSpec } from "./station.ts";
 import { buildCamcorder, buildTorch, type Camcorder } from "./camcorder.ts";
 import { holdAt, type HoldSpec, type HoldState } from "./hold.ts";
+import { loadOnryo, type Onryo, type OnryoSpec } from "./onryo.ts";
 
 export interface PsxShot {
   name?: string;
@@ -115,6 +116,8 @@ export interface PsxWorldSpec {
   actions?: ActionKey[];
   objects?: WorldObject[];
   stalker?: StalkerSpec;
+  /** Сборщик v3 (серия 2): настоящая VRM-модель-онрё, волосы занавесом на лице (onryo.ts). */
+  onryo?: OnryoSpec;
   captions?: CapChunk[];
   captionY?: number;
   comment?: CommentSpec;
@@ -165,6 +168,7 @@ let thingsRec: Things | null = null;
 let die: Die | null = null;
 let camcorder: Camcorder | null = null;
 let torch: THREE.Group | null = null;
+let onryo: Onryo | null = null;
 let psxBase: PsxSpec = {};
 const lastHold: (HoldState | null)[] = [null, null];
 let lookObj: THREE.Object3D;
@@ -360,6 +364,10 @@ function view3d(t: number, rec: boolean, nested: boolean) {
   if (rec && nested) pose(time, true, false);
   else settle(time, rec);
   const hs = lastHold[rec ? 1 : 0];
+  if (onryo) {
+    if (rec) onryo.group.visible = false;
+    else onryo.update(time);
+  }
   // Предметы: камера — в руках на улице, фонарик — на записи; кубик и огонёк — на улице.
   if (rec) {
     if (torch) placeHeld(torch, hs, time, R!.holds?.spawn);
@@ -392,7 +400,7 @@ function view3d(t: number, rec: boolean, nested: boolean) {
     camera.position.set(c.pos[0] + (hh?.pos[0] ?? 0), c.pos[1] + (hh?.pos[1] ?? 0), c.pos[2] + (hh?.pos[2] ?? 0));
     // Наведение на голову Сборщика (наезд видоискателя): точка взгляда смешивается с головой с долей aimHead.
     const ak = typeof shot.aimHead === "number" ? shot.aimHead : shot.aimHead ? keysAt(shot.aimHead, local) : 0;
-    const gh = ak && !rec ? things.gaunt?.headAt(time) : null;
+    const gh = ak && !rec ? things.gaunt?.headAt(time) ?? onryo?.headAt() : null;
     const tg = gh ? c.target.map((v, i) => v + (gh.getComponent(i) - v) * ak) : c.target;
     camera.lookAt(tg[0] + (hh?.aim[0] ?? 0), tg[1] + (hh?.aim[1] ?? 0), tg[2]);
     if (hh) roll = hh.roll;
@@ -403,6 +411,7 @@ function view3d(t: number, rec: boolean, nested: boolean) {
   if (!rec) {
     world.update(time, camera);
     things.update(time, camera);
+    onryo?.billboard(camera);
     wisp?.update(time, camera);
   } else thingsRec?.update(time, camera);
   const head = rig.point({ bone: "head", off: [0, 0.14, 0] }), hips = rig.pos("hips");
@@ -469,7 +478,7 @@ function paintLcd(t: number, frame: number) {
     view3d(t, true, true);
     const fx = { ...spec.fx, ...R.fx };
     post.scene(gl.domElement, (d, w, h) => {
-      grade(d, w, h, fx, 0, frame >> 1);
+      grade(d, w, h, fx, 0, frame);
       vhs(d, w, h, 1.9, 1.0, 0, t, frame);
     });
     const [y0, hh] = R.lcdCrop ?? [60, 202];
@@ -503,10 +512,10 @@ function render(t: number) {
   const ot = full ? t : time; // интерфейс и субтитры идут по времени ролика, не по времени записи
   const lv = fxAt(spec.fx, t);
   const fx = full ? { ...spec.fx, ...R!.fx } : spec.fx;
-  // Зерно меняется раз в 2 кадра (15 в секунду): как плёнка, и ролик вдвое легче; помехи — каждый кадр.
+  // Зерно и помехи — свои на каждом кадре (зерно раз в 2 кадра выглядело «лагом»: соседние кадры совпадали).
   const blur = focusBlur(spec.vhs, t);
   post.scene(gl.domElement, fx || kv > 0 ? (d, w, h) => {
-    if (fx) grade(d, w, h, fx, lv.black, frame >> 1);
+    if (fx) grade(d, w, h, fx, lv.black, frame);
     if (kv > 0) vhs(d, w, h, kv, blur, tearAt(spec.vhs, t), t, frame);
   } : undefined);
   const hud = spec.hud;
@@ -616,11 +625,16 @@ async function load(s: PsxWorldSpec) {
   const still = s.heroine?.noSprings ? new RegExp(s.heroine.noSprings) : null;
   const sbm = vrm.springBoneManager;
   if (still && sbm) for (const j of [...sbm.joints]) if (still.test(j.bone.name)) sbm.deleteJoint(j);
+  if (s.onryo) {
+    onryo = await loadOnryo(u, s.onryo, "http://scene3d.local/packs", ps.maxTex);
+    scene.add(onryo.group);
+  }
   if (s.idle) clips = await loadClips("http://scene3d.local/packs", s.idle.clips);
-  if (things.gaunt || thingsRec?.gaunt) {
+  if (things.gaunt || thingsRec?.gaunt || onryo) {
     const face = captureFace();
     things.gaunt?.setFace(face);
     thingsRec?.gaunt?.setFace(face);
+    onryo?.setFace(face);
   }
   const meta: any = (vrm.meta as any) || {};
   return { warnings, meta: { tris: `${tris.trisBefore}→${tris.trisAfter}`, name: meta.name || meta.title, authors: meta.authors || meta.author, licence: meta.licenseUrl || meta.otherLicenseUrl } };

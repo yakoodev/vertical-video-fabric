@@ -91,14 +91,34 @@ export function grade(d: Uint8ClampedArray | Uint8Array, w: number, h: number, s
 
 /**
  * Радиопомехи на месте: серый «снег» (пиксели 1×1 и строки, растянутые по горизонтали), сдвиг строк-срывов,
- * катящаяся светлая полоса. amount 0 — кадр не трогается.
+ * катящиеся полосы трекинга, «уплывание» кадра по вертикали (срыв синхронизации: картинка съезжает вниз с
+ * тёмной полосой гашения, тем сильнее, чем сильнее помехи). amount 0 — кадр не трогается.
  */
 export function noise(d: Uint8ClampedArray | Uint8Array, w: number, h: number, amount: number, frame: number) {
   if (amount <= 0) return;
   const a = Math.min(1, amount);
   const bar = ((frame * 7) % (h + 60)) - 30; // светлая полоса катится вниз
   const row = new Uint8ClampedArray(w * 4);
+  // Кадр уплывает вниз (с переносом), на шве — тёмная полоса гашения в 4–7 строк.
+  const roll = Math.round(a * a * 46);
+  if (roll > 0) {
+    const src = new Uint8ClampedArray(d);
+    for (let y = 0; y < h; y++) d.set(src.subarray(((y - roll + h) % h) * w * 4, (((y - roll + h) % h) + 1) * w * 4), y * w * 4);
+    const band = 4 + Math.round(3 * a);
+    for (let y = roll - band; y < roll; y++) if (y >= 0) for (let x = 0; x < w; x++) for (let c = 0; c < 3; c++) d[(y * w + x) * 4 + c] *= 0.15;
+  }
+  // Полосы трекинга: две широкие светлые полосы с разной скоростью, внутри — сдвиг строк.
+  const tracks = [((frame * 5) % (h + 80)) - 40, ((frame * 3 + 211) % (h + 80)) - 40];
   for (let y = 0; y < h; y++) {
+    const inTrack = tracks.some((ty) => Math.abs(y - ty) < 3 + 9 * a);
+    if (inTrack) {
+      const sh = Math.round((hash3(5, y, frame) - 0.3) * 18 * a);
+      for (let x = 0; x < w * 4; x++) row[x] = d[y * w * 4 + x];
+      for (let x = 0; x < w; x++) {
+        const sx = Math.max(0, Math.min(w - 1, x - sh));
+        for (let c = 0; c < 3; c++) d[(y * w + x) * 4 + c] = Math.min(255, row[sx * 4 + c] * (1 - 0.5 * a) + 150 * a * hash3(x >> 2, y, frame));
+      }
+    }
     // Срыв строки: сдвиг по горизонтали у части строк (чаще при сильных помехах).
     const tear = hash3(0, y >> 1, frame) < a * 0.18 ? Math.round((hash3(1, y, frame) - 0.5) * 24 * a) : 0;
     if (tear) {
