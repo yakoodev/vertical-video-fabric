@@ -21,6 +21,7 @@ import httpx
 
 from app.smotvibe import discover_smotvibe_download_targets, is_player_page_url
 from app.proxy_config import download_proxy, mask_secrets, proxy_env
+from app.ytdlp_net import common_args, run_routes
 from app.settings import settings
 from app.store import AppStore
 
@@ -441,35 +442,24 @@ def _download_direct_url_once(url: str) -> StoredSourceFile:
 def download_youtube_url(url: str, *, quality: str = "") -> StoredSourceFile:
     if classify_source_url(url) != "youtube_url":
         raise ValueError("url is not a YouTube URL")
-    settings.source_dir.mkdir(parents=True, exist_ok=True)
-    format_selector = format_selector_for_quality(quality, default_cap=None)
-    ensure_free_space(_ytdlp_disk_need(_size_probe_args(url, format_selector)))
-    token = uuid4().hex
-    output_template = settings.source_dir / f"{token}.%(ext)s"
-    proc = subprocess.run(
-        [
-            "yt-dlp",
-            "-f",
-            format_selector,
-            "--merge-output-format",
-            "mp4",
-            "-o",
-            str(output_template),
-            url,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60 * 60,
-        check=False,
+    # Тем же путём, что Twitch: прогресс, отмена, докачка, прокси и аккаунт для скачивания.
+    # Без подмены User-Agent/Referer: у клиентов плеера YouTube свои заголовки, чужой UA их ломает.
+    return _download_with_ytdlp(
+        url,
+        source_label="YouTube",
+        filename_stem=_youtube_filename_stem(url),
+        format_selector=format_selector_for_quality(quality, default_cap=None),
+        browser_headers=False,
     )
-    if proc.returncode != 0:
-        raise ValueError(f"YouTube download failed: {_safe_error(proc.stderr or proc.stdout)}")
-    matches = sorted(settings.source_dir.glob(f"{token}.*"))
-    if not matches:
-        raise ValueError("YouTube download did not produce a file")
-    path = matches[0]
-    sha256, size_bytes = file_hash_and_size(path)
-    return StoredSourceFile(path, path.name, sha256, size_bytes)
+
+
+def _youtube_filename_stem(url: str) -> str:
+    parts = urlsplit(url.strip())
+    video_id = dict(p.split("=", 1) for p in parts.query.split("&") if "=" in p).get("v", "")
+    if not video_id:
+        segments = [s for s in parts.path.split("/") if s]
+        video_id = segments[-1] if segments else ""
+    return f"youtube-{video_id}" if video_id else "youtube"
 
 
 def download_twitch_url(url: str, *, quality: str = "") -> StoredSourceFile:
@@ -564,6 +554,7 @@ def _download_with_ytdlp(
     referer: str = "",
     filename_stem: str = "",
     format_selector: str = "bv*+ba/b",
+    browser_headers: bool = True,
 ) -> StoredSourceFile:
     settings.source_dir.mkdir(parents=True, exist_ok=True)
     # Имя загрузки постоянное для ссылки: оборвалась (упал Docker, сеть) — повтор
@@ -572,7 +563,7 @@ def _download_with_ytdlp(
     safe_stem = _safe_filename_stem(filename_stem)
     output_basename = f"{token}-{safe_stem}" if safe_stem else token
     output_template = settings.source_dir / f"{output_basename}.%(ext)s"
-    header_args = ["--user-agent", BROWSER_USER_AGENT]
+    header_args = ["--user-agent", BROWSER_USER_AGENT] if browser_headers else []
     if referer:
         header_args.extend(["--referer", referer, "--add-header", f"Origin:{_origin(referer)}"])
     command_args = [
@@ -613,18 +604,17 @@ def _download_with_ytdlp(
             _ytdlp_disk_need(_size_probe_args(url, format_selector, header_args), proxy=proxy),
             already=sum(p.stat().st_size for p in settings.source_dir.glob(f"{output_basename}.*") if p.is_file()),
         )
-        proc = _run_ytdlp(command_args)
-        if proc.returncode != 0 and proxy:
-            # Напрямую не вышло (CDN режет соединение) — повторяем через прокси
-            # (настройки сервиса → «Прокси», запасной — DOWNLOAD_PROXY_URL).
-            # Трафик через прокси платный: из одинаковых по высоте берём меньший битрейт.
-            proc = _run_ytdlp(["-S", "res,fps,+br", *command_args], proxy=proxy)
+        # Напрямую → через прокси сервиса (настройки → «Прокси», запасной — DOWNLOAD_PROXY_URL;
+        # трафик платный — меньший битрейт) → YouTube просит вход — с аккаунтом для скачивания.
+        # Недокачанное между попытками не трогаем: --continue докачивает тем же именем.
+        routes = run_routes(_ytdlp_route_runner, command_args, url=url, proxy=proxy)
+        proc = routes.proc
     except DownloadCancelled:
         _remove_partials(output_basename)
         raise
     if proc.returncode != 0:
         # Недокачанное не удаляем: следующая попытка продолжит с того же места.
-        raise ValueError(f"{source_label} download failed: {_safe_error(proc.stderr or proc.stdout)}")
+        raise ValueError(_failure_message(source_label, routes, proc))
     matches = sorted(
         m for m in settings.source_dir.glob(f"{output_basename}.*")
         if not m.name.endswith((".part", ".ytdl", ".temp")) and ".part-Frag" not in m.name
@@ -636,6 +626,18 @@ def _download_with_ytdlp(
     sha256, size_bytes = file_hash_and_size(path)
     original_filename = f"{safe_stem}{path.suffix}" if safe_stem else path.name
     return StoredSourceFile(path, original_filename, sha256, size_bytes)
+
+
+def _ytdlp_route_runner(args: list[str], proxy: str) -> subprocess.CompletedProcess[str]:
+    """Маршрут ``run_routes`` → потоковый ``_run_ytdlp`` (ищется в модуле при вызове — тесты его подменяют)."""
+    return _run_ytdlp(args, proxy=proxy) if proxy else _run_ytdlp(args)
+
+
+def _failure_message(source_label: str, routes, proc: subprocess.CompletedProcess) -> str:
+    """«<что делать>: <строки ERROR yt-dlp>» — причина для человека первой: в задаче видно 500 символов."""
+    detail = _safe_error(proc.stderr or proc.stdout)
+    hint = routes.hint(source_label)
+    return f"{source_label} download failed: {hint} — {detail}" if hint else f"{source_label} download failed: {detail}"
 
 
 def _smotvibe_format_selector(audio_format_id: str = "", *, cap: int | None = 720) -> str:
@@ -744,7 +746,7 @@ def _ytdlp_disk_need(args: list[str], *, proxy: str = "") -> tuple[int, int] | N
             token.check()
         try:
             proc = subprocess.Popen(
-                [sys.executable, "-m", "yt_dlp", *args],
+                [sys.executable, "-m", "yt_dlp", *common_args(), *args],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
                 text=True,
@@ -779,9 +781,10 @@ def _ytdlp_disk_need(args: list[str], *, proxy: str = "") -> tuple[int, int] | N
 def _run_ytdlp(args: list[str], *, proxy: str = "") -> subprocess.CompletedProcess[str]:
     """yt-dlp с аргументами ``args``; ``proxy`` — через окружение процесса, не argv
     (логин и пароль прокси в ``--proxy`` видно в ``ps`` контейнера)."""
+    shared = common_args()  # JS-рантайм и PO-токены — у каждого запуска
     commands = [
-        [sys.executable, "-m", "yt_dlp", *args],
-        ["yt-dlp", *args],
+        [sys.executable, "-m", "yt_dlp", *shared, *args],
+        ["yt-dlp", *shared, *args],
     ]
     env = proxy_env(proxy) if proxy else None
     last_error = ""

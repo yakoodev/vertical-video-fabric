@@ -34,6 +34,11 @@ def register(get_store: Callable[[], Any]) -> None:
     _get_store = get_store
 
 
+def registered_store() -> Any:
+    """Хранилище, подключённое ``register`` (None — не подключено: тесты, скрипты)."""
+    return _get_store() if _get_store is not None else None
+
+
 def normalize_url(raw: str) -> str:
     """«http://u:p@h:port», «socks5://…» или «u:p:host:port» (как дают продавцы) → URL прокси."""
     text = (raw or "").strip()
