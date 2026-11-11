@@ -231,7 +231,8 @@ props по типу:
   page (страница сайта из page_snapshot — готовый слой в поле layer ответа page_snapshot/page_edit): page_id, version,
          pageWidth (CSS px снимка: 390 телефон, 1280 компьютер), region {{x,y,w,h}} — окно в CSS px страницы (null — первый
          экран), scroll [{{t,y}}] — верх окна по секундам СЛОЯ (листать к цене/кнопке: y из outline box), zoom [{{t,z,cx?,cy?}}]
-         (z 1..6, центр — доли окна), taps [{{t,x,y}}] — касание пальцем в точке страницы, w, device "phone", radius, border
+         (z 1..6, центр — доли окна), taps [{{t,x,y}}] — касание пальцем в точке страницы, w, device "phone", radius, border;
+         экран по блокам (фон + кнопки, цены, карточки отдельными image-слоями) — page_to_layers
   nameplate (плашка канала, весь ролик): platform {'|'.join(motion.NAMEPLATE_PLATFORMS)} (свой векторный значок), handle (ник),
          style glass (тёмное стекло + обводка accent) | solid (заливка accent), accent (нет — цвет площадки), size (высота
          пилюли, px, {motion.NAMEPLATE_SIZE}), font, weight, color, align + boxWidth (пилюля у края рамки), anim

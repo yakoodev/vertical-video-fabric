@@ -11,6 +11,8 @@ from fastapi import APIRouter, Body, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
+from app import webpage_layers as L
+from app import webpage_layers_clip as LC
 from app import webpages as W
 from app import webpages_ops as O
 from app.web_search import SearchError, web_search
@@ -107,6 +109,53 @@ def build_webpages_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
             return W.page_layer(get_store(), page_id, version, max(1.0, min(60.0, duration)), 0.0, phone)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/api/web-pages/{page_id}/blocks", summary="Разобрать страницу на блоки (каждый — своя прозрачная PNG)")
+    async def api_blocks(page_id: int, _auth: auth_dep, payload: dict = Body(default={})) -> dict:
+        store = get_store()
+        version = payload.get("version")
+        try:
+            dec = await run_in_threadpool(L.decompose, store, page_id, int(version) if version not in (None, "") else None,
+                                          payload.get("region"), int(payload.get("max_layers") or L.DEFAULT_MAX_LAYERS),
+                                          None, bool(payload.get("fresh")))
+            return L.view(dec)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except W.WebPageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @router.post("/api/web-pages/{page_id}/to-layers", summary="Блоки страницы → слои клипа (фон, затем блоки лесенкой)")
+    async def api_to_layers(page_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
+        store = get_store()
+        version = payload.get("version")
+        clip_id = payload.get("clip_id")
+        try:
+            out = await run_in_threadpool(
+                lambda: LC.page_to_layers(
+                    store, page_id, int(version) if version not in (None, "") else None,
+                    int(clip_id) if clip_id not in (None, "") else None, payload.get("region"),
+                    float(payload.get("at_sec") or 0), str(payload.get("layout") or "fit_width"), payload.get("stagger"),
+                    payload.get("blocks"), payload.get("as_text"), bool(payload.get("plate", True)),
+                    float(payload.get("duration") or LC.DEFAULT_DURATION),
+                    int(payload.get("max_layers") or L.DEFAULT_MAX_LAYERS), bool(payload.get("insert", True))))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except W.WebPageError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        out.pop("decomposition", None)
+        return out
+
+    @router.get("/api/web-pages/{page_id}/versions/{n}/layers/{key}/{name}", summary="Кадр блока разбора (PNG)")
+    def api_block_image(page_id: int, n: int, key: str, name: str, _auth: auth_dep):
+        try:
+            path = L.block_file(page_id, n, key, name)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path, media_type="image/png", headers=IMAGE_HEADERS)
 
     def _file(page_id: int, n: int, what: str):
         try:

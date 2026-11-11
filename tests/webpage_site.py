@@ -62,6 +62,42 @@ html, body { margin: 0; font-family: Arial, sans-serif; background: #f6f3ff; col
 .cookie { position: fixed; left: 0; right: 0; bottom: 0; padding: 14px; background: #111; color: #fff; }
 """
 
+# Витрина для разбора на слои (app/webpage_layers.py): шапка, секция с градиентом, заголовок и абзац подключёнными
+# шрифтами (Oswald под своим именем — файл страницы; Montserrat — есть в библиотеке моушна), кнопка-ссылка, две
+# карточки товара (картинка, название, цена, значок, кнопка) и подвал системным шрифтом.
+LAYERS = """<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Витрина — слои</title>
+<style>
+@font-face { font-family: "Vitrina Display"; src: url("/fonts/display.ttf") format("truetype"); font-weight: 700; }
+@font-face { font-family: "Montserrat"; src: url("/fonts/montserrat.ttf") format("truetype"); font-weight: 700; }
+html, body { margin: 0; background: #f6f3ff; color: #1b1530; font-family: Arial, sans-serif; }
+.top { display: flex; justify-content: space-between; align-items: center; height: 56px; padding: 0 18px; background: #2a1f5c; color: #fff; }
+.top .cat { padding: 8px 14px; border-radius: 999px; background: #ffd400; color: #2a1f5c; text-decoration: none; font-weight: 700; }
+.hero { padding: 36px 18px 30px; background: linear-gradient(135deg, #7c3aed, #ec4899); color: #fff; }
+.hero h1 { margin: 0 0 10px; font: 700 40px/1.1 "Vitrina Display", sans-serif; color: #ffffff; }
+.hero p { margin: 0 0 18px; font: 700 18px/1.3 "Montserrat", sans-serif; color: #fff1fb; }
+.hero .cta { display: inline-block; padding: 14px 22px; border-radius: 14px; background: #ffffff; color: #7c3aed; font-weight: 700; text-decoration: none; box-shadow: 0 8px 18px rgba(0,0,0,.25); }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 18px; }
+.card { position: relative; padding: 10px; background: #fff; border-radius: 16px; box-shadow: 0 6px 16px rgba(40,20,90,.18); }
+.card img { display: block; width: 100%; height: auto; border-radius: 10px; }
+.card h2 { margin: 8px 0 4px; font-size: 18px; }
+.card .price { font-size: 20px; font-weight: 800; color: #7c3aed; }
+.card .badge { position: absolute; top: 16px; left: 16px; padding: 3px 10px; border-radius: 999px; background: #ff2d55; color: #fff; font-size: 13px; font-weight: 700; }
+.card .buy { display: block; width: 100%; margin-top: 8px; padding: 10px; border: 0; border-radius: 10px; background: #ff2d55; color: #fff; font-size: 16px; }
+.foot { padding: 10px 18px 40px; color: #6b6585; font-size: 14px; }
+</style>
+</head><body>
+<header class="top"><b>Витрина</b><a href="/catalog" class="cat">Каталог</a></header>
+<section class="hero"><h1 id="title">Модели для витубера</h1><p>Готовые аватары за один вечер</p><a class="cta" href="/catalog">Смотреть каталог</a></section>
+<main class="grid">
+  <article class="card" id="ferret"><span class="badge">Хит</span><img src="/img/model.png" alt="Ferret" width="300" height="200"><h2>Ferret</h2><div class="price">1 290 ₽</div><button class="buy">Купить</button></article>
+  <article class="card" id="mafuyu"><img src="/img/lazy.png" alt="Мафую" width="300" height="200"><h2>Мафую</h2><div class="price">1 990 ₽</div><button class="buy">Купить</button></article>
+</main>
+<p class="foot">Доставка моделей — сразу после оплаты, файлы для VTube Studio.</p>
+</body></html>
+"""
+
 CAPTCHA = """<!doctype html><html><head><meta charset="utf-8"><title>Attention Required</title></head>
 <body><h1>Подтвердите, что вы не робот</h1><p>Нажмите на все светофоры.</p></body></html>
 """
@@ -72,6 +108,12 @@ def build_site(root: Path) -> Path:
     (root / "img").mkdir(exist_ok=True)
     (root / "index.html").write_text(INDEX, encoding="utf-8")
     (root / "captcha.html").write_text(CAPTCHA, encoding="utf-8")
+    (root / "layers.html").write_text(LAYERS, encoding="utf-8")
+    fonts = Path(__file__).parent.parent / "vendor" / "fonts"
+    if (fonts / "Oswald-Bold.ttf").is_file():
+        (root / "fonts").mkdir(exist_ok=True)
+        (root / "fonts" / "display.ttf").write_bytes((fonts / "Oswald-Bold.ttf").read_bytes())
+        (root / "fonts" / "montserrat.ttf").write_bytes((fonts / "Montserrat-Bold.ttf").read_bytes())
     (root / "css" / "site.css").write_text(CSS, encoding="utf-8")
     _png(root / "img" / "model.png", 300, 200, (60, 160, 40))
     _png(root / "img" / "hero.png", 120, 80, (200, 80, 40))
