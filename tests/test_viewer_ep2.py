@@ -91,3 +91,51 @@ def test_onryo_stills_spec():
     parted = [k for k in on["keys"] if k.get("part")]
     assert len(parted) == 1 and 8 <= parted[0]["t"] < 10
     assert {c["t0"] for c in spec["cam"]} == {2, 8, 14}
+
+
+def test_v3_nick_line_and_card_chime_gap():
+    """v3: вместо ника вслух — «Спасибо, Неко.» (ник целиком — на карточке); карточка и её звон — в паузе после
+    первой фразы, до реплики остаётся место на звон (обрезан за 0.15 с до голоса)."""
+    roll = E2.ep2_roll()
+    script = E2.ep2_script(roll)
+    nick = next(s for s in script if s["beat"] == "nick")
+    assert nick["text"] == E2.NICK_LINE == "Спасибо, Неко." and "nick" in E2.TAKE_LINES
+    segs, k, beats = E2.ep2_beats(script, _words(script), her_len=2.0)
+    total = round(round((beats[-1]["t1"] + E2.TAIL) * E2.FPS) / E2.FPS, 4)
+    ev = E2.ep2_scene(beats, total, roll, 2.0, [0.0] * 60)["events"]
+    intro = next(b for b in beats if b["beat"] == "intro")
+    assert ev["card0"] - intro["t1"] >= 0.15
+    assert ev["nick0"] - 0.15 - (ev["card0"] + 0.02) >= 0.35  # звону хватает места до голоса
+
+
+def test_v3_without_nick_line():
+    """Запас v3: реплику про зрителя можно убрать (ник — на карточке); пауза после первой фразы — под карточку и звон."""
+    roll = E2.ep2_roll()
+    script = E2.ep2_script(roll, drop=("nick",))
+    assert [s["beat"] for s in script][:2] == ["intro", "name"]
+    segs, k, beats = E2.ep2_beats(script, _words(script), her_len=2.0)
+    total = round(round((beats[-1]["t1"] + E2.TAIL) * E2.FPS) / E2.FPS, 4)
+    ev = E2.ep2_scene(beats, total, roll, 2.0, [0.0] * 60)["events"]
+    name = next(b for b in beats if b["beat"] == "name")
+    assert ev["nick0"] == name["t0"] and name["t0"] - ev["card0"] >= 0.8
+
+
+def test_v3_tool_helpers():
+    import sys
+    from pathlib import Path
+
+    import numpy as np
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import viewer_ep2 as T
+
+    heard = [{"word": "Спасибо,", "p": 0.95}, {"word": "Неко.", "p": 0.81}]
+    assert T.line_heard("Спасибо, Неко.", heard)["ok"]
+    assert not T.line_heard("Спасибо, Неко.", [{"word": "Спасибо,", "p": 0.95}, {"word": "некому", "p": 0.9}])["ok"]
+    assert not T.line_heard("Спасибо, Неко.", [{"word": "Спасибо,", "p": 0.95}, {"word": "Неко.", "p": 0.5}])["ok"]
+    rate = 1000
+    x = np.zeros(3 * rate, np.float32)
+    x[int(0.5 * rate):int(1.3 * rate)] = 0.3  # «речь» 0.5–1.3 с
+    x[int(2.0 * rate):int(2.6 * rate)] = 0.3  # следующее слово с 2.0 с
+    assert abs(T.voiced_end(x, rate, 1.0, 2.0) - 1.3) < 0.03  # Whisper сказал «конец 1.0», звук — до 1.3
+    assert abs(T.voiced_start(x, rate, 1.4, 2.5) - 2.0) < 0.03

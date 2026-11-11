@@ -13,6 +13,7 @@ fx.keys), — это не «эффект», а эфир (разрешено за
 
 from __future__ import annotations
 
+import math
 import subprocess
 import sys
 from pathlib import Path
@@ -134,14 +135,46 @@ def hits(events: dict, glitch_times: list[float], total: float) -> list[tuple[st
     return [h for h in out if 0 <= h[2] < total]
 
 
+LIMIT = 0.78  # потолок итогового ограничителя (−2.16 dBFS)
+
+
+def limiter_load(path: Path, gain_db: float, limit: float = LIMIT, win: float = 0.05) -> dict:
+    """Сколько работал бы итоговый ограничитель: доля окон (по win с), где пик после усиления выше limit, и глубина."""
+    import numpy as np
+
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-map", "0:a", "-f", "f32le", "-ac", "1", "-ar", str(RATE), "-"],
+                         capture_output=True, check=True).stdout
+    x = np.abs(np.frombuffer(raw, np.float32)) * 10 ** (gain_db / 20)
+    w = int(RATE * win)
+    pk = x[: len(x) // w * w].reshape(-1, w).max(axis=1)
+    gr = 20 * np.log10(np.maximum(pk / limit, 1.0))
+    return {"windows_pct": round(float((gr > 0).mean() * 100), 1), "over_1db_pct": round(float((gr > 1).mean() * 100), 1),
+            "max_db": round(float(gr.max()), 1), "_peaks": pk}
+
+
 def mix(video: Path, voice: Path, lead: float, total: float, events: dict, fx_keys: list[dict], glitch_times: list[float],
-        out: Path, work: Path, hits_fn=None, extras: list[dict] | None = None) -> dict:
+        out: Path, work: Path, hits_fn=None, extras: list[dict] | None = None, voice_peak_lu: float | None = None,
+        bus_db: float = 0.0, headroom: float | None = None, release_ms: int = 60) -> dict:
     """Голос (с lead) + подложки + звуки событий по уровням UNDER → −14 LUFS, видео копией. ``hits_fn`` — свой набор
     звуков на событиях (как ``hits``); ``extras`` — дорожки-вставки ``{name, path, at, rel_db, af}``: громкость —
-    относительно голоса (rel_db дБ LUFS), фильтры ``af`` (серия 1: её запись на старой плёнке, шипение ленты)."""
+    относительно голоса (rel_db дБ LUFS), фильтры ``af`` (серия 1: её запись на старой плёнке, шипение ленты).
+
+    Серия 2 v3 (владелец: «со звуком какая-то хуйня»): голос редкий, а −14 LUFS считается по всей серии — усиление
+    загоняло пики голоса на 5–8 дБ выше потолка, и ограничитель давил треть ролика вместе с подложкой (качало гул).
+    ``voice_peak_lu`` — пики голоса не выше его громкости + столько LU (ограничитель только на голосе, подложку не
+    качает); ``bus_db`` — сдвиг всех подложек и звуков относительно голоса; ``headroom`` — общее усиление не больше,
+    чем позволяет потолок (99.5 % окон по 50 мс — не выше него + headroom дБ): тише −14, зато без «давки». Предварительное сведение —
+    в float (сумма слоёв выше 0 dBFS не срезается)."""
     from app.stories_3d import voice_lufs
 
     v_lufs = voice_lufs(voice)
+    if voice_peak_lu is not None:
+        shaped = work / f"{voice.stem}_peak{voice_peak_lu:g}.wav"
+        lim = min(1.0, 10 ** ((v_lufs + voice_peak_lu) / 20))
+        _run(["ffmpeg", "-y", "-v", "error", "-i", str(voice), "-af", f"alimiter=limit={lim:.4f}:attack=1:release=50:level=false",
+              "-ac", "1", "-c:a", "pcm_f32le", str(shaped)], "пики голоса")
+        voice = shaped
+        v_lufs = voice_lufs(voice)
     st = stems(total, events, fx_keys, work)
     report: dict = {"voice_lufs": round(v_lufs, 2), "gains": {}}
     inputs = ["-i", str(video), "-i", str(voice)]
@@ -160,24 +193,32 @@ def mix(video: Path, voice: Path, lead: float, total: float, events: dict, fx_ke
         n += 1
 
     for name in ("drone", "wind"):
-        add(st[name], name, v_lufs - UNDER[name] - lufs(st[name]))
+        add(st[name], name, v_lufs - UNDER[name] - lufs(st[name]) + bus_db)
     # Помехи: громкость шума на уровне 1.0 → голос − static_full; огибающая уже внутри.
-    add(st["static"], "static", v_lufs - UNDER["static_full"] - lufs(st["_static_full_ref"]))
+    add(st["static"], "static", v_lufs - UNDER["static_full"] - lufs(st["_static_full_ref"]) + bus_db)
     for ex in extras or []:
         add(Path(ex["path"]), ex["name"], v_lufs + float(ex["rel_db"]) - lufs(Path(ex["path"])), ex.get("af", ""), at=float(ex["at"]))
     for name, path, t, af in (hits_fn or hits)(events, glitch_times, total):
         src_l = lufs(path)
-        add(path, name, v_lufs - UNDER[name] - (src_l if src_l > -70 else -20), af, at=t)
+        add(path, name, v_lufs - UNDER[name] - (src_l if src_l > -70 else -20) + bus_db, af, at=t)
     graph = ";".join(chains) + ";" + "".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0[mix]"
-    pre = work / "mixed_pre.mp4"
+    pre = work / "mixed_pre.mov"
     _run(["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex", graph, "-map", "0:v", "-map", "[mix]", "-c:v", "copy",
-          "-c:a", "pcm_s16le", "-t", f"{total:.3f}", str(pre.with_suffix(".mov"))], "сведение")
+          "-c:a", "pcm_f32le", "-t", f"{total:.3f}", str(pre)], "сведение")
     # Громкость −14 LUFS одним усилением + ограничитель: loudnorm в один проход «подтягивает» тихие места (помехи
     # вступления становились громче голоса) — соотношения слоёв должны остаться как сведены.
-    gain = TARGET_LUFS - lufs(pre.with_suffix(".mov"))
+    gain = TARGET_LUFS - lufs(pre)
+    if headroom is not None:
+        import numpy as np
+
+        pk = limiter_load(pre, 0.0)["_peaks"]
+        cap = 20 * math.log10(LIMIT) + headroom - 20 * math.log10(float(np.percentile(pk, 99.5)) + 1e-9)
+        report["gain_for_lufs_db"] = round(gain, 2)
+        gain = min(gain, cap)
     report["master_gain_db"] = round(gain, 2)
-    _run(["ffmpeg", "-y", "-v", "error", "-i", str(pre.with_suffix(".mov")), "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-af",
-          f"volume={gain:.2f}dB,alimiter=limit=0.78:attack=3:release=60:level=false", "-c:a", "aac", "-b:a", "192k",
+    report["limiter"] = {k: v for k, v in limiter_load(pre, gain).items() if not k.startswith("_")}
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(pre), "-c:v", "libx264", "-preset", "slow", "-crf", "20", "-pix_fmt", "yuv420p", "-af",
+          f"volume={gain:.2f}dB,alimiter=limit={LIMIT}:attack=3:release={release_ms}:level=false", "-c:a", "aac", "-b:a", "192k",
           "-ar", "48000", "-movflags", "+faststart", str(out)], "громкость")
     report["final_lufs"] = round(lufs(out), 2)
     return report
