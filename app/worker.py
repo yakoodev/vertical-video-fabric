@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from app import publish_master
+from app import publish_master, session_health, session_keepalive
 from app.ai.publish_meta import platform_texts
 from app.providers.base import safe_provider_error
 from app.providers.registry import get_provider
@@ -77,6 +77,10 @@ class JobWorker:
             if not self.store.mark_target_running(target["id"]):
                 continue
             try:
+                # Браузер аккаунта давно не заходил — короткий заход сейчас: загрузка пойдёт со свежей сессией
+                # (app/session_keepalive.py). Сбой захода загрузке не мешает.
+                if target["platform"] in session_keepalive.PLATFORMS:
+                    session_keepalive.before_upload(self.store, target["account_id"])
                 account = self.store.get_account(target["account_id"], include_secret=False)
                 cookies = self.store.get_account_cookies(target["account_id"])
                 proxy_url = self.store.get_account_proxy_url(target["account_id"])
@@ -109,11 +113,18 @@ class JobWorker:
                 # Google мог уже сменить __Secure-*PSIDTS, старые значения потом не пустят.
                 if result.refreshed_cookies:
                     try:
-                        self.store.update_account_cookie_values(
-                            target["account_id"], result.refreshed_cookies
-                        )
+                        if self.store.update_account_cookie_values(target["account_id"], result.refreshed_cookies):
+                            log.info("cookies rotated: account=%s source=upload:%s names=%s", target["account_id"],
+                                     target["platform"], ",".join(sorted(result.refreshed_cookies)))
                     except Exception:  # noqa: BLE001 - cookie refresh is best-effort
                         pass
+                # Площадка выкинула из аккаунта — то же состояние входа и одно сообщение владельцу, что у браузера.
+                if result.status == "needs_reauth":
+                    try:
+                        session_health.record(self.store, target["account_id"], "needs_reauth",
+                                              result.error, source=f"upload:{target['platform']}")
+                    except Exception:  # noqa: BLE001
+                        log.warning("session state after upload failed: account=%s", target["account_id"])
                 payload = {k: v for k, v in result.__dict__.items() if k != "refreshed_cookies"}
                 # Что ушло на самом деле: вариант площадки мог заменить текст задания (platform_texts).
                 payload["response"] = {**(payload.get("response") or {}), "master": master.summary(),

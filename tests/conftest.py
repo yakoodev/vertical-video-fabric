@@ -37,6 +37,8 @@ os.environ.setdefault("AUTOPILOT_WORKER", "0")
 os.environ.setdefault("VOD_WATCH_WORKER", "0")
 # Работник ИИ-видео (генерация по одобренным карточкам) — тесты зовут run_pending сами.
 os.environ.setdefault("AIVIDEO_WORKER", "0")
+# Браузер аккаунтов (заходы на TikTok/YouTube перед загрузкой и по расписанию) — в тестах только явно.
+os.environ.setdefault("SESSION_KEEPALIVE", "0")
 # Заголовок и описание после рендера ходят в Gemini — в тестах только явно (settings.auto_publish_meta).
 os.environ.setdefault("AUTO_PUBLISH_META", "0")
 
