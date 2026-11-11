@@ -115,7 +115,9 @@ export class PostFX {
   bloom: UnrealBloomPass | null = null;
   depthCam: THREE.PerspectiveCamera;
 
-  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, W: number, H: number, spec: PostSpec, samples = 4) {
+  /** ``extra`` — проходы после цветокоррекции (в sRGB): toon-«бумага» (toon.ts) и подобные. */
+  constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, W: number, H: number, spec: PostSpec, samples = 4,
+    extra: ShaderPass[] = []) {
     const rt = new THREE.WebGLRenderTarget(W, H, { type: THREE.HalfFloatType, samples });
     this.composer = new EffectComposer(renderer, rt);
     this.composer.setPixelRatio(1);
@@ -151,6 +153,7 @@ export class PostFX {
     u.grain.value = spec.grain ?? 0.05;
     u.ca.value = spec.ca ?? 1.2;
     this.composer.addPass(this.grade);
+    for (const p of extra) this.composer.addPass(p);
   }
 
   /** Цветокоррекция, виньетка и сила свечения — сменить на лету (фаза окружения: другая локация после склейки). */

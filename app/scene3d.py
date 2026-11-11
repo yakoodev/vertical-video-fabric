@@ -67,6 +67,15 @@
 (банка-копилка, монеты по ``drops``), ``tablet`` (планшет с эскизом по окну ``draw``), ``stylus``; поверхности ``pixel`` и
 ``pixel_planks``; ``overlays: [{kind: hud|tag|toast|phone, …}]`` — плоские карточки поверх кадра.
 
+Мультяшный «нарисованный» вид (``node/scene3d/src/toon.ts``): ``environment.toon: "ink" | "sketch" | "comic" | true |
+{preset, ramp, outline: {color, width, boil}, rim, spec, boil: {fps, amount}, paper, hatch, halftone, shadows}`` —
+cel-shading лесенкой, обводка тушью (inverted hull, «кипит»), бумага и кипение кадра последним проходом; поправки
+перекрывают пресет по полям. Мем-канал (``tools/meme3d_pilot.py``): персонаж ``style: "deskbot"`` — робот с
+экраном-лицом (``pose: [{t, lean, tilt, turn, hop, squash, armL, armR, type, shake}]``, ``face: [{t, expr, look}]``,
+``mouth: {fps, values}`` — рот под громкость голоса, ``stepFps`` — анимация «по двойкам»); примитивы ``monitor``
+(браузер с вкладками и чатом: ``params.browser``, state ``tab``/``badge``), ``keyboard``, ``plant``, ``desk_lamp``,
+``window_frame``, ``thought_bubble`` (облачко мыслей с картинкой ``panel``: editor|graph|text, state ``open``).
+
 ``render_scene(spec, out)`` — mp4; ``preview_frames(spec, [t…], dir)`` — PNG нескольких кадров без
 полного рендера; ``contact_sheet(video, out)`` — лист кадров. Командная строка:
 ``python -m app.scene3d scene.json out.mp4 [--sheet sheet.jpg] [--preview 0,2,4 --preview-dir D]``.
@@ -95,7 +104,9 @@ DURATION_MAX = 120.0
 SIDE_MAX = 2160
 MAX_FRAMES = 3600
 OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
-                     "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus"}
+                     "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus",
+                     "monitor", "keyboard", "plant", "desk_lamp", "window_frame", "thought_bubble"}
+TOON_PRESETS = {"ink", "sketch", "comic"}
 OVERLAY_KINDS = {"hud", "tag", "toast", "phone", "chat", "screen", "alert"}
 VOXEL_SHAPES = {"block", "soft"}
 LIGHT_TYPES = {"ambient", "hemisphere", "directional", "point", "spot"}
@@ -206,6 +217,11 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
             _num(o.get("width"), f"room.openings[{i}].width", 0.2, 10)
             _num(o.get("height"), f"room.openings[{i}].height", 0.2, 10)
 
+    toon = (spec.get("environment") or {}).get("toon")
+    preset = toon if isinstance(toon, str) else (toon.get("preset", "ink") if isinstance(toon, dict) else None)
+    if preset is not None and preset not in TOON_PRESETS:
+        warnings.append(f"environment.toon: нет пресета «{preset}» — будет ink ({', '.join(sorted(TOON_PRESETS))})")
+
     for i, light in enumerate(spec.get("lights") or []):
         if light.get("type") not in LIGHT_TYPES:
             raise SceneSpecError(f"lights[{i}].type: одно из {sorted(LIGHT_TYPES)}")
@@ -234,6 +250,14 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         if not isinstance(cid, str) or not cid or cid in chars:
             raise SceneSpecError(f"characters[{i}].id: нужен уникальный id")
         chars[cid] = c
+        if c.get("style") == "deskbot":
+            # Робот-помощник из примитивов (node/scene3d/src/deskbot.ts): без модели, поза и лицо — ключами.
+            if c.get("height") is not None:
+                _num(c["height"], f"characters[{i}].height", 0.1, 3)
+            for f in ("pose", "face"):
+                if c.get(f):
+                    _keys(c[f], f"characters[{i}].{f}", duration)
+            continue
         if c.get("style") == "voxel":
             # Герой из примитивов (node/scene3d/src/voxel.ts): модели и клипов паков нет.
             if (c.get("voxel") or {}).get("shape", "block") not in VOXEL_SHAPES:

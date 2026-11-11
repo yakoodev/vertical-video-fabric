@@ -20,6 +20,9 @@ import { createVoxelCharacter, type VoxelCharacterSpec } from "./voxel.ts";
 import { loadUiFonts, uiScreen } from "./ui.ts";
 import { coinJar, drawingTablet, stylus } from "./voxelprops.ts";
 import { Overlays, type OverlaySpec } from "./overlay.ts";
+import { resolveToon, Toon, type ToonSpec } from "./toon.ts";
+import { createDeskbot, type DeskbotSpec } from "./deskbot.ts";
+import { deskLamp, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
 const D2R = Math.PI / 180;
@@ -116,12 +119,14 @@ export interface SceneSpec {
     /** Живые отражения: кубическая карта сцены из точки position каждый кадр (без персонажей и эффектов). */
     reflections?: { position: number[]; size?: number; intensity?: number };
     /** Фазы окружения по времени (другая локация после склейки): с t — свой фон, туман, экспозиция, цветокоррекция. */
-    phases?: EnvPhase[] };
+    phases?: EnvPhase[];
+    /** Мультяшный «нарисованный» вид (toon.ts): имя пресета (ink|sketch|comic), true или {preset, …поправки}. */
+    toon?: string | boolean | ToonSpec };
   room?: RoomSpec;
   lights?: LightSpec[];
   objects?: ObjectSpec[];
   /** Персонажи: модель со скелетом из паков или герой из примитивов (style "voxel", voxel.ts). */
-  characters?: (CharacterSpec | VoxelCharacterSpec)[];
+  characters?: (CharacterSpec | VoxelCharacterSpec | DeskbotSpec)[];
   /** Слои поверх кадра (overlay.ts): бюджет-HUD, ярлык, всплывающая карточка, телефон-карточка. */
   overlays?: OverlaySpec[];
   camera?: { fov?: number; near?: number; far?: number; keys: CameraKey[]; margin?: number; clamp?: boolean;
@@ -159,6 +164,7 @@ class Engine {
   focus = 2;
   dof = 0;
   overlays: Overlays | null = null;
+  toon: Toon | null = null;
 
   load(ref: string): Promise<Loaded> {
     if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
@@ -223,6 +229,7 @@ class Engine {
     }
     for (const c of spec.characters || []) {
       const ch = c.style === "voxel" ? createVoxelCharacter(c as VoxelCharacterSpec)
+        : c.style === "deskbot" ? createDeskbot(c as DeskbotSpec)
         : await createCharacter(c as CharacterSpec, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
       this.scene.add(ch.root);
@@ -277,7 +284,16 @@ class Engine {
       this.scene.environmentIntensity = env.reflections.intensity ?? 1;
     }
     if (spec.overlays?.length) this.overlays = new Overlays(spec.overlays, W, H);
-    if (env.post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, env.post, spec.quality?.antialias === false ? 0 : 4);
+    const toon = resolveToon(env.toon, (m) => this.warnings.push(m));
+    if (toon) {
+      // Toon — после всех персонажей и вещей: материалы → cel, обводки, последний проход «бумага».
+      this.toon = new Toon(toon, W, H);
+      this.toon.configureRenderer(this.renderer);
+      this.toon.apply(this.scene);
+    }
+    const post = env.post || (this.toon ? { ao: 0, bloom: false as const, vignette: 0.18, grain: 0, ca: 0 } : null);
+    if (post) this.post = new PostFX(this.renderer, this.scene, this.camera, W, H, post, spec.quality?.antialias === false ? 0 : 4,
+      this.toon ? [this.toon.pass] : []);
     this.renderer.compile(this.scene, this.camera);
     return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
   }
@@ -395,7 +411,10 @@ class Engine {
       prop = kind === "mug" ? mug(p) : kind === "robot_disc" ? robotDisc(p) : kind === "string_lights" ? stringLights(p.points || [[0, 0, 0], [1, 0, 0]], p)
         : kind === "poster" ? poster(p) : kind === "blob_shadow" ? blobShadow(p) : kind === "display" ? display(p)
         : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p)
-        : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p) : primitive(kind, p);
+        : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p)
+        : kind === "monitor" ? monitor(p) : kind === "keyboard" ? keyboard(p) : kind === "plant" ? plant(p)
+        : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p)
+        : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
       if (p.surface) {
@@ -457,6 +476,7 @@ class Engine {
   /** Поставить всё на момент t (детерминированно). */
   update(t: number) {
     this.applyPhase(t);
+    if (this.toon) this.toon.update(t);
     for (const ch of Object.values(this.characters)) ch.update(t);
     for (const l of this.lights) {
       let k = 1;

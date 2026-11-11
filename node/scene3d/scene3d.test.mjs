@@ -23,6 +23,38 @@ const ROOT = resolve(HERE, "..", "..");
 const PACKS = join(ROOT, "vendor", "packs");
 const BUNDLE = join(HERE, "dist", "scene3d.js");
 
+/* ---------- toon-пресеты и робот-помощник ---------- */
+
+test("toon: пресет + поправки по полям, неизвестный пресет — ink с предупреждением", async () => {
+  const { resolveToon, rampTexture, TOON_PRESETS } = await import("./src/toon.ts");
+  assert.equal(resolveToon(undefined), null);
+  assert.equal(resolveToon(false), null);
+  const ink = resolveToon(true);
+  assert.equal(ink.preset, "ink");
+  assert.deepEqual(ink.ramp, TOON_PRESETS.ink.ramp);
+  const own = resolveToon({ preset: "ink", outline: { width: 7 } });
+  assert.equal(own.outline.width, 7);
+  assert.equal(own.outline.color, TOON_PRESETS.ink.outline.color, "остальные поля обводки — из пресета");
+  const warns = [];
+  const odd = resolveToon("нет-такого", (m) => warns.push(m));
+  assert.equal(odd.outline.color, TOON_PRESETS.ink.outline.color);
+  assert.equal(warns.length, 1);
+  assert.ok(resolveToon("comic").halftone.strength > 0);
+  assert.ok(resolveToon("sketch").hatch.strength > 0);
+  // Лесенка: ступени ровные, уровень держится до следующего порога.
+  const tex = rampTexture([[0, 0], [0.5, 0.5], [0.75, 1]]);
+  const px = (x) => tex.image.data[Math.round(x * 255) * 4];
+  assert.equal(px(0.2), 0);
+  assert.equal(px(0.6), 128);
+  assert.equal(px(0.9), 255);
+});
+
+test("deskbot: позы рук из четырёх углов, нужные выражения лица есть", async () => {
+  const { ARM_POSES, FACE_EXPR } = await import("./src/deskbot.ts");
+  for (const [name, a] of Object.entries(ARM_POSES)) assert.equal(a.length, 4, name);
+  for (const name of ["grumpy", "side", "roll", "sigh", "fake", "offended", "hurt", "stare"]) assert.ok(FACE_EXPR[name], name);
+});
+
 /* ---------- время ---------- */
 
 test("изинги: концы 0 и 1, inOutSine симметричен", () => {
