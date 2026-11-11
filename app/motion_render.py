@@ -286,8 +286,9 @@ def resolve_layer_assets(store: Any, layers: list[dict]) -> tuple[list[dict], di
             path = _resolve_ref(store, ref, layer["type"])
             if path is None:
                 what = f"файл для монтажа {ref}" if isinstance(ref, int) else ref
-                if layer["type"] in ("callout", "social"):
-                    # Значок и картинка карточки — украшение: плашка нужна и без них.
+                if layer["type"] in ("callout", "social", "bubbles", "carousel", "tile_wall", "flow_diagram"):
+                    # Значок и картинки карточки/пузыря/плитки — украшение: слой нужен и без них
+                    # (пузырь — со значком, карточка — с буквой, стена — со своими плитками).
                     notes.append(f"слой {layer['id']}: значок {what} не найден")
                     continue
                 notes.append(f"слой {layer['id']}: {what} не найден — пропущен")
@@ -622,11 +623,13 @@ def _render_frame_png(
 
             voice, _voice_notes = plan_voice(store, plan, layers, fps, "clip", window=(lt - 1.0, lt + 0.1))
         levels = None
-        if react_sources(layers):
-            # Реакция на звук в этот кадр: огибающая всего клипа (нормировка — по всему, как в рендере).
+        from app.waveform_levels import wave_layers
+
+        if react_sources(layers) or wave_layers(layers):
+            # Реакция на звук и волны в этот кадр: огибающая всего клипа (нормировка — по всему, как в рендере).
             from app.audio_react import plan_levels
 
-            levels, _level_notes = plan_levels(store, plan, react_sources(layers), fps, "clip")
+            levels, _level_notes = plan_levels(store, plan, react_sources(layers), fps, "clip", layers=layers)
         host = attach_chat(store, plan, {"layers": layers, "camera": camera}) or {}
         assets.update(host.get("chat_assets") or {})
         regions = _render.layout_camera_regions(preset, source, width, height) if camera else None

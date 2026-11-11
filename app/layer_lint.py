@@ -216,8 +216,20 @@ FULL_INSERT_MAX_SEC = 3.0
 def cover_share(layer: dict, fmt: Any = None) -> float:
     """Какую долю кадра непрозрачно закрывает слой-картинка/фигура (0, если прозрачный); кадр —
     опорный формата слоёв ``fmt`` (нет — 9:16, 1080×1920)."""
-    if layer.get("type") not in ("shape", "image", "video", "scene", "social", "page"):
+    if layer.get("type") not in ("shape", "image", "video", "scene", "social", "page", "carousel", "tile_wall"):
         return 0.0
+    if layer.get("type") in ("carousel", "tile_wall"):
+        # Карусель закрывает кадр центральной карточкой (соседи бледные), стена плиток — всей рамкой.
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
+            return 0.0
+        ref_w, ref_h = _ref(fmt)
+        scale = _num(layer.get("scale"), 1.0) or 1.0
+        if layer.get("type") == "carousel":
+            w, h = _num(props.get("cardW"), 600.0) or 600.0, _num(props.get("cardH"), 780.0) or 780.0
+        else:
+            w, h = _num(props.get("w"), ref_w) or ref_w, _num(props.get("h"), ref_h) or ref_h
+        return min(1.0, (w * h * scale * scale) / (ref_w * ref_h))
     ref_w, ref_h = _ref(fmt)
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
     if layer.get("type") in ("social", "page"):
@@ -291,7 +303,7 @@ def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
     во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
     kind = layer.get("type")
-    if kind in ("shape", "captions", "particles", "nameplate", "fx") or layer.get("behind"):
+    if kind in ("shape", "captions", "particles", "nameplate", "fx", "tile_wall") or layer.get("behind"):
         # Плашка канала висит весь ролик маленькой подписью в углу — не «графика поверх».
         return True
     if kind in ("image", "video"):

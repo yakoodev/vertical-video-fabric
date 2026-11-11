@@ -70,6 +70,18 @@ export function collectImageRefs(layers: Layer[]): string[] {
         for (const ref of [p.avatarImage, p.style === "post" ? p.image : null]) if (ref !== null && ref !== undefined && ref !== "") out.add(String(ref));
         break;
       }
+      case "bubbles":
+        for (const it of layer.props.items ?? []) if (it?.image !== null && it?.image !== undefined && it.image !== "") out.add(String(it.image));
+        break;
+      case "carousel":
+        for (const c of layer.props.cards ?? []) if (c?.image !== null && c?.image !== undefined && c.image !== "") out.add(String(c.image));
+        break;
+      case "tile_wall":
+        for (const ref of layer.props.images ?? []) if (ref !== null && ref !== undefined && ref !== "") out.add(String(ref));
+        break;
+      case "flow_diagram":
+        for (const n of layer.props.nodes ?? []) if (n?.image !== null && n?.image !== undefined && n.image !== "") out.add(String(n.image));
+        break;
       default:
         break;
     }

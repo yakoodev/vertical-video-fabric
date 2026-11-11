@@ -3,7 +3,7 @@ import { paintCoverDoc, type CoverDoc, type CoverImageLike } from "../../fronten
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
-import { type Ctx2D, type RenderEnv, renderScene, validateScene } from "../../frontend/src/motion/index";
+import { buildTemplate, type Ctx2D, type RenderEnv, renderScene, TEMPLATES, validateScene } from "../../frontend/src/motion/index";
 import { UsageError } from "./args";
 import { installVariableFonts, registerFonts } from "./fonts";
 
@@ -73,4 +73,27 @@ export async function coverDocMode(argv: string[]): Promise<void> {
     createCanvas: (w, h) => createCanvas(w, h) as unknown as { getContext(type: "2d"): unknown },
   });
   writeFileSync(out, canvas.toBuffer("image/png"));
+}
+
+/**
+ * Галерея шаблонов для агента и MCP (app/motion_template_tools.py): `--list-templates` печатает в stdout
+ * JSON [{id, name, category, description, duration, params}] — тот же список, что в редакторе.
+ */
+export function listTemplatesMode(): void {
+  const out = TEMPLATES.map((t) => ({ id: t.id, name: t.name, category: t.category, description: t.description, duration: t.duration, params: t.params }));
+  process.stdout.write(JSON.stringify(out));
+}
+
+/**
+ * Собрать шаблон: `--build-template job.json`, job — {id, params?, at?, format?}. Печатает {layers, camera?}
+ * — те же слои, что вставляет галерея редактора (buildTemplate + перенос в формат клипа).
+ */
+export function buildTemplateMode(argv: string[]): void {
+  const at = argv.indexOf("--build-template");
+  const path = argv[at + 1];
+  if (!path) throw new UsageError("--build-template: нужен путь к JSON {id, params?, at?, format?}");
+  const job = JSON.parse(readFileSync(path, "utf8")) as { id?: string; params?: Record<string, string | number | boolean>; at?: number; format?: string };
+  const built = buildTemplate(String(job.id ?? ""), job.params ?? {}, Math.max(0, Number(job.at) || 0), job.format ?? undefined);
+  if (!built) throw new UsageError(`шаблона «${job.id}» нет`);
+  process.stdout.write(JSON.stringify(built));
 }

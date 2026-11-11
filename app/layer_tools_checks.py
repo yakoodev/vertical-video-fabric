@@ -91,6 +91,11 @@ def _layer_summary(layer: dict) -> str:
         + f" {props.get('name') or ''} «{_short(props.get('text'))}»",
         "page": lambda: f"страница #{props.get('page_id') or ''} v{props.get('version') or 1}"
         + (" в телефоне" if props.get("device") == "phone" else ""),
+        "bubbles": lambda: f"облако пузырей ×{len(props.get('items') or [])}",
+        "carousel": lambda: f"карусель ×{len(props.get('cards') or [])} «{_short((props.get('cards') or [{}])[0].get('title'))}»",
+        "waveform": lambda: f"волна голоса {props.get('style') or 'bars'} ({props.get('source') or 'auto'})",
+        "tile_wall": lambda: f"стена плиток ×{len(props.get('images') or []) or 'свои'}",
+        "flow_diagram": lambda: "схема " + " → ".join(_short(n.get("label")) for n in props.get("nodes") or []),
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),

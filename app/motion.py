@@ -36,7 +36,7 @@ from app.motion_limits import (  # noqa: F401
     BEZIER_RE, PACK_REF_RE, LAYER_TYPES, VISUAL_TYPES, EASINGS, DEFAULT_EASING, ANIMATIONS, TEXT_ONLY_ANIMATIONS,
     ANIMATION_ALIASES, DRAW_SHAPE_KINDS, LOOPS, TEXT_ONLY_LOOPS, LOOP_ALIASES, BLENDS, FX_KINDS, FX_ALIASES,
     FX_MAX_AT_ONCE, REACT_SOURCES, REACT_PROPS, REACT_ALIASES, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES,
-    MAX_PARTICLES, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES,
+    MAX_PARTICLES, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, AD_ICONS, AD_THEMES, AD_ACCENT, AD_FONT, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES,
     SKETCH_SHAPE_KINDS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES,
     NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, ALIGNS, HIGHLIGHT_STYLES,
     CAPTION_STYLES, DEFAULT_CAPTION_STYLE, CAPTION_ANIMATIONS, DEFAULT_CAPTIONS_Y, MAX_CAPTION_MARKS, CHAT_STYLES,
@@ -135,6 +135,15 @@ def page_ref(props: dict) -> str:
     return f"webpage:{page_id}:{version}" if page_id > 0 else ""
 
 
+# Где у слоёв рекламного пакета картинки: список props и поле элемента (None — элемент сам ссылка).
+AD_IMAGE_LISTS: dict[str, tuple[str, str | None]] = {
+    "bubbles": ("items", "image"),
+    "carousel": ("cards", "image"),
+    "flow_diagram": ("nodes", "image"),
+    "tile_wall": ("images", None),
+}
+
+
 def layer_asset_refs(layer: dict) -> list[int | str]:
     """Какие файлы нужны слою: id файлов для монтажа (int) и ссылки на пакеты (str)."""
     props = layer.get("props") or {}
@@ -188,6 +197,13 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
     elif ltype == "scene":
         # Узлы image сцены: файлы для монтажа и emoji:/sticker: из паков.
         refs.extend(scene_image_refs(props.get("scene")))
+    elif ltype in AD_IMAGE_LISTS:
+        # Рекламный пакет: картинки пузырей, карточек карусели, узлов схемы и плиток стены.
+        key, field = AD_IMAGE_LISTS[ltype]
+        for item in props.get(key) or []:
+            ref = _as_ref(item.get(field) if field and isinstance(item, dict) else (None if field else item))
+            if ref is not None and ref not in refs:
+                refs.append(ref)
     elif ltype == "captions":
         # Эмодзи над субтитрами — тоже Twemoji; без файла рисуется символом, слой не пропадает.
         for mark in props.get("emoji") or []:
@@ -278,12 +294,18 @@ def has_pngtuber(layers: Any) -> bool:
 
 
 def react_sources(layers: Any) -> list[str]:
-    """Чьи огибающие громкости нужны видимым слоям с ``react`` (тогда их считает app/audio_react.py)."""
+    """Чьи огибающие громкости нужны видимым слоям с ``react`` и волнам ``waveform`` с source voice/music/mix
+    (тогда их считает app/audio_react.py)."""
     found = {
         str((layer.get("react") or {}).get("source") or "voice")
         for layer in layers or []
         if isinstance(layer, dict) and isinstance(layer.get("react"), dict) and not layer.get("hidden")
         and layer.get("type") != "audio"
+    }
+    found |= {
+        str((layer.get("props") or {}).get("source"))
+        for layer in layers or []
+        if isinstance(layer, dict) and layer.get("type") == "waveform" and not layer.get("hidden")
     }
     return [source for source in REACT_SOURCES if source in found]
 
@@ -498,6 +520,23 @@ def schema_summary() -> dict:
             "note": "плашка канала: значок площадки (свой векторный глиф) + ник; glass — тёмное стекло с "
                     "обводкой accent, solid — заливка accent; accent null — цвет площадки; size — высота "
                     f"пилюли (опорн. px, {NAMEPLATE_SIZE}); boxWidth + align — пилюля у края рамки слоя",
+        },
+        "ads": {
+            "icons": list(AD_ICONS),
+            "themes": list(AD_THEMES),
+            "accent": AD_ACCENT,
+            "font": AD_FONT,
+            "note": "рекламный пакет (промо продукта/сервиса): counter roll — одометр (каждая цифра — барабан, "
+                    "stagger — шаг разрядов, с, laps — лишние обороты младших); bubbles — облако кругов со значком/"
+                    "картинкой, числом и подписью (появляются по очереди от центра, парят, focus — один растёт, "
+                    "остальные гаснут и расступаются; раскладка без наложений по seed); carousel — карточки лентой, "
+                    "центральная крупнее, за ней светятся кольца, соседи выглядывают, переключение switchAt/interval; "
+                    "waveform — столбики/волна/точки по громкости audio_layer или asset_id (auto), голоса/музыки/"
+                    "всего звука клипа (voice/music/mix) или образец по seed (fake); tile_wall — наклонная стена "
+                    "картинок/своих плиток, бесконечно едет по диагонали, overlay — затемнение под текст; "
+                    "flow_diagram — узлы (значок/картинка + подпись) пунктиром по шагам, центральный — щит с замком, "
+                    "в конце плашка done. icon — свой значок из icons или 1–3 буквы (эмодзи нельзя). Наклон группы: "
+                    "одинаковые pivot {x,y} и ключи rotX/rotY/scale у слоёв (camera_preset screen_tilt)",
         },
         "social": {
             "styles": list(SOCIAL_STYLES),

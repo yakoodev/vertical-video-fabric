@@ -21,6 +21,8 @@ type Seg = {
   w: number;
   /** Ширина ячейки моноширинной цифры (счётчик): текст центрируется в ней. */
   cell: boolean;
+  /** Номер ячейки-цифры в тексте (0 — первая слева): по нему одометр крутит свой барабан. */
+  ci?: number;
   /** Символ-декор (✦ ★ ♥ →…): рисуется путём, его нет в шрифтах (glyphs.ts). */
   glyph?: DecorGlyph;
 };
@@ -60,7 +62,16 @@ export type TextBlockOptions = TextStyle & {
   tabularDigits?: boolean;
   /** Минимальная ширина блока (плашка счётчика не «дышит» по кадрам). */
   minWidth?: number;
+  /** Барабаны одометра: ячейка-цифра номер ci рисуется прокруткой (layers/odometer.ts); null — как есть. */
+  cells?: CellRoll | null;
 };
+
+/**
+ * Прокрутка ячейки-цифры: `pos` — непрерывное положение барабана (7.35 — «7» ушла вверх на 0.35
+ * шага, снизу въезжает «8»), `alpha` — видимость разряда (у появившихся в пути — проявление).
+ */
+export type CellView = { pos: number; alpha: number; blur?: number };
+export type CellRoll = (ci: number) => CellView | null;
 
 /* ---------- измерение с кэшем ---------- */
 
@@ -139,6 +150,7 @@ function layoutAt(ctx: Ctx2D, opts: TextBlockOptions, size: number, defaultFont:
     : 0;
 
   let gCursor = 0;
+  let cellIndex = 0;
   const laid: LaidWord[] = words.map((word, index) => {
     const segs: Seg[] = [];
     let buf = "";
@@ -157,7 +169,7 @@ function layoutAt(ctx: Ctx2D, opts: TextBlockOptions, size: number, defaultFont:
         segs.push({ text: g, ref: emojiRef(g), w: size * 1.08 + ls, cell: false });
       } else if (digitW && DIGIT.test(g)) {
         flush();
-        segs.push({ text: g, ref: null, w: digitW, cell: true });
+        segs.push({ text: g, ref: null, w: digitW, cell: true, ci: cellIndex++ });
       } else buf += g;
     }
     flush();
@@ -414,10 +426,55 @@ function cutSegs(segs: Seg[], n: number): Seg[] {
 
 type Pass = "stroke" | "fill";
 
-function drawSegs(ctx: Ctx2D, segs: Seg[], x: number, baseline: number, cy: number, L: TextLayout, pass: Pass, env: RenderEnv): void {
+/**
+ * Ячейка одометра: две соседние цифры барабана со сдвигом на долю шага и встречным проявлением,
+ * под маской полосы строки — цифра уходит вверх, следующая въезжает снизу (вниз — при счёте назад).
+ */
+function drawRollCell(ctx: Ctx2D, s: Seg, x: number, baseline: number, cy: number, L: TextLayout, pass: Pass, v: CellView): void {
+  if (v.alpha <= 0.002) return;
+  const step = L.size * 1.02;
+  const base = Math.floor(v.pos);
+  const frac = v.pos - base;
+  const blur = Math.max(0, Math.min(1, v.blur ?? 0));
+  ctx.save();
+  // Крутящийся барабан без тени/свечения: под маской она легла бы прямоугольником.
+  clearShadow(ctx);
+  ctx.beginPath();
+  // Окно барабана — по высоте цифры с небольшим запасом: соседние цифры видны только краем.
+  const half = L.capH / 2 + L.size * 0.14;
+  ctx.rect(x - L.size * 0.2, cy - half, s.w + L.size * 0.4, half * 2);
+  ctx.clip();
+  const alpha0 = ctx.globalAlpha;
+  const glyph = (d: number, dy: number, a: number) => {
+    if (a <= 0.002) return;
+    const ch = String(((d % 10) + 10) % 10);
+    const dx = (s.w - ctx.measureText(ch).width) / 2;
+    ctx.globalAlpha = alpha0 * Math.min(1, a);
+    if (pass === "stroke") ctx.strokeText(ch, x + dx, baseline + dy);
+    else ctx.fillText(ch, x + dx, baseline + dy);
+  };
+  for (const [d, off] of [
+    [base, -frac],
+    [base + 1, 1 - frac],
+  ] as [number, number][]) {
+    // Чем дальше цифра от середины окна, тем прозрачнее — край барабана мягкий.
+    const a = v.alpha * Math.max(0, 1 - Math.abs(off) * 1.25);
+    if (blur > 0.05) {
+      // Быстрый барабан смазан по ходу: две бледные копии выше и ниже.
+      for (const k of [-1, 1]) glyph(d, (off + k * 0.16 * blur) * step, a * 0.32 * blur);
+      glyph(d, off * step, a * (1 - 0.35 * blur));
+    } else glyph(d, off * step, a);
+  }
+  ctx.restore();
+}
+
+function drawSegs(ctx: Ctx2D, segs: Seg[], x: number, baseline: number, cy: number, L: TextLayout, pass: Pass, env: RenderEnv, cells?: CellRoll | null): void {
   let cx = x;
   for (const s of segs) {
-    if (s.glyph) {
+    const roll = s.cell && cells && s.ci !== undefined ? cells(s.ci) : null;
+    if (roll) {
+      drawRollCell(ctx, s, cx, baseline, cy, L, pass, roll);
+    } else if (s.glyph) {
       drawDecorGlyph(ctx, s.glyph, cx, s.w - L.letterSpacing, cy, L.size, pass);
     } else if (s.ref) {
       if (pass === "fill") {
@@ -500,6 +557,7 @@ function drawSegsFx(
   env: RenderEnv,
   g0: number,
   chars: CharFx,
+  cells?: CellRoll | null,
 ): void {
   let cx = x;
   let gi = g0;
@@ -510,7 +568,7 @@ function drawSegsFx(
       if (v) {
         ctx.save();
         ctx.translate(0, v.dy);
-        drawSegs(ctx, [s], cx, baseline, cy, L, pass, env);
+        drawSegs(ctx, [s], cx, baseline, cy, L, pass, env, cells);
         ctx.restore();
       }
       cx += s.w;
@@ -724,8 +782,8 @@ export function drawTextLayout(
         const x = left + line.x0 + w.x;
         withWordTransform(ctx, x + w.w / 2, line.cy, v, maskX, maskW, () => {
           if (pass === "fill") ctx.fillStyle = hlColor && hlSet.has(w.index) ? rgba(hlColor) : fill;
-          if (chars) drawSegsFx(ctx, segs, x, baseline, line.cy, L, pass, env, w.gStart, chars);
-          else drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env);
+          if (chars) drawSegsFx(ctx, segs, x, baseline, line.cy, L, pass, env, w.gStart, chars, opts.cells);
+          else drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env, opts.cells);
         });
       });
     });

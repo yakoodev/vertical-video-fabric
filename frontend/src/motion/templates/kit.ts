@@ -39,7 +39,7 @@ export type MotionTemplate = {
   fit?: { x?: "group" | "frame"; y?: "group" | "frame"; anchor?: "box" | "first" };
 };
 
-export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо", "Эффекты", "3D"] as const;
+export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо", "Реклама", "Эффекты", "3D"] as const;
 
 /* ---------- кирпичики ---------- */
 

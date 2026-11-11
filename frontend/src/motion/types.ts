@@ -6,6 +6,9 @@
  * отсутствовать (старый файл клипа, ручная правка, ИИ-агент), поэтому почти всё
  * здесь необязательное, а значения по умолчанию подставляют рендереры.
  */
+import type { BubblesProps, CarouselProps, FlowDiagramProps, LayerPivot, TileWallProps, WaveformProps } from "./adtypes";
+
+export type * from "./adtypes";
 
 /**
  * Опорный кадр по умолчанию: размеры слоёв заданы для вертикального 1080×1920.
@@ -301,6 +304,13 @@ export type CounterProps = TextStyle & {
   prefix?: string;
   suffix?: string;
   thousands?: string;
+  /**
+   * Одометр (layers/odometer.ts): каждая цифра — барабан, прокручивается от цифры `from` к цифре
+   * `to` с `laps` лишними оборотами у младших разрядов; разряды стартуют с шагом `stagger` с.
+   */
+  roll?: boolean;
+  stagger?: number;
+  laps?: number;
 };
 
 export type ProgressProps = {
@@ -701,6 +711,11 @@ export type LayerPropsMap = {
   pngtuber: PngtuberProps;
   fx: FxProps;
   scene: SceneProps;
+  bubbles: BubblesProps;
+  carousel: CarouselProps;
+  waveform: WaveformProps;
+  tile_wall: TileWallProps;
+  flow_diagram: FlowDiagramProps;
 };
 
 export type LayerType = keyof LayerPropsMap;
@@ -738,6 +753,11 @@ export type LayerBase = {
   /** Наклон с перспективой, градусы: rotX — верх уходит вглубь, rotY — правый край уходит вглубь. */
   rotX?: number;
   rotY?: number;
+  /**
+   * Точка наклона и наезда (доли кадра): rotX/rotY и ключи scale действуют вокруг неё, а не вокруг
+   * центра слоя. Одинаковый pivot и ключи у группы слоёв — наклон и наезд всей группы как одного экрана.
+   */
+  pivot?: LayerPivot | null;
   /**
    * Пометка трекинга (app/tracking.py): ключи `props` записал трек цели. Движок её не читает —
    * ключи обычные; сервис по ней заменяет ключи при повторе и двигает их через вырезы/стоп-кадры.
@@ -796,6 +816,11 @@ export type AudioLayer = LayerOf<"audio">;
 export type PngtuberLayer = LayerOf<"pngtuber">;
 export type FxLayer = LayerOf<"fx">;
 export type SceneLayer = LayerOf<"scene">;
+export type BubblesLayer = LayerOf<"bubbles">;
+export type CarouselLayer = LayerOf<"carousel">;
+export type WaveformLayer = LayerOf<"waveform">;
+export type TileWallLayer = LayerOf<"tile_wall">;
+export type FlowDiagramLayer = LayerOf<"flow_diagram">;
 
 export type Layer =
   | TextLayer
@@ -816,7 +841,12 @@ export type Layer =
   | AudioLayer
   | PngtuberLayer
   | FxLayer
-  | SceneLayer;
+  | SceneLayer
+  | BubblesLayer
+  | CarouselLayer
+  | WaveformLayer
+  | TileWallLayer
+  | FlowDiagramLayer;
 
 /**
  * Как ключ камеры понимает свои x/y: `"center"` (по умолчанию) — центр окна камеры
@@ -864,8 +894,11 @@ export type Composition = {
   chat?: ChatMessage[];
   /** Состояния голоса слоёв `pngtuber` по их id (app/pngtuber.py). */
   voice?: Record<string, VoiceTrack>;
-  /** Огибающие громкости клипа для `react` слоёв: voice / music / mix (app/audio_react.py). */
-  levels?: Partial<Record<ReactSource, LevelTrack>>;
+  /**
+   * Огибающие громкости: voice / music / mix клипа для `react` и `waveform`, `wave:<id слоя>` — звук
+   * слоя волны (его audio_layer или asset_id), app/audio_react.py.
+   */
+  levels?: { [source: string]: LevelTrack | undefined };
   /** Хромакей основы: компоновщик вырезает фон, кладёт `background` и слои `behind`. */
   key?: ChromaKey;
   /** Фон за вырезанной основой (backgrounds.ts; старый `{color, color2}` тоже читается). */

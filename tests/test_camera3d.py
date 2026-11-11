@@ -42,7 +42,7 @@ def test_camera_3d_fields_and_limits():
     assert {"z", "rotX", "rotY"} <= set(schema["animatable"]) and "fov" in schema["camera"]
 
 
-@pytest.mark.parametrize("preset", [p for p in PRESETS if p != "card_flip"])
+@pytest.mark.parametrize("preset", [p for p in PRESETS if p not in ("card_flip", "screen_tilt")])  # слоёвые — свои тесты
 def test_camera_presets_write_keys_in_range_and_end_at_rest(preset):
     before = [{"t": 0, "zoom": 1}, {"t": 1.5, "zoom": 1.2}, {"t": 9, "zoom": 1}]
     res = apply_preset(preset, 2, None, 1, camera=before, layers=[_text(z=200, end=10)], clip_duration=10)

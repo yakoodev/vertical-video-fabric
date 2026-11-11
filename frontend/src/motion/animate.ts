@@ -91,6 +91,34 @@ function defaultProgress(type: LayerType, local: number, dur: number): number {
   }
 }
 
+/**
+ * Ход слоя `progress` в момент `local` (секунды слоя) — ключи или ход по умолчанию типа. Нужен
+ * рендерерам, которым ход нужен со сдвигом во времени: разряды одометра стартуют лесенкой.
+ */
+export function layerProgress(layer: Layer, local: number): number {
+  const k = layer.keys?.progress;
+  return k?.length ? clamp01(interpolateKeys(k, local, 1)) : defaultProgress(layer.type, local, layerDuration(layer));
+}
+
+/**
+ * Наезд вокруг точки `pivot` (доли кадра): ключи scale растят слой вокруг неё, а не вокруг центра —
+ * центр уходит от точки во столько же раз (во сколько ключ больше базы `scale`). У группы с одним
+ * pivot и одинаковыми ключами наезд общий: блоки страницы приближаются как один экран.
+ */
+function applyPivotZoom(st: LayerState, layer: Layer, keys: LayerKeys, local: number): void {
+  const pv = layer.pivot;
+  if (!pv || !keys.scale?.length) return;
+  const base = layer.scale ?? 1;
+  if (!(Math.abs(base) > 1e-6)) return;
+  const k = interpolateKeys(keys.scale, local, base) / base;
+  if (Math.abs(k - 1) < 1e-9) return;
+  // Сдвиг в px кадра растёт в k раз — в долях по каждой оси тоже ровно в k.
+  const px = finite(pv.x, 0.5);
+  const py = finite(pv.y, 0.5);
+  st.x = px + (st.x - px) * k;
+  st.y = py + (st.y - py) * k;
+}
+
 const finite = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 
 /**
@@ -357,6 +385,8 @@ export function resolveLayer(
     rotX: interpolateKeys(keys.rotX, local, layer.rotX ?? 0),
     rotY: interpolateKeys(keys.rotY, local, layer.rotY ?? 0),
   };
+
+  applyPivotZoom(st, layer, keys, local);
 
   const seed = hashString(layer.id || "layer");
   const dIn = animDuration(layer.in, dur, DEFAULT_IN_DURATION);

@@ -17,11 +17,19 @@ import { loadAnims, loadImages, loadVideos } from "./motion-render/media";
 import { fitFilter } from "./motion-render/ffmpeg";
 import { makeEnv } from "./motion-render/painter";
 import { renderFrames, renderPng, renderVideo } from "./motion-render/output";
-import { coverDocMode, validateSceneMode } from "./motion-render/modes";
+import { buildTemplateMode, coverDocMode, listTemplatesMode, validateSceneMode } from "./motion-render/modes";
 
 async function main(): Promise<void> {
   if (process.argv.includes("--validate-scene")) {
     validateSceneMode(process.argv.slice(2));
+    return;
+  }
+  if (process.argv.includes("--list-templates")) {
+    listTemplatesMode();
+    return;
+  }
+  if (process.argv.includes("--build-template")) {
+    buildTemplateMode(process.argv.slice(2));
     return;
   }
   if (process.argv.includes("--cover-doc")) {

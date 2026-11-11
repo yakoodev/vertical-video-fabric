@@ -135,17 +135,21 @@ def plan_levels(
     fps: float,
     scale: str = "clip",
     music: dict | None = None,
+    layers: list[dict] | None = None,
 ) -> tuple[dict[str, dict], list[str]]:
     """``comp.levels`` клипа: {источник: {t0: 0, fps, v [0..100]}} по кадрам всего клипа и пометки.
 
     ``scale`` — шкала времени слоёв (``clip`` — до вырезов, ``final`` — готовый ролик).
-    ``music`` — {track_id, start_sec} рендера; нет — из настроек клипа."""
+    ``music`` — {track_id, start_sec} рендера; нет — из настроек клипа. ``layers`` — слои клипа в этой
+    шкале: волнам со своим звуком добавляются ``wave:<id>`` (app/waveform_levels.py)."""
     from app.timebase import ClipClock
+    from app.waveform_levels import wave_tracks
 
     fps = max(1.0, float(fps))
+    waves, wave_notes = wave_tracks(store, layers, fps) if layers else ({}, [])
     wanted = [s for s in REACT_SOURCES if s in set(sources or [])]
     if not wanted:
-        return {}, []
+        return waves, wave_notes
     segments = plan.get("segments") or []
     clock = ClipClock.for_plan(plan, fps)
     total = min(MAX_LEVELS_SEC, clock.final_duration if scale == "final" else clock.clip_duration)
@@ -189,16 +193,20 @@ def plan_levels(
                 gain = 20 * math.log10(max(1e-3, music_volume))
                 db = [power_sum(a, None if b is None else b + gain) for a, b in zip(db, music_db)]
         out[source] = {"t0": 0.0, "fps": fps, "v": envelope(db, fps)}
-    return out, notes
+    out.update(waves)
+    return out, notes + wave_notes
 
 
 def attach_levels(store: Any, plan: dict, motion: dict | None, fps: float, scale: str = "clip",
                   music: dict | None = None) -> dict | None:
-    """Огибающие громкости — в моушн (``levels``), если у видимых слоёв есть ``react``."""
-    sources = react_sources((motion or {}).get("layers"))
-    if not motion or not sources:
+    """Огибающие громкости — в моушн (``levels``), если у видимых слоёв есть ``react`` или волна ``waveform``."""
+    from app.waveform_levels import wave_layers
+
+    layers = (motion or {}).get("layers")
+    sources = react_sources(layers)
+    if not motion or not (sources or wave_layers(layers)):
         return motion
-    levels, notes = plan_levels(store, plan, sources, fps, scale, music)
+    levels, notes = plan_levels(store, plan, sources, fps, scale, music, layers=layers)
     out = {**motion, "levels": levels}
     if notes:
         out["host_notes"] = [*(motion.get("host_notes") or []), *notes]

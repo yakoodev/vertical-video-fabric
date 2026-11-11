@@ -251,7 +251,8 @@ def is_sticker(layer: dict) -> bool:
     return _num(props.get("w"), 400.0) * _num(layer.get("scale"), 1.0) < STICKER_MAX_SHARE * W
 
 
-ZONE_TYPES = ("text", "counter", "callout", "nameplate", "social", "emoji", "image")
+ZONE_TYPES = ("text", "counter", "callout", "nameplate", "social", "emoji", "image", "bubbles", "carousel", "waveform",
+              "flow_diagram")
 
 
 def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, float, float] | None:
@@ -281,6 +282,13 @@ def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, 
         w, h = layer_size(layer) or (900.0, 300.0)
     elif kind == "emoji":
         w = h = _num(props.get("size"), 160.0)
+    elif kind == "carousel":
+        # Соседние карточки выглядывают за край нарочно — проверяем центральную.
+        w, h = _num(props.get("cardW"), 600.0), _num(props.get("cardH"), 780.0)
+    elif kind in ("bubbles", "waveform", "flow_diagram"):
+        from app.aspect import layer_size
+
+        w, h = layer_size(layer) or (900.0, 600.0)
     else:
         w, h = picture_size(layer)
     w, h, shift = w * st["scale"], h * st["scale"], shift * st["scale"]
@@ -360,6 +368,10 @@ def _fix_for(zone: str, rect: tuple, ui_list: list[dict], kind: str, captions: b
     return f"опусти: y ≥ {math.ceil(new_y * 1000) / 1000:.3f}"
 
 
+AD_NAMES = {"bubbles": "облако пузырей", "carousel": "карусель (центральная карточка)", "waveform": "волна голоса",
+            "flow_diagram": "схема сделки"}
+
+
 def _what(layer: dict) -> str:
     props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
     kind = layer.get("type")
@@ -371,6 +383,8 @@ def _what(layer: dict) -> str:
         return f"плашка канала {_short(props.get('handle'))}".strip()
     if kind == "social":
         return f"карточка «{_short(props.get('text') or props.get('name'))}»"
+    if kind in AD_NAMES:
+        return AD_NAMES[kind]
     if kind == "captions":
         return "субтитры (слой)"
     if kind == "counter":

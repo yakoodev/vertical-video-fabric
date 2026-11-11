@@ -4,7 +4,9 @@
 движение одной командой: пресет пишет ключи ``render.camera`` (dolly ``z``, наклон ``rotX``,
 облёт ``rotY``, поле зрения ``fov``) на отрезке ``start..start+duration`` — ключи камеры внутри
 отрезка заменяются, снаружи остаются; плоский наезд (zoom/x/y) на краях отрезка сохраняется.
-``card_flip`` — переворот слоя: ключи ``rotY`` самого слоя.
+``card_flip`` — переворот слоя: ключи ``rotY`` самого слоя. ``screen_tilt`` — экран (группа слоёв: блоки
+страницы, макет интерфейса) наклонён в 3D и выпрямляется, пока камера наезжает в точку: всем слоям группы
+одна точка ``pivot`` и одни ключи rotX/rotY/scale (как шаблон «Экран с наклоном и наездом», templates/ads2.ts).
 
 Кривые — как у моушн-дизайнеров: мягкие in/out (cubic-bezier), перелёт — только там, где он
 читается (раскрытие наклоном, переворот карточки). Движение заканчивается в покое, кроме
@@ -25,16 +27,19 @@ from app.motion import (
     normalize_layers,
 )
 
-PRESETS = ("parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float", "card_flip")
+PRESETS = ("parallax_push", "orbit", "dolly_zoom", "tilt_reveal", "float", "card_flip", "screen_tilt")
 PRESET_ALIASES = {
     "push": "parallax_push", "parallax": "parallax_push", "push_in": "parallax_push",
     "orbit_light": "orbit", "arc": "orbit", "vertigo": "dolly_zoom", "hitchcock": "dolly_zoom",
     "dolly": "dolly_zoom", "tilt": "tilt_reveal", "reveal": "tilt_reveal", "breathe": "float",
-    "drift": "float", "flip": "card_flip",
+    "drift": "float", "flip": "card_flip", "tilt_zoom": "screen_tilt", "screen": "screen_tilt",
+    "ui_tilt": "screen_tilt",
 }
+# Слои, которые пресет двигает сам (не камера).
+LAYER_PRESETS = ("card_flip", "screen_tilt")
 # Длина по умолчанию, с, и пределы.
 DEFAULT_DURATION = {"parallax_push": 2.0, "orbit": 3.0, "dolly_zoom": 2.0, "tilt_reveal": 1.6, "float": 4.0,
-                    "card_flip": 0.9}
+                    "card_flip": 0.9, "screen_tilt": 3.0}
 MIN_DURATION = 0.3
 MAX_DURATION = 12.0
 INTENSITY_RANGE = (0.2, 2.0)
@@ -54,7 +59,11 @@ DESCRIPTIONS = {
     "tilt_reveal": "камера из наклона 16° выпрямляется с лёгким перелётом — раскрытие сцены",
     "float": "медленное «дыхание» камеры в 3D (наклон, облёт, dolly) и возврат в покой",
     "card_flip": "переворот слоя layer_id: из ребра (rotY 90°) к лицу с перелётом",
+    "screen_tilt": "группа слоёв (layer_ids или layer_prefix — блоки страницы) наклонена в 3D на 24°·intensity и "
+                   "выпрямляется, пока наезжает в точку x/y (zoom, 1.3) — как один экран",
 }
+SCREEN_TILT_DEG = 24.0
+SCREEN_TILT_ZOOM = 1.3
 
 
 class PresetError(ValueError):
@@ -122,6 +131,83 @@ def camera_shape(preset: str, intensity: float) -> list[tuple[float, dict, str |
     raise PresetError(f"{preset} — не пресет камеры")
 
 
+def _soft(p: float) -> float:
+    """Кривая SOFT (cubic-bezier 0.45,0,0.55,1) в точке p — как ease движка."""
+    p = min(1.0, max(0.0, p))
+    x1, y1, x2, y2 = 0.45, 0.0, 0.55, 1.0
+
+    def bez(a: float, b: float, u: float) -> float:
+        return 3 * a * u * (1 - u) ** 2 + 3 * b * u * u * (1 - u) + u ** 3
+
+    u = p
+    for _ in range(12):
+        x = bez(x1, x2, u) - p
+        dx = 3 * x1 * (1 - u) ** 2 + 6 * (x2 - x1) * u * (1 - u) + 3 * (1 - x2) * u * u
+        if abs(x) < 1e-6 or abs(dx) < 1e-9:
+            break
+        u = min(1.0, max(0.0, u - x / dx))
+    return bez(y1, y2, u)
+
+
+def screen_tilt_curve(d: float, tilt: float, zoom: float) -> dict[str, list[tuple[float, float]]]:
+    """Точки (секунда отрезка, значение) rotX/rotY/scale — как screenTiltKeys в templates/ads2.ts."""
+    t1 = min(d * 0.35, 1.4)
+    t2 = min(d * 0.8, t1 + 1.6)
+    return {
+        "rotX": [(0.0, tilt), (t1, tilt * 0.45), (t2, tilt * 0.12)],
+        "rotY": [(0.0, -tilt * 0.6), (t1, -tilt * 0.28), (t2, tilt * 0.1)],
+        "scale": [(0.0, 0.9), (t1, 1.0), (t2, zoom)],
+    }
+
+
+def _curve_at(points: list[tuple[float, float]], t: float) -> float:
+    if t <= points[0][0]:
+        return points[0][1]
+    for (a, va), (b, vb) in zip(points, points[1:]):
+        if t <= b:
+            return va + (vb - va) * _soft((t - a) / (b - a) if b > a else 1.0)
+    return points[-1][1]
+
+
+def _screen_tilt(lays: list[dict], targets: list[dict], t0: float, d: float, intensity: float, point: Any,
+                 zoom: Any) -> tuple[list[dict], str]:
+    """Ключи наклона и наезда группе: одна точка pivot, одни и те же кривые (секунды клипа)."""
+    tilt = round(SCREEN_TILT_DEG * intensity, 2)
+    z = SCREEN_TILT_ZOOM if zoom in (None, "") else min(3.0, max(1.0, float(zoom)))
+    curve = screen_tilt_curve(d, tilt, z)
+    if isinstance(point, dict) and point.get("x") is not None and point.get("y") is not None:
+        pivot = {"x": round(float(point["x"]), 4), "y": round(float(point["y"]), 4)}
+    else:
+        pivot = {"x": round(sum(float(l.get("x", 0.5)) for l in targets) / len(targets), 4),
+                 "y": round(sum(float(l.get("y", 0.5)) for l in targets) / len(targets), 4)}
+    added: list[dict] = []
+    for lay in targets:
+        start, end = float(lay["start"]), float(lay["end"])
+        a, b = max(t0, start), min(t0 + d, end)
+        if b - a < 0.05:
+            continue
+        keys = dict(lay.get("keys") or {})
+        base = float(lay.get("scale") or 1.0)
+        for prop, pts in curve.items():
+            # Точки отрезка в секундах слоя; слой начался позже — первая точка — значение кривой в его начале.
+            local = [(round(t0 + t - start, 3), v) for t, v in pts if start <= t0 + t <= end]
+            if t0 < start:
+                local.insert(0, (0.0, _curve_at(pts, start - t0)))
+            k = base if prop == "scale" else 1.0
+            fresh = [{"t": t, "v": round(v * k, 4), **({"ease": SOFT} if i < len(local) - 1 else {})}
+                     for i, (t, v) in enumerate(local)]
+            lo, hi = a - start - 1e-3, b - start + 1e-3
+            kept = [p for p in keys.get(prop, []) if not (lo <= p["t"] <= hi)]
+            keys[prop] = sorted(kept + fresh, key=lambda p: p["t"])[:MAX_KEYS_PER_PROP]
+        lay["keys"] = keys
+        lay["pivot"] = pivot
+        added.append({"layer": lay["id"], "pivot": pivot})
+    if not added:
+        raise PresetError(f"ни один слой группы не виден на {t0:g}–{t0 + d:g} с")
+    return added, (f"группа из {len(added)} слоёв наклонена на {tilt:g}° и наезжает ×{z:g} в точку "
+                   f"x {pivot['x']}, y {pivot['y']}; держится до конца слоёв")
+
+
 def apply_preset(
     preset: Any,
     start: Any,
@@ -133,6 +219,10 @@ def apply_preset(
     layer_id: Any = None,
     clip_duration: float | None = None,
     motion_blur: Any = None,
+    layer_ids: Any = None,
+    layer_prefix: Any = None,
+    point: Any = None,
+    zoom: Any = None,
 ) -> dict:
     """Пресет → {preset, camera, layers, keys (что поставлено), note}. Ничего не сохраняет.
     ``motion_blur`` (затвор 0..1) — у ключей движения: быстрые отрезки смазаны (motionblur.ts);
@@ -155,6 +245,18 @@ def apply_preset(
     cam = normalize_camera(camera or [])
     lays = normalize_layers(layers or [])
     note = ""
+    if name == "screen_tilt":
+        ids = {str(v) for v in (layer_ids if isinstance(layer_ids, list) else [])}
+        if layer_id:
+            ids.add(str(layer_id))
+        prefix = str(layer_prefix or "")
+        targets = [lay for lay in lays if lay["type"] != "audio" and (lay["id"] in ids or (prefix and lay["id"].startswith(prefix)))]
+        if not targets:
+            raise PresetError("screen_tilt наклоняет группу слоёв — нужны layer_ids или layer_prefix",
+                              ["блоки страницы page_to_layers — layer_prefix «wp<id страницы>_»", "id слоёв — get_clip"])
+        added, note = _screen_tilt(lays, targets, t0, t1 - t0, i, point, zoom)
+        return {"preset": name, "camera": cam, "layers": normalize_layers(lays), "keys": added,
+                "range": [t0, t1], "note": note}
     if name == "card_flip":
         target = next((lay for lay in lays if lay["id"] == str(layer_id or "")), None)
         if target is None:
@@ -209,7 +311,7 @@ def apply_preset(
 
 def describe() -> list[dict]:
     """Пресеты для UI и агента: id, что делает, длина по умолчанию."""
-    return [{"id": p, "description": DESCRIPTIONS[p], "duration": DEFAULT_DURATION[p], "layer": p == "card_flip"}
+    return [{"id": p, "description": DESCRIPTIONS[p], "duration": DEFAULT_DURATION[p], "layer": p in LAYER_PRESETS}
             for p in PRESETS]
 
 

@@ -175,6 +175,16 @@ def _picture_size(layer: dict, sizes: dict[str, tuple[int, int]] | None) -> tupl
     return w + 2 * border, h + 2 * border
 
 
+# Рамка слоёв рекламного пакета по умолчанию: ширина, высота и какое поле props — высота (как AD_BOXES в reframe.ts).
+AD_BOXES: dict[str, tuple[float, float, str]] = {
+    "bubbles": (960, 960, "h"),
+    "carousel": (1080, 780, "cardH"),
+    "waveform": (820, 220, "h"),
+    "tile_wall": (1080, 1920, "h"),
+    "flow_diagram": (1000, 620, "h"),
+}
+
+
 def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> tuple[float, float] | None:
     """Оценка ширины и высоты слоя в опорных px (без scale); None — звук и прочее без места."""
     kind = layer.get("type")
@@ -215,6 +225,10 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return w, (w * natural[1] / natural[0] if natural and natural[0] > 0 and natural[1] > 0 else w)
     if kind in ("shape", "progress", "chart"):
         return _num(props.get("w"), 400), _num(props.get("h"), 400 if kind != "progress" else 40)
+    if kind in AD_BOXES:
+        # Слои рекламного пакета: рамка w×h (у карусели — ширина ленты и высота карточки), как reframe.ts.
+        w, h, h_key = AD_BOXES[kind]
+        return _num(props.get("w"), w), _num(props.get(h_key), h)
     if kind == "scene":
         # Сцена: вьюпорт w×h; без них — весь кадр любого формата (движок берёт опорный кадр
         # формата), переносить нечего — как reframe.ts layerSize.
@@ -275,7 +289,7 @@ def is_transient(layer: dict) -> bool:
 def is_full_bleed(layer: dict, sizes: dict[str, tuple[int, int]] | None = None, ref: Any = None) -> bool:
     """Фон во всю ширину кадра (звёзды, затемнение, лента): картинка/видео/фигура ≥ 98 %
     ширины опорного кадра (1060 px у 1080)."""
-    if layer.get("type") not in ("image", "video", "shape"):
+    if layer.get("type") not in ("image", "video", "shape", "tile_wall"):
         return False
     size = layer_size(layer, sizes)
     sw = _ref(ref)[0]
@@ -503,15 +517,21 @@ def reframe_layer(layer: dict, scale: float, center: float, width: int, height: 
         k = scale
     elif growth != (1.0, 1.0):
         props = layer.get("props") or {}
-        if layer.get("type") == "shape":
-            # Фигуру (затемнение, лента) тянем по сторонам — толщина ленты не растёт.
-            out["props"] = {**props, "w": round(_num(props.get("w"), 400) * growth[0], 1)}
+        if layer.get("type") in ("shape", "tile_wall"):
+            # Фигуру (затемнение, лента) и стену плиток тянем по сторонам — толщина ленты и плитка не растут.
+            dw, dh = (1080.0, 1920.0) if layer.get("type") == "tile_wall" else (400.0, 400.0)
+            out["props"] = {**props, "w": round(_num(props.get("w"), dw) * growth[0], 1)}
             if growth[1] > 1.0:
-                out["props"]["h"] = round(_num(props.get("h"), 400) * growth[1], 1)
+                out["props"]["h"] = round(_num(props.get("h"), dh) * growth[1], 1)
         else:
             # Картинку/видео — одним масштабом «cover»: пропорции не ломаются.
             k = max(growth)
     out["scale"] = round(_num(layer.get("scale"), 1.0) * k, 4)
+    pivot = layer.get("pivot")
+    if isinstance(pivot, dict):
+        # Точка наклона/наезда группы едет вместе со слоями (как reframe.ts).
+        out["pivot"] = {**pivot, "x": _map_x(_num(pivot.get("x"), 0.5), scale, width, ref_w, cx),
+                        "y": _map_y(_num(pivot.get("y"), 0.5), scale, center, height, ref_h)}
     keys = layer.get("keys") or {}
     if keys:
         fresh = dict(keys)
