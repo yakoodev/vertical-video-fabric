@@ -18,6 +18,19 @@ WORKDIR /scene3d
 RUN npm init -y >/dev/null && npm install --no-audit --no-fund three@0.185.0 esbuild@0.28.2
 COPY node/scene3d/src /scene3d/src
 RUN npx esbuild /scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify     --outfile=/scene3d/dist/scene3d.js --log-level=warning
+# PO-токены YouTube (bgutil, режим «скрипт»): yt-dlp сам запускает `node build/generate_once.js`
+# на каждый токен (app/ytdlp_net.py, BGUTIL_POT_HOME). Версия совпадает с pip-плагином
+# bgutil-ytdlp-pot-provider в requirements.txt; tsc — только при сборке, в образ — build/ и
+# рабочие node_modules (canvas — готовая сборка под linux-x64, та же база bookworm, что у образа).
+# Архив релиза закреплён sha256.
+ARG BGUTIL_POT_VERSION=2.0.2
+ARG BGUTIL_POT_SHA256=1f2ae9ec39405b8e80397dfc2551f58deed09d8dff4b2b8fbc314df8e091c0a1
+ADD --checksum=sha256:${BGUTIL_POT_SHA256} \
+    https://github.com/Brainicism/bgutil-ytdlp-pot-provider/archive/refs/tags/${BGUTIL_POT_VERSION}.tar.gz /tmp/bgutil.tar.gz
+WORKDIR /bgutil
+RUN tar xzf /tmp/bgutil.tar.gz --strip-components=1 && rm /tmp/bgutil.tar.gz \
+    && cd server && npm ci --include=dev --no-audit --no-fund && npx tsc \
+    && npm prune --omit=dev --no-audit --no-fund
 WORKDIR /build
 
 # --- Stage 2: runtime ---
@@ -34,7 +47,8 @@ ENV PYTHONUNBUFFERED=1 \
     PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium \
     PATH="/opt/venv/bin:${PATH}" \
-    TIKTOK_VENDOR_ROOT=/opt/TiktokAutoUploader
+    TIKTOK_VENDOR_ROOT=/opt/TiktokAutoUploader \
+    BGUTIL_POT_HOME=/opt/bgutil-pot/server
 
 WORKDIR /app
 
@@ -111,6 +125,7 @@ COPY pytest.ini /app/pytest.ini
 COPY --from=frontend-build /build/dist /app/frontend/dist
 COPY --from=frontend-build /motion/motion-render.mjs /app/node/motion-render.mjs
 COPY --from=frontend-build /scene3d/dist/scene3d.js /app/node/scene3d/dist/scene3d.js
+COPY --from=frontend-build /bgutil/server /opt/bgutil-pot/server
 
 RUN mkdir -p /data && chown -R node:node /data /app
 
