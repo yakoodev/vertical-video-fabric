@@ -31,7 +31,7 @@ PACK_REF_RE = re.compile(r"^(emoji|sticker|sfx):[A-Za-z0-9_\-./]{1,160}$")
 
 LAYER_TYPES = (
     "text", "shape", "image", "video", "emoji", "particles", "counter", "progress", "chart", "callout", "captions",
-    "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social",
+    "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social", "page",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
 EASINGS = (
@@ -94,6 +94,11 @@ CALLOUT_STYLES = ("bar", "box", "pill", "neon")
 SOCIAL_STYLES = ("comment", "post")
 SOCIAL_THEMES = ("dark", "light")
 SOCIAL_MAX_LINES = 8
+# Страница сайта (frontend/src/motion/layers/page.ts, снимки app/webpages.py): окно region в CSS px страницы,
+# прокрутка scroll [{t, y}] и приближение zoom [{t, z}] по секундам слоя, касания taps [{t, x, y}].
+PAGE_MAX_KEYS = 24
+PAGE_MAX_ZOOM = 6
+PAGE_EASES = ("inOut", "linear", "out", "in")
 # Плашка канала (frontend/src/motion/layers/nameplate.ts): площадка — свой векторный значок,
 # вид — стекло с обводкой или заливка акцентом; высота пилюли по умолчанию — как на шортсах.
 NAMEPLATE_PLATFORMS = ("twitch", "youtube", "tiktok", "telegram", "kick", "none")

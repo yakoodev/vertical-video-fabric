@@ -91,6 +91,8 @@ def validate_layers(
             if isinstance(ref, int):
                 if asset_exists is not None and not asset_exists(ref):
                     problems.append(f"{where}: файла для монтажа {ref} нет")
+            elif ref.startswith("webpage:"):
+                continue  # снимок страницы — не пакет; пропавший снимок рендер пропустит с пометкой
             elif ref_exists is not None and not ref_exists(ref):
                 problems.append(f"{where}: {ref} не найден в пакетах")
     return problems
@@ -122,6 +124,15 @@ def _as_ref(value: Any) -> int | str | None:
         return value
     text = str(value).strip()
     return int(text) if text.isdigit() else text
+
+
+def page_ref(props: dict) -> str:
+    """Ссылка на кадр версии страницы слоя ``page`` (как ``pageRef`` в frontend/src/motion/layers/page.ts)."""
+    try:
+        page_id, version = int(props.get("page_id") or 0), int(props.get("version") or 1)
+    except (TypeError, ValueError):
+        return ""
+    return f"webpage:{page_id}:{version}" if page_id > 0 else ""
 
 
 def layer_asset_refs(layer: dict) -> list[int | str]:
@@ -168,6 +179,11 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         avatar = str(props.get("avatar") or "").strip()
         ref = emoji_ref(avatar) if avatar and not avatar.isalnum() else None
         if ref and ref not in refs:
+            refs.append(ref)
+    elif ltype == "page":
+        # Кадр версии снимка страницы (app/webpages.py): webpage:<page_id>:<version>.
+        ref = page_ref(props)
+        if ref:
             refs.append(ref)
     elif ltype == "scene":
         # Узлы image сцены: файлы для монтажа и emoji:/sticker: из паков.

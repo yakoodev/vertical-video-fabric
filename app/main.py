@@ -412,6 +412,10 @@ from app.stream_questions_api import build_stream_questions_router  # noqa: E402
 
 app.include_router(build_stream_questions_router(AuthDep, lambda: store))
 app.include_router(build_cover_docs_router(AuthDep, lambda: store, lambda: settings.root_dir / "frontend" / "dist" / "index.html"))
+# 🌐 Страницы сайтов: поиск, снимок, правка через HTML, версии (app/webpages.py).
+from app.webpages_api import build_webpages_router  # noqa: E402
+
+app.include_router(build_webpages_router(AuthDep, lambda: store))
 
 # In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
 # `frontend/dist` may not exist — guarded accordingly.

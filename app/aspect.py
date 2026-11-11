@@ -194,6 +194,17 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return size, size
     if kind in ("image", "video"):
         return _picture_size(layer, sizes)
+    if kind == "page":
+        # Страница: окно region (CSS px) шириной w, высота по его пропорции; без окна — экран 9:19.5
+        # (как reframe.ts layerSize).
+        w = _num(props.get("w"), 560)
+        region = props.get("region") if isinstance(props.get("region"), dict) else None
+        ratio = (_num(region.get("h"), 844) / max(1.0, _num(region.get("w"), 390))) if region else PHONE_SCREEN_RATIO
+        h = w * ratio
+        if props.get("device") == "phone":
+            return w * (1 + 2 * PHONE_EDGE), h + 2 * PHONE_EDGE * w
+        border = _num((props.get("border") or {}).get("width"), 0) if isinstance(props.get("border"), dict) else 0
+        return w + 2 * border, h + 2 * border
     if kind == "pngtuber":
         # Аватар: ширина w, высота — по пропорции idle (как reframe.ts layerSize).
         from app.motion import asset_key

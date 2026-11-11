@@ -300,6 +300,11 @@ def resolve_layer_assets(store: Any, layers: list[dict]) -> tuple[list[dict], di
 
 
 def _resolve_ref(store: Any, ref: int | str, layer_type: str) -> Path | None:
+    if isinstance(ref, str) and ref.startswith("webpage:"):
+        # Кадр снимка страницы (слой page, app/webpages.py).
+        from app.webpages import image_path
+
+        return image_path(store, ref)
     if not isinstance(ref, int):
         return resolve_pack_ref(ref)
     try:
