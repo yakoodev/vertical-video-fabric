@@ -224,8 +224,8 @@ def test_dry_run_end_to_end_builds_clip_like_pilot(env, monkeypatch):
     durations = [l["end"] - l["start"] for l in images]
     assert max(durations[:-1]) <= X.REAL_SPLIT_SEC + 0.01 and min(durations) >= 0.35
     # Первая поза без анимации входа: кадр 0 — обложка, на нём маскот целиком, а не пустой фон.
-    assert "in" not in images[0] and images[1]["in"]["type"] == "zoom"
-    assert all("in" not in l for l in by_type.get("text", []) if l["start"] == 0)
+    assert images[0]["in"]["type"] == "none" and images[1]["in"]["type"] == "zoom"
+    assert all(l["in"]["type"] == "none" for l in by_type.get("text", []) if l["start"] == 0)
     assert abs(images[-1]["end"] - video["timeline"]["duration"]) < 1e-6
     assert all(l["props"]["w"] == 1080 for l in images)
     # Соседние позы разные (или тот же кадр с наездом).

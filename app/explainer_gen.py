@@ -411,9 +411,6 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
         if item.get("variant") == "punch":
             layer["scale"] = PUNCH_SCALE
             layer["in"] = {"type": "zoom", "duration": POP_SEC}
-        if n == 0:
-            # Кадр 0 — обложка: TikTok при заливке не из приложения берёт его, и «вылет» позы давал пустой фон.
-            layer.pop("in")
         layers.append(layer)
         if n > 0:
             ref = CUT_SFX[n % 2 == 0]
@@ -432,7 +429,7 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
                        "props": {"text": item["badge"], "font": "Montserrat", "weight": 900, "size": 170,
                                  "color": accent, "stroke": {"color": mascot["outline_color"], "width": 10},
                                  "align": "center"},
-                       **({"in": {"type": "pop", "duration": 0.2}} if s > 0 else {})})
+                       "in": {"type": "pop", "duration": 0.2}})
         if sfx[BADGE_SFX]:
             layers.append({"id": f"ding{badge_n}", "type": "audio", "start": s, "end": round(min(total, s + 1.0), 3),
                            "props": {"asset_id": BADGE_SFX, "mode": "track", "volume": DING_VOLUME, "role": "sfx"}})
@@ -463,6 +460,10 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
                    "x": 0.5, "y": 0.84,
                    "props": {"style": mascot.get("captions_style") or "hormozi", "size": 92, "activeColor": accent,
                              "uppercase": True, "maxWords": 3, "maxLines": 2, "emphColor": accent}})
+    # Кадр 0 — обложка: TikTok при заливке не из приложения берёт его, и «вылет» позы давал пустой фон.
+    for layer in layers:
+        if layer.get("start") == 0:
+            layer.pop("in", None)
     return layers
 
 
