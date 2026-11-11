@@ -316,14 +316,24 @@ def test_unsent_alert_is_retried_and_new_cookies_close_the_incident(store):
 
 
 class FakeBrowser:
-    """Подмена ``node session-keepalive.cjs``: записывает вызовы, отвечает заданным итогом."""
+    """Подмена node: ``session-keepalive.cjs`` (браузер TikTok) и ``youtube-session.mjs`` (youtubei.js YouTube).
+    Записывает вызовы отдельно, отвечает заданным итогом."""
 
-    def __init__(self, answers=None, fail: str = ""):
+    def __init__(self, answers=None, fail: str = "", yt_answer=None, yt_code: int = 0):
         self.calls: list[dict] = []
+        self.yt_calls: list[dict] = []
         self.answers = answers or {}
         self.fail = fail
+        self.yt_answer = yt_answer
+        self.yt_code = yt_code
 
     def __call__(self, args, **kwargs):
+        if str(args[1]).endswith("youtube-session.mjs"):
+            self.yt_calls.append({"args": list(args), "payload": json.loads(kwargs["input"]),
+                                  "env": kwargs.get("env"), "locked": BROWSER_LOCK.locked()})
+            answer = self.yt_answer if self.yt_answer is not None else _yt_logged_in()
+            return subprocess.CompletedProcess(args, self.yt_code, json.dumps(answer), "")
+        assert str(args[1]).endswith("session-keepalive.cjs"), args
         env = kwargs["env"]
         config = json.loads(env["KA_CONFIG"])
         self.calls.append({"args": list(args), "env": dict(env), "config": config, "locked": BROWSER_LOCK.locked()})
@@ -334,17 +344,18 @@ class FakeBrowser:
 
 
 def _logged_in(platform):
-    if platform == "tiktok":
-        return {"status": "ok", "url": "https://www.tiktok.com/foryou",
-                "signals": {"captcha": False, "app_context": True, "user": "owl"},
-                "cookies": [{"name": "sessionid", "value": "S1", "domain": ".tiktok.com"},
-                            {"name": "msToken", "value": "ROTATED", "domain": ".tiktok.com"},
-                            {"name": "_ttp", "value": "ad", "domain": ".tiktok.com"}]}
-    return {"status": "ok", "url": "https://www.youtube.com/",
-            "signals": {"captcha": False, "logged_in": True, "sign_in_button": False},
-            "cookies": [{"name": n, "value": v, "domain": ".youtube.com"} for n, v in
-                        (("SID", "1"), ("SAPISID", "5"), ("__Secure-1PSIDTS", "new"))]
-            + [{"name": "SID", "value": "google", "domain": ".google.com"}]}
+    assert platform == "tiktok", "браузером ходим только в TikTok"
+    return {"status": "ok", "url": "https://www.tiktok.com/foryou",
+            "signals": {"captcha": False, "app_context": True, "user": "owl"},
+            "cookies": [{"name": "sessionid", "value": "S1", "domain": ".tiktok.com"},
+                        {"name": "msToken", "value": "ROTATED", "domain": ".tiktok.com"},
+                        {"name": "_ttp", "value": "ad", "domain": ".tiktok.com"}]}
+
+
+def _yt_logged_in(**extra):
+    """Ответ node/youtube-session.mjs: вход есть, Google сменил __Secure-1PSIDTS (и прислал рекламную cookie)."""
+    return {"ok": True, "loggedIn": True, "signal": "menu", "channel": None,
+            "refreshedCookies": {"__Secure-1PSIDTS": "new", "SID": "1", "_gcl_au": "ad"}, **extra}
 
 
 def _enable(store, **cfg):
@@ -387,9 +398,14 @@ def test_tick_visits_one_account_at_a_time_through_the_browser_lock(store):
     assert timedelta(hours=4) <= gap <= timedelta(hours=6)  # 5 ч ± 20 %
 
     second = K.tick(store, runner=browser)
-    assert second["account_id"] == yt["id"]
+    assert second["account_id"] == yt["id"] and second["state"] == "ok"
+    # YouTube — youtubei.js, не браузер: Chromium не запускался, замок браузера не брали.
+    assert len(browser.calls) == 1 and len(browser.yt_calls) == 1 and not browser.yt_calls[0]["locked"]
     assert _values(store, yt["id"])["__Secure-1PSIDTS"] == "new" and _values(store, yt["id"])["SID"] == "1"
-    assert K.tick(store, runner=browser) is None and len(browser.calls) == 2  # обоим ещё рано
+    assert "_gcl_au" not in _values(store, yt["id"])
+    gap = datetime.strptime(_row(store, yt["id"])["keepalive_next_at"], K.TIME_FMT) - NOW
+    assert timedelta(hours=4) <= gap <= timedelta(hours=6)  # то же расписание, что у TikTok
+    assert K.tick(store, runner=browser) is None and len(browser.calls) + len(browser.yt_calls) == 2  # обоим рано
 
 
 def test_disabled_setting_means_no_visits(store):
@@ -440,10 +456,10 @@ def test_captcha_is_reported_not_solved(store, monkeypatch):
     _enable(store)
     sent: list[str] = []
     monkeypatch.setattr(H, "_send_telegram", lambda store_, text: sent.append(text) or True)
-    acc = store.upsert_account("youtube", "yakoodev yt", YT_COOKIES, proxy_url=PROXY)
-    sorry = {"status": "ok", "url": "https://www.google.com/sorry/index", "signals": {}, "cookies": []}
-    K.visit(store, acc["id"], runner=FakeBrowser({"youtube": sorry}))
-    K.visit(store, acc["id"], runner=FakeBrowser({"youtube": sorry}))
+    acc = store.upsert_account("tiktok", "сова", TT_COOKIES, proxy_url=PROXY)
+    captcha = {"status": "ok", "url": "https://www.tiktok.com/foryou", "signals": {"captcha": True}, "cookies": []}
+    K.visit(store, acc["id"], runner=FakeBrowser({"tiktok": captcha}))
+    K.visit(store, acc["id"], runner=FakeBrowser({"tiktok": captcha}))
     assert _row(store, acc["id"])["session_state"] == "captcha" and len(sent) == 1 and "капча" in sent[0]
 
 
@@ -464,13 +480,11 @@ def test_browser_failure_is_not_an_incident_and_retries_in_an_hour(store, monkey
     ("tiktok", {"url": "https://www.tiktok.com/foryou", "signals": {}, "cookies": []}, "needs_reauth"),
     ("tiktok", {"url": "https://www.tiktok.com/foryou", "signals": {},
                 "cookies": [{"name": "sessionid", "value": "S", "domain": ".tiktok.com"}]}, "ok"),
-    ("youtube", {"url": "https://accounts.google.com/v3/signin/challenge/pwd", "cookies": []}, "captcha"),
-    ("youtube", {"url": "https://accounts.google.com/ServiceLogin", "cookies": []}, "needs_reauth"),
-    ("youtube", {"url": "https://www.youtube.com/", "signals": {"logged_in": True},
-                 "cookies": [{"name": "SID", "value": "1", "domain": ".youtube.com"}]}, "needs_reauth"),
-    ("youtube", {"url": "https://www.youtube.com/", "signals": {"sign_in_button": True},
-                 "cookies": [{"name": n, "value": "1", "domain": ".youtube.com"} for n in ("SID", "SAPISID")]},
-     "needs_reauth"),
+    ("youtube", {"ok": True, "loggedIn": True, "signal": "menu"}, "ok"),
+    ("youtube", {"ok": True, "loggedIn": False, "signal": "yt_li"}, "needs_reauth"),
+    ("youtube", {"ok": True, "loggedIn": None, "signal": ""}, "error"),  # не знаем — не «вылетел»
+    ("youtube", {"ok": False, "error": "Request failed with status code 401"}, "needs_reauth"),
+    ("youtube", {"ok": False, "error": "fetch failed: ECONNRESET"}, "error"),
 ])
 def test_classify_logged_out_signals(platform, data, state):
     assert K.classify(platform, data)[0] == state
@@ -559,3 +573,146 @@ def test_api_switch_and_settings(tmp_path, monkeypatch):
     assert saved.status_code == 200 and saved.json()["interval_hours"] == 6
     assert client.put("/api/settings/session-keepalive", json={"interval_hours": 100}).status_code == 400
     assert client.get("/api/settings/session-keepalive").json()["interval_hours"] == 6
+
+
+# --------------------------------------------------------------------------- #
+# YouTube: вход через youtubei.js, никогда браузером
+# --------------------------------------------------------------------------- #
+
+
+def test_youtube_never_launches_the_browser(store, monkeypatch):
+    _enable(store)
+    acc = store.upsert_account("youtube", "vtubika", YT_COOKIES, proxy_url=PROXY)
+    store.set_account_channel(acc["id"], "@vtubika")
+    monkeypatch.setattr(K, "prepare_profile", lambda *a, **k: pytest.fail("профиль Chromium для YouTube"))
+    node = FakeBrowser(yt_answer=_yt_logged_in(channel={"found": True, "label": "@vtubika"}))
+    out = K.tick(store, runner=node)
+    assert out["state"] == "ok" and out["channel_found"] is True and not out["reseeded"]
+    assert node.calls == [] and len(node.yt_calls) == 1
+    call = node.yt_calls[0]
+    assert call["args"][1].endswith("youtube-session.mjs") and len(call["args"]) == 2
+    assert not call["locked"] and call["env"] is None
+    # Секреты — через stdin, как у загрузки: cookie студии, прокси аккаунта, канал.
+    assert call["payload"]["proxyUrl"] == PROXY and "SAPISID=5" in call["payload"]["cookie"]
+    assert call["payload"]["channel"] == "@vtubika"
+    assert not any("s3cret" in a or "SAPISID" in a for a in call["args"])
+    assert not K.profile_dir(acc["id"]).exists()
+    # И напрямую браузер YouTube не откроет.
+    with pytest.raises(RuntimeError, match="без браузера"):
+        K.run_browser(store, _row(store, acc["id"]), 1, runner=node)
+    assert node.calls == []
+
+
+def test_youtube_check_saves_rotated_cookies_even_when_the_request_fails(store, monkeypatch):
+    _enable(store)
+    monkeypatch.setattr(H, "_send_telegram", lambda store_, text: pytest.fail("сбой сети — не повод писать"))
+    acc = store.upsert_account("youtube", "yt", YT_COOKIES, proxy_url=PROXY)
+    out = K.visit(store, acc["id"], runner=FakeBrowser())
+    assert out["rotated"] == ["__Secure-1PSIDTS"] and _values(store, acc["id"])["__Secure-1PSIDTS"] == "new"
+    failed = {"ok": False, "error": "fetch failed: ECONNRESET", "refreshedCookies": {"SIDCC": "fresh"}}
+    out = K.visit(store, acc["id"], runner=FakeBrowser(yt_answer=failed, yt_code=1))
+    assert out["state"] == "error" and out["rotated"] == ["SIDCC"] and _values(store, acc["id"])["SIDCC"] == "fresh"
+    row = _row(store, acc["id"])
+    assert row["keepalive_at"] == "2026-11-11 12:00:00"  # удачной считается прошлая проверка
+    assert row["keepalive_next_at"] == "2026-11-11 13:00:00"  # повтор через час
+
+
+def test_youtube_logged_out_marks_reauth_alerts_once_and_keeps_cookies(store, monkeypatch):
+    _enable(store)
+    sent: list[str] = []
+    monkeypatch.setattr(H, "_send_telegram", lambda store_, text: sent.append(text) or True)
+    acc = store.upsert_account("youtube", "vtubika", YT_COOKIES, proxy_url=PROXY)
+    guest = {"ok": True, "loggedIn": False, "signal": "yt_li", "refreshedCookies": {"__Secure-1PSIDTS": "guest"}}
+    out = K.visit(store, acc["id"], runner=FakeBrowser(yt_answer=guest))
+    assert out["state"] == "needs_reauth" and out["rotated"] == [] and out["telegram"] is True
+    assert _values(store, acc["id"])["__Secure-1PSIDTS"] == "old"
+    K.visit(store, acc["id"], runner=FakeBrowser(yt_answer=guest))
+    assert sent == ["Аккаунт «vtubika» вылетел — обнови куки расширением"]
+    assert _row(store, acc["id"])["session_state"] == "needs_reauth"
+    # Вылетевший не проверяется, пока владелец не пришлёт новые cookie.
+    assert K.tick(store, runner=FakeBrowser()) is None
+
+
+def test_youtube_401_is_reauth(store, monkeypatch):
+    _enable(store)
+    monkeypatch.setattr(H, "_send_telegram", lambda store_, text: True)
+    acc = store.upsert_account("youtube", "yt", YT_COOKIES, proxy_url=PROXY)
+    refused = {"ok": False, "error": "Request to /account/account_menu failed with status code 401",
+               "refreshedCookies": {}}
+    assert K.visit(store, acc["id"], runner=FakeBrowser(yt_answer=refused, yt_code=1))["state"] == "needs_reauth"
+
+
+def test_youtube_helper_crash_without_json_is_an_error_not_an_incident(store, monkeypatch):
+    _enable(store)
+    monkeypatch.setattr(H, "_send_telegram", lambda store_, text: pytest.fail("сбой помощника — не повод писать"))
+    acc = store.upsert_account("youtube", "yt", YT_COOKIES, proxy_url=PROXY)
+
+    def crash(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1, "", f"Error: connect {PROXY} refused\n")
+
+    out = K.visit(store, acc["id"], runner=crash)
+    assert out["state"] == "error" and "s3cret" not in out["reason"]
+
+
+def test_youtube_success_clears_a_stale_state(store, monkeypatch):
+    _enable(store)
+    sent: list[str] = []
+    monkeypatch.setattr(H, "_send_telegram", lambda store_, text: sent.append(text) or True)
+    acc = store.upsert_account("youtube", "vtubika", YT_COOKIES, proxy_url=PROXY)
+    H.record(store, acc["id"], "needs_reauth", "в браузере нет SAPISID — Google выкинул из аккаунта",
+             source="keepalive:schedule")
+    out = K.visit(store, acc["id"], runner=FakeBrowser())
+    row = _row(store, acc["id"])
+    assert out["state"] == "ok" and row["session_state"] == "ok" and row["session_alerted"] == ""
+    assert row["session_reason"] == ""
+    assert len(sent) == 1  # сообщение было только о старом случае
+
+
+def test_youtube_not_checked_before_upload(store, tmp_path, monkeypatch):
+    _enable(store)
+    acc = store.upsert_account("youtube", "yt", YT_COOKIES, proxy_url=PROXY)
+    node = FakeBrowser()
+    monkeypatch.setattr(K, "_default_runner", node)
+
+    class Provider:
+        def __init__(self, platform):
+            pass
+
+        def upload(self, **kwargs):
+            return ProviderResult(status="succeeded", remote_id="1")
+
+    monkeypatch.setattr("app.worker.get_provider", Provider)
+    _job(store, tmp_path, [acc["id"]])
+    assert JobWorker(store).process_once()
+    assert node.calls == [] and node.yt_calls == []  # загрузка — сама youtubei.js-сессия
+
+
+def test_reset_of_youtube_states_left_by_the_browser(store):
+    yt_false = store.upsert_account("youtube", "vtubika", YT_COOKIES, proxy_url=PROXY)
+    yt_off = store.upsert_account("youtube", "yakoodev yt", YT_COOKIES, proxy_url=PROXY)
+    yt_upload = store.upsert_account("youtube", "upload-dead", YT_COOKIES)
+    yt_err = store.upsert_account("youtube", "yt-err", YT_COOKIES)
+    tt = store.upsert_account("tiktok", "сова", TT_COOKIES, proxy_url=PROXY)
+    store.set_account_keepalive(yt_off["id"], False)  # выключен вручную — так и остаётся
+    sender = lambda store_, text: True  # noqa: E731
+    H.record(store, yt_false["id"], "needs_reauth", "в браузере нет SAPISID — Google выкинул из аккаунта",
+             sender=sender)
+    H.record(store, yt_off["id"], "needs_reauth", "YouTube показывает кнопку «Войти»", sender=sender)
+    H.record(store, yt_upload["id"], "needs_reauth", "Sign in to continue", sender=sender)  # отказ загрузки
+    H.record(store, yt_err["id"], "error", "браузер не уложился в 180 с", sender=sender)
+    H.record(store, tt["id"], "needs_reauth", "в браузере нет sessionid — TikTok выкинул из аккаунта", sender=sender)
+    for acc in (yt_false, yt_off, tt):
+        K.profile_dir(acc["id"]).mkdir(parents=True)
+
+    assert K.reset_youtube_browser_states(store) == [yt_false["id"], yt_off["id"], yt_err["id"]]
+    for acc in (yt_false, yt_off, yt_err):
+        row = _row(store, acc["id"])
+        assert (row["session_state"], row["session_reason"], row["session_alerted"]) == ("", "", "")
+    assert _row(store, yt_off["id"])["keepalive"] == 0
+    assert _row(store, yt_upload["id"])["session_state"] == "needs_reauth"
+    assert _row(store, tt["id"])["session_state"] == "needs_reauth"
+    assert not K.profile_dir(yt_false["id"]).exists() and K.profile_dir(tt["id"]).exists()
+    # Один раз: дальше состояния ставит youtubei.js, их не трогаем.
+    H.record(store, yt_false["id"], "needs_reauth", "YouTube показывает кнопку «Войти»", sender=sender)
+    assert K.reset_youtube_browser_states(store) is None
+    assert _row(store, yt_false["id"])["session_state"] == "needs_reauth"

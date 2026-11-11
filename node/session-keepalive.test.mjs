@@ -119,3 +119,10 @@ test('unknown platform fails without opening a browser', () => {
   assert.match(proc.stderr, /неизвестная площадка/);
   assert.deepEqual(log, []);
 });
+
+test('YouTube is never opened in the browser (youtubei.js checks it, node/youtube-session.mjs)', () => {
+  const { proc, log } = run({ config: { platform: 'youtube', url: 'https://www.youtube.com/' } });
+  assert.equal(proc.status, 1);
+  assert.match(proc.stderr, /неизвестная площадка: youtube/);
+  assert.deepEqual(log, []);
+});

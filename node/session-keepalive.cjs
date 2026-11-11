@@ -1,4 +1,8 @@
-// Заход браузера аккаунта (зовёт app/session_keepalive.py): держит вход TikTok / YouTube живым.
+// Заход браузера аккаунта TikTok (зовёт app/session_keepalive.py): держит вход живым.
+//
+// Только TikTok. YouTube браузером не ходим: у сервиса лишь cookie youtube.com, без accounts.google.com, и
+// настоящая страница YouTube, сверив вход с Google, сама стирает вход youtube.com (11.11 — ложное «вылетел»).
+// Вход YouTube проверяет node/youtube-session.mjs через youtubei.js, как загрузка.
 //
 // Свой постоянный профиль Chromium на аккаунт (launchPersistentContext): тот же UA, окно, язык и часовой пояс
 // каждый раз. Открывает главную площадки, ждёт, чуть листает колесом, стоит 20–40 с и закрывается. Только
@@ -13,9 +17,9 @@
 // (cookie — только доменов площадки; Python пишет обратно лишь известные имена, app/session_cookies.py).
 const path = require("path");
 
-const DOMAINS = { tiktok: "tiktok.com", youtube: "youtube.com" };
+const DOMAINS = { tiktok: "tiktok.com" };
 const BLOCK_TYPES = new Set(["image", "media", "font"]);
-// Видео площадок идёт и обычными запросами (MSE), не только как media.
+// Видео площадки идёт и обычными запросами (MSE), не только как media.
 const BLOCK_URL = /googlevideo\.com\/videoplayback|\.mp4(\?|$)|mime_type=video|\/video\/tos\/|webapp-prime\.tiktok\.com\/video|tiktokcdn[^/]*\/[^?]*\/video\//i;
 
 function proxyOption(raw) {
@@ -71,20 +75,6 @@ async function tiktokSignals(page) {
   });
 }
 
-async function youtubeSignals(page) {
-  return page.evaluate(() => {
-    const out = { captcha: false, logged_in: null, sign_in_button: false };
-    try {
-      if (window.ytcfg && typeof window.ytcfg.get === "function") out.logged_in = window.ytcfg.get("LOGGED_IN");
-    } catch {}
-    out.sign_in_button = Boolean(document.querySelector(
-      'ytd-masthead a[href*="accounts.google.com/ServiceLogin"], #masthead a[href*="ServiceLogin"]'));
-    out.captcha = [...document.querySelectorAll('form#captcha-form, iframe[src*="recaptcha"], #recaptcha')]
-      .some((el) => { const box = el.getBoundingClientRect(); return box.width > 50 && box.height > 50; });
-    return out;
-  });
-}
-
 (async function main() {
   const [playwrightDir] = process.argv.slice(2);
   const config = JSON.parse(process.env.KA_CONFIG || "{}");
@@ -132,7 +122,7 @@ async function youtubeSignals(page) {
     const left = stayMs - (Date.now() - started);
     if (left > 0) await sleep(left);
     out.url = bareUrl(page.url());
-    out.signals = platform === "tiktok" ? await tiktokSignals(page) : await youtubeSignals(page);
+    out.signals = await tiktokSignals(page);
     out.cookies = (await context.cookies())
       .filter((c) => domainOk(platform, c.domain))
       .map((c) => ({ name: c.name, value: c.value, domain: c.domain }));

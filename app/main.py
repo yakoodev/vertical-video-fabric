@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from typing import Annotated
 
@@ -90,6 +91,13 @@ async def lifespan(app: FastAPI):
         store.dedup_unused_ffmpeg_presets()
     except Exception:  # noqa: BLE001 - cleanup must never block startup
         pass
+    # Один раз: ложные состояния входа YouTube от браузера (теперь YouTube проверяет youtubei.js) — сбросить.
+    try:
+        from app.session_keepalive import reset_youtube_browser_states
+
+        reset_youtube_browser_states(store)
+    except Exception:  # noqa: BLE001 - cleanup must never block startup
+        logging.getLogger(__name__).warning("youtube keepalive state reset failed", exc_info=True)
     # Работники включённых модулей; выключенные не стартуют, включат — запустятся без перезапуска.
     modules.start_workers(store)
     try:
