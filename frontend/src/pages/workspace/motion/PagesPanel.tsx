@@ -1,7 +1,7 @@
 /**
  * Вкладка «Страницы» редактора: снимки сайтов (app/webpages.py). Снять страницу по ссылке, поправить её
  * словами (правка идёт через HTML — новая версия, старые остаются), сравнить «было/стало» и поставить на
- * таймлайн слоем «страница» (листается, можно в телефоне).
+ * таймлайн слоем «страница» (листается, можно в телефоне) — или разобрать на отдельные слои (PageBlocksPicker).
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +9,7 @@ import { ApiError } from "@/api/client";
 import { webPagesApi, type WebPage, type WebPageEdit } from "@/api/webPages";
 import { useToast } from "@/components/Toast";
 import type { AddLayers } from "@/pages/workspace/motion/LibraryPanels";
+import { PageBlocksPicker } from "@/pages/workspace/motion/PageBlocksPicker";
 
 const errText = (e: unknown, fallback: string) => (e instanceof ApiError ? e.message : fallback);
 
@@ -130,6 +131,7 @@ function PageCard({ page, clipId, onAdd }: { page: WebPage; clipId?: number | nu
               🗑
             </button>
           </div>
+          <PageBlocksPicker key={shown} pageId={page.id} version={shown} clipId={clipId} onAdd={onAdd} />
         </div>
       ) : null}
     </div>
