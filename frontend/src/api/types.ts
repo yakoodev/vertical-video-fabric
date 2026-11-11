@@ -399,6 +399,8 @@ export interface Job {
   targets: JobTarget[];
   /** 'agent' — поставила настройка проекта «Публиковать самому». */
   made_by?: string;
+  /** Секунда кадра-обложки TikTok; null — кадр TikTok по умолчанию. */
+  cover_sec?: number | null;
 }
 
 export interface Account {

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 from pathlib import Path
@@ -35,6 +36,9 @@ INSTAGRAM_LANDSCAPE = ("Reels — только вертикаль: ролик 16
                        "показывается мелко); для Reels отрендерите клип в 9:16")
 # У TikTok нет «по ссылке»: раньше такой пост уходил всем. Пока владелец не выбрал замену (друзья или отказ) — отказ.
 TIKTOK_UNLISTED = "В TikTok нет «по ссылке»: выберите «Открыто» или «Скрыто», иначе ролик увидели бы все"
+# Обложка TikTok — кадр ролика на этой секунде (app/providers/tiktok.py); пусто — кадр TikTok по умолчанию.
+COVER_SEC_MAX = 3600.0
+COVER_SEC_ERROR = "Обложка TikTok: секунда — число от 0 до 3600"
 
 
 def video_format(width: Any, height: Any) -> str | None:
@@ -173,12 +177,57 @@ def landscape_cover(store: Any, clip: dict | None) -> str:
 
 def upload_extras(store: Any, job: dict, platform: str) -> dict:
     """Доп. аргументы ``Provider.upload`` по формату клипа задания. 9:16 и неизвестный формат —
-    пусто: вызов площадки ровно прежний. Никогда не падает: формат — уточнение, не повод
-    сорвать публикацию."""
+    пусто: вызов площадки ровно прежний. TikTok ещё получает ``cover_sec``, если секунда
+    обложки задана или выбрана (``tiktok_cover_sec``). Никогда не падает: формат и обложка —
+    уточнения, не повод сорвать публикацию."""
     try:
         return _upload_extras(store, job, platform)
     except Exception:  # noqa: BLE001 - публикация важнее уточнения формата
         return {}
+
+
+def normalize_cover_sec(value: Any) -> float | None:
+    """Секунда обложки TikTok из запроса: пусто (None, «») — кадр TikTok по умолчанию, иначе число 0…3600."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError(COVER_SEC_ERROR)
+    try:
+        sec = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(COVER_SEC_ERROR) from None
+    if not math.isfinite(sec) or sec < 0 or sec > COVER_SEC_MAX:
+        raise ValueError(COVER_SEC_ERROR)
+    return round(sec, 3)
+
+
+def tiktok_cover_sec(store: Any, job: dict, clip: dict | None) -> float | None:
+    """Секунда кадра-обложки TikTok для задания: своя у задания (поле «Обложка TikTok, секунда»), иначе
+    время выбранного варианта обложки клипа (app/cover_variants.py, ``clip_covers.t`` — секунда готового
+    ролика). Вшитая в начало ролика обложка (``render.cover`` с burn) и так первый кадр — тогда ничего:
+    кадр по умолчанию у TikTok и есть первый. Никогда не падает."""
+    try:
+        own = normalize_cover_sec(job.get("cover_sec"))
+    except ValueError:
+        own = None
+    if own is not None:
+        return own
+    if not clip or not clip.get("id"):
+        return None
+    try:
+        plan_id = clip.get("clip_plan_id")
+        if plan_id:
+            cover = (store.get_clip_plan(int(plan_id), include_segments=False).get("render_settings") or {}).get("cover")
+            if isinstance(cover, dict) and cover.get("mode", "none") != "none" and cover.get("burn", True):
+                return None
+        row = store.db.query_one(
+            "SELECT t FROM clip_covers WHERE clip_id = ? AND chosen = 1 ORDER BY id DESC LIMIT 1", (int(clip["id"]),)
+        )
+    except Exception:  # noqa: BLE001 - обложка — уточнение, не повод сорвать публикацию
+        return None
+    if not row or row["t"] is None or float(row["t"]) <= 0:
+        return None
+    return round(float(row["t"]), 3)
 
 
 def _upload_extras(store: Any, job: dict, platform: str) -> dict:
@@ -188,10 +237,15 @@ def _upload_extras(store: Any, job: dict, platform: str) -> dict:
             clip = store.get_clip(int(job["clip_id"]))
         except (KeyError, TypeError, ValueError):
             clip = None
+    extras: dict = {}
+    if platform == "tiktok":
+        cover_sec = tiktok_cover_sec(store, job, clip)
+        if cover_sec is not None:
+            extras["cover_sec"] = cover_sec
     fmt = clip_format(store, clip)
     if not fmt or fmt == DEFAULT_FORMAT:
-        return {}
-    extras: dict = {"video_format": fmt}
+        return extras
+    extras["video_format"] = fmt
     if is_regular_video(platform, fmt):
         cover = landscape_cover(store, clip)
         if cover:

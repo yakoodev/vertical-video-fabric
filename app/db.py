@@ -424,6 +424,8 @@ class Database:
             self._ensure_column(conn, "jobs", "scheduled_at", "TEXT")
             # Кто поставил публикацию: 'agent' — настройка проекта «Публиковать самому» (app/agent_settings.py).
             self._ensure_column(conn, "jobs", "made_by", "TEXT NOT NULL DEFAULT ''")
+            # Секунда кадра-обложки TikTok (app/providers/tiktok.py); NULL — кадр TikTok по умолчанию.
+            self._ensure_column(conn, "jobs", "cover_sec", "REAL")
             self._ensure_column(conn, "ffmpeg_presets", "audio_mix_mode", "TEXT NOT NULL DEFAULT 'primary'")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_stream", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(conn, "ffmpeg_presets", "audio_primary_volume", "REAL NOT NULL DEFAULT 1")

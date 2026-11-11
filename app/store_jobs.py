@@ -48,6 +48,7 @@ class JobsStore:
         clip_id: int | None = None,
         scheduled_at: str = "",
         allow_repost: bool = False,
+        cover_sec: float | None = None,
     ) -> dict:
         title = title.strip()
         if not title:
@@ -59,12 +60,15 @@ class JobsStore:
             raise ValueError("at least one target account is required")
         if clip_id is not None:
             self.get_clip(clip_id)
+        from app.publish_format import normalize_cover_sec
+
+        cover_sec = normalize_cover_sec(cover_sec)
         accounts = self._job_accounts(target_account_ids)
         file_info = self._save_upload(fileobj, source_filename)
         try:
             return self._insert_job(
                 accounts, allow_repost, clip_id, title, description, privacy, allow_comments, scheduled_at,
-                source_filename, str(file_info["path"]), file_info["sha256"], file_info["size"],
+                source_filename, str(file_info["path"]), file_info["sha256"], file_info["size"], cover_sec=cover_sec,
             )
         except ValueError:
             file_info["path"].unlink(missing_ok=True)
@@ -81,6 +85,7 @@ class JobsStore:
         scheduled_at: str = "",
         made_by: str = "",
         allow_repost: bool = False,
+        cover_sec: float | None = None,
     ) -> dict:
         clip = self.get_clip(clip_id)
         if clip["status"] != "succeeded":
@@ -95,11 +100,17 @@ class JobsStore:
             raise ValueError(f"invalid privacy: {privacy}")
         if not target_account_ids:
             raise ValueError("at least one target account is required")
+        from app.publish_format import normalize_cover_sec
+
+        cover_sec = normalize_cover_sec(cover_sec)
+        duration = float(clip.get("duration_sec") or 0)
+        if cover_sec is not None and duration > 0 and cover_sec >= duration:
+            raise ValueError(f"Обложка TikTok: секунда {cover_sec:g} — за концом клипа ({duration:.1f} с)")
         accounts = self._job_accounts(target_account_ids)
         sha256, size_bytes = _hash_path_and_size(source_path)
         return self._insert_job(
             accounts, allow_repost, clip_id, title, description, privacy, allow_comments, scheduled_at,
-            source_path.name, str(source_path), sha256, size_bytes, made_by,
+            source_path.name, str(source_path), sha256, size_bytes, made_by, cover_sec=cover_sec,
         )
 
     def _job_accounts(self, account_ids: list[int]) -> list[dict]:
@@ -109,7 +120,7 @@ class JobsStore:
     def _insert_job(
         self, accounts: list[dict], allow_repost: bool, clip_id: int | None, title: str, description: str, privacy: str,
         allow_comments: bool, scheduled_at: str, source_filename: str, source_path: str, sha256: str, size_bytes: int,
-        made_by: str = "",
+        made_by: str = "", cover_sec: float | None = None,
     ) -> dict:
         """Проверка на дубль и запись — одна транзакция: двойной клик не проскочит между ними, а задание без площадок
         не появится вовсе (работник взял бы его и опубликовал в никуда)."""
@@ -124,8 +135,8 @@ class JobsStore:
                 """
                 INSERT INTO jobs
                     (clip_id, title, description, privacy, allow_comments, scheduled_at, source_filename, source_path,
-                     source_sha256, source_size_bytes, made_by)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     source_sha256, source_size_bytes, made_by, cover_sec)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     clip_id,
@@ -139,6 +150,7 @@ class JobsStore:
                     sha256,
                     size_bytes,
                     str(made_by or "")[:40],
+                    cover_sec,
                 ),
             )
             job_id = cur.lastrowid

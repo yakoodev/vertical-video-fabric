@@ -1,12 +1,15 @@
 """TikTok-загрузка без сети: сессия requests и помощник подписи подменены."""
 
 import json
+import shutil
+import subprocess
 
 import pytest
 import requests
 
 from app.cookies import CookieRecord
 from app.providers import tiktok
+from app.publish_format import image_size
 from app.providers.base import safe_provider_error
 from app.providers.tiktok import TikTokProvider, _find_item_id
 from app.settings import settings
@@ -298,3 +301,92 @@ def test_file_goes_in_chunks_with_matching_checksums(fake_tiktok, tmp_path, monk
     assert finish == ",".join(f"{i + 1}:{tiktok._crc32(part)}" for i, part in enumerate(parts))
     apply_url = next(url for _, url, _ in session.calls if "ApplyUploadInner" in url)
     assert "FileSize=10&" in apply_url
+
+
+# --- обложка: кадр ролика, как его шлёт TikTok Studio (poster_delay + cover_info.cover_uri) -------------------- #
+
+_VIDEO_APPLY = FakeResponse(body={"Result": {"InnerUploadAddress": {"UploadNodes": [{
+    "Vid": "v0vid", "StoreInfos": [{"StoreUri": "store/uri", "Auth": "auth"}],
+    "UploadHost": "upload.example", "SessionKey": "sk"}]}}})
+_IMAGE_APPLY = FakeResponse(body={"Result": {"InnerUploadAddress": {"UploadNodes": [{
+    "Vid": "", "StoreInfos": [{"StoreUri": "tos-x/cover1", "Auth": "img-auth"}],
+    "UploadHost": "img.example", "SessionKey": "img-sk"}]}}})
+
+
+def _cover_script(**overrides):
+    return _script(**{
+        "ApplyUploadInner": [_VIDEO_APPLY, _IMAGE_APPLY],
+        "upload/v1/": [FakeResponse(body={"code": 2000, "data": {"crc32": "x"}})],
+        "CommitUploadInner": [FakeResponse(), FakeResponse(body={"Result": {"Results": [
+            {"Uri": "tos-x/cover1", "UriStatus": 2000}]}})],
+        **overrides,
+    })
+
+
+def _feature(session):
+    post = next(kwargs for _, url, kwargs in session.calls if "web/project/post/v1" in url)
+    return json.loads(post["data"])["single_post_req_list"][0]["single_post_feature_info"]
+
+
+def test_without_cover_the_post_is_as_before(fake_tiktok, monkeypatch):
+    monkeypatch.setattr(tiktok, "_cover_frame", lambda *a: pytest.fail("кадр без cover_sec не нужен"))
+    result, session, _ = fake_tiktok(_script())
+    assert result.status == "succeeded", result.error
+    feature = _feature(session)
+    assert feature["poster_delay"] == 0 and "cover_info" not in feature
+    assert sum("ApplyUploadInner" in url for _, url, _ in session.calls) == 1  # только видео
+    assert "cover" not in result.response
+
+
+def test_cover_second_goes_as_poster_delay_and_uploaded_frame(fake_tiktok, monkeypatch):
+    frames = []
+    monkeypatch.setattr(tiktok, "_cover_frame", lambda path, sec: frames.append(sec) or b"\xff\xd8" + b"j" * 300)
+    result, session, _ = fake_tiktok(_cover_script(), cover_sec=3.6)
+    assert result.status == "succeeded", result.error
+    assert frames == [3.6]
+    feature = _feature(session)
+    assert feature["poster_delay"] == 3  # Studio: кадр 3135 мс → 3 (целые секунды)
+    info = feature["cover_info"]
+    assert info["cover_uri"] == "tos-x/cover1" and info["cover_type"] == 2 and info["frame_duration"] == 3600
+    assert (info["cover_width"], info["cover_height"]) == (486, 648)
+    # Картинка — в VOD как обложка (Scene=poster), одним куском, с CRC и своим Auth.
+    image_apply = [url for _, url, _ in session.calls if "ApplyUploadInner" in url][1]
+    assert "FileType=image" in image_apply and "Scene=poster" in image_apply and "FileSize=302&" in image_apply
+    upload = next(kwargs for _, url, kwargs in session.calls if "upload/v1/" in url)
+    assert upload["headers"]["Authorization"] == "img-auth"
+    assert upload["headers"]["Content-Crc32"] == tiktok._crc32(upload["data"])
+    commit = [kwargs for _, url, kwargs in session.calls if "CommitUploadInner" in url][1]
+    assert json.loads(commit["data"]) == {"SessionKey": "img-sk", "Functions": []}
+    assert result.response["cover"] == {"sec": 3.6, "poster_delay": 3, "image": True}
+    assert "cover_warning" not in result.response
+
+
+def test_cover_image_failure_does_not_stop_the_post(fake_tiktok, monkeypatch):
+    monkeypatch.setattr(tiktok, "_cover_frame", lambda path, sec: b"j" * 300)
+    result, session, _ = fake_tiktok(_cover_script(**{"upload/v1/": [FakeResponse(403)]}), cover_sec=2)
+    assert result.status == "succeeded", result.error
+    feature = _feature(session)
+    assert feature["poster_delay"] == 2 and "cover_info" not in feature
+    assert "не удалось загрузить" in result.response["cover_warning"]
+
+
+def test_cover_second_past_the_end_keeps_tiktok_default(fake_tiktok, monkeypatch):
+    monkeypatch.setattr(tiktok, "_cover_frame", lambda path, sec: None)
+    result, session, _ = fake_tiktok(_script(), cover_sec=99)
+    assert result.status == "succeeded", result.error
+    feature = _feature(session)
+    assert feature["poster_delay"] == 0 and "cover_info" not in feature
+    assert "нет кадра" in result.response["cover_warning"]
+
+
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="нужен ffmpeg")
+def test_cover_frame_is_a_3x4_jpeg_and_none_past_the_end(tmp_path):
+    video = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=10:duration=2",
+                    "-pix_fmt", "yuv420p", str(video)], check=True)
+    frame = tiktok._cover_frame(video, 1.0)
+    assert frame and frame[:2] == b"\xff\xd8"
+    probe = tmp_path / "cover.jpg"
+    probe.write_bytes(frame)
+    assert image_size(probe) == (486, 648)
+    assert tiktok._cover_frame(video, 9.0) is None

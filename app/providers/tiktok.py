@@ -38,6 +38,13 @@ _SIGN_TIMEOUT = 60
 _ITEM_ID_KEYS = ("item_id", "itemId", "aweme_id", "awemeId", "item_id_str")
 _ITEM_ID_RE = re.compile(r"\d{10,25}")
 _CHUNK_SIZE = 5_242_880
+# Обложка как у TikTok Studio (разведка 11.11.2026): кадр ролика картинкой 3:4 486×648 уходит в VOD (SpaceName=tiktok,
+# FileType=image, Scene=poster), в посте — cover_info.cover_uri и poster_delay (целые секунды кадра).
+_COVER_W, _COVER_H = 486, 648
+_COVER_TIMEOUT = 60
+COVER_NO_FRAME = "Обложка TikTok: на секунде {sec:g} в ролике нет кадра — оставлена обложка TikTok по умолчанию"
+COVER_UPLOAD_FAILED = ("Обложка TikTok: картинку кадра не удалось загрузить — ушла только отметка времени "
+                       "{sec:g} с, TikTok возьмёт кадр по ней")
 MAYBE_POSTED = "Связь оборвалась на самом посте, ролик мог выйти: проверьте на TikTok, прежде чем публиковать снова"
 NO_POST_LINK = "Пост вышел, но TikTok не вернул его id: ссылки и статистики у него не будет"
 
@@ -73,9 +80,11 @@ class TikTokProvider(Provider):
         video_format: str = "9:16",
         thumbnail_path: str = "",
         user_agent: str = "",
+        cover_sec: float | None = None,
     ) -> ProviderResult:
         # TikTok ждёт вертикаль: 16:9/1:1/4:5 публикуем как есть (площадка покажет с полосами),
-        # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт.
+        # предупреждение — в ответе (app/publish_format.py). thumbnail_path TikTok не берёт: обложка —
+        # кадр самого ролика на секунде ``cover_sec`` (None — кадр TikTok по умолчанию, как раньше).
         del thumbnail_path
         if privacy not in ("public", "private"):
             return ProviderResult(status="failed", error=TIKTOK_UNLISTED)  # иначе «по ссылке» ушло бы всем
@@ -91,6 +100,7 @@ class TikTokProvider(Provider):
                 account_label=account_label,
                 proxy_url=proxy_url,
                 user_agent=user_agent,
+                cover_sec=cover_sec,
             )
             warning = publish_plan(self.platform, video_format)["warning"] if video_format != "9:16" else ""
             if warning:
@@ -121,6 +131,7 @@ class TikTokProvider(Provider):
         account_label: str,
         proxy_url: str,
         user_agent: str = "",
+        cover_sec: float | None = None,
     ) -> ProviderResult:
         session = requests.Session()
         session.verify = True
@@ -165,6 +176,7 @@ class TikTokProvider(Provider):
         if not _assert_success(response):
             return _tiktok_response_failure(response, "TikTok upload commit failed")
 
+        cover = _cover_fields(session, aws_auth, file_path, cover_sec) if cover_sec is not None else None
         _safe_head(session, user_agent)
         caption = tiktok_caption(title, description)
         caption_cut = len(tiktok_full_caption(title, description)) > len(caption)
@@ -203,7 +215,8 @@ class TikTokProvider(Provider):
                         "text_extra": text_extra,
                         "markup_text": markup_text,
                         "music_info": {},
-                        "poster_delay": 0,
+                        "poster_delay": cover["poster_delay"] if cover else 0,
+                        **({"cover_info": cover["cover_info"]} if cover and cover["cover_info"] else {}),
                     },
                 }
             ],
@@ -265,7 +278,8 @@ class TikTokProvider(Provider):
             remote_url=f"https://www.tiktok.com/@/video/{item_id}" if item_id else "",
             error="" if item_id else NO_POST_LINK,
             response={"tiktok": body, "video_id": video_id, "item_id": item_id, "creation_id": creation_id,
-                      "project_id": project_id, **({"caption_cut": True} if caption_cut else {})},
+                      "project_id": project_id, **({"caption_cut": True} if caption_cut else {}),
+                      **(_cover_summary(cover) if cover else {})},
         )
 
     def _signature_dir(self) -> Path:
@@ -318,6 +332,96 @@ def _upload_to_tiktok(file_path: Path, session: requests.Session):
                 raise _StepFailed(_tiktok_response_failure(response, f"TikTok chunk upload failed at part {idx}",
                                                            status="failed"))
     return video_id, session_key, upload_id, crcs, upload_host, store_uri, video_auth, aws_auth
+
+
+def _cover_frame(file_path: Path, sec: float) -> bytes | None:
+    """Кадр ролика на секунде ``sec`` картинкой обложки TikTok Studio: JPEG 3:4 486×648, середина кадра.
+    None — кадра нет (секунда за концом ролика) или ffmpeg не справился."""
+    crop = "crop='min(iw,ih*3/4)':'min(ih,iw*4/3)'"
+    args = ["ffmpeg", "-v", "error", "-nostdin", "-ss", f"{max(0.0, sec):.3f}", "-i", str(file_path), "-frames:v", "1",
+            "-vf", f"{crop},scale={_COVER_W}:{_COVER_H}", "-q:v", "3", "-f", "image2", "-c:v", "mjpeg", "pipe:1"]
+    try:
+        proc = subprocess.run(args, capture_output=True, timeout=_COVER_TIMEOUT, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0 or len(proc.stdout or b"") < 100:
+        return None
+    return proc.stdout
+
+
+def _upload_cover_image(session: requests.Session, aws_auth, image: bytes) -> str:
+    """Картинка обложки в VOD TikTok, как её грузит TikTok Studio: ApplyUploadInner (image, Scene=poster) →
+    одним куском на upload-хост → CommitUploadInner. Ответ — uri картинки (``cover_uri`` поста)."""
+    apply_url = (
+        "https://www.tiktok.com/top/v1?Action=ApplyUploadInner&Version=2020-11-19&SpaceName=tiktok&FileType=image"
+        f"&IsInner=1&FileSize={len(image)}&s={_generate_random_string(11, False).lower()}&Scene=poster"
+        "&device_platform=web&business_tag=tiktok_video_cover_web"
+    )
+    response = _retrying(session, "get", apply_url, auth=aws_auth)
+    if not _assert_success(response):
+        raise RuntimeError(f"cover apply HTTP {response.status_code}")
+    node = response.json()["Result"]["InnerUploadAddress"]["UploadNodes"][0]
+    store = node["StoreInfos"][0]
+    upload_url = f"https://{node['UploadHost']}/upload/v1/{store['StoreUri']}"
+    headers = {
+        "Authorization": store["Auth"],
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": 'attachment; filename="undefined"',
+        "Content-Crc32": _crc32(image),
+    }
+    response = _retrying(session, "post", upload_url, headers=headers, data=image)
+    if not _assert_success(response):
+        raise RuntimeError(f"cover upload HTTP {response.status_code}")
+    commit_url = "https://www.tiktok.com/top/v1?Action=CommitUploadInner&Version=2020-11-19&SpaceName=tiktok"
+    commit_body = json.dumps({"SessionKey": node["SessionKey"], "Functions": []})
+    response = _retrying(session, "post", commit_url, auth=aws_auth, data=commit_body)
+    if not _assert_success(response):
+        raise RuntimeError(f"cover commit HTTP {response.status_code}")
+    try:
+        results = response.json()["Result"]["Results"]
+        uri = str(results[0].get("Uri") or "")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        uri = ""
+    return uri or str(store["StoreUri"])
+
+
+def _cover_fields(session: requests.Session, aws_auth, file_path: Path, cover_sec: float) -> dict:
+    """Поля обложки для поста — ровно как у TikTok Studio, когда владелец выбрал кадр:
+    ``poster_delay`` — целые секунды кадра, ``cover_info`` — загруженная картинка кадра и его время (мс).
+    Сбой картинки не срывает публикацию: остаётся ``poster_delay``, причина — в ``warning``."""
+    sec = max(0.0, float(cover_sec))
+    frame = _cover_frame(file_path, sec)
+    if frame is None:
+        return {"sec": sec, "poster_delay": 0, "cover_info": None, "warning": COVER_NO_FRAME.format(sec=sec)}
+    poster_delay = int(sec)
+    try:
+        uri = _upload_cover_image(session, aws_auth, frame)
+    except Exception as exc:  # noqa: BLE001 - обложка — уточнение, публикация важнее
+        log.warning("tiktok cover upload failed: %s", _safe_error(f"{type(exc).__name__}: {exc}")[:300])
+        uri = ""
+    if not uri:
+        return {"sec": sec, "poster_delay": poster_delay, "cover_info": None,
+                "warning": COVER_UPLOAD_FAILED.format(sec=sec)}
+    cover_info = {
+        "cover_type": 2,  # кадр, выбранный владельцем (1 — первый кадр по умолчанию)
+        "crop_type": 2,
+        "cover_width": _COVER_W,
+        "cover_height": _COVER_H,
+        "frame_duration": round(sec * 1000, 3),
+        "is_cover_cut": False,
+        "isAutoCropFirstFrame": False,
+        "add_template_flag": False,
+        "cover_uri": uri,
+    }
+    return {"sec": sec, "poster_delay": poster_delay, "cover_info": cover_info, "warning": ""}
+
+
+def _cover_summary(cover: dict) -> dict:
+    """Что ушло про обложку — в ответ задания (видно в публикации)."""
+    out = {"cover": {"sec": cover["sec"], "poster_delay": cover["poster_delay"], "image": bool(cover["cover_info"])}}
+    if cover["warning"]:
+        out["cover_warning"] = cover["warning"]
+    return out
 
 
 def _retrying(session: requests.Session, method: str, url: str, **kwargs):

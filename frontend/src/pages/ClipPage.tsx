@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { Icon } from "@/components/Icon";
 import { MissingSourceNotice } from "@/components/MissingSourceNotice";
 import { PublishDialog } from "@/components/PublishDialog";
+import { TikTokCoverField, coverSecValue } from "@/components/TikTokCoverField";
 import { useToast } from "@/components/Toast";
 import { ErrorState, Loading, formatDuration, plural } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
@@ -609,6 +610,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
   const [privacy, setPrivacy] = useState("public");
   const [when, setWhen] = useState<"now" | "later">("now");
   const [scheduledAt, setScheduledAt] = useState("");
+  const [coverSec, setCoverSec] = useState("");
   const [jobId, setJobId] = useState<number | null>(null);
   // Версия запоминается при открытии: готовый тем временем новый рендер не подменит файл под открытым окном.
   const [dialogRender, setDialogRender] = useState<{ id: number; label: string } | null>(null);
@@ -621,6 +623,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
         targets,
         privacy,
         scheduled_at: when === "later" && scheduledAt ? localInputToUtc(scheduledAt) : undefined,
+        cover_sec: tiktokChosen ? coverSecValue(coverSec) : undefined,
       }),
     onSuccess: (job) => {
       toast.success("Поставлено в очередь публикации");
@@ -633,6 +636,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
     onError: (e) => toast.error(errorText(e, "Не удалось опубликовать")),
   });
   const accountList = accounts.data ?? [];
+  const tiktokChosen = accountList.some((a) => a.platform === "tiktok" && targets.includes(a.id));
   // Неправленый текст последней версии уходит вариантом площадки (app/ai/publish_meta.platform_texts): показать какой.
   const variants: Record<string, { title: string } | undefined> =
     render && view.latest && render.id === view.latest.id ? view.latest.publish_meta?.platforms ?? {} : {};
@@ -679,6 +683,7 @@ function PublishCard({ view, render }: { view: ClipView; render: { id: number; l
           {when === "later" ? (
             <input className="input" type="datetime-local" aria-label="Время публикации" value={scheduledAt} onChange={(e) => setScheduledAt(e.target.value)} />
           ) : null}
+          {tiktokChosen ? <TikTokCoverField value={coverSec} onChange={setCoverSec} /> : null}
           {swapped.map((p) => (
             <p key={p} className="muted cpub-none">
               На {p === "tiktok" ? "TikTok" : p === "youtube" ? "YouTube" : p} уйдёт заголовок «{variants[p]!.title}»

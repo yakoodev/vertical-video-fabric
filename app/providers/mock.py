@@ -25,6 +25,7 @@ class MockProvider(Provider):
         thumbnail_path: str = "",
         user_agent: str = "",  # UA аккаунта TikTok (app/worker.py): заглушке не нужен
         channel: str = "",  # канал аккаунта YouTube (app/worker.py): заглушке не нужен
+        cover_sec: float | None = None,  # секунда обложки TikTok (app/publish_format.tiktok_cover_sec)
     ) -> ProviderResult:
         del user_agent
         if not cookies:
@@ -36,6 +37,8 @@ class MockProvider(Provider):
             "account": account_label,
             "proxy_configured": bool(proxy_url),
         }
+        if cover_sec is not None:
+            response["cover_sec"] = cover_sec
         if video_format != "9:16":
             # Как ушло бы на настоящую площадку (app/publish_format.py) — видно в задании.
             from app.publish_format import publish_plan, youtube_texts

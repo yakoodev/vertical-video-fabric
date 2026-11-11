@@ -82,11 +82,16 @@ def _now_text() -> str:
 
 
 def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str = "", tags: Any = None,
-                platforms: Any = None, when: Any = None, content_type: Any = "", submitted_by: str = "agent") -> dict:
+                platforms: Any = None, when: Any = None, content_type: Any = "", submitted_by: str = "agent",
+                cover_sec: Any = None) -> dict:
     """Клип на одобрение. Нужен готовый рендер и проект у источника. Настройка «Публиковать самому» с выбранными
     аккаунтами — сразу одобрено (и в ленту), иначе pending + карточка владельцу. Прежняя pending-карточка
-    того же клипа уходит в expired: на руках у владельца — одна, свежая."""
+    того же клипа уходит в expired: на руках у владельца — одна, свежая. ``cover_sec`` — секунда кадра-обложки
+    TikTok (пусто — выбранная обложка клипа или кадр TikTok по умолчанию), едет в задание публикации."""
     from app import agent_settings as S
+    from app.publish_format import normalize_cover_sec
+
+    cover_sec = normalize_cover_sec(cover_sec)
 
     plan = store.get_clip_plan(int(clip_plan_id), include_segments=False)
     project_id = P.project_of_plan(store, int(clip_plan_id))
@@ -122,6 +127,7 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
         store, project_id=project_id, kind="clip_publish", clip_plan_id=int(clip_plan_id), clip_id=int(clip["id"]),
         content_type=ctype, trust=trust, title=title, description=description, tags_json=_json(_clean_tags(tags)),
         cover_path=cover_path, platforms_json=_json(platforms_list),
+        payload_json=_json({"cover_sec": cover_sec} if cover_sec is not None else {}),
         proposed_at=fmt_utc(proposed) if proposed else "", submitted_by=str(submitted_by or "")[:40],
         tg_state="" if trust == "auto" else ("queued" if _tg_on(store) else ""),
     )
@@ -676,6 +682,7 @@ def _place(store: Any, approval_id: int, actor: str = "", at: datetime | None = 
             int(approval["clip_id"]), approval["title"], _description_with_tags(approval["description"],
                                                                                  approval["tags"]),
             account_ids, privacy, True, scheduled_at=fmt_utc(moment), made_by=made_by,
+            cover_sec=(approval.get("payload") or {}).get("cover_sec"),
         )
     except (KeyError, ValueError) as exc:
         _update(store, approval_id, publish_status="failed", publish_error=str(exc)[:500])
