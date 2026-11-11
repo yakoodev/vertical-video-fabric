@@ -48,7 +48,7 @@ export const screenTilt: MotionTemplate = {
     const keys = screenTiltKeys(len, tilt, num(p, "zoom", 1.35));
     const pivot: LayerPivot = { x: 0.5, y: 0.66 };
     const group = (extra: Partial<Layer>, i: number) => ({
-      start: at + (i > 0 ? 0.15 + i * 0.08 : 0),
+      start: at + (i > 0 ? 0.12 + i * 0.06 : 0),
       end,
       pivot,
       keys,
@@ -65,6 +65,7 @@ export const screenTilt: MotionTemplate = {
     ];
     parseRows(str(p, "rows", ""), 3).forEach(([name, price], i) => {
       const y = 0.33 + i * 0.095;
+      // Строка въезжает целиком: плашка, значок, название и цена — одним стартом.
       const n = 2 + i * 3;
       layers.push(
         layer("shape", { ...group({ y, track: 2, name: `Строка ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n) }, {
@@ -73,10 +74,10 @@ export const screenTilt: MotionTemplate = {
         layer("shape", { ...group({ x: 0.262, y, track: 3, name: `Значок ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n) }, {
           kind: "rect", w: 96, h: 96, radius: 26, fill: mixHex(accent, i % 2 ? "#ff5c8a" : "#22b8e6", 0.35 + 0.2 * i), stroke: null,
         }),
-        layer("text", { ...group({ x: 0.52, y, track: 3, name: `Название ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n + 1) }, {
+        layer("text", { ...group({ x: 0.52, y, track: 3, name: `Название ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n) }, {
           text: name || "", font: AD_FONT, weight: 700, size: 40, color: "#f2f3f7", align: "left", boxWidth: 400, maxWidth: 400,
         }),
-        layer("text", { ...group({ x: 0.735, y, track: 3, name: `Цена ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n + 1) }, {
+        layer("text", { ...group({ x: 0.735, y, track: 3, name: `Цена ${i + 1}`, in: { type: "slideUp", duration: 0.4 } }, n) }, {
           text: price || "", font: AD_FONT, weight: 800, size: 40, color: mixHex(accent, "#ffffff", 0.55), align: "right", boxWidth: 220, maxWidth: 220,
         }),
       );

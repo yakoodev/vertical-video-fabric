@@ -49,13 +49,15 @@ export function bubbleLayout(p: BubblesProps): BubbleSpot[] {
   const turn = rand01(seed, 99) * Math.PI * 2;
   const sx = W / Math.max(W, H);
   const sy = H / Math.max(W, H);
+  // Шаг спирали: за 1600 точек она доходит до края рамки — крупным пузырям хватает места.
+  const step = Math.max(3, Math.max(W, H) / 2 / 40);
   for (const i of order) {
     let r = radii[i];
     let spot: { x: number; y: number } | null = null;
     for (let shrink = 0; shrink < 8 && !spot; shrink++) {
       for (let s = 0; s < 1600; s++) {
         const a = turn + s * 2.39996;
-        const d = Math.sqrt(s) * 7;
+        const d = Math.sqrt(s) * step;
         const x = Math.cos(a) * d * sx;
         const y = Math.sin(a) * d * sy;
         if (Math.abs(x) + r > W / 2 || Math.abs(y) + r > H / 2) continue;
