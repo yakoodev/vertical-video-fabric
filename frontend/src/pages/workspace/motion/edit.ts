@@ -238,6 +238,8 @@ export function layerTitle(layer: Layer): string {
       return layer.props.handle ? `Канал ${layer.props.handle}` : "Плашка канала";
     case "social":
       return layer.props.style === "post" ? `Пост ${layer.props.name ?? ""}`.trim() : `Комментарий ${layer.props.name ?? ""}`.trim();
+    case "page":
+      return layer.props.device === "phone" ? "Страница в телефоне" : "Страница сайта";
     case "chart":
       return layer.props.title || "График";
     case "progress":
@@ -280,6 +282,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   callout: "▤",
   nameplate: "@",
   social: "❝",
+  page: "🌐",
   captions: "💬",
   chat: "🗨",
   audio: "♪",

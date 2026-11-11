@@ -45,7 +45,7 @@ export { clipTimeOf } from "@/pages/workspace/editor/clipTime";
 
 // Вкладки левой панели студии. Порядок — по частоте: клипы проекта, кадрирование,
 // файлы для монтажа; графика, звуки и ИИ встают сюда же по мере готовности.
-export type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "media";
+export type LibTab = "moments" | "frame" | "ai" | "templates" | "text" | "stickers" | "sounds" | "memes" | "generate" | "pages" | "media";
 // modules — вкладка видна, если включён хотя бы один из модулей (app/modules.py).
 export const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string; modules?: string[] }[] = [
   { key: "moments", icon: "🎬", label: "Черновики", hint: "Другие клипы этого видео" },
@@ -57,6 +57,7 @@ export const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string;
   { key: "sounds", icon: "♪", label: "Звуки", hint: "Звуковые эффекты: whoosh, boom, pop, ding…" },
   { key: "memes", icon: "🐸", label: "Мемы", hint: "Шаблоны мемов и картинки из ваших файлов" },
   { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете", modules: ["asset_ai", "web_images"] },
+  { key: "pages", icon: "🌐", label: "Страницы", hint: "Снимки сайтов: снять по ссылке, поправить словами, поставить на таймлайн", modules: ["web_pages"] },
   { key: "media", icon: "🖼", label: "Вставки", hint: "Файлы для монтажа как вставки (видео-мемы, звуки)" },
 ];
 

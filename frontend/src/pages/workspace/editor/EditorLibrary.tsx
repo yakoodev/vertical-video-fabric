@@ -4,6 +4,7 @@ import { AgentPanel } from "@/pages/workspace/motion/AgentPanel";
 import { BackdropLive, canvasLabel } from "@/pages/workspace/canvasClip";
 import { GeneratePanel, MemesPanel, SoundsPanel, StickersPanel, TemplatesPanel, TextPanel } from "@/pages/workspace/motion/LibraryPanels";
 import { AssetDrawer } from "@/pages/workspace/AssetDrawer";
+import { PagesPanel } from "@/pages/workspace/motion/PagesPanel";
 import { formatDuration } from "@/components/ui";
 import { clipTimeOf, LIB_TABS } from "@/pages/workspace/editor/editorHelpers";
 import { CropFrame } from "@/pages/workspace/editor/CropFrame";
@@ -187,6 +188,7 @@ export function EditorLibrary({ session }: { session: DraftsEditorSession }) {
         {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
         {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={pickableAssets} clipId={activePlanId} /> : null}
         {libTab === "generate" && libTabs.some((t) => t.key === "generate") ? <GeneratePanel onAdd={addAtCursor} /> : null}
+        {libTab === "pages" && libTabs.some((t) => t.key === "pages") ? <PagesPanel onAdd={addAtCursor} clipId={activePlanId} /> : null}
         {libTab === "media" ? (
           <div className="ed-lib-media">
             <div className="ed-shelf-head">

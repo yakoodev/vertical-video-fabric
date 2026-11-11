@@ -73,6 +73,39 @@ export function MediaSection({ layer, patchProps }: { layer: LayerOf<"image" | "
   );
 }
 
+/** Страница сайта (слой page): версия снимка, ширина, телефон, куда листать. */
+export function PageSection({ layer, patchProps }: { layer: LayerOf<"page">; patchProps: PatchProps }) {
+  const p = layer.props;
+  const scroll = p.scroll ?? [];
+  const from = scroll[0]?.y ?? p.region?.y ?? 0;
+  const to = scroll.length > 1 ? scroll[scroll.length - 1].y : from;
+  const len = Math.max(0.5, layer.end - layer.start);
+  const setScroll = (a: number, b: number) =>
+    patchProps({
+      scroll: Math.abs(b - a) < 1 ? [] : [{ t: Math.min(0.5, len * 0.15), y: a }, { t: Math.max(0.6, len * 0.8), y: b }],
+    });
+  return (
+    <Section title="Страница сайта">
+      <div className="li-row">
+        <Num label="Снимок (id)" value={p.page_id ?? 0} min={0} max={1e9} onChange={(page_id) => patchProps({ page_id })} />
+        <Num label="Версия" value={p.version ?? 1} min={1} max={9999} onChange={(version) => patchProps({ version })} />
+      </div>
+      <div className="li-row" title="Прокрутка: верх окна в начале и в конце слоя, в px страницы">
+        <Num label="Листать с, px" value={from} min={0} max={200000} step={20} onChange={(y) => setScroll(y, to)} />
+        <Num label="до, px" value={to} min={0} max={200000} step={20} onChange={(y) => setScroll(from, y)} />
+      </div>
+      <div className="li-row">
+        <Num label="Ширина" value={p.w ?? 560} min={20} max={2400} step={10} onChange={(w) => patchProps({ w })} />
+        <Num label="Скругл." value={p.radius ?? 0} min={0} max={600} onChange={(radius) => patchProps({ radius })} />
+      </div>
+      <Toggle label="В телефоне" checked={p.device === "phone"} onChange={(on) => patchProps({ device: on ? "phone" : null })} />
+      {p.device === "phone" ? (
+        <Color label="Корпус" value={p.deviceColor ?? "#2c2c2e"} onChange={(deviceColor) => patchProps({ deviceColor })} />
+      ) : null}
+    </Section>
+  );
+}
+
 export function ShapeSection({ layer, patchProps }: { layer: LayerOf<"shape">; patchProps: PatchProps }) {
   return (
     <Section title="Фигура">
