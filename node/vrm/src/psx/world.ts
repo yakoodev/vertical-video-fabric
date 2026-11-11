@@ -65,6 +65,10 @@ export interface PsxShot {
   selfie?: { fov: number; back?: number };
   /** План, где героиня может быть не целиком или не в кадре (из-за плеча, наезд на экранчик): присутствие не проверяется. */
   free?: boolean;
+  /** Её глазами через видоискатель (серия 2): героиня, камера в руках и огонёк не рисуются, присутствие не проверяется. */
+  pov?: boolean;
+  /** Смотреть на голову Сборщика (доля 0..1 между точкой плана и его головой) — наезд на лицо. */
+  aimHead?: number | [number, number][];
 }
 
 /** Старая запись на камере (серия 1): другое место (вокзал), своё время записи p = t − t0, показывается сначала на
@@ -118,6 +122,8 @@ export interface PsxWorldSpec {
   turn?: { n: number; t?: number };
   /** Сериал-хоррор: улица вместо острова, огонёк, плёнка, интерфейс ДнД, закрытые глаза. */
   street?: StreetSpec;
+  /** Серия 2: место действия — вокзал (station.ts) вживую, с будкой кассы. */
+  hall?: StationSpec;
   wisp?: WispSpec;
   fx?: FxSpec;
   /** Фонарь в руке/от камеры: позиция, направление, цвет, сила, конус (градусы), дальность. */
@@ -308,7 +314,7 @@ function applyLocation(rec: boolean) {
   const base = psxBase;
   const ps = rec && spec.rec?.psx ? { ...base, ...spec.rec.psx, fog: { ...base.fog, ...spec.rec.psx.fog }, light: { ...base.light, ...spec.rec.psx.light } } : base;
   setPsx(u, ps);
-  gl.setClearColor(spec.street || rec ? new THREE.Color(ps.fog?.color || "#3a3c3a") : new THREE.Color(0x05061a), 1);
+  gl.setClearColor(spec.street || spec.hall || rec ? new THREE.Color(ps.fog?.color || "#3a3c3a") : new THREE.Color(0x05061a), 1);
   world.group.visible = !rec;
   things.group.visible = !rec;
   if (station) station.group.visible = rec;
@@ -318,6 +324,15 @@ function applyLocation(rec: boolean) {
   if (die) die.group.visible = false;
   if (camcorder) camcorder.group.visible = false;
   if (torch) torch.visible = false;
+}
+
+/** Значение по ключам [t, v] (линейно, за краями — крайние). */
+function keysAt(ks: [number, number][], t: number): number {
+  if (t <= ks[0][0]) return ks[0][1];
+  for (let i = 0; i + 1 < ks.length; i++) {
+    if (t < ks[i + 1][0]) return ks[i][1] + (ks[i + 1][1] - ks[i][1]) * ((t - ks[i][0]) / (ks[i + 1][0] - ks[i][0]));
+  }
+  return ks[ks.length - 1][1];
 }
 
 /** Сила по ключам [t, сила] (линейно), иначе постоянная. */
@@ -375,7 +390,11 @@ function view3d(t: number, rec: boolean, nested: boolean) {
     }
   } else {
     camera.position.set(c.pos[0] + (hh?.pos[0] ?? 0), c.pos[1] + (hh?.pos[1] ?? 0), c.pos[2] + (hh?.pos[2] ?? 0));
-    camera.lookAt(c.target[0] + (hh?.aim[0] ?? 0), c.target[1] + (hh?.aim[1] ?? 0), c.target[2]);
+    // Наведение на голову Сборщика (наезд видоискателя): точка взгляда смешивается с головой с долей aimHead.
+    const ak = typeof shot.aimHead === "number" ? shot.aimHead : shot.aimHead ? keysAt(shot.aimHead, local) : 0;
+    const gh = ak && !rec ? things.gaunt?.headAt(time) : null;
+    const tg = gh ? c.target.map((v, i) => v + (gh.getComponent(i) - v) * ak) : c.target;
+    camera.lookAt(tg[0] + (hh?.aim[0] ?? 0), tg[1] + (hh?.aim[1] ?? 0), tg[2]);
     if (hh) roll = hh.roll;
   }
   if (roll) camera.rotateZ(roll);
@@ -423,13 +442,20 @@ function view3d(t: number, rec: boolean, nested: boolean) {
     if (pr.headEdge < checks.edge) Object.assign(checks, { edge: pr.headEdge, edgeAt: t });
     const min = shot.minHeight ?? 0.08;
     // Селфи и планы «из-за плеча» (free): тело не целиком — присутствие не проверяем.
-    if (!shot.free && !shot.selfie && (!pr.inFront || pr.headEdge < 0 || pr.height < min)) {
+    if (!shot.free && !shot.selfie && !shot.pov && (!pr.inFront || pr.headEdge < 0 || pr.height < min)) {
       const msg = `t=${t.toFixed(3)}: героиня не в кадре (перед камерой ${pr.inFront}, голова от края ${pr.headEdge.toFixed(3)}, рост ${pr.height.toFixed(3)} < ${min})`;
       checks.failures.push(msg);
       throw new Error(msg);
     }
   }
+  // Видоискатель: её глазами — без неё, камеры в руках и огонька (огонёк на плёнку не попадает).
+  vrm.scene.visible = !shot.pov;
+  if (shot.pov) {
+    if (camcorder) camcorder.group.visible = false;
+    if (wisp) wisp.group.visible = false;
+  }
   gl.render(scene, camera);
+  vrm.scene.visible = true;
   return { presence: pr, time, kv };
 }
 
@@ -522,7 +548,7 @@ async function load(s: PsxWorldSpec) {
   gl = new THREE.WebGLRenderer({ canvas: glc, antialias: false, alpha: false, preserveDrawingBuffer: true });
   gl.setPixelRatio(1);
   gl.setSize(ps.lowW, ps.lowH, false);
-  gl.setClearColor(s.street ? new THREE.Color(ps.fog?.color || "#3a3c3a") : new THREE.Color(0x05061a), 1);
+  gl.setClearColor(s.street || s.hall ? new THREE.Color(ps.fog?.color || "#3a3c3a") : new THREE.Color(0x05061a), 1);
   gl.outputColorSpace = THREE.SRGBColorSpace;
   gl.toneMapping = THREE.NoToneMapping;
   post = new PsxPost(ps.lowW, ps.lowH, ps.dither !== false);
@@ -532,7 +558,7 @@ async function load(s: PsxWorldSpec) {
   camera = new THREE.PerspectiveCamera(30, ps.lowW / ps.lowH, 0.05, 200);
   lookObj = new THREE.Object3D();
   scene.add(lookObj);
-  world = s.street ? buildStreet(u, { fogColor: ps.fog?.color, ...s.street }) : buildIsland(u, s.island);
+  world = s.street ? buildStreet(u, { fogColor: ps.fog?.color, ...s.street }) : s.hall ? buildStation(u, s.hall) : buildIsland(u, s.island);
   scene.add(world.group);
   if (s.wisp) {
     wisp = buildWisp(u, s.wisp);
@@ -591,8 +617,61 @@ async function load(s: PsxWorldSpec) {
   const sbm = vrm.springBoneManager;
   if (still && sbm) for (const j of [...sbm.joints]) if (still.test(j.bone.name)) sbm.deleteJoint(j);
   if (s.idle) clips = await loadClips("http://scene3d.local/packs", s.idle.clips);
+  if (things.gaunt || thingsRec?.gaunt) {
+    const face = captureFace();
+    things.gaunt?.setFace(face);
+    thingsRec?.gaunt?.setFace(face);
+  }
   const meta: any = (vrm.meta as any) || {};
   return { warnings, meta: { tris: `${tris.trisBefore}→${tris.trisAfter}`, name: meta.name || meta.title, authors: meta.authors || meta.author, licence: meta.licenseUrl || meta.otherLicenseUrl } };
+}
+
+/** Её лицо для маски Сборщика (серия 2): снимок героини анфас без сцены и тумана, ровный свет, обесцвечен и
+ * побледнён, вырезан овалом (жёсткая альфа), 40×52 — пиксели PS1. Берётся один раз при загрузке. */
+function captureFace(): HTMLCanvasElement {
+  const vis = scene.children.map((c) => [c, c.visible] as const);
+  for (const c of scene.children) c.visible = c === vrm.scene;
+  setPsx(u, { ...psxBase, fog: { color: "#000000", near: 50, far: 60 },
+    light: { dir: [0.35, 0.6, 1], color: "#ffffff", power: 0.42, ambient: "#ffffff", ambientPower: 0.4 } });
+  u.psxPtCol.value.set(0, 0, 0);
+  u.psxSpCol.value.set(0, 0, 0);
+  gl.setClearColor(0x000000, 1);
+  vrm.scene.position.y = 0;
+  rig.apply({ expr: { ...(spec.heroine?.expr || {}), blink: 0 } });
+  vrm.expressionManager?.update();
+  vrm.scene.updateMatrixWorld(true);
+  const c = rig.point({ bone: "head", off: [0, 0.065, 0] }); // с чёлкой и прядями по бокам: узнаётся, что это она
+  const cam = new THREE.PerspectiveCamera(16, gl.domElement.width / gl.domElement.height, 0.05, 10);
+  cam.position.set(c.x, c.y, c.z + 1.0);
+  cam.lookAt(c);
+  cam.updateMatrixWorld(true);
+  gl.render(scene, cam);
+  const ppm = gl.domElement.height / (2 * Math.tan((8 * Math.PI) / 180)); // пикселей на метр на 1 м
+  const fw = Math.round(0.155 * ppm), fh = Math.round(0.2 * ppm);
+  const out = document.createElement("canvas");
+  out.width = 40;
+  out.height = 52;
+  const og = out.getContext("2d")!;
+  og.imageSmoothingEnabled = true;
+  og.drawImage(gl.domElement, Math.round(gl.domElement.width / 2 - fw / 2), Math.round(gl.domElement.height / 2 - fh / 2), fw, fh, 0, 0, 40, 52);
+  const img = og.getImageData(0, 0, 40, 52);
+  const d = img.data;
+  for (let y = 0; y < 52; y++) for (let x = 0; x < 40; x++) {
+    const i = (y * 40 + x) * 4;
+    const dx = (x + 0.5 - 20) / 19.5, dy = (y + 0.5 - 26) / 25.5;
+    if (dx * dx + dy * dy > 1) {
+      d[i + 3] = 0;
+      continue;
+    }
+    const l = 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+    // Обесцветить наполовину, чуть в холод — восковая бледность, но черты (глаза, брови, рот) читаются.
+    for (let k = 0; k < 3; k++) d[i + k] = Math.min(255, 6 + 0.92 * (l + (d[i + k] - l) * 0.5) * [0.96, 1.0, 1.02][k]);
+    d[i + 3] = 255;
+  }
+  og.putImageData(img, 0, 0);
+  for (const [o, v] of vis) o.visible = v;
+  setPsx(u, psxBase);
+  return out;
 }
 
 (window as any).__scene3d = {

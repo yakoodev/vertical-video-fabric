@@ -8,6 +8,7 @@
  */
 import * as THREE from "three";
 import { psxMaterial, type PsxUniforms } from "./psx.ts";
+import { buildGaunt, type Gaunt, type GauntSpec } from "./collector.ts";
 
 export interface WorldObject {
   kind: string;
@@ -38,7 +39,9 @@ export interface StalkerSpec {
   face?: [number, number];
   /** Вид: shadow — тонкая тень с глазами (остров); collector — «Сборщик» улицы: сутулый, длинные руки до земли,
    * голова свёрнута набок, без глаз. */
-  shape?: "shadow" | "collector";
+  shape?: "shadow" | "collector" | "gaunt";
+  /** Сборщик v2 (collector.ts, серия 2): путь, стоп-моушен, голова, её лицо на маске. */
+  gaunt?: Omit<GauntSpec, "show" | "height">;
   /** Идёт: к концу последнего окна видимости доходит сюда (x, y, z) — между окнами положение по прямой. */
   move?: [number, number, number];
   /** Бледное свечение тумана за ним (цвет): светлое пятно, на фоне которого тёмный силуэт читается сразу. */
@@ -228,6 +231,8 @@ export interface Things {
   update(t: number, camera: THREE.Camera): void;
   /** Виден ли «кто-то» на время t (для проверок и листа). */
   stalkerVisible(t: number): boolean;
+  /** Сборщик v2, если он есть (лицо на маску). */
+  gaunt: Gaunt | null;
 }
 
 /** Ступенчатое появление: 0 → 1.12 → 1 за 0.5 с, по 1/15 с. */
@@ -255,7 +260,9 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
   });
   // «Кто-то»: высокая тонкая тень, неосвещённая, почти чёрная, сквозь туман слабо; два тусклых пикселя глаз.
   let shadow: THREE.Group | null = null;
-  if (stalker?.shape === "collector") shadow = collector(u, stalker.height ?? 2.6);
+  const gaunt = stalker?.shape === "gaunt" ? buildGaunt(u, { ...stalker.gaunt!, show: stalker.show, height: stalker.height }) : null;
+  if (gaunt) group.add(gaunt.group);
+  else if (stalker?.shape === "collector") shadow = collector(u, stalker.height ?? 2.6);
   else if (stalker) {
     const h = stalker.height ?? 2.3;
     shadow = new THREE.Group();
@@ -313,7 +320,9 @@ export function buildThings(u: PsxUniforms, objects: WorldObject[] = [], stalker
   return {
     group,
     stalkerVisible,
+    gaunt,
     update(t: number, camera?: THREE.Camera) {
+      gaunt?.update(t);
       for (const x of live) {
         x.o.scale.setScalar(x.s * spawnScale(t, x.w.spawn));
         x.o.visible = x.o.scale.x > 0 && (x.w.until === undefined || t < x.w.until);

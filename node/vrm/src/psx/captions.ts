@@ -22,6 +22,14 @@ export interface CommentSpec {
   text: string;
   /** Подпись над окном: «ХОД 3 · ВЫБРАЛИ ВЫ». */
   title?: string;
+  /** «tiktok» — карточка как комментарий в TikTok (серия 2): аватар, ник серым, текст, «Ответить», сердце с числом. */
+  style?: "tiktok";
+  /** Слова, которые загораются жёлтым с момента t (по подстроке, без регистра). */
+  hl?: { w: string; t: number }[];
+  y?: number;
+  /** Строка над карточкой («1 комментарий») и возраст («1 д.»). */
+  header?: string;
+  age?: string;
 }
 
 export interface EndCardSpec {
@@ -128,8 +136,70 @@ export function drawTurn(g: CanvasRenderingContext2D, turn: number, t: number, t
 /** Набор по буквам: сколько символов видно через dt секунд при cps символов в секунду. */
 export const typed = (s: string, dt: number, cps = 40) => s.slice(0, Math.max(0, Math.floor(dt * cps)));
 
+/** Сердце-контур 9×8 px. */
+function heart(g: CanvasRenderingContext2D, x: number, y: number, col: string) {
+  const rows = ["01100110", "10011001", "10000001", "10000001", "01000010", "00100100", "00011000"];
+  g.fillStyle = col;
+  rows.forEach((r, j) => [...r].forEach((b, i) => b === "1" && g.fillRect(x + i, y + j, 1, 1)));
+}
+
+/** Карточка-комментарий в стиле TikTok (тёмная тема): шапка «1 комментарий», аватар-кружок с буквой, ник, текст
+ * (слова hl загораются), «1 д. Ответить», справа сердце-контур и число. Раскрывается ступеньками, текст сразу. */
+function drawTikTok(g: CanvasRenderingContext2D, c: CommentSpec, t: number) {
+  const W = g.canvas.width, x = 8, w = W - 40, y = c.y ?? 132; // справа — запас под кнопки TikTok
+  const words = c.text.split(/\s+/);
+  const lines = layoutLines(g, words, w - 52, 8);
+  const h = 44 + lines.length * 12 + (c.header ? 16 : 0);
+  const k = Math.min(1, (t - c.t0) / 0.25);
+  const hh = Math.max(4, Math.round((h * k) / 4) * 4);
+  const top = y + Math.round((h - hh) / 2);
+  g.fillStyle = "rgba(22,22,26,0.94)";
+  g.fillRect(x + 2, top, w - 4, hh);
+  g.fillRect(x, top + 2, w, hh - 4);
+  g.fillRect(x + 1, top + 1, w - 2, hh - 2);
+  if (k < 1) return;
+  let yy = y + 8;
+  if (c.header) {
+    g.font = fontPx(8);
+    plain(g, c.header, Math.round(x + (w - g.measureText(c.header).width) / 2), yy, "#e8e8ec");
+    g.fillStyle = "#3a3a42";
+    g.fillRect(x + 6, yy + 12, w - 12, 1);
+    yy += 18;
+  }
+  // Аватар: пиксельный кружок 18 px с буквой ника.
+  const ax = x + 8, ay = yy, R = 9;
+  for (let j = 0; j < 2 * R; j++) for (let i = 0; i < 2 * R; i++) {
+    const dx = i + 0.5 - R, dy = j + 0.5 - R;
+    if (dx * dx + dy * dy <= R * R) {
+      g.fillStyle = j < R ? "#d86890" : "#a84a78";
+      g.fillRect(ax + i, ay + j, 1, 1);
+    }
+  }
+  g.font = fontPx(8);
+  const ch = c.nick[0].toUpperCase();
+  plain(g, ch, Math.round(ax + R - g.measureText(ch).width / 2), ay + 5, "#ffffff");
+  const tx = x + 34;
+  plain(g, c.nick, tx, yy, "#a0a0aa");
+  let i = 0;
+  lines.forEach((line, li) => {
+    let lx = tx;
+    for (const wd of line) {
+      const on = c.hl?.some((h) => t >= h.t && wd.toLowerCase().includes(h.w.toLowerCase()));
+      plain(g, wd, lx, yy + 14 + li * 12, on ? "#f8d848" : "#f4f4f6");
+      lx += g.measureText(wd + " ").width;
+      i++;
+    }
+  });
+  const by = yy + 16 + lines.length * 12;
+  plain(g, `${c.age ?? "1 д."}  Ответить`, tx, by, "#80808a");
+  heart(g, x + w - 18, yy + 14, "#a0a0aa");
+  const n = String(c.likes);
+  plain(g, n, Math.round(x + w - 14 - g.measureText(n).width / 2), yy + 25, "#a0a0aa");
+}
+
 export function drawComment(g: CanvasRenderingContext2D, c: CommentSpec, t: number) {
   if (t < c.t0 || t >= c.t1) return;
+  if (c.style === "tiktok") return drawTikTok(g, c, t);
   const W = g.canvas.width, x = 10, w = W - 20, y = 150;
   const lines = layoutLines(g, c.text.split(/\s+/), w - 16, 8).map((l) => l.join(" ")).slice(0, 5);
   const h = 30 + lines.length * 11;

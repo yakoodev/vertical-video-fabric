@@ -19,6 +19,12 @@ export interface StationSpec {
   /** Часы показывают (ч, мин). */
   clock?: [number, number];
   sign?: string;
+  /** Зал развёрнут на 180° (серия 2: героиня у кассы смотрит в +Z — на проход к платформам). */
+  flip?: boolean;
+  /** Отдельно стоящая будка кассы (мир, после разворота): центр (x, z), поворот (рад). За ней прячется героиня. */
+  booth?: { pos: [number, number]; rot?: number };
+  /** Яркость ламп (1 — как на записи серии 1); меньше — зал темнее, больше мёртвых трубок. */
+  lamps?: number;
 }
 
 const faceted = (g: THREE.BufferGeometry) => {
@@ -132,6 +138,7 @@ function boardTex(g: CanvasRenderingContext2D) {
 export function buildStation(u: PsxUniforms, s: StationSpec = {}): World {
   const r = rng(s.seed ?? 29);
   const group = new THREE.Group();
+  const lamps = s.lamps ?? 1;
   const mat = (o: Parameters<typeof psxMaterial>[1]) => psxMaterial(u, o);
   const add = (g: THREE.BufferGeometry, m: THREE.Material, at: [number, number, number] = [0, 0, 0], rot: [number, number, number] = [0, 0, 0]) => {
     const mesh = new THREE.Mesh(faceted(g), m);
@@ -269,11 +276,11 @@ export function buildStation(u: PsxUniforms, s: StationSpec = {}): World {
   const update = (t: number) => {
     // Лампы: у каждой свой ритм; в «плохие» секунды мигают часто, три почти мертвы.
     for (const { m, k } of tubes) {
-      const dead = k % 5 === 3;
+      const dead = k % 5 === 3 || (lamps < 1 && k % 3 === 1);
       const f = Math.floor(t * 12 + k * 7);
       const bad = Math.sin(t * 0.7 + k) > 0.55;
       const on = dead ? (Math.sin(f * 1.7 + k) > 0.8 ? 0.7 : 0.08) : bad ? (Math.sin(f * 3.1 + k) > -0.2 ? 1 : 0.15) : 1;
-      m.color.copy(tmpC.set("#e0ffe8")).multiplyScalar(on);
+      m.color.copy(tmpC.set("#e0ffe8")).multiplyScalar(on * lamps);
     }
     for (let i = 0; i < N; i++) {
       const [a, b, c, d] = seed[i];
@@ -283,5 +290,37 @@ export function buildStation(u: PsxUniforms, s: StationSpec = {}): World {
     }
     (pg.attributes.position as THREE.BufferAttribute).needsUpdate = true;
   };
-  return { group, update, radius: 0 };
+  if (!s.flip && !s.booth) return { group, update, radius: 0 };
+  const outer = new THREE.Group();
+  outer.add(group);
+  if (s.flip) group.rotation.y = Math.PI;
+  if (s.booth) outer.add(booth(u, T.wood, T.cash, s.booth.pos, s.booth.rot ?? 0));
+  return { group: outer, update, radius: 0 };
+}
+
+/** Будка кассы: деревянный низ, крашеный верх, окошко с тёмным стеклом и полочкой спереди (+Z), вывеска «КАССА»,
+ * козырёк; сзади (−Z) — глухая стена с дверцей. 1.5 × 2.4 × 1.3 м. */
+function booth(u: PsxUniforms, wood: THREE.Texture, cash: THREE.Texture, at: [number, number], rot: number): THREE.Group {
+  const g = new THREE.Group();
+  const mat = (o: Parameters<typeof psxMaterial>[1]) => psxMaterial(u, o);
+  const box = (w: number, h: number, d: number, m: THREE.Material, x: number, y: number, z: number) => {
+    const mesh = new THREE.Mesh(faceted(new THREE.BoxGeometry(w, h, d)), m);
+    mesh.position.set(x, y, z);
+    g.add(mesh);
+    return mesh;
+  };
+  const W = 1.5, D = 1.3;
+  box(W, 1.1, D, mat({ map: wood }), 0, 0.55, 0);
+  box(W, 1.2, D, mat({ color: "#4a5a50" }), 0, 1.7, 0);
+  box(W + 0.16, 0.08, D + 0.2, mat({ color: "#1e2622" }), 0, 2.34, 0.04);
+  box(1.0, 0.62, 0.04, mat({ color: "#0c1210", lit: 0.3 }), 0, 1.62, D / 2 + 0.005); // окошко
+  box(1.1, 0.05, 0.22, mat({ color: "#3a3024" }), 0, 1.28, D / 2 + 0.1); // полочка
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(1.0, 0.25), mat({ map: cash, lit: 0.5 }));
+  sign.position.set(0, 2.12, D / 2 + 0.02);
+  g.add(sign);
+  box(0.62, 1.9, 0.04, mat({ color: "#36403a" }), -0.3, 0.97, -D / 2 - 0.005); // дверца сзади
+  box(0.04, 0.12, 0.05, mat({ color: "#8a8a80" }), -0.05, 1.0, -D / 2 - 0.03); // ручка
+  g.position.set(at[0], 0, at[1]);
+  g.rotation.y = rot;
+  return g;
 }
