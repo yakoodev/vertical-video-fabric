@@ -92,10 +92,10 @@ export const CAMERA_MOVES: Record<string, MoveDef> = {
   },
   punch_in: {
     meta: { name: "punch_in", title: "Рывок вперёд", ru: "Резкий короткий наезд с лёгким перелётом — акцент на реакции или фразе.", tags: ["meme"],
-      params: [P.target, P.distance(2.4), P.yaw, P.height(0.1), P.fov(35), P.at, { name: "speed", type: "number", default: 0.22, min: 0.08, max: 1, ru: "длина рывка, с" },
+      params: [P.target, P.distance(2.4), P.yaw, P.height(0.1), P.fov(35), P.at, { name: "speed", type: "number", default: 0.3, min: 0.08, max: 1, ru: "длина рывка, с" },
         P.strength(1, "насколько ближе (1 — почти вдвое)")] },
     fn: (u, c) => {
-      const at = c.p.at ?? 0.15, sp = (c.p.speed ?? 0.22) / Math.max(0.1, c.duration), s = c.p.strength ?? 1;
+      const at = c.p.at ?? 0.15, sp = (c.p.speed ?? 0.3) / Math.max(0.1, c.duration), s = c.p.strength ?? 1;
       const k = u <= at ? 0 : easeOutBack((u - at) / sp, 1.6);
       const d = c.distance * (1 - 0.45 * s * k);
       return { position: still(c, d), target: c.target, fov: c.fov, roll: 0 };

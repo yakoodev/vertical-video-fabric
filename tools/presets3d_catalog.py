@@ -258,19 +258,21 @@ def build_sheet(category: str) -> Path:
 
 def main(argv: list[str] | None = None) -> int:
     global OUT
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--exec" in argv:
+        # Любая команда под замком рендера: --exec [--] cmd args… (всё после --exec — команда).
+        cmd = argv[argv.index("--exec") + 1:]
+        cmd = cmd[1:] if cmd[:1] == ["--"] else cmd
+        wait_memory()
+        with RenderLock(OUT / ".render.lock"):
+            return subprocess.run(cmd, cwd=str(ROOT)).returncode
+    ap =argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--category", default="all")
     ap.add_argument("--only", default="")
     ap.add_argument("--out", default=str(OUT))
     ap.add_argument("--sheets-only", action="store_true")
-    ap.add_argument("--exec", nargs=argparse.REMAINDER, help="выполнить команду под замком рендера и проверкой памяти")
     a = ap.parse_args(argv)
     OUT = Path(a.out)
-    if a.exec:
-        cmd = a.exec[1:] if a.exec[0] == "--" else a.exec
-        wait_memory()
-        with RenderLock(OUT / ".render.lock"):
-            return subprocess.run(cmd, cwd=str(ROOT)).returncode
     cats = presets3d.CATEGORIES if a.category == "all" else tuple(a.category.split(","))
     only = {x for x in a.only.split(",") if x}
     for cat in cats:

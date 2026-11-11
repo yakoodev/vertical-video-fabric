@@ -192,6 +192,15 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
     frames = round(duration * fps)
     if frames > MAX_FRAMES:
         raise SceneSpecError(f"{frames} кадров — больше {MAX_FRAMES}: короче duration или меньше fps")
+    if spec.get("presets") is not None:
+        # 3D-пресеты (стиль, свет, камера, атмосфера, окружение, игра, переходы) — разворачивает движок; здесь — имена.
+        from app.presets3d import PresetError, validate_presets
+
+        ids = [c.get("id") for c in spec.get("characters") or [] if isinstance(c, dict)]
+        try:
+            validate_presets(spec["presets"], duration=duration, characters=ids or None)
+        except PresetError as exc:
+            raise SceneSpecError("presets: " + "; ".join(exc.problems)) from exc
 
     room = spec.get("room")
     if room is not None:
@@ -311,6 +320,9 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
             raise SceneSpecError(f"overlays[{i}]: у HUD нужны values [{{t, value}}]")
 
     cam = spec.get("camera")
+    preset_cam = isinstance(spec.get("presets"), dict) and bool(spec["presets"].get("camera"))
+    if preset_cam and cam is None:
+        cam = {"keys": [{"t": 0}]}  # ключи камеры даст пресет (движок развернёт presets.camera)
     if not isinstance(cam, dict) or not cam.get("keys"):
         raise SceneSpecError("camera.keys: нужен хотя бы один ключ камеры")
     _keys(cam["keys"], "camera.keys", duration)

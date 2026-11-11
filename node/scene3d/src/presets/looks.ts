@@ -50,7 +50,7 @@ export const LOOKS: Record<string, LookDef> = {
       stylize: { fallbackOnly: true, halftone: 0.5, paper: 0.25 } },
   },
   psx: {
-    meta: { name: "psx", title: "PS1 (PSX)", ru: "Как игра 1998 года: низкое разрешение, «дрожащие» вершины, 15-битный цвет с дизерингом, близкий туман. Ностальгия, лиминальные пространства, хоррор.", tags: ["retro", "horror"] },
+    meta: { name: "psx", title: "Ретро PS1", ru: "Как игра 1998 года: низкое разрешение, «дрожащие» вершины, 15-битный цвет с дизерингом, близкий туман. Ностальгия, лиминальные пространства, хоррор.", tags: ["retro", "horror"] },
     env: { toneMapping: "neutral", fogPull: 0.55, shadowSoft: 0.3,
       matstyle: { kind: "psx", snap: 150, flat: false },
       post: { ao: 0, bloom: false, vignette: 0.28, grain: 0, ca: 0, grade: GR({ saturation: 0.95, contrast: 1.04 }) },
