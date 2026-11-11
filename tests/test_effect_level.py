@@ -77,7 +77,7 @@ def test_music_from_url_downloads_audio_only(tmp_path, monkeypatch):
         real_run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=440:d=2", str(out)], check=True)
         return subprocess.CompletedProcess(args, 0, "Cool Track\n", "")
 
-    monkeypatch.setattr(music_import.subprocess, "run", fake_run)
+    monkeypatch.setattr("app.ytdlp_net.subprocess.run", fake_run)  # yt-dlp зовётся через общий запуск
     track = music_import.import_music_from_url(store, "https://www.youtube.com/watch?v=abc")
     assert track["label"] == "Cool Track" and track["volume"] == 0.5
     assert Path(track["file_path"]).parent == settings.audio_dir
