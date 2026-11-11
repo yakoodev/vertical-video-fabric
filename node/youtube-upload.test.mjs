@@ -5,7 +5,7 @@ import test from 'node:test';
 import {
   activeChannelFromMenu, brandUploadRequest, identitiesFromAccountsList, matchIdentity, parseChannelTarget
 } from './youtube-channel.mjs';
-import { clientFetch, isRetryableUploadError, metadataUpdate, run, withRetry } from './youtube-upload.mjs';
+import { clientFetch, errorDetail, isRetryableUploadError, metadataUpdate, run, withRetry } from './youtube-upload.mjs';
 
 function fakeClient({ uploadErrors = [], metadataError = null } = {}) {
   const calls = { upload: 0, metadata: [] };
@@ -55,6 +55,19 @@ test('metadata failure does not fail the upload', async () => {
   const result = await run({ ...base, madeForKids: false }, { createClient: () => client, readFile, sleep });
   assert.equal(result.ok, true);
   assert.match(result.metadataError, /metadata_update 400/);
+});
+
+test('metadata error carries the server response body (InnertubeError.info)', async () => {
+  const error = Object.assign(new Error('Request to https://www.youtube.com/youtubei/v1/video_manager/metadata_update failed with status code 400'), {
+    info: '{"error":{"code":400, "message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}'
+  });
+  const { client } = fakeClient({ metadataError: error });
+  const result = await run({ ...base, madeForKids: false }, { createClient: () => client, readFile, sleep });
+  assert.equal(result.ok, true);
+  assert.match(result.metadataError, /status code 400 \| .*INVALID_ARGUMENT/);
+  assert.equal(errorDetail(new Error('plain')), 'plain');
+  assert.match(errorDetail({ message: 'm', info: { a: 1 } }), /m \| \{"a":1\}/);
+  assert.ok(errorDetail({ message: 'm', info: 'x'.repeat(5000) }).length < 1100);
 });
 
 test('pre-createvideo failures are retried, others are not', async () => {
