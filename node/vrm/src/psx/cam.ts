@@ -18,6 +18,8 @@ export interface CamSpec {
   date: string;
   /** Батарея садится с этого времени (с): три деления → одно мигающее. */
   lowAt?: number;
+  /** Надпись севшей батареи (по умолчанию «LOW BATT», серия 2 — «БАТАРЕЯ», мигает). */
+  lowText?: string;
 }
 
 const fontPx = (px: number) => `${px}px ${HUD_FONT}, monospace`;
@@ -84,7 +86,11 @@ export function drawCam(g: CanvasRenderingContext2D, c: CamSpec, t: number, hunt
   g.fillRect(bx + 22, by + 3, 2, 4);
   const seg = low ? 1 : 3;
   for (let i = 0; i < seg; i++) g.fillRect(bx + 3 + i * 6, by + 3, 5, 4);
-  if (low) fringe(g, "LOW BATT", W - 90, 36, RED);
+  if (low && (!c.lowText || Math.floor(t * 2.5) % 2 === 0)) {
+    const s = c.lowText ?? "LOW BATT";
+    g.font = fontPx(8);
+    fringe(g, s, W - 20 - Math.ceil(g.measureText(s).width), 36, RED);
+  }
   // Штамп: часы и минуты стоят на 3:17, секунды идут. Дата справа.
   const sec = Math.floor((c.sec0 ?? 0) + dt) % 60;
   fringe(g, `${c.stamp}:${String(sec).padStart(2, "0")}`, 20, H - 118);
