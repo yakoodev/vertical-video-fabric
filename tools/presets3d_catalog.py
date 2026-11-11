@@ -81,12 +81,12 @@ class RenderLock:
         self.path.unlink(missing_ok=True)
 
 
-def run_render(args: list[str], out_dir: Path, timeout: float = 600) -> dict:
+def run_render(args: list[str], out_dir: Path, timeout: float = 600, allow_black: bool = False) -> dict:
     wait_memory()
     with RenderLock(OUT / ".render.lock"):
         proc = subprocess.run(["node", str(RENDER), *args, "--gl", "gpu", "--packs", PACKS], capture_output=True, text=True,
                               encoding="utf-8", timeout=timeout, cwd=str(ROOT))
-    if proc.returncode != 0:
+    # Код 3 — «чёрные кадры»: у переходов через чёрное (ирис, затемнение) они задуманы — тогда это не ошибка.
         raise RuntimeError((proc.stderr or proc.stdout).strip()[-800:])
     line = (proc.stdout or "").strip().splitlines()[-1]
     return json.loads(line)

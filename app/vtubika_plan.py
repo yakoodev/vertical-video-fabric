@@ -82,6 +82,14 @@ def validate_plan(plan: dict) -> None:
         raise PlanError(f"образ: один из {', '.join(U.LOOKS)}")
     if not (sents[0].get("shots") or []):
         raise PlanError("у первой фразы нет кадра")
+    if plan.get("presets3d") is not None:
+        # 3D-пресеты поверх истории: стиль картинки, свет, настроение, эффекты, переходы (комнату и камеру ведёт история).
+        from app.presets3d import PresetError, validate_presets
+
+        try:
+            validate_presets(plan["presets3d"])
+        except PresetError as exc:
+            raise PlanError("presets3d: " + "; ".join(exc.problems)) from exc
     for n, s in enumerate(sents):
         if not str(s.get("text") or "").strip():
             raise PlanError(f"фраза {n + 1}: пустой текст")
@@ -401,6 +409,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
             "characters": characters, "overlays": overlays,
             "camera": {"fov": 40, "keys": cam_keys, "clamp": False, "fill": room["fill"]},
             "quality": {"shadows": True, "shadowSize": 1024, "antialias": True}}
+    if plan.get("presets3d"):
+        spec["presets"] = plan["presets3d"]
     sent_out = [{"n": n + 1, "text": s["text"], "t0": times[n][0]["start"], "t1": times[n][-1]["end"],
                  "show": s.get("show") or []} for n, s in enumerate(plan["sentences"])]
     for so in sent_out:
