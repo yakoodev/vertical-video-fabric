@@ -125,6 +125,9 @@ export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number,
         q = new THREE.Quaternion(acc4[0], acc4[1], acc4[2], acc4[3]).normalize();
       }
       if (tr.scale !== undefined && tr.scale !== 1) q = ID.clone().slerp(q, tr.scale);
+      // Позвоночник CMU — от вертикали (tools/cmu_to_vrm.py), у клипов библиотеки — от таза: под тазом основы
+      // (сидит, наклонён) поворот CMU пересчитывается в «от таза», иначе корпус наклоняется дважды.
+      if (b === "spine" && base?.hips && (c as { spine?: string }).spine !== "hips") q = base.hips.clone().invert().multiply(q);
       acc[b] = acc[b] ? acc[b].slerp(q, w) : ID.clone().slerp(q, w);
     }
   }
