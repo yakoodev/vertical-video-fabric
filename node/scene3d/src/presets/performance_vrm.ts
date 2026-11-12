@@ -250,7 +250,7 @@ export const VRM_PERF: Record<string, VrmPerfFn> = {
       arms: [arms(t0, d - 0.2, { [s]: null }, 0.4, 0.5)],
       hands: [{ t: r4(t0), dur: 0.3, [s]: "wave", hold: r4(d - 0.2), out: 0.4 }],
       // Клип уводит руку далеко в сторону (за край крупного плана) — плечо вперёд, к камере.
-      postures: [posture(t0, d, { [`${s}UpperArm`]: [0, left ? -24 : 24, left ? 4 : -4] }, 0.45, 0.4)],
+      postures: [posture(t0, d, { [`${s}UpperArm`]: [0, left ? -12 : 12, left ? 8 : -8] }, 0.45, 0.4)],
     });
   },
   talk_hands: (t0, d, p) => merge({
