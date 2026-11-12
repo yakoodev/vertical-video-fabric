@@ -17,6 +17,9 @@ RUN npx --yes esbuild@0.28.2 /motion/node/motion-render.ts --bundle --platform=n
 WORKDIR /scene3d
 RUN npm init -y >/dev/null && npm install --no-audit --no-fund three@0.185.0 @pixiv/three-vrm@3.5.5 esbuild@0.28.2
 COPY node/scene3d/src /scene3d/src
+# Плоские экраны 3D (src/ui_flat.ts) рисуются компонентами плоской темы редактора: импорт
+# ../../../frontend/src/motion/flat из /scene3d/src указывает в /frontend/src/motion/flat.
+COPY frontend/src/motion/flat /frontend/src/motion/flat
 RUN npx esbuild /scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify     --outfile=/scene3d/dist/scene3d.js --log-level=warning
 # VRM-персонажи 3D-серий (node/vrm, app/s3d_render.py): свой бандл; src импортирует ../../scene3d/src, поэтому
 # лежит рядом (/vrm/src), а three и three-vrm берутся из /scene3d/node_modules (NODE_PATH).
