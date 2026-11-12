@@ -56,6 +56,16 @@ test("deskbot: позы рук из четырёх углов, нужные вы
   for (const name of ["facepalm", "flail", "jab"]) assert.ok(ARM_POSES[name], name);
 });
 
+test("critter: ручки из четырёх чисел, опорные эмоции и имена сценариев deskbot есть", async () => {
+  const { NUB_POSES, CRITTER_EXPR } = await import("./src/critter.ts");
+  const { ARM_POSES, FACE_EXPR } = await import("./src/deskbot.ts");
+  for (const [name, a] of Object.entries(NUB_POSES)) assert.equal(a.length, 4, name);
+  for (const name of ["happy", "annoyed", "surprised", "angry", "sad", "smug"]) assert.ok(CRITTER_EXPR[name], name);
+  // Сценарии робота (пилот 2) идут на зверька без правок: все его выражения и позы рук известны.
+  for (const name of Object.keys(FACE_EXPR)) assert.ok(CRITTER_EXPR[name], `выражение ${name}`);
+  for (const name of Object.keys(ARM_POSES)) assert.ok(NUB_POSES[name], `поза рук ${name}`);
+});
+
 /* ---------- время ---------- */
 
 test("изинги: концы 0 и 1, inOutSine симметричен", () => {

@@ -25,6 +25,7 @@ import { coinJar, drawingTablet, stylus } from "./voxelprops.ts";
 import { Overlays, type OverlaySpec } from "./overlay.ts";
 import { resolveToon, Toon, type ToonSpec } from "./toon.ts";
 import { createDeskbot, type DeskbotSpec } from "./deskbot.ts";
+import { createCritter, critterHelper, type CritterSpec } from "./critter.ts";
 import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
@@ -233,6 +234,7 @@ class Engine {
     for (const c of spec.characters || []) {
       const ch = c.style === "voxel" ? createVoxelCharacter(c as VoxelCharacterSpec)
         : c.style === "deskbot" ? createDeskbot(c as DeskbotSpec)
+        : c.style === "critter" ? createCritter(c as CritterSpec)
         : await createCharacter(c as CharacterSpec, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
       this.scene.add(ch.root);
@@ -417,7 +419,7 @@ class Engine {
         : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p)
         : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p)
         : kind === "monitor" ? monitor(p) : kind === "keyboard" ? keyboard(p) : kind === "plant" ? plant(p)
-        : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p) : kind === "helper_bot" ? helperBot(p)
+        : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p) : kind === "helper_bot" ? (p.style === "voxel" ? critterHelper(p) : helperBot(p))
         : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
