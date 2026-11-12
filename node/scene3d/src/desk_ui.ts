@@ -9,10 +9,15 @@
  *   счётчик просмотров растёт), ``graph`` (график сайта уходит вверх, «+340%», монетки), ``text`` (крупная надпись).
  *   Нарисованы плоскими цветами с толстым контуром — под toon-обводку сцены. Новый рисунок — функция в словаре.
  *
- * Никаких чужих логотипов: иконка вкладки — цветной кружок с буквой, название — просто текст.
+ * Оформление — плоская тема (ui_flat.ts: те же токены и значки, что у плашек монтажа): по умолчанию светлая, акцент
+ * — ``accent`` страницы; ``theme`` окна — red | dark | light | brand, ``toon`` — прежний вид с тёплой бумагой. Картинки
+ * облачков остаются рисованными, плоские у них — счётчик просмотров и адресная строка (``theme`` в panelParams).
+ *
+ * Никаких чужих логотипов: иконка вкладки — цветная плашка с буквой, название — просто текст.
  */
 import { UI_FONT, roundRect } from "./ui.ts";
 import { ease } from "./timeline.ts";
+import { drawFlatIcon, flatComponent, flatFont, flatPill, flatSize, isToon, rgbaOf, screenPalette, windowDots } from "./ui_flat.ts";
 
 const font = (w: number, px: number) => `${w} ${Math.round(px)}px ${UI_FONT}, Arial, sans-serif`;
 const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
@@ -35,9 +40,13 @@ export interface ChatMessage {
   panelH?: number;
 }
 export interface ChatPage { kind?: "chat"; name: string; accent?: string; bg?: string; bubble?: string; botBubble?: string;
-  letter?: string; messages: ChatMessage[]; placeholder?: string }
-export interface BrowserTab { title: string; icon?: string; letter?: string; page: ChatPage }
-export interface BrowserSpec { tabs: BrowserTab[]; chrome?: string; scale?: number }
+  letter?: string; messages: ChatMessage[]; placeholder?: string;
+  /** Плоская тема страницы (red | dark | light | brand; toon — прежний мультяшный вид); подпись под именем. */
+  theme?: string; status?: string }
+/** url — адресная строка под вкладками (плоская тема). */
+export interface BrowserTab { title: string; icon?: string; letter?: string; url?: string; page: ChatPage }
+/** theme — плоская тема окна (по умолчанию light, акцент — accent страницы); "toon" — прежний вид (chrome — цвет рамки). */
+export interface BrowserSpec { tabs: BrowserTab[]; chrome?: string; scale?: number; theme?: string }
 
 function wrapLines(g: CanvasRenderingContext2D, text: string, max: number): string[] {
   const out: string[] = [];
@@ -55,11 +64,54 @@ function wrapLines(g: CanvasRenderingContext2D, text: string, max: number): stri
   return out;
 }
 
+/**
+ * Оформление окна: плоская тема (по умолчанию светлая, акцент — `accent` страницы) или прежний мультяшный вид
+ * (`theme: "toon"` — тёплая бумага и контур под toon-обводку сцены).
+ */
+interface Look {
+  toon: boolean;
+  chrome: string;
+  bg: string;
+  ink: string;
+  muted: string;
+  faint: string;
+  line: string;
+  head: string;
+  me: string;
+  meInk: string;
+  bot: string;
+  botInk: string;
+  input: string;
+  inputLine: string;
+  accent: string;
+  accentInk: string;
+  tableHead: string;
+  font: (w: number, px: number) => string;
+}
+
+function lookOf(page: ChatPage, theme: unknown, chrome?: string): Look {
+  if (isToon(theme)) {
+    return {
+      toon: true, chrome: chrome || "#e6dccd", bg: page.bg || "#fbf7f1", ink: "#2b1d16", muted: "rgba(43,29,22,0.6)",
+      faint: "rgba(43,29,22,0.38)", line: "rgba(43,29,22,0.18)", head: "rgba(0,0,0,0.04)", me: page.bubble || "#f6cdb6",
+      meInk: "#2b1d16", bot: page.botBubble || "#efe6da", botInk: "#2b1d16", input: "#ffffff", inputLine: "rgba(43,29,22,0.18)",
+      accent: page.accent || "#d9774b", accentInk: "#ffffff", tableHead: "rgba(217,119,75,0.18)", font,
+    };
+  }
+  const pal = screenPalette(theme, "light", page.accent);
+  return {
+    toon: false, chrome: pal.surface3, bg: rgbaOf(pal.surface, 1), ink: pal.text, muted: pal.muted, faint: pal.faint,
+    line: pal.border, head: pal.surface, me: pal.accent, meInk: pal.accentText, bot: pal.surface2, botInk: pal.text,
+    input: pal.surface2, inputLine: pal.border, accent: pal.accent, accentInk: pal.accentText, tableHead: pal.accentSoft,
+    font: (w: number, px: number) => flatFont("body", w, px),
+  };
+}
+
 /** Высота блока ответа и отрисовка (draw=false — только замер). */
-function blockLayout(g: CanvasRenderingContext2D, b: ChatBlock, x: number, y: number, w: number, s: number, draw: boolean, ink: string): number {
+function blockLayout(g: CanvasRenderingContext2D, b: ChatBlock, x: number, y: number, w: number, s: number, draw: boolean, L: Look): number {
   if (b.hr) {
     if (draw) {
-      g.fillStyle = "rgba(0,0,0,0.12)";
+      g.fillStyle = rgbaOf(L.line);
       g.fillRect(x, y + 10 * s, w, 3 * s);
     }
     return 24 * s;
@@ -67,16 +119,16 @@ function blockLayout(g: CanvasRenderingContext2D, b: ChatBlock, x: number, y: nu
   if (b.table) {
     const rows = b.table, cols = rows[0]?.length || 1, rh = 50 * s, cw = w / cols;
     if (draw) {
-      g.lineWidth = 3 * s;
-      g.strokeStyle = "rgba(60,40,30,0.35)";
+      g.lineWidth = (L.toon ? 3 : 2) * s;
+      g.strokeStyle = L.toon ? "rgba(60,40,30,0.35)" : rgbaOf(L.line);
       rows.forEach((r, i) => {
         if (i === 0) {
-          g.fillStyle = "rgba(217,119,75,0.18)";
+          g.fillStyle = rgbaOf(L.tableHead);
           g.fillRect(x, y, w, rh);
         }
         r.forEach((c, j) => {
-          g.fillStyle = ink;
-          g.font = font(i === 0 ? 800 : 600, 30 * s);
+          g.fillStyle = rgbaOf(L.ink);
+          g.font = L.font(i === 0 ? 800 : 600, 30 * s);
           g.textAlign = "center";
           g.fillText(c, x + cw * (j + 0.5), y + i * rh + rh * 0.68);
         });
@@ -98,11 +150,11 @@ function blockLayout(g: CanvasRenderingContext2D, b: ChatBlock, x: number, y: nu
     return rows.length * rh + 16 * s;
   }
   const head = !!b.h;
-  g.font = font(head ? 800 : 500, (head ? 34 : 30) * s);
+  g.font = L.font(head ? 800 : 500, (head ? 34 : 30) * s);
   const lines = wrapLines(g, b.h || b.p || "", w);
   const lh = (head ? 46 : 42) * s;
   if (draw) {
-    g.fillStyle = ink;
+    g.fillStyle = rgbaOf(L.ink);
     lines.forEach((l, i) => g.fillText(l, x, y + lh * (i + 0.78)));
   }
   return lines.length * lh + 6 * s;
@@ -112,94 +164,180 @@ function blockLayout(g: CanvasRenderingContext2D, b: ChatBlock, x: number, y: nu
 export function drawBrowser(g: CanvasRenderingContext2D, W: number, H: number, b: BrowserSpec, t: number, active: number,
   badge?: { tab: number; text: string; t: number } | null) {
   const s = (b.scale ?? 1) * (W / 1280);
+  const cur = b.tabs[Math.max(0, Math.min(b.tabs.length - 1, active))];
+  const L = lookOf(cur?.page || { name: "", messages: [] }, b.theme, b.chrome);
   g.save();
-  g.fillStyle = b.chrome || "#e6dccd";
+  g.fillStyle = rgbaOf(L.chrome);
   g.fillRect(0, 0, W, H);
-  // Вкладки.
-  const tabH = 78 * s, tabW = Math.min(420 * s, (W - 40 * s) / Math.max(1, b.tabs.length));
+  // Плоская тема: «светофор» окна слева, вкладки за ним; мультяшный вид — вкладки от края.
+  const tabH = 78 * s;
+  const x0 = L.toon ? 18 * s : 140 * s;
+  if (!L.toon) windowDots(g, 36 * s, 12 * s + tabH * 0.47, 10 * s, 32 * s);
+  const tabW = Math.min(420 * s, (W - x0 - 22 * s) / Math.max(1, b.tabs.length));
   b.tabs.forEach((tab, i) => {
-    const x = 18 * s + i * (tabW + 8 * s), y = 12 * s;
+    const x = x0 + i * (tabW + 8 * s), y = 12 * s;
     const on = i === active;
-    g.fillStyle = on ? (tab.page.bg || "#fbf7f1") : "rgba(255,255,255,0.35)";
-    roundRect(g, x, y, tabW, tabH, 18 * s);
-    g.fill();
-    g.fillStyle = tab.icon || "#d9774b";
-    g.beginPath();
-    g.arc(x + 38 * s, y + tabH * 0.47, 17 * s, 0, Math.PI * 2);
-    g.fill();
-    if (tab.letter) {
-      g.fillStyle = "#ffffff";
-      g.font = font(900, 20 * s);
-      g.textAlign = "center";
-      g.fillText(tab.letter, x + 38 * s, y + tabH * 0.47 + 7 * s);
-      g.textAlign = "left";
+    const TL = lookOf(tab.page, b.theme, b.chrome);
+    if (L.toon) {
+      g.fillStyle = on ? (tab.page.bg || "#fbf7f1") : "rgba(255,255,255,0.35)";
+      roundRect(g, x, y, tabW, tabH, 18 * s);
+      g.fill();
+    } else if (on) {
+      // Активная вкладка сливается со страницей: скругление сверху, низ — в страницу.
+      g.fillStyle = rgbaOf(L.bg);
+      roundRect(g, x, y, tabW, tabH + 30 * s, 20 * s);
+      g.fill();
+    } else if (i !== active - 1) {
+      g.fillStyle = rgbaOf(L.line);
+      g.fillRect(x + tabW + 3 * s, y + tabH * 0.25, 2 * s, tabH * 0.5);
     }
-    let title = tab.title;
-    if (badge && badge.tab === i && t >= badge.t) title = `${badge.text} ${title}`;
-    g.fillStyle = on ? "#2b1d16" : "rgba(43,29,22,0.6)";
-    g.font = font(on ? 800 : 700, 30 * s);
-    g.fillText(title, x + 66 * s, y + tabH * 0.47 + 10 * s);
-    if (badge && badge.tab === i && t >= badge.t) {
-      const k = ease("outBack", clamp01((t - badge.t) / 0.3));
-      g.fillStyle = "#ff4b3e";
+    const ix = x + 38 * s, iy = y + tabH * 0.47;
+    const color = tab.icon || TL.accent;
+    if (L.toon) {
+      g.fillStyle = color;
       g.beginPath();
-      g.arc(x + tabW - 30 * s, y + tabH * 0.47, 11 * s * k, 0, Math.PI * 2);
+      g.arc(ix, iy, 17 * s, 0, Math.PI * 2);
+      g.fill();
+    } else {
+      g.fillStyle = rgbaOf(color);
+      roundRect(g, ix - 17 * s, iy - 17 * s, 34 * s, 34 * s, 9 * s);
       g.fill();
     }
+    if (tab.letter) {
+      g.fillStyle = "#ffffff";
+      g.font = L.toon ? font(900, 20 * s) : flatFont("display", 900, 20 * s);
+      g.textAlign = "center";
+      g.fillText(tab.letter, ix, iy + 7 * s);
+      g.textAlign = "left";
+    }
+    const hasBadge = !!(badge && badge.tab === i && t >= badge.t);
+    let title = tab.title;
+    if (hasBadge && L.toon) title = `${badge!.text} ${title}`;
+    g.fillStyle = rgbaOf(on ? L.ink : L.muted);
+    g.font = L.font(on ? 800 : 700, 30 * s);
+    g.fillText(title, x + 66 * s, y + tabH * 0.47 + 10 * s);
+    if (hasBadge) {
+      const k = ease("outBack", clamp01((t - badge!.t) / 0.3));
+      if (L.toon) {
+        g.fillStyle = "#ff4b3e";
+        g.beginPath();
+        g.arc(x + tabW - 30 * s, y + tabH * 0.47, 11 * s * k, 0, Math.PI * 2);
+        g.fill();
+      } else {
+        // Счётчик непрочитанного — красная пилюля с числом у правого края вкладки.
+        const num = badge!.text.replace(/[()]/g, "").trim() || "1";
+        g.save();
+        g.translate(x + tabW - 36 * s, y + tabH * 0.47);
+        g.scale(k, k);
+        g.font = flatFont("display", 900, 22 * s);
+        const bw = Math.max(34 * s, g.measureText(num).width + 22 * s);
+        g.fillStyle = "#ff3b30";
+        roundRect(g, -bw / 2, -17 * s, bw, 34 * s, 17 * s);
+        g.fill();
+        g.fillStyle = "#ffffff";
+        g.textAlign = "center";
+        g.fillText(num, 0, 8 * s);
+        g.restore();
+      }
+    }
   });
-  const tab = b.tabs[Math.max(0, Math.min(b.tabs.length - 1, active))];
-  if (tab) drawChat(g, 0, tabH + 12 * s, W, H - tabH - 12 * s, tab.page, t, s);
+  if (cur) {
+    let top = tabH + 12 * s;
+    if (!L.toon && cur.url) {
+      // Адресная строка: замок и адрес в серой пилюле.
+      const bh = 58 * s, by = top + 10 * s;
+      g.fillStyle = rgbaOf(L.bg);
+      g.fillRect(0, top, W, bh + 20 * s);
+      g.fillStyle = rgbaOf(L.input);
+      roundRect(g, 24 * s, by, W - 48 * s, bh, bh / 2);
+      g.fill();
+      drawFlatIcon(g, "lock", 58 * s, by + bh / 2, 26 * s, rgbaOf(L.muted), 2.2);
+      g.fillStyle = rgbaOf(L.muted);
+      g.font = L.font(500, 28 * s);
+      g.fillText(cur.url, 84 * s, by + bh / 2 + 10 * s);
+      top += bh + 20 * s;
+      g.fillStyle = rgbaOf(L.line);
+      g.fillRect(0, top - 2 * s, W, 2 * s);
+    }
+    drawChat(g, 0, top, W, H - top, cur.page, t, s, b.theme);
+  }
   g.restore();
 }
 
 /** Страница-чат в прямоугольнике. */
-export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: number, H: number, page: ChatPage, t: number, s: number) {
-  const ink = "#2b1d16";
+export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: number, H: number, page: ChatPage, t: number, s: number,
+  theme?: unknown) {
+  const L = lookOf(page, theme ?? page.theme);
+  const ink = L.ink;
   g.save();
   g.beginPath();
   g.rect(X, Y, W, H);
   g.clip();
-  g.fillStyle = page.bg || "#fbf7f1";
+  g.fillStyle = rgbaOf(L.bg);
   g.fillRect(X, Y, W, H);
-  // Шапка.
+  // Шапка: кружок собеседника, имя; в плоской теме — подпись «в сети» и тонкий разделитель.
   const headH = 84 * s;
-  g.fillStyle = "rgba(0,0,0,0.04)";
+  g.fillStyle = rgbaOf(L.head);
   g.fillRect(X, Y, W, headH);
-  g.fillStyle = page.accent || "#d9774b";
+  if (!L.toon) {
+    g.fillStyle = rgbaOf(L.line);
+    g.fillRect(X, Y + headH - 2 * s, W, 2 * s);
+  }
+  g.fillStyle = rgbaOf(L.accent);
   g.beginPath();
   g.arc(X + 56 * s, Y + headH / 2, 24 * s, 0, Math.PI * 2);
   g.fill();
   if (page.letter) {
-    g.fillStyle = "#fff";
-    g.font = font(900, 26 * s);
+    g.fillStyle = rgbaOf(L.accentInk);
+    g.font = L.toon ? font(900, 26 * s) : flatFont("display", 900, 24 * s);
     g.textAlign = "center";
     g.fillText(page.letter, X + 56 * s, Y + headH / 2 + 9 * s);
     g.textAlign = "left";
   }
-  g.fillStyle = ink;
-  g.font = font(900, 44 * s);
-  g.fillText(page.name, X + 96 * s, Y + headH / 2 + 15 * s);
+  g.fillStyle = rgbaOf(ink);
+  if (L.toon) {
+    g.font = font(900, 44 * s);
+    g.fillText(page.name, X + 96 * s, Y + headH / 2 + 15 * s);
+  } else {
+    g.font = L.font(800, 36 * s);
+    g.fillText(page.name, X + 96 * s, Y + headH / 2 + 2 * s);
+    g.fillStyle = rgbaOf(L.muted);
+    g.font = L.font(500, 22 * s);
+    g.fillText(page.status ?? "в сети", X + 96 * s, Y + headH / 2 + 28 * s);
+  }
   // Поле ввода внизу: набор текста пользователем перед отправкой.
   const inH = 96 * s, inY = Y + H - inH - 22 * s;
   let typing: ChatMessage | null = null;
   for (const m of page.messages) if (m.from === "user" && m.type && t >= m.t && t < m.t + m.type) typing = m;
-  g.fillStyle = "#ffffff";
-  roundRect(g, X + 30 * s, inY, W - 60 * s, inH, 30 * s);
+  g.fillStyle = rgbaOf(L.input);
+  roundRect(g, X + 30 * s, inY, W - 60 * s, inH, (L.toon ? 30 : 48) * s);
   g.fill();
-  g.lineWidth = 3 * s;
-  g.strokeStyle = "rgba(43,29,22,0.18)";
+  g.lineWidth = (L.toon ? 3 : 2) * s;
+  g.strokeStyle = rgbaOf(L.inputLine);
   g.stroke();
-  g.font = font(600, 34 * s);
+  if (!L.toon) {
+    // Кнопка «отправить» — кружок акцентом со стрелкой.
+    const r = inH * 0.34, bx = X + W - 30 * s - inH / 2, byc = inY + inH / 2;
+    g.fillStyle = rgbaOf(typing ? L.accent : L.faint);
+    g.beginPath();
+    g.arc(bx, byc, r, 0, Math.PI * 2);
+    g.fill();
+    drawFlatIcon(g, "arrow-right", bx, byc, r * 1.15, rgbaOf(L.accentInk), 2.6);
+  }
+  g.font = L.font(600, 34 * s);
   if (typing) {
     const k = clamp01((t - typing.t) / typing.type!);
     const txt = (typing.text || "").slice(0, Math.ceil((typing.text || "").length * k));
-    g.fillStyle = ink;
-    const shown = wrapLines(g, txt, W - 160 * s);
+    g.fillStyle = rgbaOf(ink);
+    const shown = wrapLines(g, txt, W - 200 * s);
     const last = shown[shown.length - 1] || "";
     g.fillText(last, X + 62 * s, inY + inH * 0.62);
-    if (Math.floor(t * 3) % 2 === 0) g.fillRect(X + 64 * s + g.measureText(last).width, inY + inH * 0.3, 4 * s, inH * 0.42);
+    if (Math.floor(t * 3) % 2 === 0) {
+      g.fillStyle = rgbaOf(L.toon ? ink : L.accent);
+      g.fillRect(X + 64 * s + g.measureText(last).width, inY + inH * 0.3, 4 * s, inH * 0.42);
+    }
   } else {
-    g.fillStyle = "rgba(43,29,22,0.38)";
+    g.fillStyle = rgbaOf(L.faint);
     g.fillText(page.placeholder || "Сообщение…", X + 62 * s, inY + inH * 0.62);
   }
   // Сообщения: сначала замер всей высоты, потом прокрутка к последнему.
@@ -221,10 +359,10 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
       const n = Math.max(1, Math.ceil(m.blocks.length * k));
       const bl = m.blocks.slice(0, n);
       let h = 40 * s;
-      for (const b of bl) h += blockLayout(g, b, 0, 0, maxW - 60 * s, s, false, ink);
+      for (const b of bl) h += blockLayout(g, b, 0, 0, maxW - 60 * s, s, false, L);
       items.push({ m, h, kind: "answer", blocks: bl });
     } else {
-      g.font = font(m.from === "user" ? 700 : 600, (m.from === "user" ? 44 : 38) * s);
+      g.font = L.font(m.from === "user" ? 700 : 600, (m.from === "user" ? 44 : 38) * s);
       const lines = wrapLines(g, m.text || "", maxW - 64 * s);
       const lh = (m.from === "user" ? 58 : 50) * s;
       items.push({ m, h: lines.length * lh + 44 * s, kind: "bubble", lines });
@@ -245,7 +383,7 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
     const pop = it.kind === "thinking" ? 1 : ease("outBack", clamp01((t - appear) / 0.28));
     let bw = maxW;
     if (it.kind === "bubble") {
-      g.font = font(user ? 700 : 600, (user ? 44 : 38) * s);
+      g.font = L.font(user ? 700 : 600, (user ? 44 : 38) * s);
       bw = Math.min(maxW, Math.max(...it.lines!.map((l) => g.measureText(l).width)) + 64 * s);
     } else if (it.kind === "thinking") bw = 170 * s;
     else if (it.kind === "image") bw = Math.min(maxW, it.h * 1.6);
@@ -256,14 +394,15 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
     g.scale(0.6 + 0.4 * pop, 0.6 + 0.4 * pop);
     g.globalAlpha = clamp01(pop * 1.4);
     g.translate(-ox, -(y + it.h / 2));
-    g.fillStyle = user ? (page.bubble || "#f6cdb6") : (page.botBubble || "#efe6da");
-    roundRect(g, bx, y, bw, it.h, 30 * s);
+    g.fillStyle = rgbaOf(user ? L.me : L.bot);
+    roundRect(g, bx, y, bw, it.h, (L.toon ? 30 : 32) * s);
     g.fill();
-    g.fillStyle = ink;
+    g.fillStyle = rgbaOf(user ? L.meInk : L.botInk);
     if (it.kind === "thinking") {
       for (let i = 0; i < 3; i++) {
         const k = 0.5 + 0.5 * Math.sin(t * 10 - i * 1.1);
         g.globalAlpha = 0.35 + 0.65 * k;
+        g.fillStyle = rgbaOf(L.toon ? ink : L.muted);
         g.beginPath();
         g.arc(bx + 50 * s + i * 36 * s, y + it.h / 2 - k * 6 * s, 12 * s, 0, Math.PI * 2);
         g.fill();
@@ -276,15 +415,15 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
       g.clip();
       g.translate(bx + pad, y + pad);
       const painter = PANEL_PAINTERS[m.panel || "text"] || PANEL_PAINTERS.text;
-      painter(g, bw - pad * 2, it.h - pad * 2, Math.max(0, t - appear), m.panelParams || {});
+      painter(g, bw - pad * 2, it.h - pad * 2, Math.max(0, t - appear), { ...(m.panelParams || {}), theme: m.panelParams?.theme ?? (L.toon ? "toon" : undefined) });
       g.restore();
     } else if (it.kind === "bubble") {
-      g.font = font(user ? 700 : 600, (user ? 44 : 38) * s);
+      g.font = L.font(user ? 700 : 600, (user ? 44 : 38) * s);
       const lh = (user ? 58 : 50) * s;
       it.lines!.forEach((l, i) => g.fillText(l, bx + 32 * s, y + 22 * s + lh * (i + 0.78)));
     } else {
       let yy = y + 20 * s;
-      for (const b of it.blocks!) yy += blockLayout(g, b, bx + 30 * s, yy, bw - 60 * s, s, true, ink);
+      for (const b of it.blocks!) yy += blockLayout(g, b, bx + 30 * s, yy, bw - 60 * s, s, true, L);
     }
     g.restore();
     y += it.h + gap;
@@ -381,14 +520,24 @@ export const PANEL_PAINTERS: Record<string, Painter> = {
     g.fillStyle = "#ff4b3e";
     g.fillRect(hx - lw / 2, py + ph + H * 0.04, lw, H * 0.33);
     void k;
-    // Счётчик просмотров.
-    const views = (p.from ?? 120000) + ((p.to ?? 1000000) - (p.from ?? 120000)) * ease("outCubic", clamp01(t / (p.dur ?? 2.2)));
-    const txt = `${fmt(views)} просмотров`;
-    g.font = font(900, H * 0.075);
-    const tw = g.measureText(txt).width;
-    inkRect(g, W - tw - W * 0.17, py + H * 0.025, tw + W * 0.08, H * 0.11, H * 0.05, "#ff4b3e", lw * 0.8);
-    g.fillStyle = "#fff";
-    g.fillText(txt, W - tw - W * 0.13, py + H * 0.105);
+    // Счётчик просмотров: плоская пилюля темы (как слой ui counter) или прежняя мультяшная плашка.
+    const prog = ease("outCubic", clamp01(t / (p.dur ?? 2.2)));
+    const views = (p.from ?? 120000) + ((p.to ?? 1000000) - (p.from ?? 120000)) * prog;
+    if (isToon(p.theme)) {
+      const txt = `${fmt(views)} просмотров`;
+      g.font = font(900, H * 0.075);
+      const tw = g.measureText(txt).width;
+      inkRect(g, W - tw - W * 0.17, py + H * 0.025, tw + W * 0.08, H * 0.11, H * 0.05, "#ff4b3e", lw * 0.8);
+      g.fillStyle = "#fff";
+      g.fillText(txt, W - tw - W * 0.13, py + H * 0.105);
+    } else {
+      const props = { component: "counter" as const, theme: p.theme ?? "red", accent: p.accent ?? null, from: p.from ?? 120000, value: p.to ?? 1000000,
+        unit: p.unit ?? "просмотров", icon: "eye", variant: "accent", size: 58 };
+      const k = (H * 0.15) / (58 * 1.8);
+      const box = flatSize(g, props, k);
+      const kk = box.w > pw * 1.02 ? (k * pw * 1.02) / box.w : k;
+      flatComponent(g, props, px + pw - (box.w * kk) / k / 2 + W * 0.02, py + H * 0.02, kk, 9, prog);
+    }
   },
   /** Сайт: линия графика растёт и уходит за край, «+340%», монетки. */
   graph(g, W, H, t, p) {
@@ -480,7 +629,34 @@ export const PANEL_PAINTERS: Record<string, Painter> = {
     const lw = W * 0.012;
     g.fillStyle = p.bg || "#e9f1ff";
     g.fillRect(0, 0, W, H);
-    // Полоска браузера: точки и адрес.
+    // Полоска браузера: точки и адрес (плоская тема — как окно слоя ui; toon — мультяшная).
+    const pop = ease("outBack", clamp01((t - 0.3) / 0.35));
+    if (!isToon(p.theme)) {
+      const pal = screenPalette(p.theme, "light", p.accent);
+      g.fillStyle = rgbaOf(pal.surface3);
+      g.fillRect(0, 0, W, H * 0.15);
+      g.fillStyle = rgbaOf(pal.border);
+      g.fillRect(0, H * 0.15 - 2, W, 2);
+      windowDots(g, W * 0.05, H * 0.075, H * 0.022, H * 0.065);
+      const ax = W * 0.2, ah = H * 0.09, ay = H * 0.03, aw = W * 0.46;
+      g.fillStyle = rgbaOf(pal.surface2);
+      roundRect(g, ax, ay, aw, ah, ah / 2);
+      g.fill();
+      drawFlatIcon(g, "lock", ax + ah * 0.55, ay + ah / 2, ah * 0.5, rgbaOf(pal.muted), 2.2);
+      g.fillStyle = rgbaOf(pal.muted);
+      g.font = flatFont("body", 500, ah * 0.62);
+      g.fillText(String(p.url ?? "мой-сайт.рф"), ax + ah * 1.0, ay + ah / 2 + ah * 0.22);
+      if (pop > 0) {
+        g.save();
+        g.translate(W * 0.83, H * 0.075);
+        g.scale(pop, pop);
+        const ph = H * 0.1;
+        g.font = flatFont("display", 900, ph * 0.5);
+        const pwid = g.measureText("ОНЛАЙН").width + ph * 0.84 + ph * 0.42;
+        flatPill(g, -pwid / 2, -ph / 2, ph, "ОНЛАЙН", "#16a34a", "#ffffff", Math.floor(t * 2) % 2 === 0);
+        g.restore();
+      }
+    } else {
     inkRect(g, -lw, -lw, W + lw * 2, H * 0.15 + lw, 0, "#fff6e8", lw);
     ["#ff7a59", "#ffc857", "#7bc96f"].forEach((c, i) => {
       g.fillStyle = c;
@@ -492,9 +668,9 @@ export const PANEL_PAINTERS: Record<string, Painter> = {
     g.fillStyle = "rgba(43,24,16,0.6)";
     g.font = font(700, H * 0.06);
     g.fillText(String(p.url ?? "мой-сайт.рф"), W * 0.23, H * 0.095);
+    }
     // «ОНЛАЙН» с мигающей точкой.
-    const pop = ease("outBack", clamp01((t - 0.3) / 0.35));
-    if (pop > 0) {
+    if (pop > 0 && isToon(p.theme)) {
       g.save();
       g.translate(W * 0.83, H * 0.075);
       g.scale(pop, pop);

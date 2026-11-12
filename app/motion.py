@@ -45,7 +45,7 @@ from app.motion_limits import (  # noqa: F401
     VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL, VIDEO_AUDIO_MIN_SPEED, VIDEO_AUDIO_MAX_SPEED, AUDIO_MODES,
     AUDIO_ROLES, EFFECT_MAX_VOLUME, TRACK_MIN_GAIN_DB, TRACK_MAX_GAIN_DB, STATUS_BAR_AUTO, STATUS_BAR_MAX,
     PNGTUBER_STATES, VOICE_THRESHOLD_DB, VOICE_HOLD_SEC, VOICE_ATTACK_SEC, VOICE_SHOUT_DB, VOICE_SPEECH, VOICE_AUTO,
-    VOICE_THRESHOLD_DEFAULT,
+    VOICE_THRESHOLD_DEFAULT, FLAT_COMPONENTS, FLAT_THEMES, FLAT_ITEMS_MAX, FLAT_REVEALS,
 )
 from app.motion_fields import (  # noqa: F401
     _Report, _finite, _fmt, Num, Text, Flag, Choice, _color, Color, Colors, Paint, Obj, ListOf, AssetRef, Opt,
@@ -537,6 +537,21 @@ def schema_summary() -> dict:
                     "flow_diagram — узлы (значок/картинка + подпись) пунктиром по шагам, центральный — щит с замком, "
                     "в конце плашка done. icon — свой значок из icons или 1–3 буквы (эмодзи нельзя). Наклон группы: "
                     "одинаковые pivot {x,y} и ключи rotX/rotY/scale у слоёв (camera_preset screen_tilt)",
+        },
+        "flat": {
+            "components": list(FLAT_COMPONENTS),
+            "themes": list(FLAT_THEMES),
+            "note": "слой ui — плоский интерфейс одной системы токенов (docs/motion/flat-ui.md): тёмные скруглённые "
+                    "карточки с тонкой кромкой и общей тенью, подписи капсом в разрядку, чипы-пилюли, крупные цифры, "
+                    "полосы, значки Lucide (icon: eye, hourglass, circle-check, trending-up…). theme red (чёрно-"
+                    "красная), dark (графит + индиго), light (светлая), brand (accent + plate бренда); accent "
+                    "перекрашивает акцент любой темы. component: hook — огромное слово во всю ширину (variant fill — "
+                    "своя заставка), chip — пилюля капсом, title — чип label + крупный title + text, stat — подпись + "
+                    "число value (растёт от from по progress) + unit + чип delta + полоса progress, bars — полосы items "
+                    "(value/max, note справа, dim — бледная) + метка marker, counter — пилюля со значком и числом, "
+                    "checklist — пункты items с галочками по одной (delay/stagger, done:false — не отмечать; variant "
+                    "window — в окне с точками), toast — уведомление (title — приложение, text, time, badge), window "
+                    "— окно app|browser (url)|chat (items from me|them). Фон под плашками — fx kind backdrop",
         },
         "social": {
             "styles": list(SOCIAL_STYLES),

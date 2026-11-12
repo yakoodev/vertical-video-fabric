@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.scene_engine import SceneSpec
 from app.motion_flow import TRANSITION as FLOW_TRANSITION
 from app.motion_schema_ads import AD_PROPS, COUNTER_ROLL, PIVOT
+from app.motion_schema_flat import FLAT_PROPS
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
     BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
@@ -397,7 +398,7 @@ PROPS: dict[str, dict] = {
         "blend": Opt(Choice("auto", ("auto", *BLENDS))),
         "color": Opt(Color("#ffffff")),  # вспышка flash_frame
         "colors": Opt(Colors(None, 1, 4)),  # пятна light_leak; нет — тёплые
-        "size": Opt(Num(1.6, 0.5, 12, 2)),  # зерно / шаг строк, опорн. px
+        "size": Opt(Num(1.6, 0, 64, 2)),  # зерно / шаг строк, опорн. px; у backdrop — радиус размытия (22)
         "seed": Opt(Num(0, 0, 999999, integer=True)),
     },
 }
@@ -412,6 +413,7 @@ PROPS["scene"] = {
 }
 
 PROPS.update(AD_PROPS)
+PROPS.update(FLAT_PROPS)
 # Перетекающий переход между сценами (app/motion_flow.py): группы слоёв A/B, вид, маска, кривая.
 PROPS["transition"] = FLOW_TRANSITION
 

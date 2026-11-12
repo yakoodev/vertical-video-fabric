@@ -5,12 +5,12 @@
   "type": "module",
   "scripts": {
     "build:motion": "esbuild node/motion-render.ts --bundle --platform=node --format=esm --target=node20 --external:@napi-rs/canvas --outfile=node/motion-render.mjs --log-level=warning",
-    "test:motion": "npm run build:motion && node --test node/motion.test.mjs node/endscreen.test.mjs node/motion-blocks.test.mjs node/motion-page.test.mjs node/motion-ads.test.mjs node/motion-flow.test.mjs",
+    "test:motion": "npm run build:motion && node --test node/motion.test.mjs node/endscreen.test.mjs node/motion-blocks.test.mjs node/motion-page.test.mjs node/motion-ads.test.mjs node/motion-flow.test.mjs node/motion-flat.test.mjs",
     "test:youtube": "node --test node/youtube-upload.test.mjs",
     "test:keepalive": "node --test node/session-keepalive.test.mjs node/youtube-session.test.mjs",
     "test:extension": "node --test browser-extension/tests/lib.test.js",
     "build:scene3d": "esbuild node/scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/scene3d/dist/scene3d.js --log-level=warning",
-    "test:scene3d": "npm run build:scene3d && node --test node/scene3d/scene3d.test.mjs node/scene3d/presets.test.mjs node/scene3d/presets.perf.test.mjs node/scene3d/models3d.test.mjs",
+    "test:scene3d": "npm run build:scene3d && node --test node/scene3d/scene3d.test.mjs node/scene3d/presets.test.mjs node/scene3d/presets.perf.test.mjs node/scene3d/models3d.test.mjs node/scene3d/ui_flat.test.mjs",
     "build:vrm": "esbuild node/vrm/src/main.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/vrm/dist/vrm.js --log-level=warning",
     "build:psx": "esbuild node/vrm/src/psx/world.ts --bundle --format=iife --platform=browser --target=chrome110 --minify --outfile=node/vrm/dist/psx.js --log-level=warning"
   },

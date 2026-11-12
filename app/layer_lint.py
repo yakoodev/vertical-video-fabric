@@ -216,8 +216,23 @@ FULL_INSERT_MAX_SEC = 3.0
 def cover_share(layer: dict, fmt: Any = None) -> float:
     """Какую долю кадра непрозрачно закрывает слой-картинка/фигура (0, если прозрачный); кадр —
     опорный формата слоёв ``fmt`` (нет — 9:16, 1080×1920)."""
-    if layer.get("type") not in ("shape", "image", "video", "scene", "social", "page", "carousel", "tile_wall"):
+    if layer.get("type") not in ("shape", "image", "video", "scene", "social", "page", "carousel", "tile_wall", "ui"):
         return 0.0
+    if layer.get("type") == "ui":
+        # Плоская карточка непрозрачна своей рамкой (оценка app/aspect.ui_size); хук с заливкой — весь кадр.
+        from app.aspect import ui_size
+
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        if (_num(layer.get("opacity"), 1.0) or 0.0) < 0.6:
+            return 0.0
+        if props.get("component") == "hook" and props.get("variant") == "fill":
+            return 1.0
+        if props.get("component") == "hook":
+            return 0.0  # одно слово без подложки видео не закрывает
+        ref_w, ref_h = _ref(fmt)
+        w, h = ui_size(props)
+        scale = _num(layer.get("scale"), 1.0) or 1.0
+        return min(1.0, (w * h * scale * scale) / (ref_w * ref_h))
     if layer.get("type") in ("carousel", "tile_wall"):
         # Карусель закрывает кадр центральной карточкой (соседи бледные), стена плиток — всей рамкой.
         props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
@@ -290,8 +305,13 @@ def covering_problems(layers: list[dict], keyed: bool = False, fmt: Any = None) 
 
 
 def is_full_insert(layer: dict) -> bool:
-    """Картинка/видео на ≤ FULL_INSERT_MAX_SEC — короткая вставка-иллюстрация, ей можно закрыть кадр."""
-    if layer.get("type") not in ("image", "video"):
+    """Картинка/видео на ≤ FULL_INSERT_MAX_SEC — короткая вставка-иллюстрация, ей можно закрыть кадр. Так же
+    короткая заставка-хук плоской темы (ui hook с заливкой) — слово на своём фоне на первые секунды."""
+    if layer.get("type") == "ui":
+        props = layer.get("props") if isinstance(layer.get("props"), dict) else {}
+        if props.get("component") != "hook" or props.get("variant") != "fill":
+            return False
+    elif layer.get("type") not in ("image", "video"):
         return False
     start, end = _num(layer.get("start"), 0.0) or 0.0, _num(layer.get("end"), 0.0) or 0.0
     return 0.0 < end - start <= FULL_INSERT_MAX_SEC + 1e-6

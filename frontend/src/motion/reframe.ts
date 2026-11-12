@@ -131,6 +131,40 @@ const AD_BOXES: Record<string, [number, number, string]> = {
   flow_diagram: [1000, 620, "h"],
 };
 
+/**
+ * Рамка плоского интерфейса (слой `ui`, flat/): оценка по компоненту и числу пунктов — как
+ * app/aspect.ui_size (сверка — фикстура reframe_cases.json). Точный размер знает только движок со шрифтами.
+ */
+export function uiSize(props: Obj): [number, number] {
+  const comp = String(props.component || "stat");
+  const n = Array.isArray(props.items) ? Math.min(10, props.items.length) : 0;
+  const has = (k: string) => props[k] !== undefined && props[k] !== null && props[k] !== "";
+  if (comp === "chip") {
+    const size = num(props.size, 36);
+    const text = String(props.title || props.text || props.label || "Чип");
+    return [Array.from(text).length * size * 0.78 + size * 1.64 + (has("icon") ? size * 1.42 : 0), size * 1.74];
+  }
+  if (comp === "counter") {
+    const size = num(props.size, 58);
+    const digits = String(Math.trunc(Math.abs(num(props.value, 100)))).length * 1.33;
+    const unit = Array.from(String(props.unit ?? "")).length;
+    return [digits * 0.72 * size + unit * size * 0.36 + size * 1.5 + (has("icon") ? size * 1.8 : 0), size * 1.8];
+  }
+  if (comp === "hook") {
+    const lines = String(props.title || props.text || "").split("\n").length;
+    return [num(props.w, 1000), num(props.size, 200) * 0.96 * lines + (props.title && props.text ? 90 : 0)];
+  }
+  if (comp === "title") return [num(props.w, 960), (has("label") ? 68 : 0) + 82 + (has("text") ? 60 : 0) + (props.variant === "card" ? 104 : 0)];
+  if (comp === "bars") return [num(props.w, 920), 88 + (has("label") ? 55 : 0) + n * 94 + Math.max(0, n - 1) * 34];
+  if (comp === "checklist") {
+    const win = props.variant === "window";
+    return [num(props.w, 900), 88 + (win ? 80 : 0) + (has("label") && !win ? 46 : 0) + (has("title") ? 78 : 0) + n * 86 + Math.max(0, n - 1) * 30];
+  }
+  if (comp === "toast") return [num(props.w, 920), 152];
+  if (comp === "window") return [num(props.w, 940), Math.max(num(props.h, 0), 172 + (n ? n * 90 : 160))];
+  return [num(props.w, 900), 330];
+}
+
 /** Оценка ширины и высоты слоя в опорных px (без scale); null — звук и прочее без места. */
 export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number, number] | null {
   const kind = layer.type;
@@ -178,6 +212,7 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
   // переносить нечего — как app/aspect.layer_size.
   if (kind === "scene") return props.w || props.h ? [num(props.w, 1080), num(props.h, 1920)] : null;
   if (kind === "callout") return [num(props.w, 900), props.subtitle ? 240.0 : 170.0];
+  if (kind === "ui") return uiSize(props);
   if (kind === "nameplate") {
     // Пилюля: поля 0.42·H с двух сторон, значок 0.56·H + зазор 0.26·H, ник кеглем 0.5·H (как layers/nameplate.ts).
     const h = num(props.size, 74);

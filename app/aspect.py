@@ -185,6 +185,44 @@ AD_BOXES: dict[str, tuple[float, float, str]] = {
 }
 
 
+def ui_size(props: dict) -> tuple[float, float]:
+    """Рамка плоского интерфейса (слой ``ui``, frontend/src/motion/flat): оценка по компоненту и числу пунктов —
+    как ``uiSize`` в reframe.ts. Точный размер знает только движок со шрифтами."""
+    comp = str(props.get("component") or "stat")
+    items = props.get("items")
+    n = min(10, len(items)) if isinstance(items, list) else 0
+
+    def has(k: str) -> bool:
+        return props.get(k) not in (None, "")
+
+    if comp == "chip":
+        size = _num(props.get("size"), 36)
+        text = str(props.get("title") or props.get("text") or props.get("label") or "Чип")
+        return len(text) * size * 0.78 + size * 1.64 + (size * 1.42 if has("icon") else 0), size * 1.74
+    if comp == "counter":
+        size = _num(props.get("size"), 58)
+        digits = len(str(int(abs(_num(props.get("value"), 100))))) * 1.33
+        unit = len(str(props.get("unit") or ""))
+        return digits * 0.72 * size + unit * size * 0.36 + size * 1.5 + (size * 1.8 if has("icon") else 0), size * 1.8
+    if comp == "hook":
+        lines = len(str(props.get("title") or props.get("text") or "").split("\n"))
+        return _num(props.get("w"), 1000), _num(props.get("size"), 200) * 0.96 * lines + (90 if props.get("title") and props.get("text") else 0)
+    if comp == "title":
+        return _num(props.get("w"), 960), ((68 if has("label") else 0) + 82 + (60 if has("text") else 0)
+                                           + (104 if props.get("variant") == "card" else 0))
+    if comp == "bars":
+        return _num(props.get("w"), 920), 88 + (55 if has("label") else 0) + n * 94 + max(0, n - 1) * 34
+    if comp == "checklist":
+        win = props.get("variant") == "window"
+        return _num(props.get("w"), 900), (88 + (80 if win else 0) + (46 if has("label") and not win else 0)
+                                           + (78 if has("title") else 0) + n * 86 + max(0, n - 1) * 30)
+    if comp == "toast":
+        return _num(props.get("w"), 920), 152
+    if comp == "window":
+        return _num(props.get("w"), 940), max(_num(props.get("h"), 0), 172 + (n * 90 if n else 160))
+    return _num(props.get("w"), 900), 330
+
+
 def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> tuple[float, float] | None:
     """Оценка ширины и высоты слоя в опорных px (без scale); None — звук и прочее без места."""
     kind = layer.get("type")
@@ -237,6 +275,8 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return _num(props.get("w"), 1080), _num(props.get("h"), 1920)
     if kind == "callout":
         return _num(props.get("w"), 900), 240.0 if props.get("subtitle") else 170.0
+    if kind == "ui":
+        return ui_size(props)
     if kind == "nameplate":
         # Пилюля: поля 0.42·H с двух сторон, значок 0.56·H + зазор 0.26·H, ник кеглем 0.5·H (как reframe.ts).
         h = _num(props.get("size"), 74)

@@ -274,6 +274,11 @@ export function layerTitle(layer: Layer): string {
       return "Стена плиток";
     case "flow_diagram":
       return "Схема сделки";
+    case "ui": {
+      const title = layer.props.title || layer.props.label || layer.props.text;
+      const kind = { hook: "Хук", chip: "Чип", title: "Заголовок", stat: "Карточка с числом", bars: "Сравнение", counter: "Счётчик", checklist: "Чек-лист", toast: "Уведомление", window: "Окно" }[layer.props.component] ?? "Плоский UI";
+      return title ? `${kind}: ${title}` : kind;
+    }
     default:
       return "Слой";
   }
@@ -304,6 +309,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   waveform: "≋",
   tile_wall: "▦",
   flow_diagram: "⇄",
+  ui: "▣",
   transition: "⧉",
 };
 
@@ -320,4 +326,5 @@ export const FX_TITLES: Record<string, string> = {
   datamosh_lite: "Глитч: датамош",
   pixel_sort_lite: "Глитч: штрихи пикселей",
   grayscale: "Ч/б",
+  backdrop: "Фон под плашками",
 };

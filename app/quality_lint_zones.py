@@ -252,7 +252,7 @@ def is_sticker(layer: dict) -> bool:
 
 
 ZONE_TYPES = ("text", "counter", "callout", "nameplate", "social", "emoji", "image", "bubbles", "carousel", "waveform",
-              "flow_diagram")
+              "flow_diagram", "ui")
 
 
 def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, float, float] | None:
@@ -285,9 +285,11 @@ def layer_box(layer: dict, t: float, camera: Any = None) -> tuple[float, float, 
     elif kind == "carousel":
         # Соседние карточки выглядывают за край нарочно — проверяем центральную.
         w, h = _num(props.get("cardW"), 600.0), _num(props.get("cardH"), 780.0)
-    elif kind in ("bubbles", "waveform", "flow_diagram"):
+    elif kind in ("bubbles", "waveform", "flow_diagram", "ui"):
         from app.aspect import layer_size
 
+        if kind == "ui" and props.get("component") == "hook" and props.get("variant") == "fill":
+            return None  # заставка во весь кадр — безопасные зоны не про неё
         w, h = layer_size(layer) or (900.0, 600.0)
     else:
         w, h = picture_size(layer)
@@ -369,7 +371,7 @@ def _fix_for(zone: str, rect: tuple, ui_list: list[dict], kind: str, captions: b
 
 
 AD_NAMES = {"bubbles": "облако пузырей", "carousel": "карусель (центральная карточка)", "waveform": "волна голоса",
-            "flow_diagram": "схема сделки"}
+            "flow_diagram": "схема сделки", "ui": "плоская плашка"}
 
 
 def _what(layer: dict) -> str:

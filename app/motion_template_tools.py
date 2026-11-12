@@ -87,9 +87,39 @@ def h_list_motion_templates(_ctx: ToolContext, args: dict) -> dict:
         "templates": [_brief(t) for t in found] if (category or query) else
         [{k: t.get(k) for k in ("id", "name", "category", "description", "duration")} for t in found],
         "categories": categories,
+        "themes": FLAT_THEMES_HINT,
         "next": "add_motion_template(template, params?, at) — параметры, которых нет, берутся по умолчанию; "
                 "список параметров шаблона — list_motion_templates(q: id)",
     }
+
+
+FLAT_THEMES_HINT = ("theme шаблонов «Плоский UI» (и counter/progress/top-3/lower-third-*): red — чёрно-красная, "
+                    "dark — графит + индиго, light — светлая, brand — цвета бренда проекта (accent/plate подставятся "
+                    "сами); classic у старых шаблонов — прежний вид")
+
+
+def _brand_colors(ctx: ToolContext) -> dict:
+    """accent/plate бренда проекта клипа — для theme: brand без своих цветов; нет бренда — {}."""
+    try:
+        from app.cover_variants import clip_brand
+
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        brand = clip_brand(ctx.store, {"clip_plan_id": ctx.plan_id, "source_id": plan.get("source_id")}) or {}
+    except Exception:  # noqa: BLE001 - без бренда — тема brand на своих умолчаниях
+        return {}
+    colors = brand.get("colors") if isinstance(brand.get("colors"), dict) else {}
+    return {k: colors[k] for k in ("accent", "plate") if isinstance(colors.get(k), str)}
+
+
+def with_brand(params: dict, brand: dict) -> dict:
+    """theme: brand без своих accent/plate — цвета бренда проекта; заданные явно не трогаем."""
+    if str(params.get("theme") or "") != "brand" or not brand:
+        return params
+    out = dict(params)
+    for key, value in brand.items():
+        if not str(out.get(key) or "").strip():
+            out[key] = value
+    return out
 
 
 def h_add_motion_template(ctx: ToolContext, args: dict) -> dict:
@@ -106,6 +136,8 @@ def h_add_motion_template(ctx: ToolContext, args: dict) -> dict:
     params = args.get("params") if isinstance(args.get("params"), dict) else {}
     if args.get("duration") is not None:
         params = {**params, "duration": args["duration"]}
+    if str(params.get("theme") or "") == "brand":
+        params = with_brand(params, _brand_colors(ctx))
     at = max(0.0, _num(args.get("at"), 0.0) or 0.0)
     render = _current_render(ctx)
     built = build_template(template_id, params, at, settings_layers_format(render))
@@ -130,11 +162,14 @@ def tools() -> list[Tool]:
             "Галерея готовых шаблонов моушна (те же, что в редакторе): титры, плашки, инфографика, призывы, промо, "
             "РЕКЛАМА (одометр «больше 2 000 000», облако пузырей с числами, рейтинг со звёздами, экран с наклоном и "
             "наездом, карусель карточек с кольцами, волна голоса, фраза по словам в карточке, наклонная стена "
-            "плиток, схема безопасной сделки с замком и «Готово»), 3D. Без аргументов — короткий список; category "
+            "плиток, схема безопасной сделки с замком и «Готово»), ПЛОСКИЙ UI (хук-слово во весь кадр, чип «ОШИБКА 1» + "
+            "заголовок, карточка с числом, сравнение полосами, чек-лист в окне, уведомление, окно браузера/чата, "
+            "счётчик-пилюля, чип, фон под плашками; theme red|dark|light|brand — одна палитра на ролик), 3D. Без аргументов — короткий список; category "
             "или q (слово/ id) — с параметрами (имя, подпись, тип, умолчание). Вставка — add_motion_template. "
             "/ List motion gallery templates.",
             _obj({"category": {"type": "string", "description": "категория: Титры, Плашки, Инфографика, Призывы, "
-                                                                 "Акценты, Списки, Мемы, Промо, Реклама, Эффекты, 3D"},
+                                                                 "Акценты, Списки, Мемы, Промо, Реклама, Плоский UI, "
+                                                                 "Эффекты, 3D"},
                   "q": {"type": "string", "description": "поиск по id, имени и описанию"}}),
             h_list_motion_templates,
             label=lambda a: f"Смотрю шаблоны {a.get('category') or a.get('q') or ''}".strip(),

@@ -25,6 +25,7 @@ import { commentCard, postCard } from "./templates/social";
 import { pagePhone, pageScroll } from "./templates/page";
 import { bubblesCloud, cardCarousel, odometerCounter, ratingBadge } from "./templates/ads";
 import { dealFlow, karaokeCard, screenTilt, tileWallTpl, voiceWave } from "./templates/ads2";
+import { FLAT_TEMPLATES } from "./templates/flat";
 
 export { TEMPLATE_CATEGORIES, newLayerId } from "./templates/kit";
 export type { TemplateParamType, TemplateParam, TemplateParams, TemplateResult, MotionTemplate } from "./templates/kit";
@@ -82,6 +83,8 @@ export const TEMPLATES: MotionTemplate[] = [
   karaokeCard,
   tileWallTpl,
   dealFlow,
+  // Плоский UI (flat/): хук, чип + заголовок, карточки, чек-лист, уведомление, окно, фон под плашками.
+  ...FLAT_TEMPLATES,
   // Движок сцен (scene/): настоящий 3D/2D одним слоем scene.
   ...sceneTemplates(newLayerId),
 ];
