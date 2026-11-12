@@ -52,10 +52,11 @@ def h_list_animations(_ctx: ToolContext, args: dict) -> dict:
     layer = str(args.get("layer") or "").strip() or None
     if layer and layer not in animlib.LAYER_RU:
         raise ToolError(f"нет слоя «{layer}»", ["есть: full (всё тело), upper (корпус и руки поверх позы)"])
+    synced = animlib.sync()  # собрать библиотеку, если её нет, и забрать свои клипы из anim_inbox
     found = animlib.search(str(args.get("q") or "").strip() or None, layer)
     return {
         "animations": [{**c, "layer_ru": animlib.LAYER_RU.get(c.get("layer") or "full", "")} for c in found],
-        "count": len(found),
+        "count": len(found), "synced": synced,
         "how": "В плане 3D-серии (VRM-героиня): performance — {\"preset\": \"anim\", \"clip\": <имя>, \"body\": \"upper\" | \"full\"}; "
                "готовые: cheer (ликует), wave_big (машет), talk_hands (говорит руками), stand_up (встаёт, then — что стоя), "
                "sit_down. Клипы CC0 (Quaternius, KayKit), in_* — свои из папки anim_inbox.",

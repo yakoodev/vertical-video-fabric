@@ -65,3 +65,52 @@ def search(q: str | None = None, layer: str | None = None, vrm_dir: Path | None 
         items = [c for c in items if ql in c["name"].lower() or ql in str(c.get("ru", "")).lower()
                  or any(ql in str(t).lower() for t in c.get("tags") or [])]
     return items
+
+
+_SYNC_LOCK = __import__("threading").Lock()
+
+
+def sync(vrm_dir: Path | None = None, packs: Path | None = None, inbox: Path | None = None) -> dict[str, Any]:
+    """Библиотека в данных сервиса: собрать из паков, если её нет или каталог поменялся, и забрать «входящие».
+
+    Пути по умолчанию — из настроек: клипы в ``<series3d_vrm_dir>/anim`` (оттуда их берёт рендер), паки — ``vendor/packs``
+    образа (tools/fetch_packs.py), входящие — ``<runtime_dir>/anim_inbox`` (владелец кладёт FBX/GLB; перенесённые
+    уезжают в ``imported/``, не перенёсшиеся — причина в ``failed/``). Ничего не делает, если всё на месте."""
+    import hashlib
+    import sys
+
+    from app.settings import settings
+
+    vrm_dir = Path(vrm_dir or settings.series3d_vrm_dir)
+    packs = Path(packs or ROOT / "vendor" / "packs")
+    inbox = Path(inbox or Path(settings.runtime_dir) / "anim_inbox")
+    out = vrm_dir / "anim"
+    report: dict[str, Any] = {"built": 0, "imported": 0}
+    with _SYNC_LOCK:
+        if str(ROOT) not in sys.path:
+            sys.path.insert(0, str(ROOT))
+        try:
+            from tools import anim_library as AL
+        except ImportError as exc:  # нет tools/anim_*.py в образе — только то, что уже собрано
+            report["error"] = f"нет сборщика библиотеки: {exc}"
+            return report
+        stamp = hashlib.sha256(CATALOG.read_bytes()).hexdigest()[:16]
+        mark = out / ".catalog"
+        fresh = mark.is_file() and mark.read_text("utf-8").strip() == stamp and (out / "index.json").is_file()
+        entries: list[dict] = []
+        if not fresh and (packs / "quaternius-animations").is_dir():
+            out.mkdir(parents=True, exist_ok=True)
+            entries += AL.build(packs, out)
+            AL.write_licenses(out)
+            mark.write_text(stamp, "utf-8")
+            report["built"] = len(entries)
+        if inbox.is_dir() and any(p.suffix.lower() in AL.INBOX_EXT for p in inbox.iterdir() if p.is_file()):
+            out.mkdir(parents=True, exist_ok=True)
+            got = AL.import_inbox(inbox, out)
+            entries += got
+            report["imported"] = len(got)
+        else:
+            inbox.mkdir(parents=True, exist_ok=True)
+        if entries:
+            AL.write_index(out, entries)
+    return report

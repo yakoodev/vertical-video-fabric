@@ -385,6 +385,13 @@ def produce(store: Any, job: dict) -> dict:
         # Рот по гласным (голос + слова героини; не вышло — по громкости) и слой жизни героини.
         from app import lipsync
 
+        if spec["timeline"].get("actions"):
+            from app import animlib
+
+            try:  # клипы библиотеки движений в данных сервиса (собрать, если их ещё нет)
+                animlib.sync()
+            except Exception as exc:  # noqa: BLE001 - без сборки — рендер скажет, какого клипа нет
+                _log.warning("animlib sync failed: %s", exc)
         hero_words = [w for w in words if w.get("line") in hero_lines]
         info["lipsync"] = lipsync.attach_timeline(spec["timeline"], track, hero_words, total,
                                                   life_seed=sum(map(ord, str(hero))) % 997 + 1)

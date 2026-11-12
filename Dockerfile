@@ -120,6 +120,8 @@ COPY package.json package-lock.json* /app/
 RUN npm install --omit=dev
 
 COPY app /app/app
+# Библиотека движений VRM: перенос клипов паков и папки anim_inbox на скелет VRM (app/animlib.sync).
+COPY tools/anim_retarget.py tools/anim_library.py /app/tools/
 # Бренд-ассеты (значок Витубики для концовки историй, app/vtubika_endcard.py).
 COPY assets /app/assets
 # Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.

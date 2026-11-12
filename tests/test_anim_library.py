@@ -201,3 +201,40 @@ def test_animlib_search_and_plan_validation(tmp_path) -> None:
     with pytest.raises(presets3d.PresetError) as err:
         presets3d.validate_presets({"performance": [{"who": "hero", "preset": "anim", "clip": "danse_a", "t": 1}]})
     assert "dance_a" in str(err.value)
+
+
+def write_gltf(path, sk: dict) -> None:
+    """Скелет нейтрального вида → .gltf со встроенным буфером (узлы, один клип поворота)."""
+    import base64
+    import struct
+
+    nodes = [{"name": n["name"], "translation": n["t"], "rotation": n["r"]} for n in sk["nodes"]]
+    for i, n in enumerate(sk["nodes"]):
+        if n["parent"] >= 0:
+            nodes[n["parent"]].setdefault("children", []).append(i)
+    node, track = next(iter(sk["clips"]["Down"]["tracks"].items()))
+    times = [0.0, 1 / 30, 2 / 30]
+    raw = struct.pack("<3f", *times) + b"".join(struct.pack("<4f", *q) for q in track["r"])
+    doc = {"asset": {"version": "2.0"}, "scene": 0, "scenes": [{"nodes": [0]}], "nodes": nodes,
+           "buffers": [{"byteLength": len(raw), "uri": "data:application/octet-stream;base64," + base64.b64encode(raw).decode()}],
+           "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 12}, {"buffer": 0, "byteOffset": 12, "byteLength": 48}],
+           "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [times[-1]]},
+                         {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC4"}],
+           "animations": [{"name": "Down", "samplers": [{"input": 0, "output": 1}], "channels": [{"sampler": 0, "target": {"node": int(node), "path": "rotation"}}]}]}
+    path.write_text(json.dumps(doc), "utf-8")
+
+
+def test_inbox_sync_imports_owner_clip(tmp_path) -> None:
+    """Владелец кладёт свой клип в anim_inbox → он в библиотеке как in_*, исходник — в imported/."""
+    inbox = tmp_path / "anim_inbox"
+    inbox.mkdir()
+    write_gltf(inbox / "My Wave.gltf", tpose_skeleton())
+    rep = animlib.sync(vrm_dir=tmp_path / "vrm", packs=tmp_path / "no-packs", inbox=inbox)
+    assert rep["imported"] == 1 and rep["built"] == 0
+    clip = json.loads((tmp_path / "vrm" / "anim" / "in_my_wave.json").read_text("utf-8"))
+    d = R.qrot(np.array(clip["bones"]["rightUpperArm"][1]), np.array([-1.0, 0, 0]))
+    assert d[1] < -0.9  # рука опущена, как в клипе
+    assert (inbox / "imported" / "My Wave.gltf").is_file() and not (inbox / "My Wave.gltf").exists()
+    names = [c["name"] for c in animlib.search("my wave", vrm_dir=tmp_path / "vrm")]
+    assert names == ["in_my_wave"]
+    assert animlib.sync(vrm_dir=tmp_path / "vrm", packs=tmp_path / "no-packs", inbox=inbox) == {"built": 0, "imported": 0}
