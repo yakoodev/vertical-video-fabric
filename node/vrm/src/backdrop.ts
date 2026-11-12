@@ -12,7 +12,7 @@ import { BH, buildRoom, BW, drawBokeh, drawDust, drawShafts, drawSteam, type Roo
 import { buildSet, SCREEN_CHAT, SCREEN_MAIN } from "./plate/set.ts";
 import { glow, layer, rng } from "./plate/draw.ts";
 import { drawChatScreen, drawStream, type StreamScreen } from "../../scene3d/src/ui.ts";
-import { drawInsert, type InsertSpec } from "./inserts.ts";
+import { drawInsert, setInsertPlate, type InsertSpec } from "./inserts.ts";
 
 export interface PlateSpec {
   kind?: "front" | "ots" | "wide" | "flat";
@@ -38,6 +38,9 @@ export interface PlateSpec {
   insert?: InsertSpec;
   /** Край стола на переднем плане, мягкий фокус: клавиатура, стакан, микрофон на стойке. y — верх полосы. */
   fgDesk?: { y: number; cup?: boolean; mic?: boolean };
+  /** Подложка — кадр комнаты 3D-пресета (отрисован node/scene3d той же камерой, spec.plates): вместо нарисованной
+   * комнаты, лучей и боке. */
+  room?: boolean;
   /** Средний план: рисовать 2D-кота (cat.ts) на краю стола. */
   cats?: boolean;
   /** Монитор с чатом сбоку на среднем плане (чуть размыт): x, y, ширина, поворот (градусы). */
@@ -56,6 +59,8 @@ export class Backdrop {
   chat = layer(300, 540);
   small: HTMLCanvasElement;
   grain: HTMLCanvasElement;
+  /** Кадр комнаты 3D-пресета на текущее время (main.ts грузит его до кадра; null — не загрузился). */
+  plate: HTMLImageElement | null = null;
   constructor(W: number, H: number, stream: StreamScreen) {
     this.W = W;
     this.H = H;
@@ -99,7 +104,9 @@ export class Backdrop {
     if (p.insert) {
       g.fillStyle = "#0c0a1e";
       g.fillRect(0, 0, this.W, this.H);
+      setInsertPlate(p.room ? this.plate : null);
       drawInsert(g, this.W, this.H, p.insert, t, this.stream, this.room);
+      setInsertPlate(null);
       return;
     }
     this.drawBackPlate(g, p, t, rig, cam);
@@ -111,6 +118,11 @@ export class Backdrop {
     g.fillStyle = p.color || "#0c0a1e";
     g.fillRect(0, 0, W, H);
     if (p.kind === "flat") return;
+    if (p.room) {
+      // Комната 3D-пресета: камера та же, что у героини, — кадр ложится во весь кадр без сдвигов.
+      if (this.plate) g.drawImage(this.plate, 0, 0, W, H);
+      return;
+    }
     if (p.kind === "ots" || p.kind === "wide") {
       if (!this.set) this.set = buildSet();
       g.save();
@@ -152,6 +164,7 @@ export class Backdrop {
       drawSteam(g, x + 210 * k, y + 60 * k, k, t);
       g.restore();
     }
+    if (p.room) return;  // у комнаты 3D-пресета свои лучи, пылинки и свечение
     if (p.kind !== "wide") drawShafts(g, W, H, t + 3, 0.3);
     drawDust(g, this.room, W, H, t);
   }

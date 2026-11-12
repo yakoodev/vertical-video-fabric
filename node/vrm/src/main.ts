@@ -91,6 +91,9 @@ export interface Spec {
   siteShots?: string[];
   /** Проверка рук против тела (handcheck.ts) на каждом кадре; false — выключить. */
   handCheck?: boolean;
+  /** Кадры подложки планов с plate.room — комната 3D-пресета, отрисованная node/scene3d той же камерой
+   * (app/vtubika_room3d.py): url с {frame} — номер кадра ролика (5 цифр), render.mjs --plates DIR отдаёт /plates/…. */
+  plates?: { url: string };
 }
 
 let spec: Spec;
@@ -363,9 +366,38 @@ async function load(s: Spec) {
   return { warnings, meta: { name: meta.name || meta.title, authors: meta.authors || meta.author, commercial: meta.commercialUsage || meta.commercialUssageName } };
 }
 
+const plateCache = new Map<string, Promise<HTMLImageElement | null>>();
+
+function loadImage(url: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url.startsWith("http") ? url : `http://scene3d.local${url}`;
+  });
+}
+
+/** Кадр комнаты под план с plate.room (и следующий — заранее); нет файла — кадр без подложки, рендер не падает. */
+async function preparePlate(t: number) {
+  const { shot } = shotAt(t);
+  if (!spec.plates?.url || !shot.plate?.room) {
+    backdrop.plate = null;
+    return;
+  }
+  const fps = spec.fps || 30;
+  const url = (i: number) => spec.plates!.url.replace("{frame}", String(i).padStart(5, "0"));
+  const i = Math.round(t * fps);
+  for (const k of [i, i + 1]) if (!plateCache.has(url(k))) plateCache.set(url(k), loadImage(url(k)));
+  backdrop.plate = await plateCache.get(url(i))!;
+  for (const key of plateCache.keys()) if (key !== url(i) && key !== url(i + 1)) plateCache.delete(key);
+}
+
 (window as any).__scene3d = {
   load,
-  render: (t: number) => render(t),
+  render: async (t: number) => {
+    await preparePlate(t);
+    return render(t);
+  },
   inspect: (t: number) => {
     const { shot, local } = shotAt(t);
     simT = NaN;

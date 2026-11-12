@@ -14,6 +14,7 @@
  *   [--fps 30] [--duration 9] [--frames A:B] [--preview 0,2.5,5 --preview-dir DIR] [--inspect T]
  *   [--gl swiftshader|gpu] [--format jpeg|png] [--quality 92] [--crf 18] [--chrome PATH] [--ffmpeg ffmpeg]
  *   [--timeout 1800] [--site DIR — скриншоты сайта для телефона «site», отдаются как /site/…]
+ *   [--plates DIR — кадры подложки (комната 3D-пресета за VRM-героиней), отдаются как /plates/…]
  *
  * stdout — одна строка JSON {ok, frames, fps, duration, width, height, segments, black_frames,
  * luma_min, seconds, warnings, presence?, retried} (превью: {ok, previews: [...]}, inspect: {ok, inspect}).
@@ -74,6 +75,7 @@ export function parseArgs(argv) {
     output: out.out ? resolve(out.out) : null,
     packs: resolve(out.packs || process.env.MOTION_PACKS_DIR || join(ROOT, "vendor", "packs")),
     site: out.site ? resolve(out.site) : null,
+    plates: out.plates ? resolve(out.plates) : null,
     bundle: resolve(out.bundle || join(HERE, "dist", "scene3d.js")),
     workers: Math.round(num("workers", Math.max(1, Math.min(4, Math.floor(cpus().length / 4))), 1, 16)),
     fps: out.fps !== undefined ? Math.round(num("fps", 30, 1, 60)) : null,
@@ -140,6 +142,13 @@ export function serve(url, ctx) {
   if (path.startsWith("/site/")) {
     // Скриншоты сайта (телефон «site»): только картинки из каталога --site.
     const file = ctx.site && safeJoin(ctx.site, path.slice("/site/".length));
+    const mime = file && MIME[extname(file).toLowerCase()];
+    if (!file || !mime || !mime.startsWith("image/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
+    return { status: 200, body: readFileSync(file), mime };
+  }
+  if (path.startsWith("/plates/")) {
+    // Кадры подложки (комната 3D-пресета, отрисованная отдельно той же камерой): только картинки из --plates.
+    const file = ctx.plates && safeJoin(ctx.plates, path.slice("/plates/".length));
     const mime = file && MIME[extname(file).toLowerCase()];
     if (!file || !mime || !mime.startsWith("image/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
     return { status: 200, body: readFileSync(file), mime };
@@ -279,7 +288,7 @@ export async function openScene(opts, spec, log = () => {}) {
     chromeErr = (chromeErr + d.toString()).slice(-3000);
   });
   const cdp = new Cdp(chrome);
-  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs, site: opts.site };
+  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs, site: opts.site, plates: opts.plates };
   const consoleLines = [];
   const close = async () => {
     try {

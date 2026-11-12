@@ -53,6 +53,15 @@ ZHENYA_LOOK = {"outline": 0.0034, "shade": "#a49ab8", "toony": 0.97, "shift": -0
 # Модель та же, что у Веры и Ники (руки Twist-модели при печати проходят сквозь корпус), другой цвет.
 HEROINES["zhenya"] = {"model": GIRL, "chair_y": 0.775, "headphones": ZHENYA_HEADSET, "look": ZHENYA_LOOK}
 
+# Соня, стримит хорроры по ночам: пепельно-сиреневые волосы, чёрное худи, красные глаза, чёрная гарнитура с красным
+# кольцом. Модель та же, что у Веры, Ники и Жени (у Twist-модели руки при печати проходят сквозь корпус), другой цвет.
+SONYA_HEADSET = {"kind": "headphones", "color": "#17151c", "accent": "#ff3b4e", "ring": 0.02, "scale": 1.06, "lift": 0.035}
+HEROINES["sonya"] = {"model": GIRL, "chair_y": 0.775, "headphones": SONYA_HEADSET,
+                     "look": {"outline": 0.0034, "shade": "#9a90b8", "toony": 0.97, "shift": -0.05, "rim": "#ff8a9a", "rimPower": 4,
+                              "skin": "^(face|body)", "skinShade": "#e2a4a4", "tint": {"Hair": "#ffffff"},
+                              "repaint": {"Hair": ["#2a2236", "#d4c8ec"], "Tops": ["#0c0c12", "#4a4a5c"],
+                                          "EyeIris": ["#3a060c", "#ff5a64"]}}}
+
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
 # свой персонаж Веры (сиреневые волосы, белый верх, звезда-заколка, фиолетовые глаза).
 AVATARS: dict[str, dict[str, Any]] = {
@@ -74,6 +83,13 @@ AVATARS: dict[str, dict[str, Any]] = {
                                   "Bottoms": ["#1a1a30", "#5a5a90"]}},
              "accessories": [{"kind": "ears", "color": "#14122a", "accent": "#ff6a7a", "scale": 1.0}]},
 }
+
+# Бесплатная модель Сони (до покупки): простая, голубые волосы, белый верх, — на мониторе застывшей картинкой с улыбкой.
+AVATARS["sonya_free"] = {"model": GIRL,
+                         "look": {"outline": 0.004, "shade": "#9ab0d8", "toony": 0.97, "rim": "#bfe6ff", "rimPower": 4, "skin": "^(face|body)",
+                                  "tint": {"Hair": "#ffffff"},
+                                  "repaint": {"Hair": ["#3a6a9a", "#cfe9ff"], "Tops": ["#8a9ab8", "#ffffff"],
+                                              "EyeIris": ["#0a2a4a", "#6ab8ff"], "Bottoms": ["#2a3a5a", "#7a9ac8"]}}}
 
 # «Вебка» Жени: она сама на мониторе (трекинг повторяет её движения), в той же гарнитуре.
 AVATARS["zhenya_cam"] = {"model": GIRL, "look": {**ZHENYA_LOOK, "outline": 0.004}, "accessories": [ZHENYA_HEADSET]}

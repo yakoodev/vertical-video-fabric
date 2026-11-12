@@ -8,7 +8,7 @@
  *
  * Шрифты — из vendor/fonts (render.mjs отдаёт /fonts/): Montserrat — интерфейс, Rubik — крупные цифры.
  */
-import { drawSite, type SiteScreen } from "./ui_site.ts";
+import { drawSite, siteImages, type SiteScreen } from "./ui_site.ts";
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
 import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
@@ -62,6 +62,65 @@ export function drawLive(g: CanvasRenderingContext2D, img: HTMLCanvasElement | u
   g.drawImage(img, (img.width - sw) / 2, (img.height - sh) / 2, sw, sh, x, y, w, h);
 }
 export const UI_NUM = "VvfNum";
+
+/**
+ * Купленная модель в окне эфира — НАСТОЯЩИЕ картинки товара со страницы магазина (кадры превью, листы выражений;
+ * render.mjs отдаёт их из --site как /site/…, загружает loadSite по spec.siteShots). Картинки не рисуются кодом:
+ * только кадрирование «по заполнению», мягкое «дыхание» и смена выражений наплывом с лёгким толчком.
+ */
+export interface ProductAvatar {
+  /** Выражения: имя → картинка {url, x, y — точка кадра в долях картинки, которая встаёт в центр окна; zoom}. */
+  faces: Record<string, { url: string; x?: number; y?: number; zoom?: number }>;
+  /** Смена выражений [{t, face}]; до первого ключа — base. */
+  keys?: { t: number; face: string }[];
+  base?: string;
+}
+
+function drawProductImage(g: CanvasRenderingContext2D, f: ProductAvatar["faces"][string], x: number, y: number, w: number, h: number,
+  t: number, pop: number) {
+  const img = siteImages[f.url];
+  if (!img) return;
+  const breathe = 1 + 0.012 * Math.sin(t * 1.9) + 0.06 * pop;
+  // Фон окна — та же картинка «по заполнению» в расфокусе, поверх — целиком по высоте (лицо не режется).
+  const kc = Math.max(w / img.width, h / img.height) * 1.05;
+  g.save();
+  g.beginPath();
+  g.rect(x, y, w, h);
+  g.clip();
+  g.filter = "blur(14px) brightness(0.82) saturate(1.1)";
+  g.drawImage(img, x + w / 2 - (img.width * kc) / 2, y + h / 2 - (img.height * kc) / 2, img.width * kc, img.height * kc);
+  g.filter = "none";
+  const k = Math.min(w / img.width, (h * 1.04) / img.height) * (f.zoom ?? 1) * breathe;
+  const cx = img.width * (f.x ?? 0.5), cy = img.height * (f.y ?? 0.5);
+  const bob = Math.sin(t * 1.9 + 0.6) * h * 0.006;
+  const sway = Math.sin(t * 0.95) * 0.8 * (Math.PI / 180);
+  g.translate(x + w / 2, y + h * 0.5 + bob);
+  g.rotate(sway);
+  g.scale(k, k);
+  g.shadowColor = "rgba(0,0,0,0.35)";
+  g.shadowBlur = 30;
+  g.drawImage(img, -cx, -cy);
+  g.restore();
+}
+
+/** Модель-товар в окне эфира: текущее выражение, при смене — наплыв 0.18 с и толчок. */
+export function drawProduct(g: CanvasRenderingContext2D, p: ProductAvatar | undefined, t: number, x: number, y: number, w: number, h: number) {
+  if (!p) return;
+  const keys = (p.keys || []).filter((k) => k.t <= t);
+  const cur = keys.length ? keys[keys.length - 1] : null;
+  const prev = keys.length > 1 ? keys[keys.length - 2].face : p.base || "base";
+  const name = cur ? cur.face : p.base || "base";
+  const since = cur ? t - cur.t : 99;
+  const mixK = Math.min(1, since / 0.18);
+  const pop = since < 0.45 ? Math.sin((since / 0.45) * Math.PI) : 0;
+  if (mixK < 1 && p.faces[prev]) drawProductImage(g, p.faces[prev], x, y, w, h, t, 0);
+  if (p.faces[name]) {
+    g.save();
+    g.globalAlpha = mixK;
+    drawProductImage(g, p.faces[name], x, y, w, h, t, pop);
+    g.restore();
+  }
+}
 
 let fontsLoading: Promise<void> | null = null;
 /** Загрузить шрифты интерфейса (нет файлов — системный sans-serif, сцена всё равно рисуется). */
@@ -150,6 +209,8 @@ export interface StreamScreen {
   camBg?: string[];
   /** Чат — на отдельном вертикальном мониторе (kind "chat"): здесь окно эфира во всю ширину. */
   noChat?: boolean;
+  /** Аватар ``product`` — купленная модель картинками со страницы магазина (выражения по времени). */
+  product?: ProductAvatar;
   /** Подпись эфира по времени (чужой эфир — своя подпись): [{t, title}]. */
   titles?: { t: number; title: string }[];
   /** Нарисованный парень (аватар hoodie) и чужой витубер (vtuber): моргания, кивки, окна зевков. */
@@ -176,7 +237,7 @@ function screenState(s: StreamScreen, t: number) {
   const open = m === "open" || (m === "talk" && Math.floor((t - mt) * 7) % 3 !== 2);
   const wolf = wolfPose(t, s.wolf || {});
   const anim = mode === "rig" || mode === "shop" || mode === "shops" || mode === "draw"
-    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch"
+    || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch" || avatar === "product"
       || decorAt(s.decor, t) !== "plain"));
   return { mode, avatar, open, wolf, anim };
 }
@@ -274,6 +335,7 @@ function drawStreamBody(g: CanvasRenderingContext2D, W: number, H: number, s: St
   else if (st.avatar === "vtuber") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, s.vtuber, "vtuber"));
   else if (st.avatar === "nocam") drawNoCam(g, vx, vy, vw, vh, u);
   else if (st.avatar === "live") drawLive(g, liveImages.avatar, vx, vy, vw, vh);
+  else if (st.avatar === "product") drawProduct(g, s.product, t, vx, vy, vw, vh);
   else if (st.avatar === "sketch") {
     // Эскиз персонажа на бумаге (та же живая картинка, карандашом).
     g.fillStyle = "#f2ede4";

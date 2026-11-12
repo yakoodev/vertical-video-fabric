@@ -103,6 +103,9 @@ def validate_plan(plan: dict) -> None:
                 raise PlanError(f"фраза {n + 1}: нет выражения «{ev['face']}»")
             if "sfx" in ev and ev["sfx"] not in U.SFX:
                 raise PlanError(f"фраза {n + 1}: нет звука «{ev['sfx']}»")
+            faces_p = ((plan.get("screen") or {}).get("product") or {}).get("faces") or {}
+            if "product_face" in ev and ev["product_face"] not in faces_p:
+                raise PlanError(f"фраза {n + 1}: нет выражения товара «{ev['product_face']}» в screen.product.faces")
             if "decor" in ev and ev["decor"] not in DECORS:
                 raise PlanError(f"фраза {n + 1}: оформление эфира «{ev['decor']}» — одно из {', '.join(DECORS)}")
 
@@ -238,6 +241,9 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 screen["titles"].append({"t": t, "title": ev["title"]})
             if "decor" in ev:
                 screen.setdefault("decor", []).append({"t": t, "kind": ev["decor"]})
+            if "product_face" in ev:
+                # Купленная модель в эфире (аватар product): выражение — картинка со страницы товара.
+                screen.setdefault("product", {"faces": {}}).setdefault("keys", []).append({"t": t, "face": ev["product_face"]})
             if "mouth" in ev:
                 screen["mouth"].append({"t": t, "m": ev["mouth"]})
             if "chat" in ev:
