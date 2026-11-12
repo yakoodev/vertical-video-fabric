@@ -110,7 +110,7 @@ SYSTEM = """\
   нарезка источника (analyze_source), источник по ссылке (add_source_from_url). Нужна правка клипа или
   другое — сначала load_tools с нужными группами, потом вызывай их инструменты. Группы:
 {groups}
-- Клиповым инструментам нужен clip_id (list_clips по source_id). Время клиповых инструментов — секунды клипа.
+- Клиповым инструментам нужен clip_id (list_clips: без аргументов — клипы этого проекта, source_id — одного видео). Время клиповых инструментов — секунды клипа.
   Таймкоды в ответе пиши так: «клип #123, 12.5 с» или «источник #7, 1:05:30» — владелец кликает по ним.
 - Правки клипа откатываются кнопкой «Откатить» в чате и Ctrl+Z в редакторе — правь смело, но только то,
   что просили. Посмотри результат (view_frame / contact_sheet), прежде чем отчитаться.
@@ -120,6 +120,12 @@ SYSTEM = """\
 - Что можно в этом проекте без владельца, решает он сам: блок agent_settings.allows в срезе. Держись его. Отказ
   сервиса называет настройку и где её менять: перескажи владельцу, настройки сам не меняй и не обходи. Новый клип
   через create_clip только по прямому заданию, а не чтобы обойти выбор из списка.
+- Готовый ролик (mp4) — только render_clip(clip_id) → render_status(render_id, wait_sec=30) до status done.
+  Просят «отрендеренный клип», «готовый ролик», «результат» — запусти render_clip сам и дождись done. Не пиши
+  «отрендерен», «готов», «соберётся автоматически», пока render_status не ответил done: сам сервис клип не
+  рендерит, а ответ о готовом ролике без рендера он пометит.
+- Холст (create_canvas_clip) ложится в проект этой переписки. Клип с project_warning или project_unassigned в
+  get_clip — чужой или ничей: не выдавай его за свою работу и не бери как готовый результат.
 - Без настройки «Публиковать самому» публикуется только одобренное владельцем. Перед отправкой — lint_clip (зоны
   кнопок площадок, темп чтения, вспышки, луп): warn поправь и перерендерь. Клип на публикацию — submit_for_approval.
   Заголовок, описание и хэштеги сервис пишет сам после рендера; обложку — generate_covers → choose_cover (группа montage).
@@ -296,6 +302,9 @@ class ThreadPolicy(TurnPolicy):
         self.project_id = thread.get("project_id")
         self.changes: list[dict] = []
         self.ctxs: dict[int, ToolContext] = {}
+        from app.ai.render_claims import db_now
+
+        self.started = db_now(store)  # начало хода: правленому в ходе клипу нужен рендер не раньше
 
     def prompt(self, state: TurnState) -> str:
         return _system(self.thread, self.groups)
@@ -312,7 +321,9 @@ class ThreadPolicy(TurnPolicy):
                 if cp:
                     self.changes.append({"checkpoint_id": cp, "clip_plan_id": cid})
 
-            self.ctxs[clip_id] = ToolContext(store=self.store, clip_plan_id=clip_id, on_first_change=first_change)
+            # project_hint — проект чата: get_clip пометит клип другого проекта или ничей холст.
+            self.ctxs[clip_id] = ToolContext(store=self.store, clip_plan_id=clip_id, on_first_change=first_change,
+                                             project_hint=int(self.project_id) if self.project_id else None)
         return self.ctxs[clip_id]
 
     def run_call(self, state: TurnState, name: str, args: dict) -> tuple[Any, bool]:
@@ -350,10 +361,13 @@ class ThreadPolicy(TurnPolicy):
         return f"Gemini остановился на своём фильтре контента ({reason}). Переформулируй или выбери другую модель."
 
     def finish(self, state: TurnState, text: str) -> str:
-        if text:
-            return text
-        done = [s["label"] for s in state.steps if s.get("ok") and s.get("kind") == "tool"]
-        return self.note or ("Сделал:\n" + "\n".join(f"- {d}" for d in done[:20]) if done else "Готово.")
+        from app.ai.render_claims import with_render_note
+
+        if not text:
+            done = [s["label"] for s in state.steps if s.get("ok") and s.get("kind") == "tool"]
+            text = self.note or ("Сделал:\n" + "\n".join(f"- {d}" for d in done[:20]) if done else "Готово.")
+        # «Отрендерено»/«готово» без рендера у клипов этого хода — пометка сервиса (эксперимент 12.11, B2).
+        return with_render_note(self.store, text, state.steps, self.started)
 
 
 def hold_for_owner(store: Any, thread_id: int, reply_id: int | None, step: dict, name: str, args: dict, label: str) -> dict:

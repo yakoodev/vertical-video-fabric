@@ -436,8 +436,49 @@ def strip_ru_monologue(text: str) -> str:
 
 
 def _strip_leaks(text: str) -> str:
-    cleaned = strip_ru_monologue(strip_monologue(strip_service_echo(_MARKER_RE.sub("", text)))).lstrip(" .\n")
-    return _LEAK_PREFIX_RE.sub("", cleaned, count=1).strip()
+    cleaned = strip_ru_monologue(strip_latin_lead(strip_monologue(strip_service_echo(_MARKER_RE.sub("", text)))))
+    return _LEAK_PREFIX_RE.sub("", cleaned.lstrip(" .\n"), count=1).strip()
+
+
+# Начало русского отчёта после английского размышления: начало строки или сразу после конца фразы
+# («…starting at its drop.Я собрал рекламный ролик»), с разметкой перед буквой («**Готово**», «1. Хук»).
+_RU_START_RE = re.compile(r"(?:^|(?<=[.!?:)\]}`])|(?<=\n))[ \t*_#>\-•\d.)]*[А-ЯЁ]", re.MULTILINE)
+LATIN_LEAD_MIN_LETTERS = 60
+LATIN_LEAD_MAX_CYRILLIC = 0.25  # в размышлении бывают цитаты задания по-русски («Результат — отрендеренный клип»)
+REPORT_MIN_SHARE = 0.75
+
+
+def _cyr_share(text: str) -> tuple[int, int, float]:
+    letters = sum(ch.isalpha() for ch in text)
+    cyrillic = len(_CYR_RE.findall(text))
+    return letters, cyrillic, (cyrillic / letters if letters else 0.0)
+
+
+def strip_latin_lead(text: str) -> str:
+    """Отрезать английское размышление, когда в нём есть русские цитаты (эксперимент 12.11, B1: «Wait, I don't have a
+    `render` command!… Let's double check: «Результат — отрендеренный клип»… I will report…Я собрал рекламный ролик…»).
+    ``strip_monologue`` режет только до первой русской буквы, а она была внутри цитаты задания.
+
+    Ищем самое раннее место, с которого до конца — русский отчёт (≥ 75 % кириллицы, ≥ 20 русских букв), а до него —
+    английский текст (≥ 60 латинских букв, ≥ 6 слов, кириллицы ≤ 25 %). Нет такого — текст как есть."""
+    if not text or not _CYR_RE.search(text):
+        return text
+    for match in _RU_START_RE.finditer(text):
+        start = match.start()
+        while start < len(text) and text[start] in " \t":
+            start += 1
+        if start == 0:
+            continue
+        head, tail = text[:start], text[start:]
+        letters, cyrillic, share = _cyr_share(tail)
+        if cyrillic < REPORT_MIN_CYRILLIC or share < REPORT_MIN_SHARE:
+            continue
+        head_letters, _head_cyr, head_share = _cyr_share(head)
+        latin = sum(ch.isascii() and ch.isalpha() for ch in head)
+        if latin >= LATIN_LEAD_MIN_LETTERS and len(head.split()) >= 6 and head_share <= LATIN_LEAD_MAX_CYRILLIC:
+            return tail.lstrip()
+        return text  # перед русским — русский или смесь: это не размышление, а сам ответ
+    return text
 
 
 _CYR_RE = re.compile(r"[А-Яа-яЁё]")

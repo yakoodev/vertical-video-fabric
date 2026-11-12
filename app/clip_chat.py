@@ -33,6 +33,10 @@ CLIP_NOTE = (
     "чате. Ответ pending_confirmation — скажи, что ждёшь подтверждения, и не повторяй вызов.\n"
     "Приложенные файлы: «файл для монтажа #N» — asset_id для add_insert и слоёв; «источник #N» — source_id.\n"
     "Новую серию или работу на весь проект делает чат проекта: скажи владельцу открыть его.\n"
+    "Готовый ролик (mp4) — только render_clip → render_status(render_id, wait_sec=30) до status done. Просят "
+    "«отрендеренный клип», «готовый ролик», «результат» — запусти render_clip сам и дождись done. Не пиши "
+    "«отрендерен», «готов», «соберётся автоматически», пока render_status не ответил done: сам сервис клип не "
+    "рендерит, а ответ о готовом ролике без рендера он пометит.\n"
 )
 
 
@@ -115,10 +119,16 @@ def run_clip_turn(store: Any, thread: dict, message: str, *, reply_id: int | Non
 
     prompt = f"{message}\n\nСервис уже сделал: {note}" if note else message
     used_model = model or thread.get("model") or settings.gemini_agent_model
+    from app.ai.render_claims import db_now, with_render_note
+
+    started = db_now(store)
     result = editor_agent.run_agent(store, clip_id, prompt, client=gemini, model=used_model, history=history,
                                     on_step=on_step, run=run, max_steps=max_steps, on_first_change=first_change,
                                     hooks=ClipHooks(store, thread, reply_id))
     text = f"{note}\n\n{result['text']}" if note else result["text"]
+    # «Отрендерено»/«готово» без рендера после правок этого хода — пометка сервиса (эксперимент 12.11).
+    text = with_render_note(store, text, [{**s, "clip_id": s.get("clip_id", clip_id)} for s in result["steps"]],
+                            started)
     return {"text": text, "steps": result["steps"], "remembered": remembered, "ai": True, "model": result["model"],
             "changes": changes}
 
