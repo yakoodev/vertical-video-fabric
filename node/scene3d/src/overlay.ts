@@ -4,7 +4,7 @@
  * сервиса), масштаб на реальный кадр — W / 1080. Всё — функция t.
  *
  *   {kind: "hud", label, values: [{t, value}], prefix, deltas: [{t, text, kind: up|down, dur}], right?, top?}
- *   {kind: "tag", text, x?, y?, start?, end?}
+ *   {kind: "tag", text, x?, y?, start?, end?, theme?, accent?} — theme (red|dark|light|brand; toon — прежний вид) у hud/tag/toast — плоская тема ui_flat.ts
  *   {kind: "toast", t0, t1, title, text, icon, chip: {text, kind}, y?}
  *   {kind: "phone", t0, t1, x?, y?, scale?, dim?, …PhoneScreen} — телефон-карточка въезжает снизу; dim — затемнить кадр
  *     под ней (вставка: большой телефон поверх размытой сцены)
@@ -20,7 +20,7 @@ import { drawAlert, drawChatScreen, drawHud, drawPhone, drawStream, drawTag, dra
 
 export type OverlaySpec =
   | ({ kind: "hud"; right?: number; left?: number; top?: number; start?: number; end?: number } & HudSpec)
-  | { kind: "tag"; text: string; x?: number; y?: number; start?: number; end?: number }
+  | { kind: "tag"; text: string; x?: number; y?: number; start?: number; end?: number; theme?: string; accent?: string }
   | ({ kind: "toast"; y?: number } & ToastSpec)
   | ({ kind: "phone"; t0: number; t1: number; x?: number; y?: number; scale?: number; dim?: number; cut?: boolean; cutIn?: boolean;
       cutOut?: boolean } & PhoneScreen)
@@ -65,7 +65,7 @@ export class Overlays {
       const start = (o as any).start ?? -Infinity, end = (o as any).end ?? Infinity;
       if (t < start || t >= end) continue;
       if (o.kind === "hud") drawHud(g, s, (o.right ?? 1040) * s, (o.top ?? 60) * s, o, t, o.left !== undefined ? o.left * s : undefined);
-      else if (o.kind === "tag") drawTag(g, s, (o.x ?? 40) * s, (o.y ?? 97) * s, o.text);
+      else if (o.kind === "tag") drawTag(g, s, (o.x ?? 40) * s, (o.y ?? 97) * s, o.text, o.theme, o.accent);
       else if (o.kind === "toast") drawToast(g, s, 540 * s, (o.y ?? 300) * s, o, t);
       else if (o.kind === "phone") this.drawPhoneCard(o, t, s);
       else if (o.kind === "chat") this.drawChatCard(o, t, s);

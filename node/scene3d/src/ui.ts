@@ -14,6 +14,7 @@ import { ease } from "./timeline.ts";
 import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
 import { decorAt, drawDecorBack, drawDecorFront, retroFamily } from "./ui_deco.ts";
 import { drawDeclined, drawDrawApp, drawForeignShop, drawFox, drawMessenger, drawRig, drawStoreCard, drawWolf, wolfPose } from "./ui_pages.ts";
+import { card, flatComponent, flatFont, flatSize, isToon, rgbaOf, screenPalette, SHADOWS, text as flatText, TYPE } from "./ui_flat.ts";
 
 export const UI_FONT = "VvfUi";
 
@@ -129,6 +130,9 @@ export function loadUiFonts(): Promise<void> {
   const list: [string, string, string][] = [
     [UI_FONT, "Montserrat-Bold.ttf", "700"], [UI_FONT, "Montserrat-ExtraBold.ttf", "800"], [UI_FONT, "Montserrat-Black.ttf", "900"],
     [UI_FONT, "Montserrat-Medium.ttf", "500"], [UI_NUM, "Rubik-Black.ttf", "900"], [UI_NUM, "Rubik-Bold.ttf", "700"],
+    // Плоская тема (ui_flat.ts, frontend/src/motion/flat): настоящие имена семейств, как у плашек монтажа.
+    ["Montserrat", "Montserrat-ExtraBold.ttf", "800"], ["Montserrat", "Montserrat-Black.ttf", "900"],
+    ["Golos Text", "GolosText-Medium.ttf", "500"], ["Golos Text", "GolosText-Bold.ttf", "700"], ["Golos Text", "GolosText-Black.ttf", "900"],
   ];
   fontsLoading = Promise.all(list.map(async ([family, file, weight]) => {
     try {
@@ -495,6 +499,8 @@ export interface PhoneScreen {
   payment?: { title?: string; to?: string; amount: string; status?: string; ok?: boolean; t?: number };
   /** screen "shop": карточка товара (vtubika.store), screen "messenger": файл пришёл. */
   store?: { title?: string; price?: string; paidAt?: number };
+  /** Плоская тема уведомлений (red | dark | light | brand; toon — прежние карточки). */
+  theme?: string;
   /** post — пост в своём канале (набирается за typeSec), status — подпись под именем канала. */
   message?: { from?: string; file?: string; size?: string; text?: string; at?: number; post?: string; typeSec?: number; status?: string };
 }
@@ -550,7 +556,10 @@ export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: 
   g.fillText(p.date || "суббота, 8 ноября", W / 2, 210 * u);
   // Стопка уведомлений: новое сверху, въезжает сверху; старые уезжают вниз.
   const list = (p.notifications || []).filter((x) => x.t <= t);
-  const cardH = 104 * u, gap = 14 * u;
+  const flat = !isToon(p.theme);
+  // Плоская тема: уведомления — те же карточки, что слой ui toast (стекло, значок приложения, время).
+  const fk = (W - 44 * u) / 640;
+  const cardH = flat ? flatSize(g, { component: "toast", title: "x", text: "x", w: 640 }, fk).h : 104 * u, gap = 14 * u;
   let y = 250 * u;
   for (let i = list.length - 1; i >= 0 && y < H - 40 * u; i--) {
     const n = list[i];
@@ -559,6 +568,13 @@ export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: 
     g.save();
     g.globalAlpha = Math.min(1, k * 1.4);
     g.translate(0, slide);
+    if (flat) {
+      flatComponent(g, { component: "toast", theme: p.theme ?? "light", variant: "light", accent: n.color ?? null, title: n.title,
+        text: n.text || "", letter: (n.app || "•").slice(0, 2), time: "сейчас", w: 640 }, W / 2, y + cardH / 2, fk, t - n.t);
+      g.restore();
+      y += (cardH + gap) * (i === list.length - 1 ? Math.min(1, k) : 1);
+      continue;
+    }
     g.fillStyle = "rgba(255,255,255,0.94)";
     roundRect(g, 22 * u, y, W - 44 * u, cardH, 22 * u);
     g.fill();
@@ -789,6 +805,9 @@ export interface HudSpec {
   group?: boolean;
   /** Чипы изменения под плашкой: [{t, text: "+5", kind: "up"|"down", dur}]. */
   deltas?: { t: number; text: string; kind?: "up" | "down"; dur?: number }[];
+  /** Плоская тема (red | dark | light | brand + accent; toon — прежняя плашка). */
+  theme?: string;
+  accent?: string;
 }
 
 /** Бюджет-HUD справа сверху (опорные px 1080×1920, s — масштаб): «БЮДЖЕТ $175», зелёный/красный чип. */
@@ -815,6 +834,30 @@ export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, t
   const w = lw + vw + 64 * s, hh = 74 * s;
   const x = left !== undefined ? left : right - w, y = top;
   if (left !== undefined) right = left + w;
+  const flat = !isToon(h.theme);
+  if (flat) {
+    // Плоская тема: карточка-пилюля с кромкой и общей тенью, подпись капсом в разрядку (как слой ui stat).
+    const pal = screenPalette(h.theme, "dark", h.accent);
+    g.save();
+    g.scale(s, s);
+    card(g, pal, x / s, y / s, w / s, hh / s, { radius: hh / s / 2, shadow: SHADOWS.float, ds: s });
+    g.restore();
+    if (flash) {
+      g.strokeStyle = flash > 0 ? `rgba(34,197,94,${0.9 * flash})` : `rgba(255,71,87,${-0.9 * flash})`;
+      g.lineWidth = 3 * s;
+      roundRect(g, x + 1.5 * s, y + 1.5 * s, w - 3 * s, hh - 3 * s, hh / 2);
+      g.stroke();
+    }
+    g.save();
+    g.translate(x + 26 * s, y + hh / 2);
+    g.scale(s, s);
+    flatText(g, label, 0, 0, { ...TYPE.label, tracking: 0.1 }, pal.muted, { size: 21 });
+    g.restore();
+    g.font = flatFont("display", 900, 44 * s);
+    g.fillStyle = flash > 0.05 ? "#4ade80" : flash < -0.05 ? "#ff6b7d" : rgbaOf(pal.text);
+    g.textAlign = "left";
+    g.fillText(text, x + 38 * s + lw, y + hh / 2 + 2 * s);
+  } else {
   g.fillStyle = "rgba(14,10,22,0.72)";
   roundRect(g, x, y, w, hh, hh / 2);
   g.fill();
@@ -828,6 +871,7 @@ export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, t
   g.fillStyle = flash > 0.05 ? "#5cff9a" : flash < -0.05 ? "#ff6b7d" : "#ffffff";
   g.font = font(900, 46 * s, true);
   g.fillText(text, x + 38 * s + lw, y + hh / 2 + 2 * s);
+  }
   // Чип изменения под плашкой.
   let cy = y + hh + 12 * s;
   for (const d of h.deltas || []) {
@@ -854,8 +898,14 @@ export function drawHud(g: CanvasRenderingContext2D, s: number, right: number, t
   g.restore();
 }
 
-/** Ярлык «ЧАСТЬ 1» слева сверху. */
-export function drawTag(g: CanvasRenderingContext2D, s: number, x: number, y: number, text: string) {
+/** Ярлык «ЧАСТЬ 1» слева сверху: плоская тема — чип-пилюля (как слой ui chip), toon — белый капс с тенью. */
+export function drawTag(g: CanvasRenderingContext2D, s: number, x: number, y: number, text: string, theme?: string, accent?: string) {
+  if (!isToon(theme)) {
+    const props = { component: "chip" as const, theme: theme ?? "dark", accent: accent ?? null, title: text, variant: theme ? "solid" : "neutral", size: 28 };
+    const box = flatSize(g, props, s);
+    flatComponent(g, props, x + box.w / 2, y, s, 9);
+    return;
+  }
   g.save();
   g.textBaseline = "middle";
   g.textAlign = "left";
@@ -867,13 +917,28 @@ export function drawTag(g: CanvasRenderingContext2D, s: number, x: number, y: nu
   g.restore();
 }
 
-export interface ToastSpec { t0: number; t1: number; title: string; text?: string; icon?: string; chip?: { text: string; kind?: "up" | "down" } }
+export interface ToastSpec { t0: number; t1: number; title: string; text?: string; icon?: string; chip?: { text: string; kind?: "up" | "down" };
+  /** Плоская тема (red | dark | light | brand + accent; toon — прежняя карточка), время справа. */
+  theme?: string; accent?: string; time?: string }
 
 /** Всплывающая карточка (напоминание, событие) с чипом суммы — въезжает сбоку. */
 export function drawToast(g: CanvasRenderingContext2D, s: number, cx: number, y: number, ts: ToastSpec, t: number) {
   if (t < ts.t0 || t > ts.t1) return;
   const k = popIn(t, ts.t0, 0.4);
   const out = Math.max(0, Math.min(1, (ts.t1 - t) / 0.25));
+  if (!isToon(ts.theme)) {
+    // Плоская тема: уведомление слоя ui toast; значок — Lucide по имени (bell, message-circle…) или буква; сумма чипа —
+    // справа вместо времени.
+    const icon = ts.icon && /^[a-z0-9-]+$/.test(ts.icon) ? ts.icon : undefined;
+    const props = { component: "toast" as const, theme: ts.theme ?? "light", accent: ts.accent ?? null, title: ts.title, text: ts.text || "",
+      icon, letter: icon ? undefined : (ts.icon || ts.title || "!").slice(0, 2), time: ts.chip ? ts.chip.text : ts.time ?? "сейчас", w: 760 };
+    const box = flatSize(g, props, s);
+    g.save();
+    g.globalAlpha = out;
+    flatComponent(g, props, cx + (1 - Math.min(1, k)) * 300 * s, y + box.h / 2, s, t - ts.t0);
+    g.restore();
+    return;
+  }
   const w = 640 * s, h = 120 * s;
   g.save();
   g.globalAlpha = out;
