@@ -15,9 +15,14 @@ RUN npx --yes esbuild@0.28.2 /motion/node/motion-render.ts --bundle --platform=n
 # 3D scenes (node/scene3d): the three.js engine is bundled into one browser script that the
 # headless Chromium renderer loads (node/scene3d/render.mjs); three is a build-time dependency only.
 WORKDIR /scene3d
-RUN npm init -y >/dev/null && npm install --no-audit --no-fund three@0.185.0 esbuild@0.28.2
+RUN npm init -y >/dev/null && npm install --no-audit --no-fund three@0.185.0 @pixiv/three-vrm@3.5.5 esbuild@0.28.2
 COPY node/scene3d/src /scene3d/src
 RUN npx esbuild /scene3d/src/engine.ts --bundle --format=iife --platform=browser --target=chrome110 --minify     --outfile=/scene3d/dist/scene3d.js --log-level=warning
+# VRM-персонажи 3D-серий (node/vrm, app/s3d_render.py): свой бандл; src импортирует ../../scene3d/src, поэтому
+# лежит рядом (/vrm/src), а three и three-vrm берутся из /scene3d/node_modules (NODE_PATH).
+COPY node/vrm/src /vrm/src
+RUN NODE_PATH=/scene3d/node_modules npx esbuild /vrm/src/main.ts --bundle --format=iife --platform=browser --target=chrome110 \
+    --minify --outfile=/vrm/dist/vrm.js --log-level=warning
 # PO-токены YouTube (bgutil, режим «скрипт»): yt-dlp сам запускает `node build/generate_once.js`
 # на каждый токен (app/ytdlp_net.py, BGUTIL_POT_HOME). Версия совпадает с pip-плагином
 # bgutil-ytdlp-pot-provider в requirements.txt; tsc — только при сборке, в образ — build/ и
@@ -119,12 +124,15 @@ COPY app /app/app
 COPY assets /app/assets
 # Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.
 COPY docs/playbooks /app/docs/playbooks
+# Миниатюры 3D-пресетов для пикеров редактора 3D-серии (≈1 МБ, app/s3d_api.py).
+COPY docs/3d/img /app/docs/3d/img
 COPY node /app/node
 COPY tests /app/tests
 COPY pytest.ini /app/pytest.ini
 COPY --from=frontend-build /build/dist /app/frontend/dist
 COPY --from=frontend-build /motion/motion-render.mjs /app/node/motion-render.mjs
 COPY --from=frontend-build /scene3d/dist/scene3d.js /app/node/scene3d/dist/scene3d.js
+COPY --from=frontend-build /vrm/dist/vrm.js /app/node/vrm/dist/vrm.js
 COPY --from=frontend-build /bgutil/server /opt/bgutil-pot/server
 
 RUN mkdir -p /data && chown -R node:node /data /app

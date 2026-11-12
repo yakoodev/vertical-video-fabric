@@ -7,7 +7,7 @@
 import type { ArmSpec, FingerSpec, Point, PoseSpec, Surface, V3 } from "./rig.ts";
 import { mocapAt, type Clip, type Track } from "./mocap.ts";
 import { blinkAt, restHand, seated, typingHand } from "./poses.ts";
-import { speechMouth } from "./anim.ts";
+import { speechMouth, type MouthEnv } from "./anim.ts";
 import { chinArm, mouseArm, mouthArm, typingArm, waveArm } from "./typing.ts";
 import type { ChairSpec } from "./body.ts";
 import { holdKeys, perfBones, type PerfLayers } from "./perf.ts";
@@ -28,6 +28,8 @@ export interface Timeline extends PerfLayers {
   /** Взгляд: цель (точка модели), head — доля поворота головой (остальное — глаза). */
   look?: { t: number; target: V3; head?: number }[];
   speech?: number[][];
+  /** Огибающая громкости голоса (0..1 по кадрам): рот открывается по громкости внутри окон speech (anim.ts). */
+  mouthEnv?: MouthEnv;
   surfaces?: Surface[];
   /** Кресло (одно на весь ролик): коллайдер волос и проверка «тело перед спинкой». */
   chair?: ChairSpec;
@@ -252,7 +254,7 @@ export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: numb
     if (u >= 0 && u < 0.18) blink = Math.max(blink, u < 0.07 ? u / 0.07 : 1 - (u - 0.07) / 0.11);
   }
   expr.blink = Math.max(expr.blink ?? 0, blink * (1 - (expr.happy ?? 0)));
-  const mouth = speechMouth(tl.speech, t);
+  const mouth = speechMouth(tl.speech, t, tl.mouthEnv);
   if (Object.keys(mouth).length) Object.assign(expr, { aa: 0, oh: 0, ee: 0, ih: 0, ou: 0 }, mouth);
   return {
     bones, mocap, expr, look: eyes,

@@ -5,7 +5,7 @@ import type { StudioBrief, StudioSummary } from "@/api/studio";
  * Проект (app/projects.py) — несколько видео одного стрим-канала, сериала или промо: страница /p/:id.
  * Источник в интерфейсе называется «видео» (/v/:id); в API и в коде он по-прежнему source.
  */
-export type ProjectKind = "stream_channel" | "series" | "promo" | "ai_video" | "explainer" | "other";
+export type ProjectKind = "stream_channel" | "series" | "promo" | "ai_video" | "explainer" | "series3d" | "other";
 
 export const PROJECT_KINDS: { value: ProjectKind; label: string }[] = [
   { value: "stream_channel", label: "Стрим-канал" },
@@ -13,6 +13,7 @@ export const PROJECT_KINDS: { value: ProjectKind; label: string }[] = [
   { value: "promo", label: "Промо" },
   { value: "ai_video", label: "ИИ-видео (с нуля)" },
   { value: "explainer", label: "Канал объяснялок (маскот)" },
+  { value: "series3d", label: "3D-серия (свой движок)" },
   { value: "other", label: "Другое" },
 ];
 

@@ -174,6 +174,22 @@ MODULES: list[Module] = [
         workers=("stories",),
     ),
     Module(
+        "series3d", "3D-серия (свой движок в сервисе)", "ai",
+        "Проект «3D-серия»: библиотека (VRM-персонажи с перекраской и голосом, робот-помощник, комната стримерши со "
+        "светом), серия — план с репликами, ракурсами и движениями камеры, эмоциями и жестами, надписями, "
+        "комментариями и переходами; у плана версии. «Рендер» — задание в очереди по одному: голос, слова (Whisper), "
+        "рот по голосу, 3D в Chromium, проверки рук, касаний, кадра и чёрных кадров, лист кадров, холст-клип. "
+        "Голос Gemini — бесплатно, Polza — только по карточке с суммой.",
+        cost=("cpu", "ram", "paid"), cost_note="3D рисуется Chromium сервиса (≈ 1–3 с на кадр без GPU); платный голос "
+                                              "Polza — по карточке, потолок SERIES3D_EPISODE_CAP_RUB",
+        depends=("ai_video",),
+        tools=("series3d_list", "series3d_create_episode", "series3d_plan_from_script", "series3d_update_plan",
+               "series3d_render", "series3d_status", "series3d_save_item"),
+        routes=("/api/series3d/*", "/api/projects/{id}/series3d*"),
+        ui=("раздел «3D-серия» в материалах проекта", "тип проекта «3D-серия»"),
+        workers=("series3d",),
+    ),
+    Module(
         "mcp", "MCP-сервер для внешних агентов", "ai",
         "Инструменты монтажа для Claude Code, Codex и любого MCP-клиента по адресу /mcp.",
         cost=(), cost_note="нагрузка — от того, что делают агенты",

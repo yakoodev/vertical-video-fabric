@@ -15,3 +15,4 @@ logs
 
 vendor/packs
 node/scene3d/dist
+node/vrm/dist

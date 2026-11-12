@@ -124,11 +124,27 @@ export function poseAt(rig: Rig, keys: PoseKey[], t: number): PoseSpec {
   return mixPose(prev, target, easeOver(w, cur.overshoot ?? 0.5));
 }
 
-/** Рот в окнах речи: слоги ~7 в секунду, гласные по кругу с «случайным» порядком (детерминированно). */
-export function speechMouth(speech: number[][] | undefined, t: number): Record<string, number> {
+/**
+ * Огибающая громкости голоса: ``values`` (0..1) по кадрам ``fps`` от ``start`` — рот открывается сильнее на громком,
+ * почти закрыт в паузах внутри окна речи (3D-серии сервиса, app/s3d_vrm.py). ``floor`` — сколько слога остаётся в тишине.
+ */
+export interface MouthEnv { fps?: number; start?: number; values: number[]; floor?: number; gain?: number }
+
+/** Множитель открытия рта по огибающей в момент t (нет огибающей — 1). */
+export function envLevel(env: MouthEnv | undefined, t: number): number {
+  if (!env?.values?.length) return 1;
+  const i = Math.round((t - (env.start ?? 0)) * (env.fps ?? 30));
+  const v = i < 0 || i >= env.values.length ? 0 : Number(env.values[i]) || 0;
+  const floor = env.floor ?? 0.12;
+  return clamp(floor + (1 - floor) * clamp(v * (env.gain ?? 1)));
+}
+
+/** Рот в окнах речи: слоги ~7 в секунду, гласные по кругу с «случайным» порядком (детерминированно); с огибающей
+ * ``env`` — открытие по громкости голоса. */
+export function speechMouth(speech: number[][] | undefined, t: number, env?: MouthEnv): Record<string, number> {
   for (const [a, b] of speech || []) {
     if (t < a || t > b) continue;
-    const env = clamp((t - a) / 0.08) * clamp((b - t) / 0.12);
+    const edge = clamp((t - a) / 0.08) * clamp((b - t) / 0.12);
     const rate = 7.2;
     const u = (t - a) * rate, i = Math.floor(u), f = u - i;
     const h = (n: number) => {
@@ -137,7 +153,7 @@ export function speechMouth(speech: number[][] | undefined, t: number): Record<s
     };
     const vowels = ["aa", "oh", "ee", "ih", "ou"];
     const v = vowels[Math.floor(h(i) * vowels.length)];
-    const open = Math.sin(Math.PI * f) * (0.55 + 0.45 * h(i + 0.5)) * env;
+    const open = Math.sin(Math.PI * f) * (0.55 + 0.45 * h(i + 0.5)) * edge * envLevel(env, t);
     return { [v]: open };
   }
   return {};

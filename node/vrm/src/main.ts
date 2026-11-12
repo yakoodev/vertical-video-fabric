@@ -71,6 +71,8 @@ export interface Spec {
   poses?: PoseKey[];
   /** Окна речи [[t0, t1], ...] — рот слогами только в них. */
   speech?: number[][];
+  /** Огибающая громкости голоса для рта (как timeline.mouthEnv). */
+  mouthEnv?: import("./anim.ts").MouthEnv;
   /** Ролик на мокапе (sequence.ts) — вместо poses. */
   timeline?: Timeline;
   /** Слои поверх кадра (scene3d/overlay.ts): HUD копилки и зрителей, телефон-вставка, плашка, карточка чата. */
@@ -186,7 +188,7 @@ function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
   if (spec.timeline) return sequencePose(spec.timeline, clips, time);
   if (spec.poses?.length) {
     const p = poseAt(rig, spec.poses, time);
-    const mouth = speechMouth(spec.speech, time);
+    const mouth = speechMouth(spec.speech, time, spec.mouthEnv);
     return Object.keys(mouth).length ? { ...p, expr: { ...(p.expr || {}), aa: 0, oh: 0, ee: 0, ih: 0, ou: 0, ...mouth } } : p;
   }
   const base = typeof shot.pose === "string" ? poseByName(shot.pose, local) : shot.pose || {};

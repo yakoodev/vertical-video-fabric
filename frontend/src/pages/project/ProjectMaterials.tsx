@@ -4,6 +4,7 @@ import { MATERIAL_TABS, visibleTabs } from "@/lib/tabs";
 import { AiVideoTab } from "@/pages/AiVideoTab";
 import { ExplainerChannelTab } from "@/pages/ExplainerChannelTab";
 import { ExplainerTab } from "@/pages/ExplainerTab";
+import { Series3dTab } from "@/pages/Series3dTab";
 import { StoriesTab } from "@/pages/StoriesTab";
 
 /**
@@ -22,6 +23,7 @@ export function ProjectMaterials({ projectId }: { projectId: number }) {
         const next = new URLSearchParams(prev);
         next.set("mat", mat);
         next.delete("sub");
+        next.delete("ep");
         return next;
       },
       { replace: true },
@@ -37,6 +39,7 @@ export function ProjectMaterials({ projectId }: { projectId: number }) {
       </nav>
       {shown === "mascots" ? <ExplainerTab projectId={projectId} /> : null}
       {shown === "worlds" ? <StoriesTab projectId={projectId} /> : null}
+      {shown === "s3d" ? <Series3dTab projectId={projectId} /> : null}
       {shown === "aiv" ? <AiVideoTab projectId={projectId} /> : null}
       {shown === "channel" ? <ExplainerChannelTab projectId={projectId} /> : null}
     </>

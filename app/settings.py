@@ -161,6 +161,10 @@ class Settings:
         # Истории (app/stories.py): потолок одной карточки эпизода (новые сцены, листы актёров, плиты
         # локаций, кадр стиля, платная озвучка). Первый эпизод 50 с ≈ 25–30 картинок × 3–4.5 ₽ ≈ 80–130 ₽.
         self.stories_episode_cap_rub = float(os.getenv("STORIES_EPISODE_CAP_RUB", "200") or 200)
+        # 3D-серии в сервисе (app/s3d_*.py): потолок карточки серии (платные голоса реплик); папка VRM-моделей и
+        # клипов мокапа CMU (в образе — /data/runtime/vrm; на компьютере владельца — D:/vvf-offload/vtubika/vrm/vendor).
+        self.series3d_episode_cap_rub = float(os.getenv("SERIES3D_EPISODE_CAP_RUB", "150") or 150)
+        self.series3d_vrm_dir = Path(os.getenv("SERIES3D_VRM_DIR", "") or (self.runtime_dir / "vrm"))
         self.polza_tts_model = os.getenv("POLZA_TTS_MODEL", "elevenlabs/eleven-v4").strip() or "elevenlabs/eleven-v4"
         self.polza_tts_voice = os.getenv("POLZA_TTS_VOICE", "brian").strip() or "brian"
         # Бесплатная озвучка (app/dubbing.py GeminiTTS) по тому же ключу Gemini: модель и голос

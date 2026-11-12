@@ -625,6 +625,10 @@ class Database:
             from app.render_queue import ensure_render_queue_schema
 
             ensure_render_queue_schema(conn)
+            # 3D-серия в сервисе: библиотека проекта, серии с версиями плана, задания рендера (app/s3d_store.py).
+            from app.s3d_store import ensure_schema as ensure_series3d_schema
+
+            ensure_series3d_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

@@ -613,6 +613,7 @@ def _project_tools() -> list[Tool]:
     from app.autopilot_tools import tools as autopilot_tools
     from app.explainer_tools import all_tools as explainer_tools
     from app.project_tools import tools
+    from app.s3d_tools import all_tools as series3d_tools
     from app.stories_tools import all_tools as stories_tools
     from app.stream_question_tools import tools as stream_question_tools
 
@@ -620,7 +621,9 @@ def _project_tools() -> list[Tool]:
     # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег;
     # истории (app/stories_tools.py) — рассказчик и сцена на каждую фразу.
     # вопросы по стриму и выбор мемов (app/stream_question_tools.py) — монтажёр спрашивает владельца.
-    return tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
+    # 3D-серия (app/s3d_tools.py) — план серии, версии, рендер заданием и проверки.
+    return (tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
+            + series3d_tools())
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:
