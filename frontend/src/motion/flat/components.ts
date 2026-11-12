@@ -92,12 +92,14 @@ function drawTitle(fc: FlatFrame, p: FlatUiProps, L: TitleL): void {
   let y = top + L.pad;
   if (L.chip) {
     // Чип выпрыгивает чуть раньше текста — «ОШИБКА 1», затем заголовок.
-    const k = outBack((fc.local - 0.0) / 0.35);
-    g.save();
-    g.translate(0, y + L.chip.h / 2);
-    g.scale(k, k);
-    drawChip(g, pal, L.chip, -L.chip.w / 2, -L.chip.h / 2, p.variant === "card" ? "solid" : "solid", p.icon, fonts, fc.ds);
-    g.restore();
+    const k = outBack(fc.local / 0.35);
+    if (k > 0.001) {
+      g.save();
+      g.translate(0, y + L.chip.h / 2);
+      g.scale(k, k);
+      drawChip(g, pal, L.chip, -L.chip.w / 2, -L.chip.h / 2, "solid", p.icon, fonts, fc.ds);
+      g.restore();
+    }
     y += L.chip.h + L.gap;
   }
   g.save();
@@ -106,14 +108,16 @@ function drawTitle(fc: FlatFrame, p: FlatUiProps, L: TitleL): void {
     text(g, line, 0, y + L.size * 0.54, TYPE.title, pal.text, { fonts, size: L.size, align: "center" });
     y += L.size * 1.08;
   }
-  g.restore();
   if (L.sub.length) {
+    // Подзаголовок без карточки — плотнее (жирнее, почти белый) и с той же тенью: читается на пёстром кадре.
     y += L.gap * 0.6;
     for (const line of L.sub) {
-      text(g, line, 0, y + L.subSize * 0.62, TYPE.body, pal.mode === "dark" && !L.pad ? alpha(pal.text.slice(0, 7), 0.82) : pal.muted, { fonts, size: L.subSize, align: "center" });
+      const ink = pal.mode === "dark" && !L.pad ? alpha(pal.text.slice(0, 7), 0.9) : pal.muted;
+      text(g, line, 0, y + L.subSize * 0.62, TYPE.body, ink, { fonts, size: L.subSize, align: "center", weight: L.pad ? 500 : 700 });
       y += L.subSize * 1.3;
     }
   }
+  g.restore();
 }
 
 /* ---------- хук: огромное слово во всю ширину ---------- */
