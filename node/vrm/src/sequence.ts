@@ -12,6 +12,9 @@ import { chinArm, mouseArm, mouthArm, typingArm, waveArm } from "./typing.ts";
 import type { ChairSpec } from "./body.ts";
 import { holdKeys, perfBones, type PerfLayers } from "./perf.ts";
 import { perfArm } from "./perfarms.ts";
+import { blendActions, type Action, type LibClip } from "./blend.ts";
+import { lifeAt, type LifeSpec } from "./life.ts";
+import { visemeAt, type Visemes } from "./lipsync.ts";
 
 /**
  * Ключи faces / look / arms / hands могут быть «на время» (hold, out — perf.ts): после hold возвращается прежнее.
@@ -41,6 +44,25 @@ export interface Timeline extends PerfLayers {
   nods?: { t: number; n?: number; amp?: number }[];
   /** Поклоны сидя: с t за dur (вниз — пауза — вверх), глубина (градусы). */
   bows?: { t: number; dur?: number; deg?: number }[];
+  /** Клипы библиотеки движений по слоям с перекрёстным переходом (blend.ts): base — всё тело, upper — жест. */
+  actions?: Action[];
+  /** Клип, чей первый кадр — ноль перемещения таза (сидит за столом — клип сидения). */
+  rootZero?: string;
+  /** Слой жизни (life.ts): дыхание, моргание, саккады, микродвижения головы, перенос веса. true — по умолчанию. */
+  life?: LifeSpec | boolean;
+  /** Рот по гласным (app/lipsync.py): вместо рта по громкости. */
+  visemes?: Visemes;
+  /**
+   * Руки клипов чуть в стороны (градусы): у манекенов паков бёдра и корпус уже, чем у аниме-модели, — опущенные
+   * руки клипа входят в бока. По умолчанию 6° при клипах основы.
+   */
+  armSpread?: number;
+}
+
+/** Что знает о кадре страница (main.ts): где камера, длина ноги модели. */
+export interface FrameCtx {
+  cam?: V3;
+  leg?: number;
 }
 
 /** Добавка кивков и поклонов к костям на t (градусы). */
@@ -207,17 +229,28 @@ export function armChain(keys: Timeline["arms"], side: 1 | -1, t: number): ArmSp
 
 const HEAD: V3 = [0, 1.39, -0.02];
 
-export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: number): PoseSpec {
+const FINGER_BONE = "leftIndexProximal";
+
+export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: number, ctx: FrameCtx = {}): PoseSpec {
   // Ключи «на время» (пресеты игры) — развёрнуты в обычные с возвратом к прежнему.
   const tl: Timeline = { ...tl0, ...holdKeys(tl0) };
-  const bones: Record<string, V3> = { ...seated(t, tl.lean ?? 3) };
-  // Взгляд: глаза почти сразу, голова догоняет (0.28 с), корпус ещё позже (0.6 с) и чуть-чуть.
-  const eyes = lookPoint(tl.look, t, 0.05);
-  const head = lookPoint(tl.look, t, 0.28);
-  const body = lookPoint(tl.look, t, 0.6);
-  const hk = keyAt(tl.look, t).b?.head ?? 0.75;
+  const life: LifeSpec | null = tl.life === true ? {} : tl.life || null;
+  // Клипы библиотеки: слой base ведёт всё тело (тогда ноги сидя не ставятся), прочие слои — жесты поверх.
+  const blended = blendActions(tl.actions, clips as Record<string, LibClip>, t, ctx.leg ?? 0.8, tl.rootZero);
+  const hasBase = !!blended?.layers.base;
+  const bones: Record<string, V3> = hasBase ? {} : { ...seated(t, tl.lean ?? 3, life ? 0 : 1) };
+  const hipsModel: V3 = blended ? [...blended.hips] : [0, 0, 0];
+  const headAt: V3 = [HEAD[0] + hipsModel[0], HEAD[1] + hipsModel[1], HEAD[2] + hipsModel[2]];
+  // Взгляд: глаза почти сразу, голова догоняет (0.28 с), корпус ещё позже (0.6 с) и чуть-чуть. Без ключей
+  // взгляда и со слоем жизни — в камеру (голова — слабее, в основном глаза).
+  const toCam = !tl.look?.length && !!life && life.lookCamera !== false && !!ctx.cam;
+  const keys = toCam ? [{ t: 0, target: ctx.cam!, head: 0.3 }] : tl.look;
+  const eyes = lookPoint(keys, t, 0.05);
+  const head = lookPoint(keys, t, 0.28);
+  const body = lookPoint(keys, t, 0.6);
+  const hk = keyAt(keys, t).b?.head ?? 0.75;
   const ang = (p: V3) => {
-    const dx = p[0] - HEAD[0], dy = p[1] - HEAD[1], dz = p[2] - HEAD[2];
+    const dx = p[0] - headAt[0], dy = p[1] - headAt[1], dz = p[2] - headAt[2];
     return { yaw: (Math.atan2(dx, dz) * 180) / Math.PI, pitch: (-Math.atan2(dy, Math.hypot(dx, dz)) * 180) / Math.PI };
   };
   const h = ang(head), b = ang(body);
@@ -233,12 +266,23 @@ export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: numb
     add("chest", [nb.chest, 0, 0]);
   }
   for (const [n, v] of Object.entries(perfBones(tl, t))) add(n, v);
-  const mocap = mocapAt(clips, tl.tracks, t);
+  const spread = hasBase ? tl.armSpread ?? 6 : 0;
+  if (spread) {
+    add("leftUpperArm", [0, 0, spread]);
+    add("rightUpperArm", [0, 0, -spread]);
+  }
+  // Клип основы с solo гасит дорожки мокапа ролика (петля сидения CMU не тянет вставшую героиню назад).
+  const solo = blended?.solo ?? 0;
+  const tracks = solo > 0 ? (tl.tracks || []).map((tr) => ({ ...tr, weight: (tr.weight ?? 1) * (1 - solo) })) : tl.tracks || [];
+  const mocap = mocapAt(clips, tracks, t, blended?.bones);
   // Руки: IK-пресеты с плавным весом против мокапа.
   const arm = (side: 1 | -1) => armChain(tl.arms, side, t);
   const left = arm(1), right = arm(-1);
   const hk2 = keyAt(tl.hands, t, 0.35);
+  // Пальцы: ключи hands; без ключей при клипе с пальцами (UAL) — пальцы клипа, иначе расслабленные.
+  const clipFingers = !tl.hands?.length && !!blended && FINGER_BONE in blended.bones;
   const fing = (n: "left" | "right") => {
+    if (clipFingers) return undefined;
     const a = hk2.a?.[n] ? FINGERS[hk2.a[n]!] : undefined, bb = hk2.b?.[n] ? FINGERS[hk2.b[n]!] : FINGERS.relaxed;
     return hk2.a ? mixFingers(a, bb, hk2.w) : bb;
   };
@@ -248,16 +292,37 @@ export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: numb
   for (const n of new Set([...Object.keys(fk.a?.expr || {}), ...Object.keys(fk.b?.expr || {})])) {
     expr[n] = lerp(fk.a?.expr[n] ?? 0, fk.b?.expr[n] ?? 0, fk.a ? fk.w : 1);
   }
-  let blink = blinkAt(t, 3.9, 0.9);
+  // Рот: гласные по голосу (visemes), иначе — по громкости в окнах речи.
+  const vis = visemeAt(tl.visemes, t);
+  const mouth = vis || speechMouth(tl.speech, t, tl.mouthEnv);
+  const talking = vis ? Object.values(vis).some((v) => v > 0.05) : Object.keys(mouth).length > 0;
+  let blink = 0;
+  let plant: PoseSpec["plant"];
+  let gazeEyes = eyes;
+  if (life) {
+    // Стоит: основа без сдвига таза вниз (не сидит, не присела) — перенос веса, стопы — IK на месте.
+    const standing = hasBase ? Math.max(0, Math.min(1, (hipsModel[1] + 0.2) / 0.12)) : 0;
+    const L = lifeAt(life, t, { talking, standing });
+    if (standing > 0) plant = { hipsModel: [...hipsModel], bones: { ...bones } };
+    for (const [n, v] of Object.entries(L.bones)) add(n, v);
+    for (let k = 0; k < 3; k++) hipsModel[k] += L.hips[k];
+    blink = L.blink;
+    // Саккады: сдвиг точки взгляда поперёк луча от головы.
+    const d = Math.hypot(eyes[0] - headAt[0], eyes[1] - headAt[1], eyes[2] - headAt[2]);
+    const r = Math.PI / 180;
+    gazeEyes = [eyes[0] + d * Math.tan(L.gaze[0] * r), eyes[1] + d * Math.tan(L.gaze[1] * r), eyes[2]];
+  } else {
+    blink = blinkAt(t, 3.9, 0.9);
+  }
   for (const k of tl.look || []) {
     const u = t - k.t - 0.03;
     if (u >= 0 && u < 0.18) blink = Math.max(blink, u < 0.07 ? u / 0.07 : 1 - (u - 0.07) / 0.11);
   }
   expr.blink = Math.max(expr.blink ?? 0, blink * (1 - (expr.happy ?? 0)));
-  const mouth = speechMouth(tl.speech, t, tl.mouthEnv);
   if (Object.keys(mouth).length) Object.assign(expr, { aa: 0, oh: 0, ee: 0, ih: 0, ou: 0 }, mouth);
   return {
-    bones, mocap, expr, look: eyes,
+    bones, mocap, expr, look: gazeEyes,
+    hipsModel: hipsModel.some((v) => v !== 0) ? hipsModel : undefined, plant,
     left: left || undefined, right: right || undefined,
     hands: { left: handFingers(left, fing("left")), right: handFingers(right, fing("right")) },
     surfaces: tl.clamp === false ? undefined : tl.surfaces,

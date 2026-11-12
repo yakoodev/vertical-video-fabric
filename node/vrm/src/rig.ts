@@ -71,6 +71,13 @@ export interface PoseSpec {
   chair?: ChairSpec;
   /** Поверхности, сквозь которые нельзя пальцам (стол, клавиатура): кисть приподнимается. */
   surfaces?: Surface[];
+  /** Сдвиг таза в осях модели (м) — перемещение таза клипа библиотеки и перенос веса (blend.ts, life.ts). */
+  hipsModel?: V3;
+  /**
+   * Стопы стоят на месте: поза без слоя жизни (таз и ноги) — где стопы должны быть; после позы ноги
+   * доводятся IK к этим точкам (перенос веса не скользит стопами по полу).
+   */
+  plant?: { hipsModel: V3; bones: Record<string, V3> };
 }
 
 /** Горизонтальная поверхность: высота и прямоугольник в плане (x, z). */
@@ -174,13 +181,21 @@ export class Rig {
     this.hands = {};
     this.resolved = {};
     const hips = this.node("hips");
-    if (hips && p.hips) hips.position.add(new THREE.Vector3(...p.hips));
-    for (const [name, q] of Object.entries(p.mocap || {})) {
-      const o = this.node(name);
-      if (o) o.quaternion.copy(this.conj(new THREE.Quaternion(q[0], q[1], q[2], q[3])));
+    let feet: THREE.Vector3[] | null = null;
+    let footQ: THREE.Quaternion[] = [];
+    if (p.plant) {
+      // Где стопы без слоя жизни: таз, ноги — из той же позы.
+      this.body(p, p.plant.hipsModel, p.plant.bones);
+      feet = [this.pos("leftFoot"), this.pos("rightFoot")];
+      footQ = ["leftFoot", "rightFoot"].map((n) => this.node(n)!.getWorldQuaternion(new THREE.Quaternion()));
+      this.reset();
     }
-    for (const [name, deg] of Object.entries(p.bones || {})) this.euler(name, deg);
-    this.update();
+    if (hips && p.hips) hips.position.add(new THREE.Vector3(...p.hips));
+    this.body(p, p.hipsModel, p.bones || {});
+    if (feet) {
+      this.legIK(1, feet[0], footQ[0]);
+      this.legIK(-1, feet[1], footQ[1]);
+    }
     if (p.chair) this.restOnChair(p.chair);
     if (p.left) this.arm(1, p.left);
     if (p.right) this.arm(-1, p.right);
@@ -199,6 +214,52 @@ export class Rig {
         if (name) em.setValue(name, Math.max(em.getValue(name) ?? 0, v));
       }
     }
+  }
+
+  /** Тело без рук: мокап, сдвиг таза (оси модели), углы костей. */
+  private body(p: PoseSpec, hipsModel: V3 | undefined, bones: Record<string, V3>) {
+    const hips = this.node("hips");
+    if (hips && hipsModel) hips.position.add(new THREE.Vector3(...hipsModel).applyQuaternion(this.R0i));
+    for (const [name, q] of Object.entries(p.mocap || {})) {
+      const o = this.node(name);
+      if (o) o.quaternion.copy(this.conj(new THREE.Quaternion(q[0], q[1], q[2], q[3])));
+    }
+    for (const [name, deg] of Object.entries(bones)) this.euler(name, deg);
+    this.update();
+  }
+
+  /** Длина ноги модели (бедро + голень, м) — масштаб перемещения таза клипов. */
+  get legLength(): number {
+    const a = this.node("leftUpperLeg"), b = this.node("leftLowerLeg"), c = this.node("leftFoot");
+    if (!a || !b || !c) return 0.8;
+    return b.position.length() + c.position.length();
+  }
+
+  /**
+   * Нога к точке стопы (двухзвенная IK): сгиб колена по закону косинусов в плоскости ноги, затем бедро
+   * доворачивает цепочку на цель; поворот стопы в мире — прежний (подошва не наклоняется).
+   */
+  legIK(side: 1 | -1, T: THREE.Vector3, footWorld?: THREE.Quaternion) {
+    const pre = side > 0 ? "left" : "right";
+    const up = this.node(`${pre}UpperLeg`), lo = this.node(`${pre}LowerLeg`), foot = this.node(`${pre}Foot`);
+    if (!up || !lo || !foot) return;
+    const A = this.pos(`${pre}UpperLeg`), B = this.pos(`${pre}LowerLeg`), C = this.pos(`${pre}Foot`);
+    if (C.distanceTo(T) < 1e-4) return;
+    const L1 = A.distanceTo(B), L2 = B.distanceTo(C);
+    const d = Math.max(Math.abs(L1 - L2) + 1e-3, Math.min(L1 + L2 - 1e-3, A.distanceTo(T)));
+    const u = C.clone().sub(B), v = A.clone().sub(B);
+    const theta = u.angleTo(v);
+    const want = Math.acos(Math.max(-1, Math.min(1, (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2))));
+    let n = new THREE.Vector3().crossVectors(u, v);
+    if (n.lengthSq() < 1e-10) n.set(1, 0, 0);
+    n.normalize();
+    const wq = (o: THREE.Object3D) => o.getWorldQuaternion(new THREE.Quaternion());
+    const rot = (o: THREE.Object3D, dq: THREE.Quaternion) => this.setWorld(o, dq.multiply(wq(o)).multiply(this.R0i));
+    rot(lo, new THREE.Quaternion().setFromAxisAngle(n, theta - want));
+    const C2 = this.pos(`${pre}Foot`);
+    rot(up, new THREE.Quaternion().setFromUnitVectors(C2.sub(A).normalize(), T.clone().sub(A).normalize()));
+    if (footWorld) this.setWorld(foot, footWorld.clone().multiply(this.R0i));
+    this.update();
   }
 
   /** Рука: side 1 — левая (+X), -1 — правая. */

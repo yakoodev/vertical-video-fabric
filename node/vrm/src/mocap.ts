@@ -99,8 +99,11 @@ export function trackWeight(tr: Track, t: number): number {
 }
 
 /** Смешанная поза мокапа на t: кость → локальный поворот (в осях модели), только кости с весом. */
-export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number): Record<string, [number, number, number, number]> {
+export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number,
+  base?: Record<string, THREE.Quaternion>): Record<string, [number, number, number, number]> {
+  // base — поза клипов библиотеки (blend.ts): дорожки смешиваются с ней, а не с позой покоя.
   const acc: Record<string, THREE.Quaternion> = {};
+  for (const [b, q] of Object.entries(base || {})) acc[b] = q.clone();
   for (const tr of tracks) {
     const w = trackWeight(tr, t);
     if (w <= 0) continue;

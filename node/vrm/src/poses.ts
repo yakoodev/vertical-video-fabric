@@ -20,8 +20,8 @@ export function blinkAt(t: number, period = 3.7, phase = 0.6): number {
 type Bones = Record<string, V3>;
 
 /** Сидя: бёдра вперёд, голени вниз, дыхание грудью. */
-export function seated(t: number, lean = 0): Bones {
-  const br = sin(t * 1.6) * 0.8;
+export function seated(t: number, lean = 0, breath = 1): Bones {
+  const br = sin(t * 1.6) * 0.8 * breath;
   return {
     leftUpperLeg: [-86, 0, -6], rightUpperLeg: [-86, 0, 6],
     leftLowerLeg: [80, 0, 0], rightLowerLeg: [80, 0, 0],

@@ -33,6 +33,7 @@ import { loadSite } from "../../scene3d/src/ui_site.ts";
 import { AvatarStage, type AvatarSpec } from "./avatar.ts";
 import { drawCats, type CatSpec } from "./cat.ts";
 import type { AccessorySpec } from "./props.ts";
+import { camPos, libraryNames, tuneSprings, type SpringTune } from "./stage.ts";
 
 export interface CamSpec {
   /** Камера и точка, куда смотрит (пространство модели), угол обзора по вертикали (длинный объектив — 12–20°). */
@@ -91,6 +92,8 @@ export interface Spec {
   siteShots?: string[];
   /** Проверка рук против тела (handcheck.ts) на каждом кадре; false — выключить. */
   handCheck?: boolean;
+  /** Пружинные кости (волосы, одежда): множители жёсткости, сопротивления и тяжести настроек модели. */
+  springs?: SpringTune;
 }
 
 let spec: Spec;
@@ -185,7 +188,7 @@ const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0,
   chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "" } };
 
 function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
-  if (spec.timeline) return sequencePose(spec.timeline, clips, time);
+  if (spec.timeline) return sequencePose(spec.timeline, clips, time, { cam: camPos(shot, local), leg: rig.legLength });
   if (spec.poses?.length) {
     const p = poseAt(rig, spec.poses, time);
     const mouth = speechMouth(spec.speech, time, spec.mouthEnv);
@@ -340,9 +343,12 @@ async function load(s: Spec) {
     // Дорожки пресетов игры (wave, laugh, stretch_yawn…) ссылаются на клипы CMU по имени — их не надо перечислять в clips.
     const map: Record<string, string> = { ...(s.timeline.clips || {}) };
     for (const tr of s.timeline.tracks || []) if (!map[tr.clip] && CMU_CLIPS.includes(tr.clip)) map[tr.clip] = `cmu/clips/${tr.clip}.json`;
+    // Остальные имена — библиотека движений (tools/anim_library.py → anim/<имя>.json).
+    for (const n of libraryNames(s.timeline)) if (!map[n]) map[n] = CMU_CLIPS.includes(n) ? `cmu/clips/${n}.json` : `anim/${n}.json`;
     clips = await loadClips("http://scene3d.local/packs", map);
   }
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
+  tuneSprings(vrm, s.springs ?? (s.timeline?.life ? {} : undefined));
   if (s.timeline && s.handCheck !== false) hands = new HandCheck(vrm, rig);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
