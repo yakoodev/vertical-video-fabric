@@ -57,6 +57,18 @@ const merge = (...parts: TL[]): { timeline: TL } => {
   return { timeline: tl };
 };
 
+/** Руки «обиделась»: правая скрещивает, левая следом под неё, перед концом — врозь, потом к прежнему (на время). */
+function offendedArms(t0: number, d: number): any[] {
+  const lag = Math.min(0.3, d * 0.12);
+  const open = t0 + Math.max(lag + 0.5, d - 0.85);
+  const outDur = Math.min(0.45, Math.max(0.2, t0 + d - open - 0.4));
+  return [
+    arms(t0, open + 0.1 - t0, { right: "cross" }, 0.4, 0.4),
+    arms(t0 + lag, open + 0.1 - t0 - lag, { left: "cross" }, 0.4, 0.4),
+    arms(open, 0.35, { left: "cross_open", right: "cross_open" }, 0.35, outDur),
+  ];
+}
+
 export const VRM_PERF: Record<string, VrmPerfFn> = {
   happy: (t0, d, p) => {
     const k = k1(p);
@@ -92,9 +104,16 @@ export const VRM_PERF: Record<string, VrmPerfFn> = {
     const k = k1(p), s = sideOf(p, "left");
     return merge({
       faces: faces(t0, d, [[0, "frown"], [0.12, "pout"]], k),
-      look: [look(t0 + 0.05, d - 0.05, [s * 1.0, 1.6, 1.1], 0.75)],
-      arms: [arms(t0, d - 0.3, { left: "rest", right: "rest" }, 0.45, 0.5)],
-      postures: [posture(t0, d, sc3({ chest: [-2, s * 3, 0], neck: [-4, s * 3, 0], head: [-10, s * 2, -s * 5] }, k), 0.25, 0.55)],
+      // Отвернулась: взгляд и голова в сторону и вверх, корпус следом; руки скрещены на груди (пресет cross).
+      look: [look(t0 + 0.05, d - 0.05, [s * 1.3, 1.65, 0.8], 0.8)],
+      // Скрещивает по очереди: сначала правая (верхняя), потом левая подныривает под неё. Разжимает через «руки
+      // врозь» (cross_open: каждая кисть на своей стороне) и уже оттуда — к столу: прямой перенос из скрещённых
+      // проводил пальцы одной руки сквозь предплечье другой (проверка рук handcheck.ts).
+      arms: offendedArms(t0, d),
+      // Корпус почти не поворачивает (иначе плечо уходит назад и скрещенная рука входит в грудь) — отворачивают
+      // шея и голова; плечи чуть вперёд и вверх («закрылась»).
+      postures: [posture(t0, d, sc3({ spine: [-2, 0, 0], chest: [-3, s * 2, 0], neck: [-4, s * 9, 0], head: [-10, s * 10, -s * 6],
+        leftShoulder: [0, -8, 4], rightShoulder: [0, 8, -4] }, k), 0.25, 0.55)],
     });
   },
   shocked: (t0, d, p) => {
@@ -178,12 +197,15 @@ export const VRM_PERF: Record<string, VrmPerfFn> = {
       look: [look(t0, d, LOOK.camera, 0.7)],
     });
   },
-  wave: (t0, d, p) => merge({
-    // VRM: машет правой (пресет wave — правая рука).
-    faces: faces(t0, d, [[0, "happy"]], k1(p), p.face),
-    arms: [arms(t0, d - 0.45, { right: "wave" }, 0.5, 0.5)],
-    look: [look(t0, d, LOOK.camera, 0.7)],
-  }),
+  wave: (t0, d, p) => {
+    // Рука — hand / side (по умолчанию правая): пресет wave node/vrm зеркален для обеих рук.
+    const left = (p.hand ?? p.side) === "left";
+    return merge({
+      faces: faces(t0, d, [[0, "happy"]], k1(p), p.face),
+      arms: [arms(t0, d - 0.45, { [left ? "left" : "right"]: "wave" }, 0.5, 0.5)],
+      look: [look(t0, d, LOOK.camera, 0.7)],
+    });
+  },
   typing: (t0, d, p) => merge({
     faces: faces(t0, d, [[0, "none"]], k1(p), p.face === "none" ? undefined : p.face),
     arms: [arms(t0, d - 0.4, { left: "keys", right: "keys" }, 0.5, 0.5)],

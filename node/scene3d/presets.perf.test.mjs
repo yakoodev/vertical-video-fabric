@@ -158,7 +158,7 @@ test("зеркало app/voxel3d.py: те же клипы с длительно�
   for (const f of VOXEL_FACES) assert.ok(pyFaces.includes(f), `нет лица ${f} в app/voxel3d.py`);
 });
 
-const ARM_PRESETS = new Set(["typing", "rest", "keys", "idle", "chin", "wave", "mouse", "mouth", "facepalm", "shrug", "point", "fist", "cheek", "guard", "yawn", "chinfist", null, undefined]);
+const ARM_PRESETS = new Set(["typing", "rest", "keys", "idle", "chin", "wave", "mouse", "mouth", "facepalm", "shrug", "point", "fist", "cheek", "guard", "yawn", "chinfist", "cross", "cross_open", null, undefined]);
 const EXPRS = new Set(["happy", "angry", "sad", "relaxed", "surprised", "blink", "aa", "ih", "ou", "ee", "oh"]);
 
 test("vrm: ключи отсортированы, «на время» внутри окна, руки и выражения существуют", () => {
@@ -219,4 +219,31 @@ test("пресеты на сцене: реплика игры разворачи
   assert.ok(hero.faces.some((f) => f.face === "wince"));
   assert.ok(girl.timeline.arms.some((a) => a.left === "shrug" && a.hold > 0));
   assert.ok(girl.timeline.shrugs.length === 1 && girl.timeline.faces.length >= 2);
+});
+
+test("жесты: wave hand left|right — та же сторона во всех движках (voxel, VRM, робот)", () => {
+  const vl = perfPatch({ who: "hero", preset: "wave", t: 1, hand: "left" }, "voxel");
+  assert.equal(vl.actions[0].side, "left");
+  assert.equal(perfPatch({ who: "hero", preset: "wave", t: 1 }, "voxel").actions[0].side, "right");
+  const left = perfPatch({ who: "g", preset: "wave", t: 1, hand: "left" }, "vrm").timeline.arms[0];
+  assert.ok(left.left === "wave" && left.right === undefined);
+  const right = perfPatch({ who: "g", preset: "wave", t: 1, hand: "right" }, "vrm").timeline.arms[0];
+  assert.ok(right.right === "wave" && right.left === undefined);
+  assert.equal(perfPatch({ who: "g", preset: "wave", t: 1, side: "left" }, "vrm").timeline.arms[0].left, "wave");
+  assert.ok(GESTURES.wave.meta.params.some((p) => p.name === "hand" && p.options.join() === "left,right"));
+  const bot = (hand) => JSON.stringify(perfPatch({ who: "b", preset: "wave", t: 1, hand }, "deskbot").pose);
+  assert.notEqual(bot("left"), bot("right"));
+});
+
+test("обиделась (VRM): руки скрещены по очереди и расплетаются через «врозь», голова отвёрнута", () => {
+  const { timeline } = perfPatch({ who: "g", preset: "offended", t: 2 }, "vrm");
+  const a = timeline.arms;
+  assert.deepEqual(a.map((k) => [k.left ?? "-", k.right ?? "-"]), [["-", "cross"], ["cross", "-"], ["cross_open", "cross_open"]]);
+  assert.ok(a[1].t > a[0].t && a[2].t > a[1].t);
+  const ex = expandHolds([{ t: -3, left: "keys", right: "keys" }, ...a], ["left", "right"], { left: null, right: null });
+  assert.deepEqual(ex.at(-1).left, "keys", "в конце — снова на клавишах");
+  assert.ok(ex.at(-1).t + ex.at(-1).dur <= 2 + EMOTIONS.offended.dur + 1e-6);
+  assert.ok(!ex.some((k) => k.left === "rest"), "руки не лежат на столе");
+  const head = timeline.postures[0].bones.head;
+  assert.ok(Math.abs(head[1]) >= 8, "голова отвёрнута");
 });

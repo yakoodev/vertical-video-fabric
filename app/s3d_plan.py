@@ -180,6 +180,12 @@ def _perf(cue: Any, where: str, text: str, cast: list[str], problems: list[str])
                 problems.append(f"{where}: {key} — число от {lo} до {hi}")
             else:
                 out[key] = round(float(cue[key]), 3)
+    for key in ("hand", "side"):  # какой рукой (wave, point, facepalm) / куда отвернуться — сторона персонажа
+        if cue.get(key) not in (None, ""):
+            if cue[key] not in ("left", "right"):
+                problems.append(f"{where}: {key} — left или right")
+            else:
+                out[key] = cue[key]
     return out
 
 
@@ -507,7 +513,7 @@ def cheatsheet() -> str:
     return "\n".join([
         "План 3D-серии: {engine, title, cast: [slug персонажей; первый — в кадре], location, narrator, presets {look, light, mood},"
         " lines: [{id, who, text, say?, pause_after?, shots: [{camera, move?, at?, strength?, roll?}],"
-        " performance: [{who, preset, at?, dt?, dur?}], events: [{kind, …}], transition?: {kind, duration}}]}.",
+        " performance: [{who, preset, at?, dt?, dur?, hand?: left|right}], events: [{kind, …}], transition?: {kind, duration}}]}.",
         "Ракурсы vrm_desk: " + ", ".join(f"{k} — {v}" for k, v in VRM_FRAMINGS.items()) + ".",
         "Движения камеры: " + ", ".join(VRM_MOVES) + " (параметры — list_3d_presets category=camera).",
         "Игра: " + ", ".join(perf_presets()) + ".",

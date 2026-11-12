@@ -109,7 +109,7 @@ function armPreset(name: string | null | undefined, side: 1 | -1, t: number): Ar
   if (name === "keys") return typingArm(side, t);
   if (name === "idle") return typingArm(side, t, 0, true);
   if (name === "chin") return side < 0 ? chinArm(t) : typingArm(side, t, 0, true);
-  if (name === "wave") return side < 0 ? waveArm(t) : restHand(side);
+  if (name === "wave") return waveArm(t, side);
   if (name === "mouse") return side < 0 ? mouseArm(t) : typingArm(side, t);
   if (name === "mouth") return side < 0 ? mouthArm(t) : typingArm(side, t, 0, true);
   return perfArm(name, side, t);

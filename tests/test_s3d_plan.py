@@ -202,6 +202,50 @@ def test_compile_vrm_spec(monkeypatch):
     assert any(o["kind"] == "chat" for o in spec["overlays"]) and any(x["name"] == "pop" for x in res["sfx"])
 
 
+def test_chat_insert_and_comment_card_keep_clear_of_captions(monkeypatch):
+    monkeypatch.setattr(SV, "expand_presets", _fake_expand)
+    lib = _lib()
+    plan, _ = SP.validate_plan(PLAN, lib, D.DEFAULT_SETTINGS)
+    words, total = _words(plan)
+    spec = SV.compile_vrm(plan, lib, words, total)["spec"]
+    band = SV.caption_band(plan)
+    assert band == (1386.0, 1686.0)  # субтитры по умолчанию — 0.8 кадра
+    chats = [s["plate"]["insert"] for s in spec["shots"] if (s.get("plate") or {}).get("insert", {}).get("kind") == "chat"]
+    assert chats and all(c["avoid"] == [1386.0, 1686.0] for c in chats)
+    card = next(o for o in spec["overlays"] if o["kind"] == "chat")
+    assert card["y"] + card["h"] / 2 < band[0]  # карточка комментария сверху — субтитры её не задевают
+    # Субтитры подняты к карточке — карточка уходит вниз, под полосу, и не вылезает за кадр.
+    high = json.loads(json.dumps(PLAN))
+    high["captions"] = {"y": 0.3}
+    plan2, _ = SP.validate_plan(high, lib, D.DEFAULT_SETTINGS)
+    spec2 = SV.compile_vrm(plan2, lib, words, total)["spec"]
+    b2 = SV.caption_band(plan2)
+    card2 = next(o for o in spec2["overlays"] if o["kind"] == "chat")
+    assert card2["y"] - card2["h"] / 2 >= b2[1] + 24 and card2["y"] + card2["h"] / 2 <= 1920
+
+
+def test_performance_hand_is_validated_and_passed_to_engine(monkeypatch):
+    seen = {}
+
+    def fake(spec):
+        seen["perf"] = spec["presets"].get("performance")
+        return _fake_expand(spec)
+
+    monkeypatch.setattr(SV, "expand_presets", fake)
+    lib = _lib()
+    p = json.loads(json.dumps(PLAN))
+    p["lines"][0]["performance"] = [{"preset": "wave", "at": "Привет", "hand": "left"}]
+    plan, _ = SP.validate_plan(p, lib, D.DEFAULT_SETTINGS)
+    assert plan["lines"][0]["performance"][0]["hand"] == "left"
+    words, total = _words(plan)
+    SV.compile_vrm(plan, lib, words, total)
+    assert seen["perf"][0]["hand"] == "left"
+    p["lines"][0]["performance"][0]["hand"] = "both"
+    with pytest.raises(SP.PlanError) as err:
+        SP.validate_plan(p, lib, D.DEFAULT_SETTINGS)
+    assert "hand — left или right" in " ".join(err.value.problems)
+
+
 @pytest.mark.skipif(not shutil.which("node"), reason="нет node")
 def test_compile_with_real_engine_expansion():
     lib = _lib()

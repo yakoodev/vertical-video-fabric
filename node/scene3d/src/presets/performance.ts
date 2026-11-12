@@ -147,7 +147,7 @@ export const GESTURES: Record<string, PerfDef> = {
   },
   wave: {
     meta: { name: "wave", title: "Машет рукой", ru: "Рука у головы, кисть качается от локтя, улыбка, голова к руке. Привет зрителям, пока-пока.",
-      tags: ["cute"], params: [P.intensity, P.side("right"), P.face("happy")] },
+      tags: ["cute"], params: [P.intensity, { name: "hand", type: "enum", options: ["left", "right"], ru: "какой рукой махать (left / right — рука персонажа); то же, что side" }, P.side("right"), P.face("happy")] },
     dur: 2.2, voxel: vox("Gest_Wave", [[0, "happy"]]), vrm: VRM_PERF.wave,
   },
   typing: {
@@ -181,6 +181,8 @@ export function perfPatch(cue: PerfCue, engine: "voxel" | "vrm" | "deskbot"): Pe
   const def = perfDef(cue.preset);
   if (!def) throw new Error(`нет пресета игры «${cue.preset}»`);
   const p = withDefaults(def.meta, cue);
+  // hand — «какой рукой» словами плана (wave): та же сторона, что side.
+  if (p.hand === "left" || p.hand === "right") p.side = p.hand;
   if (engine === "deskbot") {
     // Робот мем-пилота (deskbot.ts): ключи pose/face из performance_deskbot.ts.
     const bot = DESKBOT_PERF[cue.preset];
