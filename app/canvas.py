@@ -121,21 +121,34 @@ def normalize_duration(value: Any) -> float:
 
 
 def create_canvas_clip(
-    store: Any, duration: Any, background: Any = None, title: str = "", description: str = ""
+    store: Any, duration: Any, background: Any = None, title: str = "", description: str = "",
+    project_id: int | None = None,
 ) -> dict:
     """Новый клип-холст: кусок ``[0, duration]`` основы и фон ``background``
     (имя стиля ``aurora``/``grid``/``bokeh``/``waves``/``gradient``/``solid`` или объект
-    ``{kind, colors, speed, intensity}``; не задан — аврора в цветах клипа)."""
+    ``{kind, colors, speed, intensity}``; не задан — аврора в цветах клипа).
+
+    ``project_id`` — проект-серия (таблица ``projects``): холст приписан к нему (``plan_projects``). Источник у всех
+    холстов один и скрытый, поэтому без приписки холст ничей: его не найти в клипах проекта, а агенты других
+    проектов видят его среди своих (эксперимент 12.11: чужой холст выдан за свой)."""
     from app.backgrounds import normalize_background
     from app.clip_settings import normalize_render_settings
     from app.manual_clips import create_manual_clip
 
     seconds = normalize_duration(duration)
     backdrop = normalize_background(background)
+    if project_id is not None:
+        from app.projects import get_project
+
+        get_project(store, int(project_id), include_sources=False)  # нет проекта — KeyError до создания клипа
     source = ensure_canvas_source(store)
     title = " ".join(str(title or "").split())[:100] or "Холст"
     plan = create_manual_clip(store, source["id"], title, [{"start_sec": 0.0, "end_sec": seconds}],
                               str(description or ""))
     render = normalize_render_settings({**(plan.get("render_settings") or {}), "backdrop": backdrop})
     store.set_clip_plan_render_settings(plan["id"], render)
+    if project_id is not None:
+        from app.projects import assign_plan_project
+
+        assign_plan_project(store, int(plan["id"]), int(project_id))
     return store.get_clip_plan(plan["id"])

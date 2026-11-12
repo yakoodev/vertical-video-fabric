@@ -1092,8 +1092,8 @@
 {
 "name": "audio_map",
 "title": "Смотрю карту звука",
-"description": "dc8966933d0327de",
-"parameters": "80f9fa2c7f499354",
+"description": "759354cf6e9d8a33",
+"parameters": "eb329567b7dfe732",
 "mutating": false,
 "scope": "global",
 "module": null,
@@ -1416,8 +1416,8 @@
 {
 "name": "list_clips",
 "title": "Клипы проекта",
-"description": "c0e8fc77941b0a3d",
-"parameters": "f80364553e9e74ab",
+"description": "49c7b3de417804d7",
+"parameters": "ad6cbbc32330a696",
 "mutating": false,
 "scope": "global",
 "module": null,
@@ -1460,13 +1460,24 @@
 {
 "name": "create_canvas_clip",
 "title": "Создаю холст",
-"description": "a0180d9db5a19b69",
-"parameters": "1ec49725077df8b9",
+"description": "091413305dabfb57",
+"parameters": "56836c336bc41652",
 "mutating": false,
 "scope": "global",
 "module": null,
 "handler": "h_create_canvas_clip",
 "label": true
+},
+{
+"name": "describe_tool",
+"title": "Справка по инструменту",
+"description": "324678b6d01045ee",
+"parameters": "d680a6327ee0a6b4",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_describe_tool",
+"label": false
 },
 {
 "name": "list_modules",
@@ -1517,8 +1528,8 @@
 {
 "name": "get_project_brief",
 "title": "Бриф проекта",
-"description": "289b05a4829ee3a1",
-"parameters": "c88cb877390d2a75",
+"description": "6b01c9f5ffe176d9",
+"parameters": "af93a1ba76072d0e",
 "mutating": false,
 "scope": "project",
 "module": "series",

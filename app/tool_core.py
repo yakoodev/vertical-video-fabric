@@ -37,6 +37,22 @@ def callable_tool_names() -> set[str]:
     return set(_callable_names()) if _callable_names is not None else set()
 
 
+# Инструмент по имени (``agent_tools.get_tool``) — тоже ставит реестр: describe_tool живёт в домене источника.
+_tool_lookup: Callable[[str], Any] | None = None
+
+
+def set_tool_lookup(fn: Callable[[str], Any]) -> None:
+    global _tool_lookup
+    _tool_lookup = fn
+
+
+def lookup_tool(name: str) -> Any:
+    """Инструмент по имени; нет такого (или реестр не собран) — KeyError."""
+    if _tool_lookup is None:
+        raise KeyError(name)
+    return _tool_lookup(name)
+
+
 @dataclass
 class ImageResult:
     """Картинка как результат инструмента (кадр клипа) — модель её «видит»."""
@@ -352,8 +368,10 @@ def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
 
 # Инструменты, где project_id исторически значит ИСТОЧНИК (видео из list_projects), а не проект-серию из таблицы projects
 # (app/projects.py). Правильное имя у них source_id, project_id оставлен как старое имя для прежних вызовов.
+# list_clips отсюда ушёл (12.11): там project_id — проект-серия (холсты лежат в общем скрытом источнике, найти их можно
+# только по проекту); id, которого нет среди проектов, но есть среди источников, он по-прежнему читает как источник.
 SOURCE_ID_TOOLS = frozenset({
-    "list_clips", "get_source_transcript", "get_shots", "create_clip", "source_contact_sheet", "source_loudness",
+    "get_source_transcript", "get_shots", "create_clip", "source_contact_sheet", "source_loudness",
     "chat_activity", "get_chat", "set_source_audio", "audio_map",
 })
 SOURCE_ARGS = {

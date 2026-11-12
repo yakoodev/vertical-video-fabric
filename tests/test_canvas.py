@@ -107,12 +107,17 @@ def test_create_canvas_clip_tool_and_full_frame_images(canvas_api):
     """Инструмент агента/MCP: холст создаётся, картинка во весь кадр не «закрывает видео»."""
     from app.agent_tools import ToolContext, _cover_problems, list_tools, run_tool
 
+    from app import projects as P
+
     _client_, store = canvas_api
     assert "create_canvas_clip" in {t.name for t in list_tools(include_discovery=True)}
+    project = P.create_project(store, "Промо")
     out, ok = run_tool(ToolContext(store=store), "create_canvas_clip",
-                       {"duration": 10, "background": "aurora", "title": "Картинки"})
+                       {"duration": 10, "background": "aurora", "title": "Картинки", "project_id": project["id"]})
     assert ok, out
-    assert out["duration"] == 10 and out["backdrop"]["kind"] == "aurora" and out["project_id"]
+    # project_id — проект-серия холста, а не скрытый источник (эксперимент 12.11).
+    assert out["duration"] == 10 and out["backdrop"]["kind"] == "aurora" and out["project_id"] == project["id"]
+    assert out["source_id"] and P.project_of_plan(store, out["clip_id"]) == project["id"]
 
     full = {"id": "bg", "type": "image", "props": {"w": 1080, "h": 1920}}
     assert _cover_problems(ToolContext(store=store, clip_plan_id=out["clip_id"]), [full]) == []

@@ -217,12 +217,10 @@ def build_clip_plans_router(
         from app.canvas import create_canvas_clip
 
         try:
+            # Проект проверяется до создания: несуществующий проект не оставляет ничейного холста.
             plan = create_canvas_clip(get_store(), payload.duration, payload.background,
-                                      payload.title or payload.name, payload.description)
-            if payload.project_id is not None:
-                from app import projects as P
-
-                P.assign_plan_project(get_store(), int(plan["id"]), int(payload.project_id))
+                                      payload.title or payload.name, payload.description,
+                                      project_id=payload.project_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:

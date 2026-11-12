@@ -247,6 +247,33 @@ def project_of_plan(store: Any, clip_plan_id: int) -> int | None:
     return int(row["direct"]) if row["direct"] is not None else None
 
 
+def plan_projects_map(store: Any, clip_plan_ids: list[int]) -> dict[int, int | None]:
+    """Проект каждого клипа одним запросом (как ``project_of_plan``): источник, иначе приписка ``plan_projects``."""
+    ids = sorted({int(i) for i in clip_plan_ids})
+    out: dict[int, int | None] = {}
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        for row in store.db.query_all(
+            "SELECT cp.id, s.project_id, (SELECT pp.project_id FROM plan_projects pp WHERE pp.clip_plan_id = cp.id) "
+            f"AS direct FROM clip_plans cp JOIN sources s ON s.id = cp.source_id WHERE cp.id IN ({marks})", chunk,
+        ):
+            value = row["project_id"] if row["project_id"] is not None else row["direct"]
+            out[int(row["id"])] = int(value) if value is not None else None
+    return out
+
+
+def project_plan_ids(store: Any, project_id: int) -> list[int]:
+    """Все клипы проекта: клипы его источников и приписанные напрямую (холсты, загруженные ролики)."""
+    rows = store.db.query_all(
+        "SELECT cp.id FROM clip_plans cp JOIN sources s ON s.id = cp.source_id WHERE s.project_id = ? "
+        "UNION SELECT pp.clip_plan_id FROM plan_projects pp JOIN clip_plans cp ON cp.id = pp.clip_plan_id "
+        "JOIN sources s ON s.id = cp.source_id WHERE pp.project_id = ? AND s.project_id IS NULL",
+        (int(project_id), int(project_id)),
+    )
+    return sorted(int(r[0]) for r in rows)
+
+
 def assign_plan_project(store: Any, clip_plan_id: int, project_id: int | None) -> dict:
     """Приписать клип к проекту напрямую (клип-холст объяснялки → канал). None — снять приписку."""
     store.get_clip_plan(int(clip_plan_id), include_segments=False)
