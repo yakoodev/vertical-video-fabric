@@ -247,5 +247,6 @@ def plan_cheatsheet() -> str:
     lines.append("- subject: id персонажа или [x, y, z] — опора света и камеры по умолчанию")
     lines.append("camera: [{move, t0, t1, target: id|якорь|[x,y,z], ...параметры}] — каждое движение — новый план (склейка); "
                  "transitions: [{kind, t, duration?}]; performance: [{who, preset, t, dur?}].")
-    lines.append(f"Категории: {', '.join(f'{k} — {v['title']}' for k, v in c.items())}.")
+    cats = ", ".join(f"{k} — {v['title']}" for k, v in c.items())  # Python 3.11 в образе: без вложенных кавычек
+    lines.append(f"Категории: {cats}.")
     return "\n".join(lines)
