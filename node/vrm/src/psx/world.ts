@@ -19,6 +19,7 @@
  * призыва, бросок d20 и окно героини (menu.ts), пробуждение «лёжа → сидя → стоя» (wake.ts + sit.ts), закрытые
  * глаза по окнам eyesClosed. Все поля необязательны: остров (psx_world.json) работает как раньше.
  */
+import { visemeAt, type Visemes } from "../lipsync.ts";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
@@ -86,7 +87,7 @@ export interface RecSpec {
   shots: PsxShot[];
   look_at: { t: number; target: V3; head?: number }[];
   holds?: HoldSpec;
-  mouth?: { t0: number; t1: number; voice: number[]; fps?: number }[];
+  mouth?: { t0: number; t1: number; voice: number[]; fps?: number; visemes?: Visemes }[];
   flashlight?: PsxWorldSpec["flashlight"];
   stand?: Partial<StandOpts>;
   /** Окно экранчика берёт полосу кадра записи 4:3: [верх, высота] в строках кадра низкого разрешения. */
@@ -141,7 +142,7 @@ export interface PsxWorldSpec {
   cam?: CamSpec[];
   titles?: TitleSpec[];
   /** Рот: огибающая её голоса (0..1 по кадрам voiceFps) на окне [от, до] — открывает «а» (для записи, где говорит она). */
-  mouth?: { t0: number; t1: number; voice: number[]; fps?: number }[];
+  mouth?: { t0: number; t1: number; voice: number[]; fps?: number; visemes?: Visemes }[];
   /** Камера и фонарик в руках, настоящий кубик, старая запись (серия 1). */
   holds?: HoldSpec;
   die?: DieSpec;
@@ -258,6 +259,12 @@ function pose(time: number, rec = false, springs = true) {
   const expr: Record<string, number> = { ...(spec.heroine?.expr || {}), blink };
   for (const m of L.mouth || []) {
     if (time < m.t0 || time >= m.t1) continue;
+    // Гласные по голосу и словам (app/lipsync.py) — иначе рот по громкости.
+    const vis = visemeAt(m.visemes, time - m.t0);
+    if (vis) {
+      for (const [k, v] of Object.entries(vis)) expr[k] = Math.max(expr[k] ?? 0, v * 0.85);
+      continue;
+    }
     const f = Math.floor((time - m.t0) * (m.fps ?? 30));
     expr.aa = Math.max(expr.aa ?? 0, Math.min(0.7, 0.8 * (m.voice[f] ?? 0)));
   }

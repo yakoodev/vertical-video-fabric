@@ -382,6 +382,12 @@ def produce(store: Any, job: dict) -> dict:
         envelope = SV.mouth_envelope(track, windows, total) if windows else []
         compiled = compile_vrm(plan, lib, words, total, envelope=envelope)
         spec = compiled["spec"]
+        # Рот по гласным (голос + слова героини; не вышло — по громкости) и слой жизни героини.
+        from app import lipsync
+
+        hero_words = [w for w in words if w.get("line") in hero_lines]
+        info["lipsync"] = lipsync.attach_timeline(spec["timeline"], track, hero_words, total,
+                                                  life_seed=sum(map(ord, str(hero))) % 997 + 1)
         spec_path = work / "scene_vrm.json"
         spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
         D.set_job(store, job["id"], note=f"рисую 3D: {round(total * 30)} кадров", progress=0.25)

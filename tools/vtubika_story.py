@@ -422,6 +422,10 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     if args.endcard_sounds_only:
         return endcard_sounds_only(args, plan, built, total, narration, lead, work, report)
     spec = to_vrm_spec(plan, built, words, total)
+    # Рот по гласным (голос + слова) и слой жизни; голос в ролике — с lead.
+    from app import lipsync
+
+    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead)
     spec_path = work / "scene_vrm.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
     render = ["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(spec_path), "--bundle",
