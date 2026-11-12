@@ -58,7 +58,7 @@ export const PROJECT_TABS: readonly ProjectTab[] = [
 
 /** Вкладки проекта. Набор один у всех проектов: «Материалы» нужны, только если включён хотя бы один генератор. */
 export function projectTabs(on: IsOn): ProjectTab[] {
-  const generators = on("explainer") || on("stories") || on("ai_video");
+  const generators = on("explainer") || on("stories") || on("ai_video") || on("series3d");
   return visibleTabs(PROJECT_TABS, on).filter((tab) => tab.key !== "materials" || generators);
 }
 
@@ -66,6 +66,7 @@ export function projectTabs(on: IsOn): ProjectTab[] {
 export const MATERIAL_TABS = [
   { key: "mascots", label: "Маскоты и позы", module: "explainer" },
   { key: "worlds", label: "Миры, актёры, сцены", module: "stories" },
+  { key: "s3d", label: "3D-серия", module: "series3d" },
   { key: "aiv", label: "ИИ-видео: стиль, персонажи, бюджет", module: "ai_video" },
   { key: "channel", label: "Канал: темы и расписание", module: "explainer" },
 ] as const;
