@@ -24,7 +24,7 @@ function cozyDesk(p: Record<string, any>, c: Record<string, string>) {
   o.push(...put(keyboardSet("kb", { body: "#2a2b31", keys: "#efe9df", mat: c.rug2, mouseX: 0.33 }), [0.02, top, -0.6], 180));
   o.push(...put(monitor("monitor", { w: 0.62, h: 0.35, screen: c.screen, content: "code", seed: seed + 2, light: 0.5 }), [0.5, top, -0.48], 212));
   o.push(...put(deskLamp("lamp", { color: c.lamp, light: c.warm, power: 1.0 }), [-0.6, top, -0.2], 140));
-  o.push({ id: "mug", primitive: "mug", position: [-0.36, top, -0.32], rotation: [0, 200, 0], params: { color: c.mug, inner: "#3b2414" } });
+  o.push({ id: "mug", model: "mug", fitMax: [0.13, 0.105, 0.13], primitive: "mug", position: [-0.36, top, -0.32], rotation: [0, 200, 0], params: { color: c.mug, inner: "#3b2414" } });
   o.push(...put(plant("cactus", { kind: "cactus", pot: c.pot, leaf: "#5f9a62", leaf2: "#7bb874", size: 0.7, seed: seed + 3 }), [0.2, top, -0.14], 0));
   // Блокнот с ручкой и стопка книг на краю.
   o.push(rbox("notebook", [-0.22, top, -0.42], [0.16, 0.012, 0.22], "#e4c7a0", 0.004, { rot: [0, 12, 0], roughness: 0.8 }));
@@ -86,12 +86,12 @@ function gamerRgb(p: Record<string, any>, c: Record<string, string>) {
   const o: O[] = [];
   const dz = back + 0.38, top = 0.75;
   // Стол у задней стены: два монитора, системник со стеклом, клавиатура с подсветкой, колонки.
-  o.push(...put(desk("desk", { w: 1.8, d: 0.68, h: top, top: c.desk, leg: c.frame }), [0, 0, dz], 0));
+  o.push(...put(desk("desk", { w: 1.8, d: 0.68, h: top, top: c.desk, leg: c.frame, tags: ["dark"] }), [0, 0, dz], 0));
   o.push(glow("box", "desk.led", [0, top - 0.045, dz + 0.335], [1.7, 0.012, 0.012], c.neon2, 2.6, {
     light: { type: "point", id: "desk.ledlight", color: c.neon2, intensity: 0.5, position: [0, -0.1, 0.2], distance: 2.5, decay: 2 } }));
   o.push(...put(monitor("monitor_l", { w: 0.66, h: 0.37, screen: c.screen, content: "game", seed: seed + 1, light: 0.5 }), [-0.38, top, dz - 0.06], 12));
   o.push(...put(monitor("monitor_r", { w: 0.66, h: 0.37, screen: c.screen2, ui: {}, light: 0.4 }), [0.38, top, dz - 0.06], -12));
-  o.push(...put(keyboardSet("kb", { body: "#141418", keys: "#2a2b33", mat: "#15151c", rgb: c.neon, mouseX: 0.36 }), [-0.05, top, dz + 0.16], 0));
+  o.push(...put(keyboardSet("kb", { body: "#141418", keys: "#2a2b33", mat: "#15151c", rgb: c.neon, mouseX: 0.36, tags: ["dark"] }), [-0.05, top, dz + 0.16], 0));
   o.push(glow("box", "kb.matedge", [0.03, top + 0.001, dz + 0.16 + 0.171], [0.86, 0.006, 0.004], c.neon, 2.4));
   o.push(...put(pcTower("pc", { fan: c.neon, fan2: c.neon2, light: 0.6 }), [0.98, top, dz - 0.05], -90));
   o.push(...put(speaker("speaker_l", { color: "#1b1c22", h: 0.2 }), [-0.86, top, dz - 0.1], 10));
@@ -264,8 +264,8 @@ function kitchenNight(p: Record<string, any>, c: Record<string, string>) {
   }
   o.push(rbox("toaster", [0.58, top, z - 0.08], [0.28, 0.19, 0.17], c.kettle, 0.04, { roughness: 0.3 }));
   for (const s2 of [-1, 1]) o.push(box(`toaster.slot${s2}`, [0.58 + s2 * 0.05, top + 0.186, z - 0.08], [0.03, 0.006, 0.12], "#2a2a2e"));
-  o.push({ id: "mug", primitive: "mug", position: [0.3, top, z + 0.12], rotation: [0, 150, 0], params: { color: c.mug } });
-  o.push({ id: "mug2", primitive: "mug", position: [0.4, top, z + 0.05], rotation: [0, 60, 0], params: { color: "#f3efe8" } });
+  o.push({ id: "mug", model: "mug", fitMax: [0.13, 0.105, 0.13], primitive: "mug", position: [0.3, top, z + 0.12], rotation: [0, 150, 0], params: { color: c.mug } });
+  o.push({ id: "mug2", model: "mug", fitMax: [0.13, 0.105, 0.13], primitive: "mug", position: [0.4, top, z + 0.05], rotation: [0, 60, 0], params: { color: "#f3efe8" } });
   for (let i = 0; i < 3; i++) o.push(...put(plant(`herbs.${i}`, { kind: i === 1 ? "rosette" : "bush", pot: ["#c97b5a", "#e9dfd0", "#7f9cb0"][i], leaf: "#4f8a4b", leaf2: "#7fb36a", size: 0.55, seed: seed + 20 + i }), [sink - 0.28 + i * 0.28, 1.12, back + 0.06], 0));
   o.push(cyl("bowl", [-1.25, 0.755, -0.45], [0.24, 0.07], c.bowl, { top: 1.35, roughness: 0.4 }));
   for (let i = 0; i < 4; i++) o.push(sph(`bowl.fruit${i}`, [-1.25 + (r() - 0.5) * 0.1, 0.795, -0.45 + (r() - 0.5) * 0.1], 0.075, ["#ff8a3c", "#e2483a", "#ffd166", "#9ccf5e"][i], { roughness: 0.5 }));

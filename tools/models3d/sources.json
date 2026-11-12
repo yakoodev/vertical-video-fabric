@@ -1,0 +1,86 @@
+{
+  "_doc": "Источники библиотеки 3D-моделей сцен (docs/3d/models.md). pp — id модели на poly.pizza (страница https://poly.pizza/m/<pp>, файл https://static.poly.pizza/<res>.glb); gen — своя процедурная модель (tools/models3d/gen_keyboard.mjs). fit — до какого габарита (м) масштабировать: dim width|height|depth|max. yaw — поворот вокруг вертикали (°), чтобы «перёд» смотрел на +z. Лицензии проверены на странице модели 2026-11-12.",
+  "models": [
+    {"id": "keyboard/mech_tkl_dark", "title": "Механическая TKL, тёмная с оранжевым", "gen": "mech_tkl_dark", "fit": {"dim": "width", "value": 0.36}, "tags": ["mechanical", "dark", "gaming"], "outline": 0.45},
+    {"id": "keyboard/mech_65_cream", "title": "Механическая 65%, кремовая ретро", "gen": "mech_65_cream", "fit": {"dim": "width", "value": 0.32}, "tags": ["mechanical", "retro", "light"], "outline": 0.45},
+    {"id": "keyboard/mech_60_pastel", "title": "Механическая 60%, пастельная", "gen": "mech_60_pastel", "fit": {"dim": "width", "value": 0.29}, "tags": ["mechanical", "pastel", "light"], "outline": 0.45},
+    {"id": "keyboard/rgb_black", "title": "Игровая, чёрная с подсветкой", "pp": "3oFfQCSsUmQ", "res": "8dc7a33e-9ed8-4e01-a7a1-b3717ac35c51", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.45}, "tags": ["gaming", "dark"], "outline": 0.45},
+    {"id": "keyboard/compact_white", "title": "Компактная белая", "pp": "fOy2zvPJAj-", "res": "1f6cf483-4859-4fda-a706-5bbeb005dd45", "author": "Alex Safayan", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.29}, "tags": ["office", "light"], "outline": 0.45},
+    {"id": "keyboard/office_black", "yaw": 45, "title": "Офисная, чёрная со светлыми клавишами", "pp": "4pzLbWshZ9m", "res": "45d19ffe-c437-4ee1-9ac6-0361f35b45e8", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.44}, "tags": ["office", "dark"], "outline": 0.45},
+
+    {"id": "monitor/flat_black", "anchors": {"screen": {"pos": [0, 0.231, 0.001], "size": [0.562, 0.249]}}, "title": "Монитор, тонкая рамка", "pp": "PvSjEbz11k", "res": "9f6ea5f4-d71c-4217-a8d4-6768ad0f4f47", "author": "CreativeTrio", "license": "CC0-1.0", "fit": {"dim": "width", "value": 0.6}, "tags": ["dark"]},
+    {"id": "monitor/slim", "anchors": {"screen": {"pos": [0, 0.2795, 0.071], "size": [0.54, 0.327], "rot": [-9.3, 0, 0]}}, "yaw": 90, "title": "Монитор на ножке", "pp": "e8cELDeDuTr", "res": "da623ac4-2444-49b6-a8a8-172353c3a9c0", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.58}, "tags": ["dark"]},
+    {"id": "monitor/allinone_white", "anchors": {"screen": {"pos": [0, 0.37, 0.051], "size": [0.56, 0.31], "rot": [-10.3, 0, 0]}}, "yaw": -90, "title": "Моноблок, белый", "pp": "5qZ5IaClHHw", "res": "167a91d0-f44e-446e-8600-ff85d2e12c6e", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.6}, "tags": ["light"]},
+
+    {"id": "laptop/macbook", "anchors": {"screen": {"pos": [0, 0.123, -0.11], "size": [0.306, 0.188]}}, "title": "Ноутбук, серебристый", "pp": "27hcX_w47Jb", "res": "7528df1c-c611-4e42-9210-eba9fcaf4269", "author": "Alex Safayan", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.33}, "tags": ["light"]},
+    {"id": "laptop/silver", "anchors": {"screen": {"pos": [0, 0.121, -0.112], "size": [0.3, 0.195], "rot": [-15, 0, 0]}}, "title": "Ноутбук белый", "pp": "6eBS-C3E33W", "res": "11b0f409-a2de-4c02-87ce-7128cfa8193f", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.34}, "tags": ["light"]},
+    {"id": "laptop/dark", "anchors": {"screen": {"pos": [0, 0.128, -0.121], "size": [0.314, 0.21], "rot": [-10.3, 0, 0]}}, "title": "Ноутбук тёмный", "pp": "4UuDHXFJ7I0", "res": "b7d65f4e-35c2-4172-9ea0-2f2be0b5ee5f", "author": "jeremy", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.34}, "tags": ["dark"]},
+
+    {"id": "desk/wood_drawers", "title": "Стол деревянный с ящиками", "pp": "V86Go2rlnq", "res": "91c2bf8d-0876-4801-abd3-8dd5d017ecbd", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.76}, "tags": ["wood"]},
+    {"id": "desk/kenney", "title": "Стол светлый с ящиком", "pp": "6PbVkqPzEU", "res": "0716218b-3aae-48e6-8ddd-185cf7f7b7d7", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.75}, "tags": ["wood", "light"]},
+    {"id": "desk/standing", "title": "Стол на металлических ногах", "pp": "dE6BqyF4Ws", "res": "9c598d24-cdd0-4494-a6c6-3a21a8a696d5", "author": "Zsky", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.75}, "tags": ["modern", "dark"]},
+
+    {"id": "chair/office_blue", "title": "Офисное кресло, синее", "pp": "UfKvrZBK6C", "res": "ac2301f3-af86-435a-885a-d8f1a32f9f76", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 1.05}, "tags": ["office"]},
+    {"id": "chair/executive_black", "title": "Кресло руководителя, чёрное", "pp": "hW11P9DDXa", "res": "08501afc-f719-4755-bb1c-6757c13f5b56", "author": "Zsky", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 1.2}, "tags": ["office", "dark", "gaming"]},
+    {"id": "chair/mesh_grey", "title": "Кресло серое с сеткой", "pp": "aB4-AS93Wd7", "res": "9b521c8d-de1a-4b3e-973b-ccdd973743b9", "author": "CMHT Oculus", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 1.05}, "tags": ["office"]},
+    {"id": "chair/kenney_red", "title": "Стул на колёсиках (Kenney)", "pp": "CKSz6PB1vO", "res": "64699642-a4c2-4850-9c4b-558a328ed1bf", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.95}, "tags": ["office"]},
+
+    {"id": "mug/white", "title": "Кружка белая", "pp": "eYH-QqBybgU", "res": "72ca337a-b7a7-4e17-82d8-3b28164cf6f6", "author": "Michael Fuchs", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.1}, "tags": ["light"], "outline": 0.6},
+    {"id": "mug/cup", "title": "Чашка", "pp": "drpe4yrzgU", "res": "a78d07a7-7a82-478e-a213-b9b0ee3c61cc", "author": "SoyMaria", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.095}, "tags": [], "outline": 0.6},
+    {"id": "mug/simple", "title": "Кружка простая", "pp": "54cOZNS04L", "res": "f1ca63bb-8da2-490c-aa79-0c7511f250fe", "author": "MilkAndBanana", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.1}, "tags": [], "outline": 0.6},
+
+    {"id": "lamp/classic_black", "anchors": {"bulb": {"pos": [0, 0.33, 0.12]}}, "title": "Настольная лампа, чёрная", "pp": "uJDWrSJGVH", "res": "2e1ab34a-eab6-4751-930f-6e3b4f5319a8", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.42}, "tags": ["dark"]},
+    {"id": "lamp/cartoon_white", "anchors": {"bulb": {"pos": [-0.01, 0.33, 0.1]}}, "title": "Лампа мультяшная, белая", "pp": "4ScdjC1wytg", "res": "2a5adc84-d569-4807-b1fa-2007e5aa71a8", "author": "jeremy", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.42}, "tags": ["light", "cartoon"]},
+    {"id": "lamp/silver_wood", "anchors": {"bulb": {"pos": [0.11, 0.3, 0.0], "rot": [0, 90, 0]}}, "title": "Лампа серебристая на деревянной подставке", "pp": "0iZSZezOQxC", "res": "8fefc37b-c3c7-4743-9a7c-d33dcc445602", "author": "Alex Safayan", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.45}, "tags": ["light"]},
+    {"id": "lamp/architect", "anchors": {"bulb": {"pos": [0, 0.4, 0.09]}}, "title": "Лампа на шарнирах", "pp": "0_FDq_UjWHp", "res": "883cde03-cc5e-4728-a926-b6db9b81ec2e", "author": "involuntary tsetse", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.5}, "tags": ["wood"]},
+
+    {"id": "plant/snake", "title": "Сансевиерия в терракоте", "pp": "3qh9saogdJd", "res": "8fbe76c6-762c-4ed4-919a-308ab83f96d3", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.32}, "tags": ["desk"], "outline": 0.7},
+    {"id": "plant/aloe", "title": "Алоэ в горшке", "pp": "8KMKYzAqWjp", "res": "6686e9a1-7aae-462b-bad5-111e36afabb1", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.3}, "tags": ["desk"], "outline": 0.7},
+    {"id": "plant/kenney", "title": "Агава (Kenney)", "pp": "23Dx9CC95C", "res": "6482596c-6423-415d-bfd5-e66bcc546642", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.3}, "tags": ["desk"], "outline": 0.7},
+    {"id": "plant/small_pot", "title": "Росток в горшочке", "pp": "auhzQHajHd", "res": "4a21a868-b9d4-4a60-9e42-135048c18f55", "author": "scaranto", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.26}, "tags": ["desk"], "outline": 0.7},
+    {"id": "plant/monstera", "title": "Монстера в напольном горшке", "pp": "bfLOqIV5uP", "res": "1683c0b1-4dd9-4d45-910e-cf3e46f163f5", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 1.0}, "tags": ["floor"], "outline": 0.8},
+    {"id": "plant/cactus", "title": "Кактус в большом горшке", "pp": "Kr4kr7OCCQ", "res": "c087694b-eda0-426e-a5d6-a1f9b9d57a28", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.8}, "tags": ["floor"], "outline": 0.8},
+
+    {"id": "headphones/orange", "title": "Наушники оранжево-чёрные", "pp": "PSsWSIAYIL", "res": "b72a848f-b4c6-40fb-ada7-69c4c524bd27", "author": "CreativeTrio", "license": "CC0-1.0", "fit": {"dim": "max", "value": 0.2}, "tags": [], "outline": 0.6},
+    {"id": "headphones/teal", "title": "Наушники бирюзовые", "pp": "frvTEfwm9Yg", "res": "b3fe74b4-6bee-4108-88a9-18503df68033", "author": "jeremy", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 0.2}, "tags": [], "outline": 0.6},
+    {"id": "headphones/pink", "title": "Наушники розовые", "pp": "VLB0kuGDoP", "res": "76c177d1-5033-4c89-8cc2-9e23a6030069", "author": "Ginsta", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 0.2}, "tags": [], "outline": 0.6},
+    {"id": "headphones/headset", "yaw": 90, "title": "Гарнитура с микрофоном", "pp": "a7h9oaV3xzV", "res": "c9b39be5-20cd-4125-bca7-d3d3037f6456", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 0.21}, "tags": ["gaming"], "outline": 0.6},
+
+    {"id": "mouse/white", "title": "Мышь белая", "pp": "6ikB7PIRVyd", "res": "e33afddf-dc1f-479d-9115-d45ec96f477a", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "depth", "value": 0.12}, "tags": ["light"], "outline": 0.5},
+    {"id": "mouse/black", "title": "Мышь чёрная", "pp": "V2Ebx3pvo4", "res": "c0123ed1-38d1-4532-a711-3fccdc42fe25", "author": "CreativeTrio", "license": "CC0-1.0", "fit": {"dim": "depth", "value": 0.12}, "tags": ["dark"], "outline": 0.5},
+    {"id": "mouse/black_round", "title": "Мышь чёрная округлая", "pp": "fbmU0OF0G2", "res": "d3c7d440-435c-409e-b624-ae14c3574d8c", "author": "Zsky", "license": "CC-BY-3.0", "fit": {"dim": "depth", "value": 0.12}, "tags": ["dark"], "outline": 0.5},
+    {"id": "mousepad/dark", "title": "Коврик для мыши", "pp": "S5sNqsyyOs", "res": "1c99bc04-c510-46f0-90c2-1bd5afb13308", "author": "dook", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.3}, "tags": ["dark"], "outline": 0.5},
+
+    {"id": "books/stack", "title": "Стопка книг", "pp": "1WggoIFq8tx", "res": "b8d88c42-85c7-4b58-8758-09561f47edd0", "author": "Danni Bittman", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.26}, "tags": ["desk"], "outline": 0.6},
+    {"id": "books/row", "title": "Ряд книг", "pp": "dxt7dETAy9", "res": "dfbb9f38-a5de-41d7-bcbf-0a0929f3c53d", "author": "CreativeTrio", "license": "CC0-1.0", "fit": {"dim": "height", "value": 0.24}, "tags": ["shelf"], "outline": 0.6},
+    {"id": "books/leaning", "title": "Книги с наклоном", "pp": "fkPRnm8iSXI", "res": "d7db901b-2980-401d-8435-990ecb8e5d6a", "author": "Tiff Eidmann", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.24}, "tags": ["shelf"], "outline": 0.6},
+    {"id": "books/row_long", "title": "Длинный ряд книг", "pp": "aksI3ML9rpi", "res": "503f76ac-473c-4a2b-ae64-aa6ba8e03737", "author": "Alex Safayan", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 0.24}, "tags": ["shelf"], "outline": 0.6},
+
+    {"id": "phone/white", "title": "Телефон белый", "pp": "k2kgBepoMU", "res": "bb788859-3dca-4a80-b4da-f5f26e6148f6", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "max", "value": 0.15}, "tags": ["light"], "outline": 0.5},
+    {"id": "phone/black", "title": "Смартфон чёрный", "pp": "4DRZmTs3jq", "res": "68a8586b-e540-431c-b42e-e3c6bc691e11", "author": "smallbigsquare", "license": "CC0-1.0", "fit": {"dim": "max", "value": 0.15}, "tags": ["dark"], "outline": 0.5},
+    {"id": "phone/notch", "title": "Смартфон с иконками", "pp": "1fhwylgLb6I", "res": "73e982dc-1579-404b-b7fa-a833890b1741", "author": "Sal Blrm", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 0.15}, "tags": [], "outline": 0.5},
+
+    {"id": "shelf/wall_plank", "title": "Полка-доска на кронштейнах", "pp": "144BQsV4GdZ", "res": "a17ff20b-6b43-4906-8186-3dfa6d26148c", "author": "jeremy", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.8}, "tags": ["wall"]},
+    {"id": "shelf/wall_double", "title": "Две настенные полки", "pp": "7544dJq1UVu", "res": "80003122-cece-4b41-9db7-d0aa54cf2e49", "author": "Jarlan Perez", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 0.8}, "tags": ["wall"]},
+    {"id": "shelf/cubby", "yaw": 180, "title": "Стеллаж-ячейки", "pp": "3aAw-c_7gkO", "res": "d57022e1-1ebc-45b8-a78e-29bc0ee3ae44", "author": "Jonathan Granskog", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 1.0}, "tags": ["floor"]},
+    {"id": "bookcase/books", "title": "Книжный шкаф с книгами", "pp": "15B0ihXkg3C", "res": "91537fb2-45d2-4b08-b060-7347a52b70ab", "author": "Wanja Pflüger", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 1.8}, "tags": ["floor"]},
+    {"id": "bookcase/quaternius", "title": "Шкаф с книгами (Quaternius)", "pp": "tACDGJ4CGW", "res": "7d59d0aa-6447-4bbb-afc7-0452e9a34353", "author": "Quaternius", "license": "CC0-1.0", "fit": {"dim": "height", "value": 1.8}, "tags": ["floor"]},
+
+    {"id": "bed/kenney_single", "title": "Кровать односпальная (Kenney)", "pp": "sn8az3odMR", "res": "412f5303-86bc-48b2-aaeb-99393c0a4004", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "max", "value": 2.05}, "tags": []},
+    {"id": "bed/wood", "title": "Кровать деревянная", "pp": "rXo5Rkl5LC", "res": "44976488-9b2d-4ffb-b07d-b64c2768a1bc", "author": "CreativeTrio", "license": "CC0-1.0", "fit": {"dim": "max", "value": 2.1}, "tags": []},
+    {"id": "bed/kid", "yaw": 90, "title": "Кровать с оранжевым пледом", "pp": "aF8zkL7mfb0", "res": "2f8905c8-f820-4017-92fd-79a70263bebd", "author": "64 Bit", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 2.05}, "tags": []},
+
+    {"id": "sofa/olive", "title": "Диван оливковый", "pp": "aFwNuRNmcO5", "res": "95c481d4-2de9-4bf8-80f7-679ff271335f", "author": "CMHT Oculus", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 2.0}, "tags": []},
+    {"id": "sofa/kenney", "title": "Диван (Kenney)", "pp": "jMu2iCmGxU", "res": "f47310a0-4d22-48a3-a2ce-62f67bcc998d", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "width", "value": 1.9}, "tags": []},
+    {"id": "sofa/wide", "yaw": 180, "title": "Диван широкий тёмный", "pp": "7Q_Ab2HLll1", "res": "f48c7bea-4869-4847-b233-abb7c4ed0814", "author": "Danni Bittman", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 2.2}, "tags": ["dark"]},
+    {"id": "sofa/grey", "yaw": 90, "title": "Диван серый", "pp": "obMPe0AheB", "res": "2501f65e-d73d-483f-bf57-571e31f640f4", "author": "J-Toastie", "license": "CC-BY-3.0", "fit": {"dim": "width", "value": 2.0}, "tags": []},
+
+    {"id": "window/wood_cross", "yaw": 90, "title": "Окно деревянное с крестовиной", "pp": "dwBpM-aSA_t", "res": "651a4ee6-8233-4029-93ef-f3d67f24a940", "author": "Justin Randall", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 1.2}, "tags": ["wall"]},
+    {"id": "window/white_double", "yaw": 90, "title": "Окно белое двойное", "pp": "98ZJrd80Q1V", "res": "d30a1a80-7181-411b-9ce9-48e3008e64a6", "author": "Poly by Google", "license": "CC-BY-3.0", "fit": {"dim": "height", "value": 1.3}, "tags": ["wall"]},
+
+    {"id": "rug/oriental", "title": "Ковёр восточный", "pp": "8-vPv5_yqKb", "res": "1b72dcac-0970-4f52-a3fd-753529f7dc4a", "author": "jeremy", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 2.0}, "tags": []},
+    {"id": "rug/kilim", "title": "Ковёр-килим", "pp": "cORwtjCf95", "res": "44c3fb9b-a2c7-48c8-8234-105136438e73", "author": "Akimkhan", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 1.8}, "tags": []},
+    {"id": "rug/round_kenney", "title": "Ковёр круглый (Kenney)", "pp": "jeDDiN69Ze", "res": "06a5cc94-d146-4ee6-8506-1be516dc4dbd", "author": "Kenney", "license": "CC0-1.0", "fit": {"dim": "max", "value": 1.6}, "tags": ["round"]},
+    {"id": "rug/round_fluffy", "title": "Ковёр круглый пушистый", "pp": "tr0LwyNnCt", "res": "b0a1ca34-4e22-4d2b-8715-77e7791f2d7a", "author": "J-Toastie", "license": "CC-BY-3.0", "fit": {"dim": "max", "value": 1.5}, "tags": ["round"]}
+  ]
+}

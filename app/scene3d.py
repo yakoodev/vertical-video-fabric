@@ -105,7 +105,7 @@ SIDE_MAX = 2160
 MAX_FRAMES = 3600
 OBJECT_PRIMITIVES = {"mug", "robot_disc", "string_lights", "poster", "box", "cylinder", "sphere", "blob_shadow",
                      "rounded_box", "display", "button_panel", "ui_screen", "coin_jar", "tablet", "stylus",
-                     "monitor", "keyboard", "plant", "desk_lamp", "window_frame", "thought_bubble"}
+                     "monitor", "keyboard", "plant", "desk_lamp", "window_frame", "thought_bubble", "group"}
 TOON_PRESETS = {"ink", "sketch", "comic"}
 OVERLAY_KINDS = {"hud", "tag", "toast", "phone", "chat", "screen", "alert"}
 VOXEL_SHAPES = {"block", "soft"}
@@ -133,6 +133,24 @@ class Scene3dError(RuntimeError):
 
 
 BUILTIN_DIR = Path(__file__).resolve().parent.parent / "node" / "scene3d" / "assets"
+
+
+def library_manifest() -> dict | None:
+    from app.models3d import manifest
+
+    return manifest()
+
+
+def resolve_library(ref: str) -> list[str]:
+    from app.models3d import resolve
+
+    return resolve(ref)
+
+
+def is_library_ref(ref: Any) -> bool:
+    from app.models3d import is_library_ref as check
+
+    return check(ref)
 
 
 def packs_dir() -> Path:
@@ -241,6 +259,12 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
     models: list[str] = []
 
     def model(ref: Any, name: str) -> dict | None:
+        if is_library_ref(ref) and not ref.startswith("builtin/"):
+            # Библиотека вещей (app/models3d.py): нет модели — движок строит запасную (primitive/fallback), не ошибка.
+            models.append(ref)
+            if check_assets and library_manifest() is not None and not resolve_library(ref):
+                warnings.append(f"{name}: в библиотеке моделей нет «{ref}» — будет процедурная замена")
+            return None
         if not isinstance(ref, str) or ref.count("/") != 1 or ".." in ref:
             raise SceneSpecError(f"{name}: ссылка на модель — «пак/файл», а не {ref!r}")
         models.append(ref)
@@ -315,6 +339,9 @@ def validate_spec(spec: Any, *, packs: Path | None = None, check_assets: bool = 
         objs[oid] = o
         if o.get("model") is not None:
             model(o["model"], f"objects[{i}].model")
+            for j, part in enumerate(o.get("fallback") or []):
+                if not isinstance(part, dict) or not isinstance(part.get("id"), str):
+                    raise SceneSpecError(f"objects[{i}].fallback[{j}]: объект с id")
         elif (o.get("primitive") or "box") not in OBJECT_PRIMITIVES:
             raise SceneSpecError(f"objects[{i}].primitive: одно из {sorted(OBJECT_PRIMITIVES)}")
         if o.get("position") is not None:

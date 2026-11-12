@@ -140,6 +140,8 @@ export function buildRoomPreset(name: string, given: Record<string, any> = {}): 
   const p = withDefaults(def.meta, given);
   const colors = { ...def.palette, ...(given.colors || {}) };
   const out = def.fn(p, colors);
+  // Вещи библиотеки моделей: вариант засеян seed окружения (другой seed — другая клавиатура, растение, монитор).
+  for (const o of out.objects) if (o.model && !String(o.model).includes(".") && o.variantSeed === undefined) o.variantSeed = Number(p.seed) || 1;
   const hide = new Set<string>(Array.isArray(given.hide) ? given.hide : []);
   if (hide.size) {
     // Вещь и всё, что к ней крепится (parent), убираются вместе.

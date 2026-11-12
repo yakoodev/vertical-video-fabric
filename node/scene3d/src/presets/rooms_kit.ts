@@ -73,7 +73,8 @@ export function rotVec(rot: number[], v: number[]): number[] {
   return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2], m[3] * v[0] + m[4] * v[1] + m[5] * v[2], m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
 }
 
-/** Поставить вещь (части в её осях) в мир: позиция основания и поворот вокруг вертикали (° как heading). */
+/** Поставить вещь (части в её осях) в мир: позиция основания и поворот вокруг вертикали (° как heading). Запасные
+ * детали вещи из библиотеки (fallback) едут вместе с ней; детали на якорях (mounts) — в осях модели, их не трогаем. */
 export function put(list: O[], pos: number[], yaw = 0): O[] {
   const c = Math.cos(yaw * D2R), s = Math.sin(yaw * D2R);
   const ry = eulerM([0, yaw, 0]);
@@ -84,17 +85,43 @@ export function put(list: O[], pos: number[], yaw = 0): O[] {
       const r = o.rotation || [0, 0, 0];
       out.rotation = !r[0] && !r[2] ? [r[0], r4(r[1] + yaw), r[2]] : toEuler(mul(ry, eulerM(r)));
     }
+    if (Array.isArray(o.fallback)) out.fallback = put(o.fallback, pos, yaw);
     return out;
   });
 }
 
 /** Сдвинуть вещь целиком по высоте (на столешницу, полку). */
-export const lift = (list: O[], y: number) => list.map((o) => ({ ...o, position: r4v([o.position[0], o.position[1] + y, o.position[2]]) }));
+export const lift = (list: O[], y: number): O[] => list.map((o) => ({ ...o, position: r4v([o.position[0], o.position[1] + y, o.position[2]]),
+  ...(Array.isArray(o.fallback) ? { fallback: lift(o.fallback, y) } : {}) }));
+
+/**
+ * Вещь из библиотеки моделей (models3d.ts, docs/3d/models.md): ref — категория («keyboard») или точный id; parts —
+ * процедурная вещь (её же детали, в осях вещи) на случай, если модели нет. Вариант выбирается засеянно (seed
+ * окружения + id). fitMax — вписать равномерно в габарит, fit — растянуть точно (стол под высоту столешницы),
+ * tags — нужные теги (растение на стол — "desk"), mounts — детали на якорях модели (экран, лампочка).
+ */
+export function libThing(id: string, ref: string, parts: O[], x: { pos?: number[]; rot?: number[]; fitMax?: number[]; fit?: number[]; tags?: string[];
+  mounts?: { anchor: string; size?: number[]; parts: O[] }[] } = {}): O {
+  const o: O = { id, model: ref, position: r4v(x.pos || [0, 0, 0]), fallback: parts };
+  if (x.rot) o.rotation = x.rot.map(r4);
+  if (x.fitMax) o.fitMax = x.fitMax.map(r4);
+  if (x.fit) o.fit = x.fit.map(r4);
+  if (x.tags?.length) o.modelTags = x.tags;
+  if (x.mounts?.length) o.mounts = x.mounts;
+  return o;
+}
 
 // ---------- мебель ----------
 
-/** Стол: столешница со скруглением, ножки-рамы, царга сзади; drawers — тумба с ящиками слева. */
-export function desk(id: string, o: { w?: number; d?: number; h?: number; top: string; leg: string; drawers?: string }): O[] {
+/** Стол: модель библиотеки «desk», растянутая точно в [w, h, d] (столешница — ровно на h), или процедурный (model: false). */
+export function desk(id: string, o: { w?: number; d?: number; h?: number; top: string; leg: string; drawers?: string; model?: boolean; tags?: string[] }): O[] {
+  const parts = deskParts(id, o);
+  if (o.model === false) return parts;
+  return [libThing(`${id}.model`, "desk", parts, { fit: [o.w ?? 1.4, o.h ?? 0.75, o.d ?? 0.7], tags: o.tags })];
+}
+
+/** Процедурный стол: столешница со скруглением, ножки-рамы, царга сзади; drawers — тумба с ящиками слева. */
+function deskParts(id: string, o: { w?: number; d?: number; h?: number; top: string; leg: string; drawers?: string }): O[] {
   const w = o.w ?? 1.4, d = o.d ?? 0.7, h = o.h ?? 0.75, t = 0.035;
   const out: O[] = [rbox(`${id}.top`, [0, h - t, 0], [w, t, d], o.top, 0.01, { roughness: 0.55 })];
   for (const sx of [-1, 1]) {
@@ -203,55 +230,74 @@ function screenArt(id: string, w: number, h: number, kind: string, accent: strin
  * эфир с чатом), иначе — screenArt. Свет экрана — мягкий прожектор вперёд (light: false — без него).
  */
 export function monitor(id: string, o: { w?: number; h?: number; lift?: number; body?: string; screen?: string; content?: string; seed?: number;
-  light?: number | false; ui?: Record<string, any> }): O[] {
+  light?: number | false; ui?: Record<string, any>; model?: boolean }): O[] {
   const w = o.w ?? 0.6, h = o.h ?? 0.34, ly = o.lift ?? 0.12, body = o.body || "#1c1d22", sc = o.screen || "#7fb2ff";
+  // Экран (в осях экрана: начало — середина низа), один и тот же у модели (якорь screen) и у процедурного монитора.
+  const screenParts = (dy: number, dz: number): O[] => o.ui
+    ? [{ id: `${id}.screen`, primitive: "ui_screen", position: r4v([0, dy, dz]), params: { size: [w, h], ...o.ui } }]
+    : put(screenArt(`${id}.screen`, w, h, o.content || "code", sc, 0, o.seed ?? 3), [0, dy, dz]);
   const out: O[] = [
     rbox(`${id}.foot`, [0, 0, -0.03], [0.24, 0.014, 0.17], body, 0.006, { roughness: 0.4, metalness: 0.4 }),
     box(`${id}.neck`, [0, 0.01, -0.07], [0.045, ly + h * 0.4, 0.025], body, { roughness: 0.4, metalness: 0.5 }),
     rbox(`${id}.panel`, [0, ly, -0.01], [w + 0.024, h + 0.024, 0.022], body, 0.008, { roughness: 0.45 }),
     rbox(`${id}.hump`, [0, ly + h * 0.2, -0.045], [w * 0.5, h * 0.55, 0.05], body, 0.015, { roughness: 0.5 }),
   ];
-  const z = 0.0015;
-  const scr = o.ui
-    ? [{ id: `${id}.screen`, primitive: "ui_screen", position: r4v([0, ly + 0.012, z]), params: { size: [w, h], ...o.ui } }]
-    : put(screenArt(`${id}.screen`, w, h, o.content || "code", sc, 0, o.seed ?? 3), [0, ly + 0.012, z]);
-  out.push(...scr);
+  out.push(...screenParts(ly + 0.012, 0.0015));
+  const lamp: O[] = [];
   if (o.light !== false) {
-    out.push(glow("box", `${id}.glowlight`, [0, ly + h * 0.5, 0.003], [0.001, 0.001, 0.001], sc, 0.01, {
+    lamp.push(glow("box", `${id}.glowlight`, [0, ly + h * 0.5, 0.003], [0.001, 0.001, 0.001], sc, 0.01, {
       light: { type: "spot", id: `${id}.light`, color: sc, intensity: o.light ?? 1.6, position: [0, 0, 0.08], target: [0, -0.25, 1.4], angle: 70, penumbra: 1, decay: 2, distance: 4 } }));
   }
-  return out;
+  if (o.model === false) return [...out, ...lamp];
+  // Модель монитора: экран — на якоре screen (вписан в него), ширина — как у процедурного (корпус чуть шире экрана).
+  return [libThing(`${id}.model`, "monitor", out, { pos: [0, 0, -0.03], fitMax: [w + 0.06, 0, 0],
+    mounts: [{ anchor: "screen", size: [w, h], parts: screenParts(-h / 2, 0.002) }] }), ...lamp];
 }
 
 /** Клавиатура, мышь и коврик; rgb — цвет подсветки под клавиатурой. */
-export function keyboardSet(id: string, o: { body?: string; keys?: string; mat?: string; rgb?: string; mouseX?: number }): O[] {
-  const out: O[] = [
-    rbox(`${id}.mat`, [0.08, 0, 0], [0.86, 0.004, 0.34], o.mat || "#2c2f3a", 0.002, { roughness: 0.95 }),
+export function keyboardSet(id: string, o: { body?: string; keys?: string; mat?: string; rgb?: string; mouseX?: number; model?: boolean; tags?: string[] }): O[] {
+  const kb = [
     rbox(`${id}.kb`, [0, 0.004, 0.0], [0.42, 0.022, 0.135], o.body || "#24262d", 0.006, { rot: [3, 0, 0], roughness: 0.5 }),
     rbox(`${id}.keys`, [0, 0.022, 0.003], [0.395, 0.013, 0.112], o.keys || "#e9e6df", 0.004, { rot: [3, 0, 0], roughness: 0.6 }),
     rbox(`${id}.space`, [0, 0.033, 0.042], [0.13, 0.006, 0.02], o.keys || "#e9e6df", 0.003, { rot: [3, 0, 0], roughness: 0.6 }),
-    sph(`${id}.mouse`, [o.mouseX ?? 0.34, 0.004, 0.02], 0.068, o.body || "#24262d", { scale: [0.62, 0.48, 1], roughness: 0.4 }),
   ];
+  const mouse = [sph(`${id}.mouse`, [o.mouseX ?? 0.34, 0.004, 0.02], 0.068, o.body || "#24262d", { scale: [0.62, 0.48, 1], roughness: 0.4 })];
+  const out: O[] = [rbox(`${id}.mat`, [0.08, 0, 0], [0.86, 0.004, 0.34], o.mat || "#2c2f3a", 0.002, { roughness: 0.95 })];
+  if (o.model === false) out.push(...kb, ...mouse);
+  else {
+    // Клавиатура и мышь — модели библиотеки (засеянный вариант), вписаны в место процедурных.
+    out.push(libThing(`${id}.kb_model`, "keyboard", kb, { pos: [0, 0.004, 0], fitMax: [0.44, 0.05, 0.17], tags: o.tags }));
+    out.push(libThing(`${id}.mouse_model`, "mouse", mouse, { pos: [o.mouseX ?? 0.34, 0.004, 0.02], fitMax: [0.075, 0.05, 0.12] }));
+  }
   if (o.rgb) out.push(glow("box", `${id}.rgb`, [0, 0.002, 0], [0.43, 0.004, 0.14], o.rgb, 2.2));
   return out;
 }
 
 /** Настольная лампа на шарнирах: свет вниз-вперёд (прожектор с тенью) и тёплое свечение плафона. */
-export function deskLamp(id: string, o: { color: string; light?: string; power?: number; shadow?: boolean }): O[] {
+export function deskLamp(id: string, o: { color: string; light?: string; power?: number; shadow?: boolean; model?: boolean }): O[] {
   const lc = o.light || "#ffc98a";
   const r1 = [-18, 0, 0], r2 = [62, 0, 0];
   const j = rotVec(r1, [0, 0.3, 0]), top = rotVec(r2, [0, 0.27, 0]);
   const jp = [0, 0.02 + j[1], j[2]], hp = [0, jp[1] + top[1], jp[2] + top[2]];
   const met = { roughness: 0.35, metalness: 0.5 };
+  const bulb = (pos: number[]) => glow("sphere", `${id}.bulb`, pos, [0.055], lc, 3.2, {
+    light: { type: "spot", id: `${id}.light`, color: lc, intensity: o.power ?? 2.4, position: [0, 0.02, 0], target: [0, -0.6, 0.25], angle: 58, penumbra: 0.85, decay: 2,
+      distance: 4, castShadow: o.shadow !== false, shadow: { size: 1024, radius: 4 }, halo: { size: 0.16, opacity: 0.55 } } });
+  const parts = deskLampParts(id, o.color, hp, jp, r1, r2, met, bulb([hp[0], hp[1] - 0.115, hp[2] + 0.035]));
+  if (o.model === false) return parts;
+  // Модель лампы: свет и свечение — на якоре bulb (у плафона модели).
+  return [libThing(`${id}.model`, "lamp", parts, { fitMax: [0, 0.55, 0], mounts: [{ anchor: "bulb", parts: [bulb([0, -0.03, 0])] }] })];
+}
+
+function deskLampParts(id: string, color: string, hp: number[], jp: number[], r1: number[], r2: number[], met: Record<string, number>, bulb: O): O[] {
+  const o = { color };
   return [
     cyl(`${id}.base`, [0, 0, 0], [0.13, 0.025], o.color, met),
     cyl(`${id}.arm1`, [0, 0.02, 0], [0.016, 0.3], o.color, { rot: r1, ...met }),
     sph(`${id}.joint`, [jp[0], jp[1] - 0.016, jp[2]], 0.032, "#2b2b2f", met),
     cyl(`${id}.arm2`, jp, [0.016, 0.27], o.color, { rot: r2, ...met }),
     cyl(`${id}.shade`, [hp[0], hp[1] - 0.1, hp[2] + 0.02], [0.16, 0.12], o.color, { top: 0.42, rot: [18, 0, 0], ...met }),
-    glow("sphere", `${id}.bulb`, [hp[0], hp[1] - 0.115, hp[2] + 0.035], [0.055], lc, 3.2, {
-      light: { type: "spot", id: `${id}.light`, color: lc, intensity: o.power ?? 2.4, position: [0, 0.02, 0], target: [0, -0.6, 0.25], angle: 58, penumbra: 0.85, decay: 2,
-        distance: 4, castShadow: o.shadow !== false, shadow: { size: 1024, radius: 4 }, halo: { size: 0.16, opacity: 0.55 } } }),
+    bulb,
   ];
 }
 
@@ -345,7 +391,15 @@ export function bookcase(id: string, o: { w?: number; h?: number; d?: number; co
  * Растение в горшке: snake (сансевиерия — острые листья-клинки), bush (лоу-поли куст), rosette (розетка
  * крупных листьев — монстера/фикус), cactus. Листья — сплюснутые многогранники двух оттенков.
  */
-export function plant(id: string, o: { kind?: string; pot?: string; leaf?: string; leaf2?: string; size?: number; seed?: number; potH?: number }): O[] {
+export function plant(id: string, o: { kind?: string; pot?: string; leaf?: string; leaf2?: string; size?: number; seed?: number; potH?: number; model?: boolean }): O[] {
+  const parts = plantParts(id, o);
+  // Без своего горшка (в кашпо, potH: 0) — только процедурное; иначе модель библиотеки: на стол/полку — desk, на пол — floor.
+  if (o.model === false || o.potH === 0) return parts;
+  const s = o.size ?? 1, desk = s < 1;
+  return [libThing(`${id}.model`, "plant", parts, { tags: [desk ? "desk" : "floor"], fitMax: desk ? [0.3 * s + 0.1, 0.5 * s, 0.3 * s + 0.1] : [0.6 * s, 0.75 * s, 0.6 * s] })];
+}
+
+function plantParts(id: string, o: { kind?: string; pot?: string; leaf?: string; leaf2?: string; size?: number; seed?: number; potH?: number }): O[] {
   const s = o.size ?? 1, r = seeded(o.seed ?? 5), kind = o.kind || "rosette";
   const leaf = o.leaf || "#4f8a5b", leaf2 = o.leaf2 || "#6fae6a";
   const pd = 0.18 * s, ph = (o.potH ?? 0.17) * s;
