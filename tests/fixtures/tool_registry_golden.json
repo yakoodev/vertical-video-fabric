@@ -1460,7 +1460,7 @@
 "name": "save_channel_project",
 "title": "Сохраняю проект-серию",
 "description": "47e440e1389fda66",
-"parameters": "2cd8435345c61d9f",
+"parameters": "06712816cbc5ae55",
 "mutating": true,
 "scope": "project",
 "module": "series",
@@ -2368,6 +2368,83 @@
 "module": "stream_questions",
 "handler": "h_list_meme_catalog",
 "label": false
+},
+{
+"name": "series3d_list",
+"title": "Смотрю 3D-серию проекта",
+"description": "1240460c66204cfe",
+"parameters": "c9ed12d73d5a6fef",
+"mutating": false,
+"scope": "project",
+"module": "series3d",
+"handler": "h_list",
+"label": true
+},
+{
+"name": "series3d_create_episode",
+"title": "Новая 3D-серия",
+"description": "2062dfd8ed053d04",
+"parameters": "a29e43e60180f2d1",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_create",
+"label": true
+},
+{
+"name": "series3d_plan_from_script",
+"title": "Пишу план 3D-серии",
+"description": "82a2ba2a0c899186",
+"parameters": "1ec559f8fd795744",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_plan_from_script",
+"label": true
+},
+{
+"name": "series3d_update_plan",
+"title": "Правлю план 3D-серии",
+"description": "046286ede8f4464c",
+"parameters": "d9f06ecd1a79c3cc",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_update_plan",
+"label": true
+},
+{
+"name": "series3d_render",
+"title": "Рендерю 3D-серию",
+"description": "bea18b39d18f80b6",
+"parameters": "802cccb44ca716ee",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_render",
+"label": true
+},
+{
+"name": "series3d_status",
+"title": "Смотрю статус 3D-серии",
+"description": "0193cc753e79c5ae",
+"parameters": "d125d833383d42f3",
+"mutating": false,
+"scope": "project",
+"module": "series3d",
+"handler": "h_status",
+"label": true
+},
+{
+"name": "series3d_save_item",
+"title": "Библиотека 3D-серии",
+"description": "567e2727810af63c",
+"parameters": "cb71aa1d348b2b3f",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_save_item",
+"label": true
 }
 ]
 }

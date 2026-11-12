@@ -68,6 +68,9 @@ explainer_worker = ExplainerWorker(store)
 from app.stories_gen import StoriesWorker  # noqa: E402 - истории: завязка → сценарий → сцены → карточка → клип
 
 stories_worker = StoriesWorker(store)
+from app.s3d_render import Series3dWorker  # noqa: E402 - 3D-серия: голос → 3D → проверки → клип, по одному
+
+series3d_worker = Series3dWorker(store)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 # Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
@@ -81,6 +84,7 @@ modules.register_worker("vod_watch", "vod-watch", lambda: vod_watch_worker)
 modules.register_worker("ai_video", "aivideo-gen", lambda: aivideo_worker)
 modules.register_worker("explainer", "explainer", lambda: explainer_worker)
 modules.register_worker("stories", "stories", lambda: stories_worker)
+modules.register_worker("series3d", "series3d", lambda: series3d_worker)
 
 
 @asynccontextmanager
@@ -408,6 +412,11 @@ from app.stories_gen import kick as _stories_kick  # noqa: E402
 
 app.include_router(build_render3d_router(AuthDep, lambda: store))
 _render3d_on_done(_stories_kick)  # рендер готов — работник историй сразу собирает клип
+
+# 3D-серия в сервисе: библиотека проекта, серии с версиями плана, рендер заданием и проверки (app/s3d_api.py).
+from app.s3d_api import build_series3d_router  # noqa: E402
+
+app.include_router(build_series3d_router(AuthDep, lambda: store))
 
 # Модули сервиса: список, переключение владельцем, живые ресурсы (app/modules_api.py).
 app.include_router(build_modules_router(AuthDep, lambda: store))
