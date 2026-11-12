@@ -62,6 +62,19 @@ HEROINES["sonya"] = {"model": GIRL, "chair_y": 0.775, "headphones": SONYA_HEADSE
                               "repaint": {"Hair": ["#2a2236", "#d4c8ec"], "Tops": ["#0c0c12", "#4a4a5c"],
                                           "EyeIris": ["#3a060c", "#ff5a64"]}}}
 
+# Лёша (серия 7), первый герой-парень: мужская база VRoid с 52 формами ARKit (hinzka/52blendshapes-for-VRoid-face
+# v1.1.3, README: коммерческое использование разрешено, указывать автора не нужно; D:\vvf-offload\vtubika\vrm\vendor\hinzka).
+# Каштановые волосы, оливковое худи, тёмные штаны, карие глаза, чёрная гарнитура с мятным кольцом. Рот — ещё и по
+# Wav2ARKit (план: "vrm": {"arkit": true}). База выше героинь (голова 1.55 м против 1.37) — scale 0.885: кресло, стол,
+# клавиатура и камеры настроены под их рост.
+MALE = "hinzka/VRoid_V110_Male_v1.1.3.vrm"
+LYOSHA_HEADSET = {"kind": "headphones", "color": "#1c1d22", "accent": "#5fe0b8", "ring": 0.02, "scale": 1.06, "lift": 0.035}
+HEROINES["lyosha"] = {"model": MALE, "scale": 0.885, "keys_spread": 1.25, "chair_y": 0.775, "headphones": LYOSHA_HEADSET,
+                      "look": {"outline": 0.0034, "shade": "#98a0b8", "toony": 0.97, "shift": -0.05, "rim": "#9af0d0", "rimPower": 4,
+                               "skin": "^(face|body)|_SKIN", "skinShade": "#e0a890", "tint": {"Hair": "#ffffff"},
+                               "repaint": {"Hair": ["#1e120c", "#9a6a46"], "Tops": ["#2a3018", "#9aa86a"],
+                                           "Bottoms": ["#101218", "#3a4050"], "EyeIris": ["#1a0c06", "#a0683a"]}}}
+
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
 # свой персонаж Веры (сиреневые волосы, белый верх, звезда-заколка, фиолетовые глаза).
 AVATARS: dict[str, dict[str, Any]] = {

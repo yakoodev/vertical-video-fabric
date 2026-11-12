@@ -70,15 +70,24 @@ export const UI_NUM = "VvfNum";
  */
 export interface ProductAvatar {
   /** Выражения: имя → картинка {url, x, y — точка кадра в долях картинки, которая встаёт в центр окна; zoom}. */
-  faces: Record<string, { url: string; x?: number; y?: number; zoom?: number }>;
+  faces: Record<string, { url: string; x?: number; y?: number; zoom?: number; seq?: string[]; fps?: number }>;
   /** Смена выражений [{t, face}]; до первого ключа — base. */
   keys?: { t: number; face: string }[];
   base?: string;
 }
 
+/** Номер кадра туда-обратно: 0 1 … n-1 n-2 … 1 0 1 … */
+export function pingPong(i: number, n: number): number {
+  if (n <= 1) return 0;
+  const p = 2 * (n - 1);
+  const k = ((i % p) + p) % p;
+  return k < n ? k : p - k;
+}
+
 function drawProductImage(g: CanvasRenderingContext2D, f: ProductAvatar["faces"][string], x: number, y: number, w: number, h: number,
   t: number, pop: number) {
-  const img = siteImages[f.url];
+  // seq — кадры настоящего видео-превью товара со страницы магазина (туда-обратно): модель живая, а не стоп-кадр.
+  const img = (f.seq?.length ? siteImages[f.seq[pingPong(Math.floor(t * (f.fps ?? 12)), f.seq.length)]] : null) ?? siteImages[f.url];
   if (!img) return;
   const breathe = 1 + 0.012 * Math.sin(t * 1.9) + 0.06 * pop;
   // Фон окна — та же картинка «по заполнению» в расфокусе, поверх — целиком по высоте (лицо не режется).

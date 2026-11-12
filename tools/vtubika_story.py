@@ -257,8 +257,86 @@ def flow_layers(shots: list[dict], total: float, fps: int = 30) -> list[dict]:
     return out
 
 
+def hook_layers(plan: dict) -> list[dict]:
+    """Крючок (поле ``hook`` плана): с первого кадра одно огромное слово во всю ширину — боль зрителя, которую
+    называет первая фраза (``{"word": "СТЕСНЯЕШЬСЯ?", "until": 1.5, "color": "#ffffff", "accent": "#ff3b4e"}``).
+    Без анимации входа (кадр 0 — уже слово), уходит наплывом."""
+    from app.motion_normalize import normalize_layers
+
+    hook = plan.get("hook")
+    if not hook:
+        return []
+    word = str(hook["word"]).strip().upper()
+    size = int(hook.get("size") or max(90, min(240, round(1960 / max(4, len(word))))))
+    layer = {"id": "hook", "type": "text", "start": 0.0, "end": float(hook.get("until", 1.5)), "x": 0.5,
+             "y": float(hook.get("y", 0.4)), "track": 10,
+             "props": {"text": word, "size": size, "weight": 900, "color": hook.get("color", "#ffffff"),
+                       "stroke": {"color": "#0b0812", "width": 14}, "maxWidth": 1040, "lineHeight": 1.0,
+                       "backdrop": {"color": hook.get("accent", "#ff3b4e"), "opacity": 0.42, "spread": 160}},
+             "in": {"type": "none", "duration": 0.3}, "out": {"type": "fade", "duration": 0.22},
+             "loop": {"type": "pulse", "speed": 1.2, "amount": 0.25}}
+    return normalize_layers([layer])
+
+
+def line_layers(lines: list[dict]) -> list[dict]:
+    """Подписи реплик других голосов (``voices_extra``): строка под местом субтитров на время реплики."""
+    from app.motion_normalize import normalize_layers
+
+    out = []
+    for n, ln in enumerate(lines):
+        if not ln.get("caption"):
+            continue
+        out.append({"id": f"line{n}", "type": "text", "start": round(ln["t"], 3), "end": round(ln["t"] + ln["dur"] + 0.35, 3),
+                    "x": 0.5, "y": 0.8, "track": 9,
+                    "props": {"text": ln["caption"], "size": 78, "weight": 900, "color": ln.get("color", "#ff9ad6"),
+                              "stroke": {"color": "#0b0812", "width": 10}, "maxWidth": 980},
+                    "in": {"type": "pop", "duration": 0.18}, "out": {"type": "fade", "duration": 0.2}})
+    return normalize_layers(out) if out else []
+
+
+def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> list[dict]:
+    """Реплики других голосов (``voices_extra`` плана, например мама из коридора голосом Lily): каждая — отдельный
+    синтез (кэш по тексту и голосу), звучит в паузе после фразы ``after`` (номер с 1) + ``dt``. Платный голос —
+    только с ``paid_ok`` и под общим потолком. Возвращает [{t, dur, path, caption, color}]."""
+    from app import vtubika_plan as P
+    from app import series3d_voice as VF
+    from app.dubbing import get_tts_provider
+
+    items = plan.get("voices_extra") or []
+    if not items:
+        return []
+    times = P.token_times(plan, words)
+    out, spent = [], 0.0
+    for it in items:
+        voice = dict(it["voice"])
+        if voice.get("provider") == "polza" and not voice.get("paid_ok"):
+            raise RuntimeError(f"реплика {it.get('id')}: голос Polza платный — нужен paid_ok")
+        key = hashlib.sha1(json.dumps([it["text"], voice], ensure_ascii=False).encode()).hexdigest()[:12]
+        path = work / f"line_{key}.mp3"
+        meta = path.with_suffix(".json")
+        if not (path.is_file() and meta.is_file()):
+            tts = get_tts_provider(voice["provider"], model=voice.get("model"), voice=voice["voice"], style=voice.get("style"))
+            if tts.price_rub_per_char() * len(it["text"]) > POLZA_CAP_RUB:
+                raise RuntimeError("реплика: оценка выше потолка")
+            speech = tts.synthesize(it["text"], path)
+            meta.write_text(json.dumps({"text": it["text"], "voice": voice, "cost_rub": float(speech.cost_rub or 0.0)},
+                                       ensure_ascii=False), "utf-8")
+        info = json.loads(meta.read_text("utf-8"))
+        spent += float(info.get("cost_rub") or 0.0)
+        dur = round(len(VF.decode(path)) / VF.SR, 3)
+        n = int(it["after"]) - 1
+        t = round(times[n][-1]["end"] + float(it.get("dt", 0.15)), 3)
+        room = (times[n + 1][0]["start"] if n + 1 < len(times) else t + 99) - t
+        if dur > room + 0.05:
+            report.setdefault("voices_extra_warn", []).append(f"{it.get('id')}: реплика {dur:.2f} с, пауза {room:.2f} с")
+        out.append({"id": it.get("id"), "t": t, "dur": dur, "path": str(path), "caption": it.get("caption"),
+                    "color": it.get("color"), "gain_db": float(it.get("gain_db", -1.5))})
+    report["voices_extra"] = {"lines": [{k: v for k, v in o.items() if k != "path"} for o in out], "cost_rub": round(spent, 2)}
+    return out
+
+
 def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float,
-                  y: float | None = None, shots: list[dict] | None = None) -> None:
+                  y: float | None = None, shots: list[dict] | None = None, lines: list[dict] | None = None) -> None:
     from app import vtubika_plan as P
     from app.motion_render_comp import build_compositor_args, write_comp
     from app.motion_render_video import prepare_video_frames
@@ -271,8 +349,9 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
     layer = {"id": "caps", "type": "captions", "start": 0.0, "end": round(total, 3), "x": 0.5,
              "y": float(DEFAULT_CAPTIONS["y"] if y is None else y), "props": props, "track": 9}
     flows = flow_layers(shots or [], total)
-    comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[*flows, layer], camera=[],
-                      words=comp_words)
+    extra = [*hook_layers(plan), *line_layers(lines or [])]
+    comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[*flows, layer, *extra],
+                      camera=[], words=comp_words)
     (work / "assets.json").write_text(json.dumps({FLOW_ASSET: str(video)} if flows else {}), "utf-8")
     videos = None
     if flows:
@@ -290,7 +369,7 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
 
 
 def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float, out: Path, work: Path,
-        report: dict, lead: float = 0.0, music_fade: float | None = None) -> None:
+        report: dict, lead: float = 0.0, music_fade: float | None = None, lines: list[dict] | None = None) -> None:
     """Голос, музыка на under_db тише голоса, звуки паков → громкость −14 LUFS. ``music_fade`` — затухание музыки
     в конце (под концовкой), иначе ``fade_out`` плана."""
     from app import vtubika as U
@@ -328,6 +407,12 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
         assets[asset_key(key)] = str(path)
         layers.append({"id": f"sfx{n}", "type": "audio", "start": s["t"], "end": round(min(total, s["t"] + 2.5), 3),
                        "props": {"asset_id": key, "volume": s["volume"], "mode": "effect"}})
+    for n, ln in enumerate(lines or []):
+        # Реплика другого голоса — дорожкой на уровне рассказчика (+ gain_db реплики: «из коридора» чуть тише).
+        gain = round(voice_db - voice_lufs(Path(ln["path"])) + float(ln.get("gain_db", 0.0)), 2)
+        assets[asset_key(9100 + n)] = ln["path"]
+        layers.append({"id": f"line{n}", "type": "audio", "start": round(ln["t"], 3), "end": round(min(total, ln["t"] + ln["dur"] + 0.2), 3),
+                       "props": {"asset_id": 9100 + n, "mode": "track", "volume": 1.0, "gain_db": gain, "role": "voice"}})
     pre = work / "mixed.mp4"
     args = build_audio_layers_args(video, pre, layers, assets, total, clip_has_audio=False,
                                    speech_db=speech_level_db(narration), notes=notes)
@@ -474,8 +559,12 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     # Рот по гласным (голос + слова), брови на ударениях (и выделенных словах) и слой жизни; голос — с lead.
     from app import lipsync
 
+    # Модель с perfect sync (52 формы ARKit, ``vrm.arkit`` плана): рот в окнах речи героя — ещё по Wav2ARKit.
     lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead,
-                            highlight=list((plan.get("highlight") or {}).keys()))
+                            highlight=list((plan.get("highlight") or {}).keys()),
+                            arkit=bool((plan.get("vrm") or {}).get("arkit")))
+    if (plan.get("vrm") or {}).get("arkit"):
+        report["arkit"] = bool(spec["timeline"].get("arkit"))
     # Комната 3D-пресета (presets3d.room): отрисована отдельно той же камерой — подложкой под героиню.
     plates = ROOM.apply(plan, spec, work, gl=args.gl, log=_log)
     if plates:
@@ -531,11 +620,12 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
-    burn_captions(plan, script, raw_video, capped, work, total, y=0.8, shots=built["shots"])
+    lines = extra_voices(plan, words, work, report)
+    burn_captions(plan, script, raw_video, capped, work, total, y=0.8, shots=built["shots"], lines=lines)
     report["flow"] = [{"t": round(float(sh["t0"]), 3), **sh["flow"]} for sh in built["shots"] if sh.get("flow")]
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
-    mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
+    mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade, lines=lines)
     if args.endcard_sounds and report.get("end_card"):
         endcard_compare(args, plan, built, capped, narration, full, lead, music_fade, work, report)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
@@ -582,6 +672,9 @@ def main(argv: list[str] | None = None) -> int:
     main_root = ROOT.parent.parent.parent if ".claude" in str(ROOT) else ROOT
     if "MOTION_PACKS_DIR" not in os.environ and not (ROOT / "vendor" / "packs").is_dir():
         os.environ["MOTION_PACKS_DIR"] = str(main_root / "vendor" / "packs")  # worktree: паки звуков — из основной копии
+    lib3d = Path(r"D:\vvf-data\runtime\models3d")
+    if "SCENE3D_MODELS_DIR" not in os.environ and "DATA_DIR" not in os.environ and (lib3d / "manifest.json").is_file():
+        os.environ["SCENE3D_MODELS_DIR"] = str(lib3d)  # библиотека вещей (docs/3d/models.md) — комната и стол VRM
     from app.settings import settings
 
     hf = Path.home() / ".cache" / "huggingface" / "hub"
