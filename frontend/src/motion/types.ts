@@ -7,6 +7,7 @@
  * здесь необязательное, а значения по умолчанию подставляют рендереры.
  */
 import type { BubblesProps, CarouselProps, FlowDiagramProps, LayerPivot, TileWallProps, WaveformProps } from "./adtypes";
+import type { TransitionProps } from "./flow";
 
 export type * from "./adtypes";
 
@@ -716,6 +717,8 @@ export type LayerPropsMap = {
   waveform: WaveformProps;
   tile_wall: TileWallProps;
   flow_diagram: FlowDiagramProps;
+  /** Перетекающий переход между сценами (flow.ts): сам не рисуется, ведёт группы слоёв A и B. */
+  transition: TransitionProps;
 };
 
 export type LayerType = keyof LayerPropsMap;
@@ -821,6 +824,7 @@ export type CarouselLayer = LayerOf<"carousel">;
 export type WaveformLayer = LayerOf<"waveform">;
 export type TileWallLayer = LayerOf<"tile_wall">;
 export type FlowDiagramLayer = LayerOf<"flow_diagram">;
+export type TransitionLayerOf = LayerOf<"transition">;
 
 export type Layer =
   | TextLayer
@@ -846,7 +850,8 @@ export type Layer =
   | CarouselLayer
   | WaveformLayer
   | TileWallLayer
-  | FlowDiagramLayer;
+  | FlowDiagramLayer
+  | TransitionLayerOf;
 
 /**
  * Как ключ камеры понимает свои x/y: `"center"` (по умолчанию) — центр окна камеры

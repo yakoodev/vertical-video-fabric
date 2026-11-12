@@ -34,8 +34,10 @@ LAYER_TYPES = (
     "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social", "page",
     # Рекламный пакет (frontend/src/motion/layers/{bubbles,carousel,waveform,tilewall,flow}.ts).
     "bubbles", "carousel", "waveform", "tile_wall", "flow_diagram",
+    # Перетекающий переход между сценами (app/motion_flow.py, frontend/src/motion/flow.ts): сам не рисуется.
+    "transition",
 )
-VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t != "audio")
+VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t not in ("audio", "transition"))
 EASINGS = (
     "linear", "inQuad", "outQuad", "inOutQuad", "inCubic", "outCubic", "inOutCubic",
     "inBack", "outBack", "inOutBack", "outElastic", "outBounce", "step",

@@ -231,6 +231,8 @@ def _normalize_layer(raw: Any, index: int, taken: set[str], rep: _Report) -> dic
             rep(f"{where}.tracking", "пометка трекинга не разобрана — отброшена (ключи остались)")
     if ltype == "fx":
         _fx_rules(layer, raw, rep, where)
+    if ltype == "transition":
+        _transition_rules(layer, rep, where)
     _check_required(layer, rep, where)
     _clamp_effect_volume(layer, rep, where)
     return layer
@@ -289,6 +291,30 @@ def _fx_rules(layer: dict, raw: dict, rep: _Report, where: str) -> None:
         layer["blend"] = "normal"
     if layer.pop("motionBlur", None) is not None:
         rep(f"{where}.motionBlur", "эффект кадра не смазывается (motion blur — у движущихся слоёв) — снято")
+
+
+def _transition_rules(layer: dict, rep: _Report, where: str) -> None:
+    """Слой перехода сам не рисуется: свои анимации, тень, камера и смаз к нему не относятся; кривая — как у ключей."""
+    layer["in"] = {"type": "none", "duration": layer["in"]["duration"]}
+    layer["out"] = {"type": "none", "duration": layer["out"]["duration"]}
+    layer["loop"] = {**layer["loop"], "type": "none"}
+    for name in ("shadow", "react", "motionBlur", "pivot", "tracking"):
+        layer.pop(name, None)
+    layer["followCamera"] = False
+    props = layer["props"]
+    if "ease" in props:
+        ease = _norm_ease(props["ease"], rep, f"{where}.props.ease")
+        if ease:
+            props["ease"] = ease
+        else:
+            props.pop("ease")
+    # from/to без повторов; слой из обоих списков — в B (как flowGroups движка).
+    for name in ("from", "to"):
+        props[name] = list(dict.fromkeys(i for i in props.get(name) or [] if i))
+    props["from"] = [i for i in props["from"] if i not in set(props["to"])]
+    for name in ("target", "match"):
+        if name in props and not props[name]:
+            props.pop(name)
 
 
 def _marker_text_color(layer: dict, props_raw: Any) -> None:

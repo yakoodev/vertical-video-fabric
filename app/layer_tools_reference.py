@@ -239,6 +239,9 @@ props по типу:
          overlay 0.55 (затемнение под текст) — фон сцены во весь кадр (на видео закрывает его — только на холсте/заставке)
   flow_diagram: nodes [{{label, sub, icon|image}}] 2..6, center (щит с замком), layout row|column, stepGap 0.8 (шаги
          появления), done «Готово» (плашка с галочкой в конце; "" — без), doneAt, w 1000, h 620
+  transition (перетекающий переход, сам не рисуется — ставь инструментом flow_transition): kind reveal_from|zoom_through|
+         shared_element|push_slide, from [id слоёв A], to [id слоёв B] (пусто — по времени), target, match, ease, shape,
+         w, h, radius, feather, depth, edge, edgeWidth, fill, direction, dip; start..end слоя — отрезок перехода
   progress: w, h, value 0..1, track, fill (цвет или [c1,c2]), radius, label, font, labelColor
   chart: kind {'|'.join(enums['charts'])}, data [{{label,value,color?}}] ≤12, w, h, palette, font, labelColor, showValues, title
   callout: title, subtitle, accent, style {'|'.join(enums['callouts'])}, font, w
