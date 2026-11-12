@@ -670,22 +670,39 @@ def clip_audio_map(store: Any, clip_plan_id: int, *, from_sec: float | None = No
     ops = plan_source_ops(plan, source)
     words = (store.get_clip_plan_subtitles(clip_plan_id) or {}).get("words") or []
     speech_tracks = speech_mix(source) if separate_speech(source) else None
+    from app.canvas import is_canvas
+
+    canvas = is_canvas(source)
     key = {"v": VERSION, "kind": "clip", "file": _file_stamp(source_path), "pieces": pieces, "mix": mix,
            "speech": speech_tracks, "ops": ops, "words": len(words),
            "w": [round(float(w.get("end") or 0), 2) for w in words[:400]]}
+    if canvas:
+        # Холст: звук — слои (озвучка, звуки, музыка), основа молчит (app/canvas_audio.py).
+        from app.canvas_audio import signature
+
+        mix, ops, speech_tracks = [{"track": 0, "gain_db": 0.0}], [], None
+        key.update(canvas=signature(store, plan), plan=int(clip_plan_id), mix=mix, ops=ops, speech=None)
 
     def compute() -> dict:
         import numpy as np
 
         with heavy_slot("audio_map", f"клип {clip_plan_id}"):
-            x = _extract(source_path, pieces, mix, ops)
-            voice = _extract(source_path, pieces, speech_tracks, ops) if speech_tracks else None
+            if canvas:
+                from app.canvas_audio import canvas_audio
+
+                with canvas_audio(store, plan, "mix") as mixed:
+                    x = _extract(mixed, pieces, None, [])
+                with canvas_audio(store, plan, "speech") as speech:
+                    voice = _extract(speech, pieces, None, [])
+            else:
+                x = _extract(source_path, pieces, mix, ops)
+                voice = _extract(source_path, pieces, speech_tracks, ops) if speech_tracks else None
             raw = analyze_pcm(x, words=words, speech_audio=voice)
             tracks = {}
             if len(mix) > 1:
                 for m in mix:
                     tracks[str(m["track"])] = analyze_pcm(_extract(source_path, pieces, [m], ops))
-            probes = _join_probes(source, source_path, segments, clock, raw, speech_tracks or mix, ops)
+            probes = [] if canvas else _join_probes(source, source_path, segments, clock, raw, speech_tracks or mix, ops)
         plain_to_clip = clock.plain_to_clip
         view = build_view(raw, to_out=plain_to_clip, to_src=clock.clip_to_plain, duration=clock.clip_duration)
         if tracks:

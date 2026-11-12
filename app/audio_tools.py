@@ -57,8 +57,18 @@ def h_audio_map(ctx: Any, args: dict) -> Any:
     at = _at()
     image = bool(args.get("image"))
     lo, hi = at._num(args.get("from_sec")), at._num(args.get("to_sec"))
+    # Инструмент глобальный (карта источника без клипа), поэтому клип — аргументом clip_id: MCP и чат его не
+    # подставляют (эксперимент 12.11: на холсте audio_map просил source_id).
+    if ctx.clip_plan_id is None and args.get("clip_id") not in (None, "") and not args.get("source"):
+        try:
+            ctx = at.ToolContext(store=ctx.store, clip_plan_id=int(args["clip_id"]), project_hint=ctx.project_hint)
+        except (TypeError, ValueError) as exc:
+            raise at.ToolError("clip_id — число (см. list_clips)") from exc
     try:
         if args.get("source") or ctx.clip_plan_id is None:
+            if at._source_arg(args) is None and ctx.clip_plan_id is None:
+                raise at.ToolError("audio_map: дай clip_id (карта звука клипа, холста тоже) или source_id "
+                                   "(окно видео-источника from_sec..to_sec)")
             project = at._source_or_clip_source(ctx, args)
             track = at._num(args.get("track"))
             out, png = source_audio_map(ctx.store, project, lo, hi, None if track is None else int(track), image)
@@ -632,7 +642,7 @@ def tools() -> list:
     return [
         Tool(
             "audio_map", "Смотрю карту звука",
-            "Карта звука клипа (шкала clip; source=true или без клипа — окно исходника from_sec..to_sec, шкала "
+            "Карта звука клипа clip_id (холст тоже — его слои; шкала clip; source=true или без клипа — окно исходника from_sec..to_sec, шкала "
             "source, ≤ 300 с): громкость LUFS по шагу 0.1–0.5 с (числа и строка ▁…█), отрезки «что звучит» "
             "(речь, тишина, громко, крик, смех?, музыка?), удары (hits), паузы речи (before_punch — перед ударом/"
             "громкой фразой), точки склейки (конец фразы +3 кадра), советы J/L на стыках кусков (jl), сетка долей "
@@ -640,7 +650,8 @@ def tools() -> list:
             "записи отдельно (tracks). Зови перед монтажом звука и склейками; image=true — ещё и картинка "
             "(громкость, речь, удары, стыки). Кешируется. / Compact audio map: loudness, speech, pauses, hits, "
             "cut points, J/L hints, beats, per track.",
-            obj({"from_sec": {"type": "number"}, "to_sec": {"type": "number"},
+            obj({"clip_id": {"type": "integer", "description": "клип (холст тоже): карта его звука, шкала clip"},
+                 "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
                  "image": {"type": "boolean", "description": "вернуть картинку карты"},
                  "source": {"type": "boolean", "description": "окно исходника, а не клип"},
                  **_at().SOURCE_ARGS,

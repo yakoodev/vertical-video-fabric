@@ -458,7 +458,7 @@ def build_model(store: Any, plan_id: int, workdir: Path, overrides: dict | None 
                       "sidechain": music.get("sidechain") is not False,
                       "duck_spans": len((music.get("automation") or {}).get("duck") or [])}
 
-    motion = plan_motion({**rs})
+    motion = plan_motion({**rs}) or {}  # без слоёв — None
     from app.motion import has_layer_sound
 
     sound_layers = [layer for layer in (motion.get("layers") or []) if has_layer_sound(layer)]

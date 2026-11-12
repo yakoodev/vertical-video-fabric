@@ -231,8 +231,15 @@ def plan_heard_words(store: Any, clip_plan_id: int) -> list[dict]:
     plan = store.get_clip_plan(clip_plan_id)
     source = store.get_source(int(plan["source_id"]))
     pieces = [(float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []]
+    from app.canvas import is_canvas
+
     key = (int(plan["source_id"]), str(source.get("local_path")), str(speech_mix(source)),
            [list(p) for p in pieces], QUALITY_WHISPER_MODEL)
+    if is_canvas(source):
+        # Холст: звук — слои (app/canvas_audio.py), у каждого холста свой; меняются слои — распознаём заново.
+        from app.canvas_audio import signature
+
+        key = (*key, "canvas", int(plan["id"]), signature(store, plan))
     memo = json.dumps(key, ensure_ascii=False)
     if memo in _cache:
         return _cache[memo]
@@ -248,7 +255,10 @@ def plan_heard_words(store: Any, clip_plan_id: int) -> list[dict]:
         modules.require("transcription", store)
         audio = settings.tmp_dir / f"heard-{uuid4().hex}.wav"
         try:
-            _run_ffmpeg(build_clip_audio_args(path, pieces, audio, speech_mix(source)), timeout=600)
+            from app.canvas_audio import clip_audio_input
+
+            with clip_audio_input(store, plan, source, "speech") as (speech_path, speech_tracks, _canvas):
+                _run_ffmpeg(build_clip_audio_args(speech_path, pieces, audio, speech_tracks), timeout=600)
             payload = store.get_clip_plan_subtitles(clip_plan_id) or {}
             # Без VAD: на клипах 930–939 он терял речь под игрой, а именно там субтитры и врут.
             profile = {"provider": "whisper", "language": payload.get("language") or "", "vad_filter": False}
