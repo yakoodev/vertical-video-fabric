@@ -34,7 +34,7 @@ def test_fox_plan_is_valid_and_uses_script_text():
     assert len(texts) == 24
     # Цены — словами, ссылки и ники — как читать вслух; в субтитрах — текст сценария.
     say = P.narration_text(plan)
-    assert "Две девятьсот девяносто." in say and "витубика точка стор" in say and "mama_alina" not in say
+    assert "Две девятьсот девяносто." in say and "виту́бика точка стор" in say and "mama_alina" not in say
     assert "vtubika.store" in P.caption_text(plan)
     # Ничего из референса.
     blob = FOX.read_text("utf-8")

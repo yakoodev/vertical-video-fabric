@@ -54,8 +54,15 @@ def apply(text: str, mapping: dict[str, str]) -> str:
     """Текст для TTS: термины словаря → как читать. Длинные термины раньше коротких («VTube Studio» до «VTube»)."""
     out = str(text or "")
     for term in sorted(mapping, key=len, reverse=True):
-        out = _pattern(term).sub(lambda _m, say=mapping[term]: say, out)
+        out = _pattern(term).sub(lambda m, say=mapping[term]: _case(m.group(0), say), out)
     return out
+
+
+def _case(found: str, say: str) -> str:
+    """Регистр первой буквы — как в тексте: «витубика точка стор» не становится «Витубика» посреди фразы."""
+    if say[:1].isupper() and found[:1].islower():
+        return say[0].lower() + say[1:]
+    return say
 
 
 def heard_as_script(heard: list[dict], mapping: dict[str, str]) -> list[dict]:

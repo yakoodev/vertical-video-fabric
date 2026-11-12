@@ -53,6 +53,15 @@ def test_talk_faces_and_product_sequence():
     for f in prod["faces"].values():
         assert len(f["seq"]) == 36 and all(u in spec["siteShots"] for u in f["seq"])
     assert spec["shots"][0]["props"]["keyboard"]["model"] == "keyboard/mech_tkl_dark"
+    # Руки на клавишах ближе к себе (keys_pull): иначе левая рука выпрямлена до конца и кисть крутится штопором.
+    assert spec["timeline"]["keysPull"] == 0.03 and spec["modelScale"] == 0.885
+
+
+def test_first_vtubika_line_revoiced_only():
+    plan = P.load_plan(PLAN)
+    flagged = [s["text"] for s in plan["sentences"] if s.get("revoice")]
+    assert flagged == ["Однажды ночью ты открываешь Витубику."]
+    assert "Виту́бику" in P.narration_sentences(plan)[4]
 
 
 def test_expand_seq_pattern_and_list():

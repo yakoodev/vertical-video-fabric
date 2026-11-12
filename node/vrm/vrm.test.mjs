@@ -15,7 +15,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts"; export { speechMouth, envLevel } from "./src/anim.ts"; export { waveArm } from "./src/typing.ts"; export { crossArm, crossOpenArm, perfArm } from "./src/perfarms.ts"; export { chatLane } from "./src/chatlane.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts"; export { speechMouth, envLevel } from "./src/anim.ts"; export { waveArm } from "./src/typing.ts"; export { crossArm, crossOpenArm, perfArm } from "./src/perfarms.ts"; export { chatLane } from "./src/chatlane.ts"; export { armTwist, twistAbout, TwistCheck, WRIST_TWIST_MAX, TWIST_JUMP_MAX } from "./src/twist.ts"; export * as THREE from "three";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -144,7 +144,8 @@ test("кусок с потерей контекста переснимается
 
 test("пустые проверки касаний — причина, а не «ок»", () => {
   const spec = { timeline: { surfaces: [{ name: "стол" }], chair: { pos: [0, 0.8, 0] } } };
-  const good = { frames: 100, min: 0.008, chair: { min: 0.003 }, hair: { min: 0.005 }, hands: { frames: 100, gaps: { torso: { min: 0.02 } } } };
+  const good = { frames: 100, min: 0.008, chair: { min: 0.003 }, hair: { min: 0.005 }, hands: { frames: 100, gaps: { torso: { min: 0.02 } } },
+    twist: { frames: 100, bad: 0 } };
   assert.deepEqual(emptyChecks(good, spec, 80), []);
   assert.deepEqual(emptyChecks(good, { ...spec, timeline: undefined }, 80), []);
   const empty = { frames: 0, min: Infinity, chair: { min: Infinity }, hair: { min: Infinity }, hands: { frames: 0, gaps: {} } };
@@ -153,6 +154,64 @@ test("пустые проверки касаний — причина, а не �
   assert.match(emptyChecks({ ...good, hands: { frames: 100, gaps: {} } }, spec, 80).join(), /руки: нет ни одного/);
   assert.match(emptyChecks({ ...good, hands: null }, spec, 80).join(), /не запускалась/);
   assert.match(emptyChecks(good, spec, 80, ["кадр 5: модели нет в сцене"]).join(), /модели нет на 1 кадрах/);
+});
+
+/** Рука из трёх костей (оси модели, как у нормализованных костей VRM: в покое кость вдоль ±X, ладонь −Y). */
+function fakeArm(side, { wrist = 0, forearm = 0, flex = 40 } = {}) {
+  const T = M.THREE;
+  const up = new T.Object3D(), lo = new T.Object3D(), hand = new T.Object3D();
+  up.add(lo);
+  lo.add(hand);
+  lo.position.set(side * 0.22, 0, 0);
+  hand.position.set(side * 0.22, 0, 0);
+  const ax = new T.Vector3(side, 0, 0);
+  lo.quaternion.setFromAxisAngle(new T.Vector3(0, 1, 0), (side * flex * Math.PI) / 180)
+    .multiply(new T.Quaternion().setFromAxisAngle(ax, (forearm * Math.PI) / 180));
+  hand.quaternion.setFromAxisAngle(ax, (wrist * Math.PI) / 180);
+  up.updateMatrixWorld(true);
+  return { up, lo, hand };
+}
+
+function fakeRig(left, right, flex = { left: 40, right: 40 }) {
+  const arms = { left: fakeArm(1, left), right: fakeArm(-1, right) };
+  return {
+    restInverse: new M.THREE.Quaternion(),
+    info: { left: { flex: flex.left }, right: { flex: flex.right } },
+    node: (n) => {
+      const side = n.startsWith("left") ? arms.left : arms.right;
+      return /UpperArm$/.test(n) ? side.up : /LowerArm$/.test(n) ? side.lo : /Hand$/.test(n) ? side.hand : null;
+    },
+  };
+}
+
+test("скрутка рук: запястье и предплечье по оси кости, ладонь вниз, сгиб не путается со скруткой", () => {
+  const r = fakeRig({ wrist: 55 }, { wrist: -57 });
+  const a = M.armTwist(r, 1), b = M.armTwist(r, -1);
+  assert.ok(Math.abs(a.wrist - 55) < 0.2 && Math.abs(b.wrist + 57) < 0.2, JSON.stringify([a, b]));
+  assert.equal(a.forearm, 0);
+  // Сгиб локтя (качание вокруг Y) не даёт скрутки предплечья.
+  assert.ok(Math.abs(M.armTwist(fakeRig({ wrist: 0 }, {}, undefined), 1).forearm) < 0.2);
+  assert.ok(Math.abs(M.armTwist(fakeRig({ forearm: 70 }, {}), 1).forearm - 70) < 0.2);
+  assert.ok(a.palm[1] < -0.5); // ладонь (−Y кисти) вниз
+});
+
+test("проверка скрутки: штопор, ладонь вверх при печати, рывок и прямая рука — нарушения", () => {
+  const ok = new M.TwistCheck();
+  for (let i = 0; i < 5; i++) ok.frame(fakeRig({ wrist: 55 + i }, { wrist: -57 }), i / 30, () => true, 1 / 30);
+  assert.equal(ok.summary().bad, 0);
+  assert.equal(ok.summary().frames, 5);
+  // Серия 7 до правки: прямая левая рука (сгиб 3°), кисть 57° → −168° за кадр.
+  const bad = new M.TwistCheck();
+  bad.frame(fakeRig({ wrist: 57 }, { wrist: -57 }), 0, () => true, 1 / 30);
+  bad.frame(fakeRig({ wrist: -168 }, { wrist: -57 }, { left: 3, right: 32 }), 1 / 30, () => true, 1 / 30);
+  const what = bad.bad.map((b) => b.what);
+  assert.ok(what.includes("wrist") && what.includes("jump") && what.includes("straight_arm"), JSON.stringify(bad.bad));
+  assert.ok(bad.summary().wrist.max > M.WRIST_TWIST_MAX);
+  // Ладонь вверх у руки на клавишах (кисть провёрнута на 180°) — нарушение; та же рука не на клавишах — нет «palm_up».
+  const up = new M.TwistCheck();
+  up.frame(fakeRig({ wrist: 180 }, { wrist: 0 }), 0, (s) => s > 0, 1 / 30);
+  assert.ok(up.bad.some((b) => b.what === "palm_up" && b.side === "left"));
+  assert.ok(!up.bad.some((b) => b.what === "palm_up" && b.side === "right"));
 });
 
 test("разрез персонажа: край сдвинутого холста — ровная вертикаль; живой силуэт и край кадра — нет", () => {

@@ -37,7 +37,8 @@ def _render_rep(spec, **presence):
 
 GOOD_CHECKS = {"ok": True, "frames": 100, "fingers": {"min_gap_mm": 8.7, "at": 1, "point": "x", "surface": "клавиатура"},
                "chair": {"min_gap_mm": 3, "at": 1, "point": "head"}, "hair": {"min_gap_mm": 5, "at": 1, "point": "h"},
-               "hands": {"torso": {"min_gap_mm": 19, "at": 1, "point": "p", "against": "torso"}}, "hand_spans": 0, "empty": []}
+               "hands": {"torso": {"min_gap_mm": 19, "at": 1, "point": "p", "against": "torso"}}, "hand_spans": 0, "empty": [],
+               "twist": {"frames": 100, "wrist_max": {"max": 57}, "bad": 0, "first": []}}
 
 
 def test_hero_frames_skip_inserts(story):
@@ -77,6 +78,8 @@ def test_render_with_missing_hero_frames_fails(story):
     ({"hands": {}}, "руки"),
     ({"frames": 0}, "0 кадров"),
     ({"empty": ["руки: проверка рук против тела не запускалась"]}, "не запускалась"),
+    ({"twist": None}, "скрутка рук"),
+    ({"twist": {"frames": 0, "bad": 0}}, "скрутка рук"),
 ])
 def test_empty_checks_fail(story, broken, what):
     spec = story[4]

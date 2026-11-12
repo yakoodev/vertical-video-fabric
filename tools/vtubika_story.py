@@ -19,7 +19,12 @@
 7. **Концовка** — карточка бренда (``app.vtubika_endcard``: значок, «vtubika», сайт, слоган сайта) ~2.8 с после
    ролика, мягкий стинг паков, музыка затихает под ней; ``"end_card": false`` в плане — без неё.
 8. **Проверка** — лист кадров (12), лист концовки (endcard_sheet.jpg), кадр на каждую фразу и список «фраза → что в
-   кадре» (check.md).
+   кадре» (check.md); звук (``app.vtubika_audio``: слова, оборванные тишиной, стыки пауз не в тишине, провалы голоса,
+   рассинхрон — не прошёл, код 4); VRM — ещё скрутка рук (node/vrm/src/twist.ts) и лист кистей крупно
+   (hands_sheet.jpg, node/vrm/hands.mjs).
+
+Переозвучка одной фразы (``app.vtubika_revoice``): изменилось, как её читать, или у фразы ``"revoice": true`` —
+платно читается только она и вклеивается в прошлый дубль в тишине, той же длины и громкости.
 
 Озвучка читает термины по словарю произношения (``app.vtubika_say``, ``app.vtubika.PRONOUNCE`` + ``pronounce``
 плана): «Live2D» → «лайв-два-дэ» только в тексте TTS; субтитры — как в сценарии, слова Whisper сливаются обратно в
@@ -76,14 +81,19 @@ def narrate(plan: dict, work: Path, report: dict) -> Path:
     from app.dubbing import get_tts_provider
 
     voice = {**U.NARRATOR, **(plan.get("voice") or {})}
-    text = P.narration_text(plan)
+    sentences = P.narration_sentences(plan)
+    text = " ".join(sentences)
     key = hashlib.sha1(json.dumps([text, voice], ensure_ascii=False).encode()).hexdigest()[:12]
     raw = work / f"narration_{key}.wav"
     meta = work / f"narration_{key}.json"
     if raw.is_file() and meta.is_file():
         report["tts"] = json.loads(meta.read_text("utf-8"))
         return raw
-    info: dict = {"provider": voice["provider"], "voice": voice["voice"], "chars": len(text), "cost_rub": 0.0}
+    patched = revoice_lines(plan, work, voice, sentences, report)
+    if patched:
+        return patched
+    info: dict = {"provider": voice["provider"], "voice": voice["voice"], "chars": len(text), "cost_rub": 0.0,
+                  "voice_spec": voice, "sentences": sentences}
     if voice["provider"] == "polza":
         # Платный голос — только явным разрешением в плане и под потолком.
         if not voice.get("paid_ok"):
@@ -107,6 +117,41 @@ def narrate(plan: dict, work: Path, report: dict) -> Path:
                      "estimate_rub": round(estimate, 2), "cost_rub": float(speech.cost_rub or estimate)})
     meta.write_text(json.dumps(info, ensure_ascii=False, indent=1), "utf-8")
     report["tts"] = info
+    return raw
+
+
+REVOICE_CAP_RUB = 3.0
+
+
+def revoice_lines(plan: dict, work: Path, voice: dict, sentences: list[str], report: dict) -> Path | None:
+    """Переозвучить только изменённые фразы (или с ``"revoice": true``) поверх прошлого полного дубля того же голоса
+    (``app.vtubika_revoice``): платный синтез — только этих фраз, под потолком ``REVOICE_CAP_RUB``. None — дубля нет."""
+    from app import vtubika_revoice as R
+    from app.dubbing import get_tts_provider
+
+    base = R.find_base(plan, work, voice, sentences)
+    if not base:
+        return None
+    todo_chars = sum(len(sentences[i]) for i in base[2])
+
+    def heard_of(raw: Path) -> list[dict]:
+        for cached in sorted(raw.parent.glob(f"{raw.stem}_t*.words.json")):
+            heard = json.loads(cached.read_text("utf-8")).get("heard")
+            if heard:
+                return heard
+        return transcribe_words(raw)
+
+    def synth(text: str, out: Path) -> float:
+        if voice["provider"] == "polza" and not voice.get("paid_ok"):
+            raise RuntimeError("голос Polza платный: нужен \"paid_ok\": true в плане (по команде владельца)")
+        tts = get_tts_provider(voice["provider"], model=voice.get("model"), voice=voice["voice"], style=voice.get("style"))
+        if tts.price_rub_per_char() * todo_chars > REVOICE_CAP_RUB:
+            raise RuntimeError(f"переозвучка фраз: оценка выше потолка {REVOICE_CAP_RUB} ₽")
+        return float(tts.synthesize(text, out).cost_rub or 0.0)
+
+    raw, info = R.revoice(plan, work, voice, sentences, base, heard_of, synth)
+    report["tts"] = info
+    _log(f"озвучка: дубль {info.get('patched_from')}, переозвучены фразы {info.get('revoiced')} ({info.get('cost_rub')} ₽)")
     return raw
 
 
@@ -174,47 +219,65 @@ def timed_words(plan: dict, raw: Path, work: Path, report: dict) -> tuple[Path, 
     return fitted, fit["words"]
 
 
+PACE_V = 2  # 2: разрез паузы — в тишине по энергии, с наплывами (app/vtubika_audio); v1 резал по времени Whisper
+
+
 def pace_beats(plan: dict, narration: Path, words: list[dict], work: Path, report: dict) -> tuple[Path, list[dict]]:
     """Паузы-«биты» после фраз (``pause_after`` фразы, с) и общий темп (``pace.tempo`` < 1 — медленнее): картинка
-    успевает показать то, о чём сказали. Тишина вставляется в середину паузы между фразами; слова сдвигаются."""
+    успевает показать то, о чём сказали. Тишина вставляется в самую тихую точку между фразами (середина настоящей
+    паузы по энергии, не середина по времени Whisper — тот ошибается на десятые, и разрез попадал в слово:
+    кусок слова, тишина, остаток — «лаги» серии 7) с наплывами по краям; слова сдвигаются. Если тишины между
+    фразами нет вовсе (голос слил фразы), пауза не вставляется — лучше без «бита», чем разрезанное слово."""
     from app import series3d_voice as VF
+    from app import vtubika_audio as AUD
     from app import vtubika_plan as P
 
     pauses = [float(s.get("pause_after") or 0.0) for s in plan["sentences"]]
     tempo = float((plan.get("pace") or {}).get("tempo", 1.0))
     if not any(pauses) and abs(tempo - 1.0) < 1e-3:
         return narration, words
-    key = hashlib.sha1(json.dumps([str(narration), pauses, tempo]).encode()).hexdigest()[:10]
+    key = hashlib.sha1(json.dumps([str(narration), pauses, tempo, PACE_V]).encode()).hexdigest()[:10]
     out = work / f"narration_paced_{key}.mp3"
     cache = out.with_suffix(".json")
     if out.is_file() and cache.is_file():
-        return out, json.loads(cache.read_text("utf-8"))
-    import numpy as np
-
+        data = json.loads(cache.read_text("utf-8"))
+        report["beats"] = data["beats"]
+        return out, data["words"]
     pcm = VF.decode(narration)
+    level = AUD.speech_level(AUD.frame_db(pcm))
     times = P.token_times(plan, words)
     cuts: list[tuple[float, float]] = []  # (точка разреза, сколько тишины)
+    marks: list[float] = []  # с какого времени слова сдвигаются (слова следующей фразы — даже если Whisper поставил их раньше разреза)
+    skipped = []
     for n in range(len(times) - 1):
-        if pauses[n] > 0:
-            cuts.append(((times[n][-1]["end"] + times[n + 1][0]["start"]) / 2, pauses[n]))
-    parts, prev = [], 0
-    for t, gap in cuts:
-        k = int(t * VF.SR)
-        parts += [pcm[prev:k], np.zeros(int(gap * VF.SR), dtype=np.float32)]
-        prev = k
-    parts.append(pcm[prev:])
+        if pauses[n] <= 0:
+            continue
+        last, nxt = times[n][-1], times[n + 1][0]
+        # Окно поиска тишины — с запасом: Whisper на стыке фраз ошибается до полсекунды («чиби-версия. Три»:
+        # конец слова = начало следующего, а настоящая пауза на 0.4 с позже: «3890» Whisper слил в одно слово).
+        # Самая длинная тишина в окне (не короче смычки согласного) — пауза.
+        lo = max(last["start"] + 0.3 * (last["end"] - last["start"]), last["end"] - 0.35)
+        hi = max(nxt["end"], nxt["start"] + 0.5) + 0.3
+        t = AUD.quiet_point(pcm, lo, max(hi, lo + 0.02), level=level)
+        if AUD.join_levels(pcm, [t])[0]["ok"]:
+            cuts.append((t, pauses[n]))
+            marks.append(min(t, nxt["start"]))
+        else:
+            skipped.append({"after": n + 1, "t": t})
+    joins = AUD.join_levels(pcm, [t for t, _ in cuts])
     raw = out.with_suffix(".wav")
-    VF._write_wav(raw, np.concatenate(parts))
+    VF._write_wav(raw, AUD.insert_pauses(pcm, cuts, sr=VF.SR))
     graph = ["-filter:a", f"atempo={tempo:.3f}"] if abs(tempo - 1.0) > 1e-3 else []
     _run(["ffmpeg", "-y", "-v", "error", "-i", str(raw), *graph, "-c:a", "libmp3lame", "-b:a", "160k", str(out)], "темп")
     raw.unlink(missing_ok=True)
 
     def shift(t: float) -> float:
-        return (t + sum(g for c, g in cuts if c <= t)) / tempo
+        return (t + sum(g for (_, g), m in zip(cuts, marks) if m <= t)) / tempo
 
     paced = [{**w, "start": round(shift(w["start"]), 3), "end": round(shift(w["end"]), 3)} for w in words]
-    cache.write_text(json.dumps(paced, ensure_ascii=False), "utf-8")
-    report["beats"] = {"pauses_sec": round(sum(pauses), 2), "tempo": tempo}
+    beats = {"pauses_sec": round(sum(g for _, g in cuts), 2), "tempo": tempo, "joins": joins, "skipped": skipped}
+    cache.write_text(json.dumps({"words": paced, "beats": beats}, ensure_ascii=False), "utf-8")
+    report["beats"] = beats
     return out, paced
 
 
@@ -617,6 +680,7 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
                          stdin=subprocess.DEVNULL)
     report["checks"] = json.loads(chk.stdout.strip().splitlines()[-1]) if chk.stdout.strip() else {"error": chk.stderr[-400:]}
     VRM.require_checks(report["checks"], spec)
+    report["twist_problems"] = VRM.twist_problems(report["checks"])
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
@@ -628,8 +692,10 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade, lines=lines)
     if args.endcard_sounds and report.get("end_card"):
         endcard_compare(args, plan, built, capped, narration, full, lead, music_fade, work, report)
+    audio_check(narration, final, lead, report, lines)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
+    hands_sheet(spec_path, total, out_dir / "hands_sheet.jpg", work, args, report)
     frames = sentence_frames(final, built, out_dir / "check")
     tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6, [f"{n}" for n in sorted(frames)])
     (out_dir / "check.md").write_text(P.checklist_md(plan, built, {n: Path(p).name for n, p in frames.items()}), "utf-8")
@@ -637,7 +703,44 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
                    "engine": "vrm", "total_sec": round(time.time() - started, 1)})
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
+    if not report["audio_check"].get("ok"):
+        _log("звук не прошёл проверку: " + "; ".join(report["audio_check"]["problems"][:6]))
+        return 4
     return 0 if report["checks"].get("ok") else 3
+
+
+def audio_check(narration: Path, final: Path, lead: float, report: dict, lines: list[dict] | None = None) -> dict:
+    """Звук готового ролика против голоса (``app.vtubika_audio.check``): слова, оборванные тишиной, стыки пауз не в
+    тишине, провалы голоса в сведении, рассинхрон. Пустой замер — не «ок». Итог — ``report["audio_check"]``."""
+    from app import series3d_voice as VF
+    from app import vtubika_audio as AUD
+
+    extra = [(float(ln["t"]), float(ln["t"]) + float(ln["dur"]) + 0.2) for ln in lines or []]
+    res = AUD.check(VF.decode(narration), VF.decode(final), lead, sr=VF.SR, extra=extra,
+                    joins=(report.get("beats") or {}).get("joins"))
+    report["audio_check"] = res
+    return res
+
+
+HANDS_SHEET_COUNT = 12
+
+
+def hands_sheet(spec_path: Path, total: float, out: Path, work: Path, args, report: dict) -> None:
+    """Лист кистей крупно (``node/vrm/hands.mjs``): 12 моментов ролика, спереди сверху и сбоку, со скруткой запястий."""
+    times = [round(total * (k + 0.5) / HANDS_SHEET_COUNT, 2) for k in range(HANDS_SHEET_COUNT)]
+    shots = work / "hands"
+    shutil.rmtree(shots, ignore_errors=True)
+    r = subprocess.run(["node", str(ROOT / "node" / "vrm" / "hands.mjs"), "--spec", str(spec_path), "--times",
+                        ",".join(f"{t:.2f}" for t in times), "--out", str(shots), "--sheet", str(out), "--packs",
+                        args.vrm_packs, "--gl", args.gl], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", stdin=subprocess.DEVNULL)
+    if r.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"лист кистей: {r.stderr.strip()[-600:]}")
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    report["hands_sheet"] = {"file": str(out), "times": times,
+                             "wrist": [{"t": f["t"], "left": (f.get("twist") or {}).get("left", {}).get("wrist"),
+                                        "right": (f.get("twist") or {}).get("right", {}).get("wrist")}
+                                       for f in res["frames"]]}
 
 
 # --------------------------------------------------------------------------- main
@@ -761,6 +864,7 @@ def main(argv: list[str] | None = None) -> int:
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
+    audio_check(narration, final, lead, report)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
@@ -772,7 +876,7 @@ def main(argv: list[str] | None = None) -> int:
                    "total_sec": round(time.time() - started, 1)})
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
-    return 0
+    return 0 if report["audio_check"].get("ok") else 4
 
 
 if __name__ == "__main__":

@@ -193,6 +193,8 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
            "timeline": timeline, "shots": shots, "cats": extra["cats"]}
     if her.get("keys_spread"):
         timeline["keysSpread"] = float(her["keys_spread"])
+    if her.get("keys_pull"):
+        timeline["keysPull"] = float(her["keys_pull"])
     if her.get("scale"):
         out["modelScale"] = float(her["scale"])
     if extra.get("avatar"):
@@ -277,8 +279,8 @@ def render_problems(rep: dict | None, spec: dict) -> list[str]:
 
 
 def check_problems(checks: dict | None, spec: dict) -> list[str]:
-    """Отчёт contact.mjs → пустые проверки (пальцы, кресло, волосы, руки) при героине в кадре — причины ошибки.
-    Нарушения зазоров (ok: false при полных замерах) сюда не входят — их показывает отчёт истории."""
+    """Отчёт contact.mjs → пустые проверки (пальцы, кресло, волосы, руки, скрутка рук) при героине в кадре —
+    причины ошибки. Нарушения зазоров (ok: false при полных замерах) сюда не входят — их показывает отчёт истории."""
     if not hero_frames(spec) or not spec.get("timeline"):
         return []
     if not checks:
@@ -298,6 +300,9 @@ def check_problems(checks: dict | None, spec: dict) -> list[str]:
         out.append("волосы: нет замеров")
     if spec.get("handCheck") is not False and not checks.get("hands"):
         out.append("руки: нет замеров")
+    tw = checks.get("twist")
+    if not isinstance(tw, dict) or not int(tw.get("frames") or 0):
+        out.append("скрутка рук: нет замеров")
     return list(dict.fromkeys(out))
 
 
@@ -313,3 +318,17 @@ def require_checks(checks: dict | None, spec: dict) -> None:
     probs = check_problems(checks, spec)
     if probs:
         raise VrmRenderError("проверки VRM пустые: " + "; ".join(probs))
+
+
+def twist_problems(checks: dict | None) -> list[str]:
+    """Скрутка рук за пределами (contact.mjs → twist, node/vrm/src/twist.ts): запястье или предплечье выкручено, ладонь
+    вверх при печати, рывок скрутки за кадр, прямая рука на клавишах. Пустой замер — тоже проблема."""
+    tw = (checks or {}).get("twist")
+    if not isinstance(tw, dict) or not int(tw.get("frames") or 0):
+        return ["скрутка рук: нет замеров"]
+    if not int(tw.get("bad") or 0):
+        return []
+    out = [f"скрутка рук: {tw['bad']} нарушений"]
+    for b in (tw.get("first") or [])[:4]:
+        out.append(f"{float(b.get('t', 0)):.2f} с {b.get('side')} {b.get('what')} {b.get('value')}")
+    return out
