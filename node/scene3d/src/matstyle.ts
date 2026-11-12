@@ -5,7 +5,10 @@
  *
  *   cel   — ступенчатый свет (MeshToonMaterial, лесенка tones с мягким краем soft), каёмка-«рим» (rim), плоский
  *           цвет без текстур (flatColor); обводка outline {width px при 1920, color}.
- *   clay  — пластилин: матовый, отпечатки пальцев (шум нормали в мировых координатах, bump), насыщеннее цвет.
+ *   clay  — пластилин: матовый, бугры лепки и отпечатки пальцев (шум нормали в мировых координатах, bump),
+ *           неровный тон массы, «подповерхностный» тёплый подсвет теней и мягкий тёплый край (sss), теплее цвет.
+ *   toy   — лоу-поли игрушка: круглые формы пересобраны с малым числом граней (facets — во сколько раз меньше
+ *           сегментов), плоское затенение граней, насыщенный «пластиковый» цвет (saturation, roughness).
  *   flat  — плоские грани, матовость (воксели).
  *   psx   — «дрожащие» вершины по сетке snap (как PS1), матовый Lambert, текстуры без фильтрации.
  *   neon  — тёмный глянец + неоновая каёмка двумя цветами (rimA слева, rimB справа экрана).
@@ -21,7 +24,12 @@ import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import { FX_LAYER } from "./post.ts";
 
 export interface MatStyle {
-  kind: "cel" | "clay" | "flat" | "psx" | "neon" | "pbr";
+  kind: "cel" | "clay" | "toy" | "flat" | "psx" | "neon" | "pbr";
+  /** clay: сила тёплого подсвета теней (как свет сквозь массу) и его цвет. */
+  sss?: number;
+  sssColor?: string;
+  /** toy: во сколько раз меньше сегментов у круглых форм (сфера, цилиндр, конус, тор, скруглённый куб). */
+  facets?: number;
   fallbackOnly?: boolean;
   tones?: number;
   soft?: number;
@@ -117,32 +125,88 @@ function celMaterial(m: any, ms: MatStyle, grad: THREE.DataTexture): THREE.Mater
   return t;
 }
 
-/** Пластилин: шум нормали в мировых координатах (отпечатки и неровность лепки), матовость. */
+/**
+ * Пластилин: бугры лепки и отпечатки пальцев — шум нормали в мировых координатах; неровный тон массы; тёплый
+ * «подповерхностный» подсвет (тени не проваливаются в чёрное, край формы светится теплом); матовость.
+ */
 function clayMaterial(m: any, ms: MatStyle): THREE.Material {
   const c = m.clone();
-  c.roughness = Math.max(0.82, m.roughness ?? 0.9);
+  c.roughness = Math.max(0.9, m.roughness ?? 0.95);
   c.metalness = 0;
   c.normalMap = null;
-  if (c.color) saturate(c.color, ms.saturation ?? 1.1);
-  const bump = ms.bump ?? 0.6;
+  c.envMapIntensity = 0.3;
+  if (c.color) {
+    saturate(c.color, ms.saturation ?? 1.1);
+    // Тёплая масса: чуть к охре (пластилин не бывает холодно-серым).
+    c.color.lerp(new THREE.Color("#c8823f"), 0.06);
+  }
+  const bump = ms.bump ?? 0.6, sss = ms.sss ?? 0.3, sssCol = new THREE.Color(ms.sssColor || "#ff9a6a");
   c.onBeforeCompile = (sh: any) => {
     sh.uniforms.clayBump = { value: bump };
+    sh.uniforms.claySss = { value: sss };
+    sh.uniforms.claySssColor = { value: sssCol };
     sh.vertexShader = "varying vec3 vClayW;\n" + sh.vertexShader.replace("#include <worldpos_vertex>", "#include <worldpos_vertex>\n vClayW = (modelMatrix * vec4(transformed, 1.0)).xyz;");
-    sh.fragmentShader = `varying vec3 vClayW; uniform float clayBump;
+    sh.fragmentShader = `varying vec3 vClayW; uniform float clayBump, claySss; uniform vec3 claySssColor;
       float clayH(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
       float clayN(vec3 p) { vec3 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
         return mix(mix(mix(clayH(i), clayH(i + vec3(1,0,0)), f.x), mix(clayH(i + vec3(0,1,0)), clayH(i + vec3(1,1,0)), f.x), f.y),
                    mix(mix(clayH(i + vec3(0,0,1)), clayH(i + vec3(1,0,1)), f.x), mix(clayH(i + vec3(0,1,1)), clayH(i + vec3(1,1,1)), f.x), f.y), f.z); }
-      float clayF(vec3 p) { return clayN(p * 9.0) * 0.55 + clayN(p * 23.0) * 0.3 + clayN(p * 61.0) * 0.15; }
-    ` + sh.fragmentShader.replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
+      // Высота поверхности: крупные бугры (руками размяли), средняя неровность и пятна отпечатков — дуги-гребни.
+      float clayF(vec3 p) {
+        float lump = clayN(p * 3.2) * 0.6 + clayN(p * 7.5 + 4.1) * 0.4;
+        float mid = clayN(p * 19.0 + 9.7);
+        float mask = smoothstep(0.55, 0.8, clayN(p * 2.3 + 17.0));
+        float ridge = abs(sin(clayN(p * 6.0 + 2.0) * 60.0)) * mask;
+        return lump * 0.085 + mid * 0.006 + ridge * 0.00022;
+      }
+    ` + sh.fragmentShader
+      .replace("#include <color_fragment>", `#include <color_fragment>
+      diffuseColor.rgb *= 0.9 + 0.2 * clayN(vClayW * 4.5 + 31.0);`)
+      .replace("#include <normal_fragment_maps>", `#include <normal_fragment_maps>
       {
-        float e = 0.004;
+        float e = 0.002;
         vec3 g = vec3(clayF(vClayW + vec3(e,0,0)) - clayF(vClayW - vec3(e,0,0)), clayF(vClayW + vec3(0,e,0)) - clayF(vClayW - vec3(0,e,0)), clayF(vClayW + vec3(0,0,e)) - clayF(vClayW - vec3(0,0,e))) / (2.0 * e);
         vec3 gv = (viewMatrix * vec4(g, 0.0)).xyz;
-        normal = normalize(normal - (gv - dot(gv, normal) * normal) * 0.012 * clayBump);
+        normal = normalize(normal - (gv - dot(gv, normal) * normal) * clayBump);
+      }`)
+      .replace("#include <lights_fragment_end>", `#include <lights_fragment_end>
+      {
+        float nv = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
+        reflectedLight.indirectDiffuse += diffuseColor.rgb * claySssColor * claySss * (0.45 + 0.9 * pow(1.0 - nv, 2.0));
       }`);
   };
-  c.customProgramCacheKey = () => `clay${bump}`;
+  c.customProgramCacheKey = () => `clay${bump}_${sss}`;
+  return c;
+}
+
+/** Лоу-поли: круглые формы — с меньшим числом сегментов (пересобранная геометрия, у каждой формы — своя). */
+function facetGeometry(g: any, k: number, cache: Map<any, any>): any {
+  if (cache.has(g)) return cache.get(g);
+  const p = g.parameters || {};
+  const red = (n: number | undefined, min: number) => Math.max(min, Math.round((n ?? min) / k));
+  let n: any = null;
+  try {
+    if (g.type === "SphereGeometry") n = new THREE.SphereGeometry(p.radius, red(p.widthSegments, 7), red(p.heightSegments, 5), p.phiStart, p.phiLength, p.thetaStart, p.thetaLength);
+    else if (g.type === "CylinderGeometry") n = new THREE.CylinderGeometry(p.radiusTop, p.radiusBottom, p.height, red(p.radialSegments, 6), 1, p.openEnded, p.thetaStart, p.thetaLength);
+    else if (g.type === "ConeGeometry") n = new THREE.ConeGeometry(p.radius, p.height, red(p.radialSegments, 5), 1, p.openEnded, p.thetaStart, p.thetaLength);
+    else if (g.type === "TorusGeometry") n = new THREE.TorusGeometry(p.radius, p.tube, red(p.radialSegments, 4), red(p.tubularSegments, 8), p.arc);
+    else if (g.type === "CapsuleGeometry") n = new THREE.CapsuleGeometry(p.radius, p.height ?? p.length, red(p.capSegments, 2), red(p.radialSegments, 6));
+    else if (g.type === "RoundedBoxGeometry" && p.segments > 1) n = new (g.constructor as any)(p.width, p.height, p.depth, 1, p.radius);
+  } catch {
+    n = null;
+  }
+  if (n && g.groups?.length > 1) n = null; // формы с группами материалов не трогаем
+  cache.set(g, n);
+  return n;
+}
+
+function toyMaterial(m: any, ms: MatStyle): THREE.Material {
+  const c = m.clone();
+  c.flatShading = true;
+  c.normalMap = null;
+  if (c.roughness !== undefined && !(m.metalness > 0.4)) c.roughness = ms.roughness ?? 0.55;
+  if (c.color && !(c.emissive && m.emissiveIntensity > 0.3 && c.emissive.getHex())) saturate(c.color, ms.saturation ?? 1.35);
+  c.needsUpdate = true;
   return c;
 }
 
@@ -217,6 +281,7 @@ export function applyMatStyle(scene: THREE.Scene, ms: MatStyle | undefined, W: n
     let n: THREE.Material = m;
     if (ms.kind === "cel") n = celMaterial(m, ms, grad!);
     else if (ms.kind === "clay") n = clayMaterial(m, ms);
+    else if (ms.kind === "toy") n = toyMaterial(m, ms);
     else if (ms.kind === "psx") n = psxMaterial(m, ms, W, H);
     else if (ms.kind === "neon") n = neonMaterial(m, ms);
     else if (ms.kind === "flat") {
@@ -232,8 +297,14 @@ export function applyMatStyle(scene: THREE.Scene, ms: MatStyle | undefined, W: n
     cache.set(m, n);
     return n;
   };
+  const geoCache = new Map<any, any>();
   scene.traverse((o: any) => {
     if (!o.isMesh && !o.isSkinnedMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    if (ms.kind === "toy" && !o.isSkinnedMesh && !o.isInstancedMesh && !mats.some((m: any) => skip(o, m))) {
+      const g = facetGeometry(o.geometry, Math.max(1, ms.facets ?? 2.5), geoCache);
+      if (g) o.geometry = g;
+    }
     o.material = Array.isArray(o.material) ? o.material.map((m: any) => conv(o, m)) : conv(o, o.material);
   });
   // Обводка не нужна прозрачному, атмосфере и эффектам.

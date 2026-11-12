@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { CAMERA_MOVES, handheldOffset, moveAt, moveKeys, orbitPoint, vertigoFov } from "./src/presets/cameras.ts";
+import { CAMERA_MOVES, handheldOffset, moveAt, moveKeys, orbitPoint, punchStrength, vertigoFov } from "./src/presets/cameras.ts";
 import { flickerKeys, LIGHT_RIGS, lightRig } from "./src/presets/lights.ts";
 import { LOOKS } from "./src/presets/looks.ts";
 import { FX, MOODS } from "./src/presets/fx.ts";
@@ -26,6 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const BUNDLE = join(HERE, "dist", "scene3d.js");
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const T = [0, 1.2, 0];
+const HERO_C = { id: "hero", style: "voxel", voxel: { shape: "soft" }, at: "hero" };
 
 /* ---------- реестр ---------- */
 
@@ -110,6 +111,25 @@ test("камера: сверху — над целью, голландский �
   assert.deepEqual(orbitPoint([0, 0, 0], 0, 0, 2, 0).map((v) => Math.round(v * 1e6) / 1e6), [0, 0, 2]);
 });
 
+test("камера: рывок вперёд по умолчанию — по крупности плана, явный strength — как задан, тряска — по той же силе", () => {
+  const closest = (m) => Math.min(...moveKeys({ t0: 0, t1: 2, target: T, at: 0.2, move: "punch_in", ...m }, 30).map((k) => dist(k.position, T)));
+  // Средний план (умолчания движения: 2.4 м, 35°) — около 0.5: подъезжает на ~22 %, а не почти вдвое.
+  assert.ok(Math.abs(punchStrength(2.4, 35) - 0.5) < 0.03);
+  const mid = closest({}) / 2.4;
+  assert.ok(mid > 0.7 && mid < 0.85, `средний: ${mid}`);
+  // Крупное лицо (узкий угол VRM) — мягко, общий — сильнее, но не больше 0.7.
+  assert.equal(punchStrength(2.6, 9.5), 0.3);
+  assert.ok(punchStrength(6, 40) <= 0.7 && punchStrength(6, 40) > punchStrength(2.4, 35));
+  assert.ok(closest({ distance: 2.6, fov: 9.5 }) / 2.6 > 0.82, "на крупном не влетает в лицо");
+  // Старые планы с явной силой — без изменений.
+  const one = closest({ strength: 1 }) / 2.4;
+  assert.ok(one < 0.55, `strength 1: ${one}`);
+  assert.equal(CAMERA_MOVES.punch_in.meta.params.find((p) => p.name === "strength").default, undefined);
+  const sc = { characters: [{ id: "hero", style: "voxel", position: [0, 0, 0] }], duration: 2 };
+  const shake = (m) => expandPresets({ ...sc, presets: { camera: [{ move: "punch_in", t0: 0, t1: 2, target: "hero", ...m }] } }).camera.shake[0].amp;
+  assert.ok(shake({}) < shake({ strength: 1 }) && Math.abs(shake({ strength: 1 }) - 0.006) < 1e-9);
+});
+
 /* ---------- свет ---------- */
 
 test("свет: схемы детерминированы, лампы правильных типов, схема поворачивается вместе с героем", () => {
@@ -138,6 +158,43 @@ test("свет: мерцание огня — в пределах [base·(1−de
   assert.ok(new Set(ks.map((k) => k.intensity)).size > 20, "огонь живой");
   assert.ok(lightRig("golden_hour", { subject: T, heading: 0, duration: 2 }).env.sky);
   assert.equal(lightRig("golden_hour", { subject: T, heading: 0, duration: 2, indoor: true }).env.sky, undefined);
+});
+
+test("свет: костёр — у костра окружения на высоте пламени, без ореола и жгучего огонька у земли; каустика — узким пятном", () => {
+  const fire = (anchors) => lightRig("campfire", { subject: T, heading: 0, duration: 2, anchors }).lights.filter((l) => l.type === "point");
+  const at = fire({ fire: { pos: [0.32, 0.3, 1.05] } });
+  assert.equal(at.length, 1, "только огонь, без отдельного «угля» у земли");
+  assert.deepEqual(at[0].position, [0.32, 0.55, 1.05]);
+  assert.ok(!at[0].halo && at[0].distance <= 6);
+  const free = fire(undefined)[0];
+  assert.ok(free.position[1] >= 0.5 && !free.halo && Math.abs(free.position[0]) > 0.5, "без костра — сбоку, не перед героем");
+  const sc = expandPresets({ characters: [{ ...HERO_C }], duration: 2, presets: { room: "forest_clearing", light: "campfire" } });
+  const rigFire = sc.lights.find((l) => l.id === "fire");
+  assert.deepEqual([rigFire.position[0], rigFire.position[2]], [0.32, 1.05], "свет рига — в костре поляны");
+  const uw = lightRig("underwater", { subject: T, heading: 0, duration: 2 }).lights;
+  const c = uw.find((l) => l.cookie === "caustics"), h = uw.find((l) => l.type === "hemisphere");
+  assert.ok(c.angle <= 34 && c.intensity > h.intensity * 60, "каустика — ключ сильнее заливки, пятно узкое (ячейки мельче)");
+});
+
+test("стили: кино, игрушка, пластилин, акварель — каждый со своим видом; параметры стиля — в последний проход", () => {
+  const env = (look, p = {}) => expandPresets({ characters: [{ ...HERO_C }], duration: 2, presets: { look: { name: look, ...p } } }).environment;
+  const cin = env("cinematic"), toy = env("lowpoly_toy"), clay = env("clay"), wc = env("watercolor"), anime = env("anime_soft");
+  assert.ok(cin.post.dof && cin.stylize.anamorphic > 0 && cin.post.grade.split >= 0.7 && cin.toneMapping === "aces");
+  assert.equal(cin.stylize.letterbox, 0);
+  assert.equal(env("cinematic", { letterbox: 0.12 }).stylize.letterbox, 0.12);
+  assert.ok(toy.matstyle.kind === "toy" && toy.matstyle.facets >= 2 && toy.stylize.tiltShift > 0 && !toy.post.dof);
+  assert.ok(clay.matstyle.kind === "clay" && clay.matstyle.bump >= 3 && clay.matstyle.sss > 0 && clay.stylize.softness > 0);
+  assert.ok(wc.stylize.watercolor && wc.stylize.wash > 0 && wc.stylize.paperGrain > 0 && wc.stylize.paperEdge > 0);
+  assert.ok(!anime.stylize, "мягкое аниме — без последнего прохода");
+  // Прежние «близнецы»: у anime_soft, cinematic и lowpoly_toy разные материалы и последний проход.
+  const sig = (e) => JSON.stringify([e.matstyle?.kind, Object.keys(e.stylize || {}).sort(), e.toneMapping]);
+  assert.equal(new Set([anime, cin, toy, clay, wc].map(sig)).size, 5);
+  // Неон: тени глубокие и бирюзовые, не розовые.
+  const neon = LOOKS.neon_cyber.env;
+  const hex = (s) => [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16));
+  const sh = hex(neon.post.grade.shadows);
+  assert.ok(sh[2] > sh[0] && sh[1] > sh[0], "тени — к бирюзе");
+  assert.ok(neon.post.grade.lift.every((v) => v <= 0), "тени не подняты");
 });
 
 /* ---------- окружения, эффекты, переходы ---------- */

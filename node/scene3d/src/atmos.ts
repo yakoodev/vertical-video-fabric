@@ -169,7 +169,7 @@ export function skyDome(sky: SkySpec, far: number): THREE.Mesh {
 export class Caustics {
   tex: THREE.DataTexture;
   data: Uint8Array;
-  n = 128;
+  n = 256;
   constructor() {
     this.data = new Uint8Array(this.n * this.n * 4);
     this.tex = new THREE.DataTexture(this.data, this.n, this.n, THREE.RGBAFormat);
@@ -178,15 +178,17 @@ export class Caustics {
   }
   update(t: number) {
     const n = this.n, d = this.data;
+    // Ячейки ~1/10 пятна (≈0.4 м под лампой на 5 м с углом 32°): крупнее — блики сливаются в ровный свет и
+    // каустики не видно. Основа светлая (свет под водой не гаснет между бликами), гребни — ярче вдвое.
     for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
       const u = (x / n) * 6.283, v = (y / n) * 6.283;
       let s = 0;
       for (let k = 0; k < 3; k++) {
-        const a = u * (k + 2) + Math.sin(v * (k + 1) + t * (0.9 + k * 0.4)) * 1.3 + t * 0.6;
-        const b = v * (k + 2) + Math.sin(u * (k + 1.5) - t * (0.7 + k * 0.3)) * 1.3 - t * 0.5;
-        s += Math.pow(1 - Math.abs(Math.sin(a) * Math.sin(b)), 7);
+        const a = u * (k * 3 + 8) + Math.sin(v * (k * 2 + 3) + t * (0.9 + k * 0.4)) * 1.8 + t * 0.6;
+        const b = v * (k * 3 + 8) + Math.sin(u * (k * 2 + 4) - t * (0.7 + k * 0.3)) * 1.8 - t * 0.5;
+        s += Math.pow(1 - Math.abs(Math.sin(a) * Math.sin(b)), 9);
       }
-      const val = Math.min(255, Math.round(70 + s * 120));
+      const val = Math.min(255, Math.round(92 + s * 105));
       const i = (y * n + x) * 4;
       d[i] = d[i + 1] = d[i + 2] = val;
       d[i + 3] = 255;

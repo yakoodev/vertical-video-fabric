@@ -51,6 +51,16 @@ export function vertigoFov(fov0: number, d0: number, d: number): number {
   return 2 * Math.atan((Math.tan((fov0 * D2R) / 2) * d0) / Math.max(0.05, d)) * R2D;
 }
 
+/**
+ * Сила punch_in по умолчанию — по крупности плана: высота кадра на дистанции цели h = 2·d·tan(fov/2).
+ * Средний план (h ≈ 1.5 м, умолчания движения) — 0.5; крупное лицо (h ≈ 0.3–0.6 м) — 0.3, иначе рывок
+ * влетает в глаз; общий (h ≥ 3 м) — до 0.7. Явный strength плана — как задан.
+ */
+export function punchStrength(distance: number, fov: number): number {
+  const h = 2 * Math.max(0.05, distance) * Math.tan((Math.max(1, fov) * D2R) / 2);
+  return r4(clamp(0.5 * Math.sqrt(h / 1.5), 0.3, 0.7));
+}
+
 type MoveFn = (u: number, c: CamCtx) => CamState;
 
 interface MoveDef { meta: Meta; distance?: number; fov?: number; height?: number; fn: MoveFn }
@@ -91,11 +101,11 @@ export const CAMERA_MOVES: Record<string, MoveDef> = {
     },
   },
   punch_in: {
-    meta: { name: "punch_in", title: "Рывок вперёд", ru: "Резкий короткий наезд с лёгким перелётом — акцент на реакции или фразе.", tags: ["meme"],
+    meta: { name: "punch_in", title: "Рывок вперёд", ru: "Резкий короткий наезд с лёгким перелётом — акцент на реакции или фразе. Сила по умолчанию — по крупности плана: на общем заметнее, на крупном лице — мягко.", tags: ["meme"],
       params: [P.target, P.distance(2.4), P.yaw, P.height(0.1), P.fov(35), P.at, { name: "speed", type: "number", default: 0.3, min: 0.08, max: 1, ru: "длина рывка, с" },
-        P.strength(1, "насколько ближе (1 — почти вдвое)")] },
+        { name: "strength", type: "number", min: 0, max: 3, ru: "насколько ближе (1 — почти вдвое); не задано — по крупности плана: ~0.5 на среднем, 0.3 на крупном лице, до 0.7 на общем" }] },
     fn: (u, c) => {
-      const at = c.p.at ?? 0.15, sp = (c.p.speed ?? 0.3) / Math.max(0.1, c.duration), s = c.p.strength ?? 1;
+      const at = c.p.at ?? 0.15, sp = (c.p.speed ?? 0.3) / Math.max(0.1, c.duration), s = c.p.strength ?? punchStrength(c.distance, c.fov);
       const k = u <= at ? 0 : easeOutBack((u - at) / sp, 1.6);
       const d = c.distance * (1 - 0.45 * s * k);
       return { position: still(c, d), target: c.target, fov: c.fov, roll: 0 };
