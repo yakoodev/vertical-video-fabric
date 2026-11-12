@@ -15,6 +15,8 @@
  *   [--gl swiftshader|gpu] [--format jpeg|png] [--quality 92] [--crf 18] [--chrome PATH] [--ffmpeg ffmpeg]
  *   [--timeout 1800] [--site DIR — скриншоты сайта для телефона «site», отдаются как /site/…]
  *   [--plates DIR — кадры подложки (комната 3D-пресета за VRM-героиней), отдаются как /plates/…]
+ *   [--models DIR — библиотека вещей (manifest.json + <категория>/<slug>.glb, docs/3d/models.md), отдаётся как /models3d/…;
+ *    по умолчанию SCENE3D_MODELS_DIR или DATA_DIR/runtime/models3d]
  *
  * stdout — одна строка JSON {ok, frames, fps, duration, width, height, segments, black_frames,
  * luma_min, seconds, warnings, presence?, retried} (превью: {ok, previews: [...]}, inspect: {ok, inspect}).
@@ -76,6 +78,7 @@ export function parseArgs(argv) {
     packs: resolve(out.packs || process.env.MOTION_PACKS_DIR || join(ROOT, "vendor", "packs")),
     site: out.site ? resolve(out.site) : null,
     plates: out.plates ? resolve(out.plates) : null,
+    models: defaultModelsDir(out.models),
     bundle: resolve(out.bundle || join(HERE, "dist", "scene3d.js")),
     workers: Math.round(num("workers", Math.max(1, Math.min(4, Math.floor(cpus().length / 4))), 1, 16)),
     fps: out.fps !== undefined ? Math.round(num("fps", 30, 1, 60)) : null,
@@ -93,6 +96,13 @@ export function parseArgs(argv) {
     ffmpeg: out.ffmpeg || "ffmpeg",
     timeout: num("timeout", 1800, 10, 24 * 3600),
   };
+}
+
+/** Каталог библиотеки вещей: явный, SCENE3D_MODELS_DIR, DATA_DIR/runtime/models3d, иначе data/runtime/models3d репозитория. */
+export function defaultModelsDir(explicit) {
+  if (explicit) return resolve(explicit);
+  if (process.env.SCENE3D_MODELS_DIR) return resolve(process.env.SCENE3D_MODELS_DIR);
+  return resolve(process.env.DATA_DIR || join(ROOT, "data"), "runtime", "models3d");
 }
 
 /* ---------- раздача файлов странице (CDP Fetch) ---------- */
@@ -152,6 +162,13 @@ export function serve(url, ctx) {
     const mime = file && MIME[extname(file).toLowerCase()];
     if (!file || !mime || !mime.startsWith("image/") || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
     return { status: 200, body: readFileSync(file), mime };
+  }
+  if (path.startsWith("/models3d/")) {
+    // Библиотека вещей: только manifest.json и модели .glb из --models (нет каталога — 404, сцена берёт замену).
+    const file = ctx.models && safeJoin(ctx.models, path.slice("/models3d/".length));
+    const ext = file && extname(file).toLowerCase();
+    if (!file || !(ext === ".glb" || (ext === ".json" && file.endsWith("manifest.json"))) || !existsSync(file) || !statSync(file).isFile()) return { status: 404 };
+    return { status: 200, body: readFileSync(file), mime: MIME[ext] };
   }
   if (path.startsWith("/packs/") || path.startsWith("/assets/")) {
     // /assets/ — встроенные модели движка (node/scene3d/assets), /packs/ — скачанные паки.
@@ -288,7 +305,7 @@ export async function openScene(opts, spec, log = () => {}) {
     chromeErr = (chromeErr + d.toString()).slice(-3000);
   });
   const cdp = new Cdp(chrome);
-  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs, site: opts.site, plates: opts.plates };
+  const ctx = { width, height, bundle: opts.bundle, packs: opts.packs, site: opts.site, plates: opts.plates, models: opts.models ?? defaultModelsDir() };
   const consoleLines = [];
   const close = async () => {
     try {

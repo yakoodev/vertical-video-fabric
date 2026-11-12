@@ -15,6 +15,11 @@ from app.tool_core import _obj, Tool, ToolContext, ToolError
 
 def h_list_3d_presets(_ctx: ToolContext, args: dict) -> dict:
     category = str(args.get("category") or "").strip().lower() or None
+    if category == "model":
+        # Библиотека 3D-моделей вещей (клавиатуры, мониторы, столы, растения…): не пресеты движка, а файлы runtime.
+        from app import models3d
+
+        return {"models": models3d.list_models(None, str(args.get("q") or "").strip() or None)}
     if category and category not in presets3d.CATEGORIES:
         raise ToolError(f"нет категории «{category}»", [f"есть: {', '.join(presets3d.CATEGORIES)}"])
     query = str(args.get("q") or "").strip() or None
@@ -83,10 +88,13 @@ def tools() -> list[Tool]:
             "студия, монитор ночью, костёр, под водой…), camera — движения (наезд, рывок, вертиго, облёт, с рук, хлёст, "
             "краш-зум, через плечо, сверху, голландский угол, кран), fx — пост и атмосфера (дождь, снег, пылинки, лучи, "
             "блики, засветка, туман…), mood — связки, room — окружения (уютный стол, RGB-комната, кухня, офис, вокзал, "
-            "крыша, лес…), emotion/gesture — игра персонажа, transition — переходы. Без аргументов — список и шпаргалка "
-            "плана; category или q — с параметрами. / List ready-made 3D presets (Russian descriptions).",
-            _obj({"category": {"type": "string", "enum": list(presets3d.CATEGORIES),
-                               "description": "look, light, camera, fx, mood, room, emotion, gesture, transition"},
+            "крыша, лес…), emotion/gesture — игра персонажа, transition — переходы; model — библиотека 3D-моделей вещей "
+            "(objects[].model: \"keyboard\" — засеянный вариант, \"keyboard/mech_tkl_dark\" — точно эта). Без аргументов — "
+            "список и шпаргалка плана; category или q — с параметрами. / List ready-made 3D presets (Russian descriptions).",
+            _obj({"category": {"type": "string", "enum": [*presets3d.CATEGORIES, "model"],
+                               "description": "look, light, camera, fx, mood, room, emotion, gesture, transition; "
+                                              "model — библиотека 3D-моделей вещей (клавиатуры, мониторы, столы, кресла, "
+                                              "кружки, лампы, растения, книги, диваны…) для поля objects[].model"},
                   "q": {"type": "string", "description": "поиск по имени, названию, описанию, тегам"}}),
             h_list_3d_presets, scope="global",
             label=lambda a: f"Смотрю 3D-пресеты {a.get('category') or a.get('q') or ''}".strip(),

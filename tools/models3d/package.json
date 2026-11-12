@@ -1,0 +1,13 @@
+{
+  "name": "vvf-models3d-tools",
+  "private": true,
+  "type": "module",
+  "description": "Импорт 3D-моделей в библиотеку ассетов сцен (DATA_DIR/runtime/models3d): нормализация, meshopt, текстуры до 1K.",
+  "dependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "@napi-rs/canvas": "1.0.10",
+    "meshoptimizer": "1.3.0"
+  }
+}

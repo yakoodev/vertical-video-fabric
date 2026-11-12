@@ -11,6 +11,8 @@ import * as THREE from "three";
 import { expandPresets, presetCatalog } from "./presets/index.ts";
 import { PresetRuntime } from "./presets_runtime.ts";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { hashSeed, isLibraryRef, LIB_ORIGIN, pickModel, type Library, type LibModel } from "./models3d.ts";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { buildRoom, cutawayFor, type RoomBuild, type RoomSpec } from "./room.ts";
 import { createCharacter, type Character, type CharacterSpec } from "./character.ts";
@@ -32,7 +34,18 @@ const D2R = Math.PI / 180;
 
 interface ObjectSpec {
   id: string;
+  /** Пак: «пак/файл.glb»; библиотека вещей (models3d.ts): «категория» (засеянный вариант) или «категория/slug». */
   model?: string;
+  /** Библиотека: нужны модели с этими тегами (растение ["desk"] на стол, ["floor"] на пол). */
+  modelTags?: string[];
+  /** Библиотека: свой засев выбора варианта (иначе — models.seed сцены и id объекта). */
+  variantSeed?: number | string;
+  /** Библиотека: равномерно вписать в габарит [ширина, высота, глубина] (м; 0 — не ограничивать). */
+  fitMax?: number[];
+  /** Нет модели в библиотеке (или файла) — эти объекты вместо неё (координаты — мировые, как у остальных). */
+  fallback?: ObjectSpec[];
+  /** Детали на якоре модели (экран монитора, лампочка): координаты — от якоря, size [w, h] — под размер якоря. */
+  mounts?: { anchor: string; size?: number[]; parts: ObjectSpec[] }[];
   primitive?: string;
   params?: Record<string, any>;
   position?: number[];
@@ -137,6 +150,8 @@ export interface SceneSpec {
     fill?: { color?: string; intensity?: number; distance?: number; keys?: Key[] };
     keepInFrame?: { ids?: string[]; margin?: number; feet?: boolean }; shake?: { t: number; amp?: number; duration?: number }[] };
   quality?: { shadows?: boolean; shadowSize?: number; antialias?: boolean };
+  /** Библиотека вещей: seed — засев выбора вариантов, off — всё из процедурной замены (сравнение «до/после»). */
+  models?: { seed?: number | string; off?: boolean };
 }
 
 type Loaded = { scene: THREE.Group; animations: THREE.AnimationClip[] };
@@ -155,7 +170,10 @@ class Engine {
   objects: { spec: ObjectSpec; node: THREE.Group; inner: THREE.Object3D; prop?: Prop; light?: THREE.Light }[] = [];
   lights: { spec: LightSpec; light: THREE.Light }[] = [];
   gltfCache = new Map<string, Promise<Loaded>>();
-  loader = new GLTFLoader();
+  loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+  library: Library | null = null;
+  /** Какая модель библиотеки встала на место объекта (или "fallback"). */
+  modelChoice: Record<string, string> = {};
   textureLoader = new THREE.TextureLoader();
   warnings: string[] = [];
   probe!: CanvasRenderingContext2D;
@@ -170,10 +188,11 @@ class Engine {
   toon: Toon | null = null;
 
   load(ref: string): Promise<Loaded> {
-    if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
+    const lib = typeof ref === "string" && ref.startsWith("lib:");
+    if (lib ? !/^lib:[a-z0-9_]+\/[a-z0-9_]+\.glb$/.test(ref) : !/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(ref)) return Promise.reject(new Error(`плохая ссылка на модель: ${ref}`));
     if (!this.gltfCache.has(ref)) {
-      // builtin/… — модели самого движка (node/scene3d/assets), остальное — паки.
-      const url = ref.startsWith("builtin/") ? "http://scene3d.local/assets/" + ref.slice(8) : ASSET_BASE + ref;
+      // builtin/… — модели самого движка (node/scene3d/assets), lib:… — библиотека вещей (models3d), остальное — паки.
+      const url = lib ? LIB_ORIGIN + ref.slice(4) : ref.startsWith("builtin/") ? "http://scene3d.local/assets/" + ref.slice(8) : ASSET_BASE + ref;
       this.gltfCache.set(ref, this.loader.loadAsync(url).then((g: any) => ({ scene: g.scene, animations: g.animations || [] })));
     }
     return this.gltfCache.get(ref)!;
@@ -237,6 +256,8 @@ class Engine {
       this.characters[c.id] = ch;
       this.scene.add(ch.root);
     }
+    // Библиотека вещей — только если сцена на неё ссылается (без неё сцены грузятся как раньше).
+    if ((spec.objects || []).some((o) => isLibraryRef(o.model))) this.library = await loadLibrary(this.warnings);
     for (const o of spec.objects || []) await this.addObject(o);
     // Родители объектов — после того как созданы все.
     for (const o of this.objects) {
@@ -299,7 +320,7 @@ class Engine {
       this.toon ? [this.toon.pass] : []);
     this.renderer.compile(this.scene, this.camera);
     (this as any).presetRt = new PresetRuntime(this);
-    return { warnings: this.warnings, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
+    return { warnings: this.warnings, models: this.modelChoice, characters: Object.fromEntries(Object.entries(this.characters).map(([k, v]) => [k, { height: v.height }])) };
   }
 
   addLight(l: LightSpec, parent: THREE.Object3D): THREE.Light {
@@ -385,13 +406,62 @@ class Engine {
     return light;
   }
 
+  /** Модель библиотеки для объекта или null (нет библиотеки, варианта, якоря для деталей, файла) — тогда замена. */
+  async libraryModel(o: ObjectSpec): Promise<{ entry: LibModel; g: Loaded } | null> {
+    if (this.spec.models?.off) return null;
+    const entry = pickModel(this.library, o.model!, { seed: `${this.modelSeed()}|${o.variantSeed ?? ""}`, key: o.id, tags: o.modelTags });
+    if (!entry) {
+      if (this.library) this.warnings.push(`объект ${o.id}: в библиотеке нет «${o.model}» — процедурная замена`);
+      return null;
+    }
+    const missing = (o.mounts || []).find((m) => !entry.anchors?.[m.anchor]);
+    if (missing) {
+      this.warnings.push(`объект ${o.id}: у ${entry.id} нет якоря ${missing.anchor} — процедурная замена`);
+      return null;
+    }
+    try {
+      return { entry, g: await this.load("lib:" + entry.file) };
+    } catch (e) {
+      this.warnings.push(`объект ${o.id}: файл ${entry.file} не загрузился — процедурная замена`);
+      return null;
+    }
+  }
+
+  /**
+   * Засев вариантов сцены: models.seed, иначе — от содержания ролика (подписи, герои, длительность): у разных роликов
+   * разные вещи, у одного ролика — одни и те же в любом куске рендера.
+   */
+  modelSeed(): string {
+    const s = this.spec;
+    if (s.models?.seed !== undefined) return String(s.models.seed);
+    return String(hashSeed(JSON.stringify([s.duration ?? 0, (s.characters || []).map((c: any) => c.id), s.overlays || []])));
+  }
+
+  /** Замена модели: детали fallback (или примитив самого объекта); узел с id объекта остаётся — к нему крепятся дети. */
+  async addFallback(o: ObjectSpec) {
+    this.modelChoice[o.id] = "fallback";
+    const { model: _m, fallback, mounts: _mt, fitMax: _f, ...rest } = o;
+    if (!fallback?.length && o.primitive) return this.addObject(rest as ObjectSpec);
+    await this.addObject({ ...rest, primitive: "group" } as ObjectSpec);
+    for (const part of fallback || []) await this.addObject(part);
+  }
+
   async addObject(o: ObjectSpec) {
+    let libHit: { entry: LibModel; g: Loaded } | null = null;
+    if (o.model && isLibraryRef(o.model)) {
+      libHit = await this.libraryModel(o);
+      if (!libHit) return this.addFallback(o);
+      this.modelChoice[o.id] = libHit.entry.id;
+    }
     const node = new THREE.Group();
     node.name = `obj:${o.id}`;
     let inner: THREE.Object3D;
     let prop: Prop | undefined;
-    if (o.model) {
-      const g = await this.load(o.model);
+    if (o.primitive === "group" && !o.model) {
+      inner = new THREE.Group();
+      inner.add(new THREE.Group());
+    } else if (o.model) {
+      const g = libHit ? libHit.g : await this.load(o.model);
       const src = g.scene.clone(true);
       // Материалы — свои у каждого экземпляра (перекраска не задевает соседей).
       src.traverse((c: any) => {
@@ -400,6 +470,8 @@ class Engine {
           // Светильник не загораживает собственный свет (абажур без тени).
           c.castShadow = o.castShadow ?? !o.light;
           c.receiveShadow = o.receiveShadow ?? true;
+          // Мелкие вещи библиотеки — с обводкой тоньше (клавиши, кружка), как у процедурных.
+          if (libHit && c.userData.outlineScale === undefined && libHit.entry.outline !== undefined) c.userData.outlineScale = libHit.entry.outline;
         }
       });
       inner = new THREE.Group();
@@ -444,6 +516,10 @@ class Engine {
       const box = new THREE.Box3().setFromObject(inner.children[0]);
       const size = box.getSize(new THREE.Vector3());
       sc = [o.fit[0] / Math.max(1e-4, size.x), o.fit[1] / Math.max(1e-4, size.y), o.fit[2] / Math.max(1e-4, size.z)];
+    } else if (o.fitMax && libHit) {
+      // Равномерно: вещь библиотеки встаёт в место процедурной, не искажаясь (габарит — из манифеста).
+      const k = Math.min(...o.fitMax.map((v, i) => (v > 0 ? v / Math.max(1e-4, libHit!.entry.size[i]) : Infinity)));
+      if (Number.isFinite(k)) sc = sc.map((v) => v * k);
     }
     const scaled = new THREE.Group();
     scaled.scale.set(sc[0], sc[1], sc[2]);
@@ -455,6 +531,21 @@ class Engine {
     if (o.light) light = this.addLight(o.light, node);
     this.scene.add(node);
     this.objects.push({ spec: o, node, inner, prop, light });
+    // Детали на якорях модели (экран, лампочка): своя группа в осях модели, масштаб — под размер якоря.
+    for (const m of (libHit && o.mounts) || []) {
+      const a = libHit!.entry.anchors![m.anchor];
+      const g = new THREE.Group();
+      g.name = `mount:${o.id}:${m.anchor}`;
+      g.position.set(a.pos[0], a.pos[1], a.pos[2]);
+      if (a.rot) g.rotation.set(a.rot[0] * D2R, a.rot[1] * D2R, a.rot[2] * D2R);
+      if (m.size && a.size) g.scale.setScalar(Math.min(a.size[0] / Math.max(1e-4, m.size[0]), a.size[1] / Math.max(1e-4, m.size[1])));
+      scaled.add(g);
+      for (const part of m.parts) {
+        const before = this.objects.length;
+        await this.addObject(part);
+        for (const x of this.objects.slice(before)) if (!x.spec.parent && x.node.parent === this.scene) g.add(x.node);
+      }
+    }
   }
 
   /** Фаза окружения на t: фон, туман, экспозиция, цветокоррекция (до первой фазы — исходное окружение). */
@@ -764,7 +855,7 @@ class Engine {
   inspect(t: number) {
     this.update(t);
     const dirv = this.camera.getWorldDirection(new THREE.Vector3());
-    const out: Record<string, any> = { camera: this.camera.position.toArray(), cameraDir: dirv.toArray().map(r3), objects: {}, characters: {} };
+    const out: Record<string, any> = { camera: this.camera.position.toArray(), cameraDir: dirv.toArray().map(r3), objects: {}, characters: {}, models: this.modelChoice };
     for (const o of this.objects) {
       o.node.updateMatrixWorld(true);
       const b = new THREE.Box3().setFromObject(o.node);
@@ -834,6 +925,20 @@ function applyMaterials(root: THREE.Object3D, mats: NonNullable<ObjectSpec["mate
       }
     }
   });
+}
+
+/** Манифест библиотеки вещей (models3d.ts) или null, если его нет (сцена строит вещи из запасных деталей). */
+async function loadLibrary(warnings: string[]): Promise<Library | null> {
+  try {
+    const res = await fetch(LIB_ORIGIN + "manifest.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const m = await res.json();
+    if (m?.version !== 1 || !m.models || !m.categories) throw new Error("не тот формат");
+    return m as Library;
+  } catch (e) {
+    warnings.push(`библиотека моделей недоступна (${(e as Error).message}) — вещи из процедурных деталей`);
+    return null;
+  }
 }
 
 /** Мягкая «контактная» тень-пятно на полу (для предметов, где тень от ламп слабая). */
