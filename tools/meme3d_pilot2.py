@@ -250,14 +250,16 @@ def deskbot(pose: list[dict], face: list[dict], mouth: dict, blinks: list[float]
 # --------------------------------------------------------------------------- хореография
 
 
-def plan(spans: dict[str, tuple[float, float]]) -> dict:
+def plan(spans: dict[str, tuple[float, float]], face_dy: float = 0.168, cam_k: float = 1.0) -> dict:
+    """Хореография; ``face_dy`` — высота лица героя над столом (центр крупных планов), ``cam_k`` — во сколько раз
+    отодвинуть камеру на планах героя (у пилота 3 другой герой: ниже и шире)."""
     a = {k: v[0] for k, v in spans.items()}
     b = {k: v[1] for k, v in spans.items()}
     c = S.screen_center()
     yaw = math.radians(S.MONITOR_YAW)
     nx, nz = math.sin(yaw), math.cos(yaw)
     bx, by, bz = S.BOT_POS
-    fy = by + 0.168  # высота лица
+    fy = by + face_dy  # высота лица
 
     ev = {"t_task": b["c10"] + 0.2, "t_cut": b["c12"], "t_tab": b["c12"] + 0.6, "t_gpt": a["g1"] - 0.05,
           "t_plan": a["g1"] + 2.1, "t_type": a["c15"] - 0.2}
@@ -282,6 +284,13 @@ def plan(spans: dict[str, tuple[float, float]]) -> dict:
     MED_L = ([bx - 0.22, fy + 0.03, bz + 1.32], [bx - 0.02, fy - 0.01, bz])
     OTS = ([bx + 0.26, fy + 0.2, bz + 1.32], [c[0] + 0.2, c[1] - 0.12, c[2] + 0.12])
     LOW = ([bx + 0.08, fy - 0.1, bz + 0.9], [bx, fy + 0.02, bz])
+
+    def far(A):
+        p, t = A
+        return ([t[i] + (p[i] - t[i]) * cam_k for i in range(3)], t)
+
+    if cam_k != 1.0:
+        COVER, COVER2, CU, CU_L, ECU, MED, MED_L, LOW = map(far, (COVER, COVER2, CU, CU_L, ECU, MED, MED_L, LOW))
 
     keys: list[dict] = []
 
