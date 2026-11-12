@@ -113,7 +113,8 @@ class YouTubeProvider(Provider):
         log.info("youtube upload ok: account=%s video_id=%s channel=%s attempts=%s metadata=%s%s", account_label,
                  remote_id or "?", _channel_text(result.get("channel")), result.get("uploadAttempts"),
                  result.get("metadataSet"),
-                 f" metadata_error={result['metadataError']}" if result.get("metadataError") else "")
+                 (f" metadata_error={result['metadataError']}" if result.get("metadataError") else "")
+                 + (f" metadata_check={result['metadataCheck']}" if result.get("metadataCheck") else ""))
         response = dict(result)
         if video_format != "9:16":
             response["publish_as"] = "video" if is_regular_video(self.platform, video_format) else "shorts"

@@ -5,10 +5,12 @@ import test from 'node:test';
 import {
   activeChannelFromMenu, brandUploadRequest, identitiesFromAccountsList, matchIdentity, parseChannelTarget
 } from './youtube-channel.mjs';
-import { clientFetch, errorDetail, isRetryableUploadError, metadataUpdate, run, withRetry } from './youtube-upload.mjs';
+import {
+  clientFetch, errorDetail, isRetryableUploadError, metadataUpdate, metadataUpdateRequest, run, withRetry
+} from './youtube-upload.mjs';
 
-function fakeClient({ uploadErrors = [], metadataError = null } = {}) {
-  const calls = { upload: 0, metadata: [] };
+function fakeClient({ uploadErrors = [], metadataError = null, readError = null, audience = 'VIDEO_TARGETED_AUDIENCE_ALL' } = {}) {
+  const calls = { upload: 0, metadata: [], thumbnails: [], reads: [] };
   const client = {
     studio: {
       async upload(file, metadata) {
@@ -18,10 +20,26 @@ function fakeClient({ uploadErrors = [], metadataError = null } = {}) {
         if (error) throw error;
         return { data: { videoId: 'abc123XYZ' } };
       },
+      // Миниатюра (16:9) — по-прежнему через studio.updateVideoMetadata.
       async updateVideoMetadata(videoId, update) {
-        calls.metadata.push({ videoId, update });
-        if (metadataError && !update.thumbnail) throw metadataError;
+        calls.thumbnails.push({ videoId, update });
         return {};
+      }
+    },
+    actions: {
+      async execute(path, body) {
+        if (path === '/video_manager/metadata_update') {
+          calls.metadata.push(body);
+          if (metadataError) throw metadataError;
+          return { success: true, status_code: 200, data: { responseContext: {} } };
+        }
+        if (path === '/creator/get_creator_videos') {
+          calls.reads.push(body);
+          if (readError) throw readError;
+          return { data: { videos: [{ videoId: body.videoIds[0], category: 'CREATOR_VIDEO_CATEGORY_GADGETS',
+            audienceRestriction: { selfRating: audience, imposer: 'VIDEO_TARGETED_AUDIENCE_IMPOSER_SELF' } }] } };
+        }
+        throw new Error(`unexpected ${path}`);
       }
     }
   };
@@ -32,14 +50,24 @@ const base = { filePath: 'clip.mp4', title: 'T', description: 'D', privacy: 'PUB
 const readFile = async () => Buffer.from('video');
 const sleep = async () => {};
 
-test('upload sets audience and category after the video exists', async () => {
+test('upload sets audience and category after the video exists — Studio JSON, then reads it back', async () => {
   const { client, calls } = fakeClient();
   const result = await run({ ...base, madeForKids: false, categoryId: 20 }, { createClient: () => client, readFile, sleep });
   assert.equal(result.ok, true);
   assert.equal(result.videoId, 'abc123XYZ');
   assert.equal(result.uploadAttempts, 1);
-  assert.deepEqual(calls.metadata, [{ videoId: 'abc123XYZ', update: { made_for_kids: false, category: 20 } }]);
+  assert.deepEqual(calls.metadata, [{
+    client: 'WEB_CREATOR',
+    encryptedVideoId: 'abc123XYZ',
+    madeForKids: { operation: 'MDE_MADE_FOR_KIDS_UPDATE_OPERATION_SET', newMfk: 'MDE_MADE_FOR_KIDS_TYPE_NOT_MFK' },
+    category: { newCategoryId: 20 }
+  }]);
   assert.deepEqual(result.metadataSet, { made_for_kids: false, category: 20 });
+  assert.deepEqual(result.metadataCheck, {
+    category: 'CREATOR_VIDEO_CATEGORY_GADGETS', audience: 'VIDEO_TARGETED_AUDIENCE_ALL', audienceBy: 'VIDEO_TARGETED_AUDIENCE_IMPOSER_SELF'
+  });
+  assert.deepEqual(calls.reads[0].videoIds, ['abc123XYZ']);
+  assert.equal(calls.thumbnails.length, 0);
   assert.deepEqual(calls.lastUpload, { title: 'T', description: 'D', privacy: 'PUBLIC', is_draft: false });
 });
 
@@ -47,14 +75,39 @@ test('no audience/category settings — no extra metadata call (old behaviour)',
   const { client, calls } = fakeClient();
   const result = await run(base, { createClient: () => client, readFile, sleep });
   assert.equal(calls.metadata.length, 0);
+  assert.equal(calls.reads.length, 0);
   assert.equal(result.metadataSet, undefined);
 });
 
-test('metadata failure does not fail the upload', async () => {
-  const { client } = fakeClient({ metadataError: new Error('metadata_update 400') });
+test('metadata failure does not fail the upload, and nothing is read back', async () => {
+  const { client, calls } = fakeClient({ metadataError: new Error('metadata_update 400') });
   const result = await run({ ...base, madeForKids: false }, { createClient: () => client, readFile, sleep });
   assert.equal(result.ok, true);
   assert.match(result.metadataError, /metadata_update 400/);
+  assert.equal(result.metadataSet, undefined);
+  assert.equal(calls.reads.length, 0);
+});
+
+test('read-back failure is reported but the update still counts', async () => {
+  const { client } = fakeClient({ readError: new Error('get_creator_videos 500') });
+  const result = await run({ ...base, categoryId: 24 }, { createClient: () => client, readFile, sleep });
+  assert.deepEqual(result.metadataSet, { category: 24 });
+  assert.match(result.metadataCheckError, /get_creator_videos 500/);
+});
+
+test('metadata update request builder', () => {
+  assert.deepEqual(metadataUpdateRequest('v1', { made_for_kids: false }), {
+    client: 'WEB_CREATOR', encryptedVideoId: 'v1',
+    madeForKids: { operation: 'MDE_MADE_FOR_KIDS_UPDATE_OPERATION_SET', newMfk: 'MDE_MADE_FOR_KIDS_TYPE_NOT_MFK' }
+  });
+  assert.equal(metadataUpdateRequest('v1', { made_for_kids: true }).madeForKids.newMfk, 'MDE_MADE_FOR_KIDS_TYPE_MFK');
+  assert.deepEqual(metadataUpdateRequest('v1', { category: 20 }), {
+    client: 'WEB_CREATOR', encryptedVideoId: 'v1', category: { newCategoryId: 20 }
+  });
+  assert.equal(metadataUpdateRequest('v1', {}), null);
+  assert.equal(metadataUpdateRequest('v1', { category: 0 }), null);
+  // Связка с настройками: payload → metadataUpdate → тело запроса.
+  assert.deepEqual(metadataUpdateRequest('v1', metadataUpdate({ madeForKids: false, categoryId: 20 })).category, { newCategoryId: 20 });
 });
 
 test('metadata error carries the server response body (InnertubeError.info)', async () => {
@@ -377,6 +430,53 @@ test('real youtubei.js studio.upload for the brand: start without PageId, create
   assert.equal(body.context.user.onBehalfOfUser, '113000');
   assert.equal(body.resourceId.scottyResourceId.id, 'res1');
   assert.equal(body.initialMetadata.privacy.newPrivacy, 'UNLISTED');
+});
+
+// 12.11: studio.updateVideoMetadata (protobuf ANDROID) — 400 INVALID_ARGUMENT; JSON WEB_CREATOR — 200.
+test('real youtubei.js: audience/category go as Studio JSON from WEB_CREATOR, on behalf of the brand', async () => {
+  const { Innertube } = await import('youtubei.js');
+  const sent = [];
+  const fetchImpl = async (input, options = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const headers = new Headers(options.headers ?? (typeof input === 'string' ? {} : input.headers));
+    sent.push({ url, headers, body: options.body });
+    if (url.includes('/creator/get_creator_videos')) {
+      return Response.json({ videos: [{ videoId: 'vid12345678', category: 'CREATOR_VIDEO_CATEGORY_GADGETS',
+        audienceRestriction: { selfRating: 'VIDEO_TARGETED_AUDIENCE_ALL', imposer: 'VIDEO_TARGETED_AUDIENCE_IMPOSER_SELF' } }] });
+    }
+    if (headers.get('x-goog-upload-command') === 'start') {
+      return new Response('', { status: 200, headers: { 'x-goog-upload-url': 'https://upload.youtube.com/?upload_id=u1' } });
+    }
+    if (url.startsWith('https://upload.youtube.com/?upload_id=')) {
+      return Response.json({ status: 'STATUS_SUCCESS', scottyResourceId: 'res1' });
+    }
+    return Response.json({ videoId: 'vid12345678' });
+  };
+  const createClient = () => Innertube.create({
+    cookie: 'SAPISID=sap; SID=sid', account_index: 2, on_behalf_of_user: '113000',
+    generate_session_locally: true, retrieve_player: false, retrieve_innertube_config: false, enable_session_cache: false,
+    fetch: clientFetch({ cookieJar: new Map(), target: BRAND, fetchImpl })
+  });
+  const result = await run({ ...base, madeForKids: false, categoryId: 20 }, { createClient, readFile, sleep });
+  assert.equal(result.videoId, 'vid12345678');
+  assert.equal(result.metadataError, undefined);
+  assert.equal(result.metadataCheck.audience, 'VIDEO_TARGETED_AUDIENCE_ALL');
+  const update = sent.find((it) => it.url.includes('/video_manager/metadata_update'));
+  assert.equal(new URL(update.url).hostname, 'www.youtube.com');
+  assert.equal(update.headers.get('content-type'), 'application/json');
+  assert.equal(update.headers.get('x-goog-pageid'), '113000');
+  assert.equal(update.headers.get('x-goog-authuser'), '2');
+  assert.match(update.headers.get('authorization') || '', /^SAPISIDHASH /);
+  const body = JSON.parse(update.body);
+  assert.equal(body.context.client.clientName, 'WEB_CREATOR');
+  assert.equal(body.context.user.onBehalfOfUser, '113000');
+  assert.equal(body.client, undefined);
+  assert.equal(body.encryptedVideoId, 'vid12345678');
+  assert.deepEqual(body.madeForKids, { operation: 'MDE_MADE_FOR_KIDS_UPDATE_OPERATION_SET', newMfk: 'MDE_MADE_FOR_KIDS_TYPE_NOT_MFK' });
+  assert.deepEqual(body.category, { newCategoryId: 20 });
+  const read = JSON.parse(sent.find((it) => it.url.includes('/creator/get_creator_videos')).body);
+  assert.deepEqual(read.videoIds, ['vid12345678']);
+  assert.equal(read.context.client.clientName, 'WEB_CREATOR');
 });
 
 test('rotated cookies reach the caller even when the upload throws', async () => {
