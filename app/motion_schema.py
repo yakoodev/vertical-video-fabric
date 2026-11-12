@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.scene_engine import SceneSpec
+from app.motion_flow import TRANSITION as FLOW_TRANSITION
 from app.motion_schema_ads import AD_PROPS, COUNTER_ROLL, PIVOT
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
@@ -411,6 +412,8 @@ PROPS["scene"] = {
 }
 
 PROPS.update(AD_PROPS)
+# Перетекающий переход между сценами (app/motion_flow.py): группы слоёв A/B, вид, маска, кривая.
+PROPS["transition"] = FLOW_TRANSITION
 
 ANIM = {"type": Choice("none", ANIMATIONS), "duration": Num(0.3, MIN_ANIM_SEC, MAX_ANIM_SEC, 3)}
 LOOP = {"type": Choice("none", LOOPS), "speed": Num(1, 0.1, 5, 3), "amount": Num(1, 0, 3, 3)}

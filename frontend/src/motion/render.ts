@@ -49,6 +49,21 @@ import { waveformRenderer } from "./layers/waveform";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import { drawFx } from "./layers/fx";
+import { roundRectPath } from "./layers/common";
+import {
+  flowGroups,
+  flowRegion,
+  flowState,
+  isIdentityXf,
+  isTransition,
+  morphLayers,
+  type FlowBox,
+  type FlowFill,
+  type FlowMask,
+  type FlowRing,
+  type FlowState,
+  type GroupXf,
+} from "./flow";
 import type { Levels } from "./levels";
 import type { BlendMode, CameraKey, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, SceneLayer, ScratchCanvas, VoiceTrack } from "./types";
 import { layerUnit, refSize } from "./types";
@@ -181,9 +196,18 @@ export function drawFrame(
   let cam: CameraMatrix | null | undefined;
   const cam3 = cam3At(t);
   const fps = Number(comp.fps) > 0 ? Number(comp.fps) : 30;
+  // Перетекающие переходы (flow.ts): слои сцен A и B рисуются группами со своей матрицей и маской.
+  const flows = pass === "behind" ? null : planFlows(ctx, comp.layers || [], visible, t, env, data);
   for (const layer of visible) {
+    if (layer.type === "transition") continue;
     // С хромакеем компоновщик рисует в два прохода: под основой и над ней.
     if (pass && !!layer.behind !== (pass === "behind")) continue;
+    const part = flows?.member.get(layer.id);
+    if (part) {
+      if (cam === undefined) cam = camAt(t);
+      drawFlowPart(ctx, part, layer, t, env, data, cam, cam3, comp.camera);
+      continue;
+    }
     if (layer.type === "fx") {
       // Эффект кадра — во весь кадр поверх уже нарисованного, без матрицы слоя и камеры.
       const st = resolveLayer(layer, t, refSize(env), comp.levels);
@@ -242,6 +266,264 @@ function paintScene(
     return;
   }
   drawLayer(ctx, layer, t, env, data);
+}
+
+/* ---------- перетекающие переходы (слой transition, flow.ts) ---------- */
+
+type ActiveFlow = {
+  st: FlowState;
+  A: Layer[];
+  B: Layer[];
+  /** Общий элемент (shared_element): копии слоя в промежуточном состоянии и слой, на месте которого их рисовать. */
+  morph: Layer[];
+  morphAt: Layer | null;
+  drawn: Set<"A" | "B" | "ring">;
+};
+type FlowPart = { flow: ActiveFlow; side: "A" | "B" | "M" };
+type FlowPlan = { member: Map<string, FlowPart> };
+
+/** Переходы, активные в момент t: кто в какой группе и как её рисовать. null — переходов нет. */
+function planFlows(ctx: Ctx2D, all: Layer[], visible: Layer[], t: number, env: RenderEnv, data: FrameData): FlowPlan | null {
+  const trs = visible.filter(isTransition);
+  if (!trs.length) return null;
+  const member = new Map<string, FlowPart>();
+  const order = new Map(visible.map((l, i) => [l.id, i]));
+  const boxOf = (l: Layer): FlowBox | null => {
+    const b = layerBox(ctx, l, t, env, data, null);
+    return b && b.w > 0 && b.h > 0 ? { cx: b.cx, cy: b.cy, w: b.w, h: b.h } : null;
+  };
+  const register = (flow: ActiveFlow): void => {
+    if (!flow.A.length) flow.drawn.add("A");
+    if (!flow.B.length) flow.drawn.add("B");
+    for (const l of flow.A) member.set(l.id, { flow, side: "A" });
+    for (const l of flow.B) member.set(l.id, { flow, side: "B" });
+  };
+  for (const tr of trs) {
+    const g = flowGroups(tr, all);
+    const P = tr.props || ({} as typeof tr.props);
+    let A = visible.filter((l) => g.from.has(l.id) && !member.has(l.id));
+    let B = visible.filter((l) => g.to.has(l.id) && !member.has(l.id));
+    const target = P.target ? visible.find((l) => l.id === P.target && !isTransition(l)) ?? null : null;
+    const tBox = target ? boxOf(target) : null;
+    const region = flowRegion(tr, env, tBox);
+    if (P.kind === "shared_element" && target && tBox && !member.has(target.id)) {
+      const match = P.match ? visible.find((l) => l.id === P.match && !isTransition(l)) ?? null : null;
+      const mBox = match ? boxOf(match) : null;
+      const st = flowState(tr, t, env, region, mBox);
+      const sa = resolveLayer(target, t, refSize(env), data.levels);
+      const sb = match ? resolveLayer(match, t, refSize(env), data.levels) : null;
+      const morph = sa ? morphLayers(target, match, sa, sb, tBox, mBox, st.p, t, env) : [];
+      const pair = [target, match].filter((l): l is Layer => !!l);
+      const morphAt = pair.reduce((best, l) => ((order.get(l.id) ?? 0) > (order.get(best.id) ?? 0) ? l : best), pair[0]);
+      A = A.filter((l) => !pair.includes(l));
+      B = B.filter((l) => !pair.includes(l));
+      const flow: ActiveFlow = { st, A, B, morph, morphAt, drawn: new Set() };
+      for (const l of pair) member.set(l.id, { flow, side: "M" });
+      register(flow);
+      continue;
+    }
+    register({ st: flowState(tr, t, env, region, null), A, B, morph: [], morphAt: null, drawn: new Set() });
+  }
+  return member.size ? { member } : null;
+}
+
+/** Слой из группы перехода: вся группа рисуется на месте первого своего слоя (по дорожкам). */
+function drawFlowPart(
+  ctx: Ctx2D,
+  part: FlowPart,
+  layer: Layer,
+  t: number,
+  env: RenderEnv,
+  data: FrameData,
+  cam: CameraMatrix | null,
+  cam3: Camera3D | null,
+  keys: CameraKey[] | undefined,
+): void {
+  const f = part.flow;
+  if (part.side === "M") {
+    if (layer !== f.morphAt) return;
+    for (const m of f.morph) paintScene(ctx, m, t, env, data, cam, cam3, keys);
+    return;
+  }
+  if (f.drawn.has(part.side)) return;
+  // Приходящая сцена — всегда над уходящей (B внутри кнопки A, B в дыре A): группа B, встреченная
+  // раньше A (дорожка ниже), рисуется сразу после A.
+  if (part.side === "B" && !f.drawn.has("A")) return;
+  f.drawn.add(part.side);
+  if (part.side === "B" && f.st.fill && f.st.fill.alpha > 0.002) paintFlowFill(ctx, f.st.fill);
+  drawGroup(ctx, part.side === "A" ? f.A : f.B, part.side === "A" ? f.st.a : f.st.b, t, env, data, cam, cam3, keys);
+  if (part.side === "A" && !f.drawn.has("B")) {
+    f.drawn.add("B");
+    if (f.st.fill && f.st.fill.alpha > 0.002) paintFlowFill(ctx, f.st.fill);
+    drawGroup(ctx, f.B, f.st.b, t, env, data, cam, cam3, keys);
+  }
+  if (f.st.ring && f.drawn.has("A") && f.drawn.has("B") && !f.drawn.has("ring")) {
+    f.drawn.add("ring");
+    if (f.st.ring.alpha > 0.002) paintFlowRing(ctx, f.st.ring);
+  }
+}
+
+type FlowBufs = { g: { canvas: ScratchCanvas; ctx: Ctx2D }; m: { canvas: ScratchCanvas; ctx: Ctx2D } };
+const flowBufsByEnv = new WeakMap<RenderEnv, FlowBufs>();
+
+/** Два холста во весь кадр на окружение: группа слоёв и она же после матрицы (перенос картинкой). */
+function flowBuffers(env: RenderEnv): FlowBufs | null {
+  if (!env.createCanvas) return null;
+  let b = flowBufsByEnv.get(env);
+  if (!b || b.g.canvas.width !== env.width || b.g.canvas.height !== env.height) {
+    const mk = () => {
+      const canvas = env.createCanvas!(Math.max(1, env.width), Math.max(1, env.height));
+      return { canvas, ctx: canvas.getContext("2d") as Ctx2D };
+    };
+    b = { g: mk(), m: mk() };
+    flowBufsByEnv.set(env, b);
+  }
+  return b;
+}
+
+function resetBuf(c: Ctx2D, W: number, H: number): void {
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = "source-over";
+  c.filter = "none";
+  c.clearRect(0, 0, W, H);
+}
+
+/** Путь маски (без beginPath): круг или скруглённый прямоугольник. */
+function maskShape(c: Ctx2D, m: FlowMask): void {
+  if (m.shape === "circle") {
+    const r = Math.max(0, m.hw);
+    c.moveTo(m.cx + r, m.cy);
+    c.arc(m.cx, m.cy, r, 0, Math.PI * 2);
+  } else {
+    roundRectPath(c, m.cx - m.hw, m.cy - m.hh, Math.max(0, m.hw * 2), Math.max(0, m.hh * 2), m.r);
+  }
+}
+
+/**
+ * Маска на холсте группы (px кадра). Только `destination-out` — Skia и браузер одинаково трогают лишь
+ * покрытые пиксели: «оставить внутри» = стереть кадр вокруг фигуры, «вырезать» = стереть саму фигуру.
+ * Растушёвка — радиальный градиент у круга и размытие пути у прямоугольника.
+ */
+function applyMask(c: Ctx2D, m: FlowMask, W: number, H: number): void {
+  c.save();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = "destination-out";
+  const f = m.feather;
+  if (m.shape === "circle" && f > 0.5) {
+    const r = Math.max(0, m.hw);
+    const g = c.createRadialGradient(m.cx, m.cy, Math.max(0, r - f / 2), m.cx, m.cy, r + f / 2);
+    g.addColorStop(0, m.invert ? "rgba(0,0,0,1)" : "rgba(0,0,0,0)");
+    g.addColorStop(1, m.invert ? "rgba(0,0,0,0)" : "rgba(0,0,0,1)");
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, H);
+  } else {
+    if (f > 0.5) c.filter = `blur(${(f / 2).toFixed(2)}px)`;
+    c.fillStyle = "#000000";
+    c.beginPath();
+    if (!m.invert) {
+      const pad = f * 2 + 4;
+      c.rect(-pad, -pad, W + pad * 2, H + pad * 2);
+    }
+    maskShape(c, m);
+    c.fill(m.invert ? "nonzero" : "evenodd");
+  }
+  c.restore();
+}
+
+/** Заливка под сценой B внутри маски (reveal_from props.fill). */
+function paintFlowFill(ctx: Ctx2D, fill: FlowFill): void {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = fill.alpha;
+  ctx.globalCompositeOperation = "source-over";
+  if (fill.mask.feather > 0.5) ctx.filter = `blur(${(fill.mask.feather / 2).toFixed(2)}px)`;
+  ctx.fillStyle = fill.color;
+  ctx.beginPath();
+  maskShape(ctx, fill.mask);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Светящееся кольцо по краю маски (props.edge). */
+function paintFlowRing(ctx: Ctx2D, ring: FlowRing): void {
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = ring.alpha;
+  ctx.globalCompositeOperation = "source-over";
+  ctx.strokeStyle = ring.color;
+  ctx.lineWidth = ring.width;
+  ctx.shadowColor = ring.color;
+  ctx.shadowBlur = ring.width * 2.5;
+  ctx.beginPath();
+  maskShape(ctx, ring.mask);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Группа слоёв как одна картинка: матрица x' = s·x + t (px кадра), маска, общая прозрачность.
+ * Без 3D-слоёв матрица ставится прямо под слои (векторно — наезд в 8× остаётся резким); со слоями
+ * в перспективе (space3d сам сбрасывает матрицу) — группа рисуется как есть и переносится картинкой.
+ */
+function drawGroup(
+  ctx: Ctx2D,
+  members: Layer[],
+  xf: GroupXf,
+  t: number,
+  env: RenderEnv,
+  data: FrameData,
+  cam: CameraMatrix | null,
+  cam3: Camera3D | null,
+  keys: CameraKey[] | undefined,
+): void {
+  if (!members.length || xf.alpha <= 0.002) return;
+  if (isIdentityXf(xf)) {
+    for (const l of members) paintScene(ctx, l, t, env, data, cam, cam3, keys);
+    return;
+  }
+  const W = env.width;
+  const H = env.height;
+  const bufs = flowBuffers(env);
+  if (!bufs) {
+    // Нет фабрики холстов — матрица и прямая маска клипом (без растушёвки и общей прозрачности).
+    ctx.save();
+    if (xf.mask && !xf.mask.invert) {
+      ctx.beginPath();
+      maskShape(ctx, xf.mask);
+      ctx.clip();
+    }
+    ctx.transform(xf.s, 0, 0, xf.s, xf.tx, xf.ty);
+    for (const l of members) paintScene(ctx, l, t, env, data, cam, cam3, keys);
+    ctx.restore();
+    return;
+  }
+  const base = typeof ctx.getTransform === "function" ? ctx.getTransform() : null;
+  const vector = !members.some((l) => has3dFields(l) || (inScene(l) && cam3));
+  const g = bufs.g.ctx;
+  resetBuf(g, W, H);
+  if (vector) g.setTransform(xf.s, 0, 0, xf.s, xf.tx, xf.ty);
+  if (base) g.transform(base.a, base.b, base.c, base.d, base.e, base.f);
+  for (const l of members) paintScene(g, l, t, env, data, cam, cam3, keys);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  let out = bufs.g;
+  if (!vector) {
+    const m = bufs.m.ctx;
+    resetBuf(m, W, H);
+    m.imageSmoothingEnabled = true;
+    m.setTransform(xf.s, 0, 0, xf.s, xf.tx, xf.ty);
+    m.drawImage(bufs.g.canvas as unknown as CanvasImageSource, 0, 0);
+    m.setTransform(1, 0, 0, 1, 0, 0);
+    out = bufs.m;
+  }
+  if (xf.mask) applyMask(out.ctx, xf.mask, W, H);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = Math.min(1, xf.alpha);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.drawImage(out.canvas as unknown as CanvasImageSource, 0, 0);
+  ctx.restore();
 }
 
 /* ---------- motion blur ---------- */

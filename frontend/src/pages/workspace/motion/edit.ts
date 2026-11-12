@@ -304,6 +304,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   waveform: "≋",
   tile_wall: "▦",
   flow_diagram: "⇄",
+  transition: "⧉",
 };
 
 /** Подписи видов эффекта кадра (fx). */

@@ -169,7 +169,7 @@
 "name": "add_layers",
 "title": "Добавляю слои",
 "description": "e29ac6101baabacb",
-"parameters": "b10efce7c4b5e1a9",
+"parameters": "d0e40b41402891fa",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -262,6 +262,17 @@
 "scope": "clip",
 "module": null,
 "handler": "h_camera_preset",
+"label": true
+},
+{
+"name": "flow_transition",
+"title": "Ставлю перетекающий переход",
+"description": "9539b398e8a83a5d",
+"parameters": "3e7eaa9378f24ec3",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_flow_transition",
 "label": true
 },
 {
