@@ -13,6 +13,7 @@
  * creditNotation unnecessary, allowRedistribution true, modification allowModificationRedistribution.
  * Сборка: npm run build:vrm; стопкадры: node node/vrm/stills.mjs --spec node/vrm/examples/stills.json --out DIR.
  */
+import { setKeySpread } from "./typing.ts";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
@@ -66,6 +67,8 @@ export interface Spec {
   height?: number;
   fps?: number;
   model: string;
+  /** Масштаб модели (крупная мужская база VRoid — под рост героинь: кресло, стол, камеры и клавиатура настроены под ~1.55 м). */
+  modelScale?: number;
   look?: LookSpec;
   shots: Shot[];
   stream?: any;
@@ -341,12 +344,14 @@ async function load(s: Spec) {
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
   VRMUtils.combineSkeletons?.(gltf.scene);
   VRMUtils.rotateVRM0(vrm);
+  if (s.modelScale && s.modelScale !== 1) vrm.scene.scale.setScalar(s.modelScale);
   vrm.scene.traverse((o) => (o.frustumCulled = false));
   applyLook(vrm, s.look);
   scene.add(vrm.scene);
   rig = new Rig(vrm);
   // Лицо по слоям: свои ручки из частичных морфов; перекрытия VRM 1.0 сняты (timeline.face: false — как раньше).
   faceCaps = setupFace(vrm, { clear: s.timeline?.face !== false, names: gltfMorphNames(gltf.parser) });
+  setKeySpread(s.timeline?.keysSpread);
   if (s.timeline) {
     // Дорожки пресетов игры (wave, laugh, stretch_yawn…) ссылаются на клипы CMU по имени — их не надо перечислять в clips.
     const map: Record<string, string> = { ...(s.timeline.clips || {}) };
@@ -360,6 +365,7 @@ async function load(s: Spec) {
   if (s.timeline && s.handCheck !== false) hands = new HandCheck(vrm, rig);
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
+  await props.loadLibrary(s.shots || [], (m) => warnings.push(m));
   if (s.headphones) props.headphones(rig, typeof s.headphones === "object" ? s.headphones : undefined);
   for (const a of s.accessories || []) props.headphones(rig, a);
   if (s.avatar) {

@@ -447,12 +447,28 @@ def attach_timeline(timeline: dict, track: Any, words: list[dict], total: float,
 
             ak = wav2arkit.from_track(track, offset=offset)
             if ak:
-                timeline["arkit"] = ak
+                timeline["arkit"] = mask_arkit(ak, win) if win else ak
         if "brows" not in timeline:
             brows = brows_from_track(track, local, highlight)
             if brows:
                 timeline["brows"] = [{**b, "t": round(b["t"] + offset, 3)} for b in brows]
     return bool(vis)
+
+
+def mask_arkit(ak: dict, windows: list[tuple[float, float]], *, fade: float = 0.12) -> dict:
+    """Дорожка ARKit (время кадра = start + i/fps) только в окнах речи героя: голос рассказчика вне окон не двигает
+    ей рот. На краях окна — наплыв ``fade`` с; вне окон кадр нулевой."""
+    fps = float(ak.get("fps") or 30)
+    start = float(ak.get("start") or 0.0)
+    out = []
+    for i, row in enumerate(ak.get("frames") or []):
+        t = start + i / fps
+        k = 0.0
+        for a, b in windows:
+            if a - fade <= t <= b + fade:
+                k = max(k, min(1.0, (t - (a - fade)) / fade, ((b + fade) - t) / fade))
+        out.append([round(v * k, 3) for v in row] if k < 1.0 else row)
+    return {**ak, "frames": out}
 
 
 def brows_from_track(path: Any, words: list[dict], highlight: Any = None) -> list[dict]:

@@ -230,7 +230,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 if "act" in ev:
                     acts.append({"clip": ev["act"], "t": t, "fade": float(ev.get("fade") or 0.35)})
                 if "face" in ev:
-                    faces.append({"t": t, "face": ev["face"]})
+                    # "talk": true — героиня говорит в эфир с этим лицом (рот по голосу, эмоция под речью; VRM).
+                    faces.append({"t": t, "face": ev["face"], **({"talk": True} if ev.get("talk") else {})})
             if "pose" in ev:
                 poses.append({"start": t, "end": round(until or t + 1.5, 3), "fade": 0.3, **ev["pose"]})
             if "screen" in ev:

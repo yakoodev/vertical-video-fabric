@@ -8,6 +8,13 @@ import type { ArmSpec, V3 } from "./rig.ts";
 
 const KB_TOP = 1.072, KB_Z = 0.36;
 
+/** Ширина постановки кистей на клавиатуре (множитель): у героя с крупными кистями (мужская база) — шире, иначе
+ * большие пальцы задевают другую кисть. Ставит main.ts из timeline.keysSpread до первого кадра. */
+let keySpread = 1;
+export function setKeySpread(k: number | undefined) {
+  keySpread = k && k > 0 ? k : 1;
+}
+
 const hash = (n: number) => {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
@@ -46,7 +53,7 @@ export function typingArm(side: 1 | -1, t: number, seed = 0, idle = false): ArmS
   const curl = base.map((c, i) => (i === 0 ? c : c - 0.12 * lifts[i - 1]));
   // Кисть: к дальней клавише чуть вперёд и в сторону, лёгкое дыхание запястья.
   const reach = lifts.reduce((s, v, i) => s + v * (i - 1.5), 0);
-  const target: V3 = [side * 0.088 + side * 0.004 * reach, KB_TOP + 0.03 + 0.002 * Math.sin(t * 1.7 + side), KB_Z - 0.078 + 0.003 * act];
+  const target: V3 = [side * 0.088 * keySpread + side * 0.004 * reach, KB_TOP + 0.03 + 0.002 * Math.sin(t * 1.7 + side), KB_Z - 0.078 + 0.003 * act];
   return {
     // Предплечья почти горизонтально, локти у корпуса и ниже; ладонь вниз, параллельно клавиатуре.
     target, pole: [side * 0.2, 0.72, -0.42],

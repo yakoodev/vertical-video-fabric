@@ -78,6 +78,12 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
     her = VS.heroine(plan)
     chair = {**CHAIR, "pos": [CHAIR["pos"][0], her["chair_y"], CHAIR["pos"][2]]}
     props = {**PROPS, "chair": chair}
+    # Вещи библиотеки вместо нарисованных (docs/3d/models.md; только CC0): "vrm": {"props_models": {"keyboard":
+    # "keyboard/mech_tkl_dark", "mouse": "mouse/black", "desk": "desk/wood_drawers"}} — вписываются в тот же габарит.
+    for slot, ref in ((plan.get("vrm") or {}).get("props_models") or {}).items():
+        if slot not in ("desk", "keyboard", "mouse"):
+            raise ValueError(f"vrm.props_models: {slot} — только desk, keyboard, mouse")
+        props[slot] = {**props[slot], "model": str(ref)}
     extra = VS.stage(plan, words, total)
     spec = built["spec"]
     objs = {o["id"]: o for o in spec["objects"]}
@@ -171,10 +177,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
                    {"t": round(f["t"] + 0.16, 3), "dur": 0.1, "expr": prev}]
             continue
         fk.append({"t": round(float(f["t"]), 3), "dur": 0.3, "expr": FACES.get(name, {})})
-    # Рот слогами: слова озвучки, пока героиня «говорит в эфир» (лицо talk).
+    # Рот слогами: слова озвучки, пока героиня «говорит в эфир» (лицо talk или любое лицо с "talk": true).
     talk = []
     for i, f in enumerate(faces):
-        if f["face"] == "talk":
+        if f["face"] == "talk" or f.get("talk"):
             end = float(faces[i + 1]["t"]) if i + 1 < len(faces) else total
             talk.append((float(f["t"]), end))
     speech = [[round(w["start"], 3), round(w["end"], 3)] for w in words
@@ -185,6 +191,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
     out = {"width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3), "model": her["model"], "look": her["look"],
            "stream": stream, "overlays": spec.get("overlays") or [], "headphones": her["headphones"], "strictContact": True,
            "timeline": timeline, "shots": shots, "cats": extra["cats"]}
+    if her.get("keys_spread"):
+        timeline["keysSpread"] = float(her["keys_spread"])
+    if her.get("scale"):
+        out["modelScale"] = float(her["scale"])
     if extra.get("avatar"):
         out["avatar"] = extra["avatar"]
     # Настоящие скриншоты сайта во вставке покупки (если сняты): телефон «shop» → «site».
@@ -199,8 +209,24 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
     if product:
         if not out.get("siteDir"):
             raise ValueError("screen.product: картинки товара берутся из папки site_shots.dir — её нет")
-        out["siteShots"] = list(dict.fromkeys([*(out.get("siteShots") or []), *(f["url"] for f in product.values())]))
+        for f in product.values():
+            seq = expand_seq(f.get("seq"))
+            if seq:
+                f["seq"] = seq
+        out["siteShots"] = list(dict.fromkeys([*(out.get("siteShots") or []),
+                                               *(u for f in product.values() for u in [f["url"], *(f.get("seq") or [])])]))
     return out
+
+
+def expand_seq(seq: Any) -> list[str] | None:
+    """Кадры видео-превью товара (нарезаны из ролика со страницы магазина) для окна эфира: список URL или
+    ``{"pattern": "/site/media/x/f_{:03d}.jpg", "from": 1, "count": 36}`` → список URL."""
+    if not seq:
+        return None
+    if isinstance(seq, list):
+        return [str(u) for u in seq]
+    start, count = int(seq.get("from", 1)), int(seq["count"])
+    return [str(seq["pattern"]).format(i) for i in range(start, start + count)]
 
 
 # --------------------------------------------------------------------------- проверки готового рендера

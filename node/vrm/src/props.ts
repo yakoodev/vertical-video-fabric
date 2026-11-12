@@ -7,13 +7,62 @@ import * as THREE from "three";
 import type { Rig, V3 } from "./rig.ts";
 import { blob, glow, layer, rgba } from "./plate/draw.ts";
 import { drawPhone, phoneSignature, type PhoneScreen } from "../../scene3d/src/ui.ts";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { LIB_ORIGIN, pickModel, type Library } from "../../scene3d/src/models3d.ts";
+
+/** Размер нарисованной клавиатуры и мыши (м): в этот габарит вписывается модель библиотеки, чтобы руки, поверхности
+ * проверок касаний (timeline.surfaces) и вещь совпадали. */
+const KB_BOX: V3 = [0.44, 0.022, 0.147];
+const MOUSE_BOX: V3 = [0.06, 0.033, 0.09];
+
+/** Вещь библиотеки в кадре VRM: материалы → «мультяшные» в 3 тона (свет сцены), чернильный контур по нормалям. */
+interface LibProp { obj: THREE.Group; size: number[] }
+
+function toonify(root: THREE.Object3D, ink = 0.0025) {
+  const ramp = new THREE.DataTexture(new Uint8Array([90, 90, 90, 255, 175, 175, 175, 255, 255, 255, 255, 255]), 3, 1);
+  ramp.minFilter = ramp.magFilter = THREE.NearestFilter;
+  ramp.needsUpdate = true;
+  const meshes: THREE.Mesh[] = [];
+  root.traverse((o) => void ((o as THREE.Mesh).isMesh && meshes.push(o as THREE.Mesh)));
+  for (const m of meshes) {
+    const src = (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[];
+    const conv = src.map((s) => new THREE.MeshToonMaterial({ color: s.color ?? new THREE.Color("#888"), map: s.map ?? null,
+      gradientMap: ramp, transparent: s.transparent, opacity: s.opacity ?? 1, alphaTest: s.alphaTest ?? 0 }));
+    m.material = Array.isArray(m.material) ? conv : conv[0];
+    // Контур: обратные грани, сдвинутые по нормали (толщина в метрах, не зависит от центра детали).
+    const line = new THREE.MeshBasicMaterial({ color: "#120c1e", side: THREE.BackSide, toneMapped: false });
+    const inkW = { value: ink };
+    line.userData.inkW = inkW;
+    line.onBeforeCompile = (sh) => {
+      sh.uniforms.inkW = inkW;
+      sh.vertexShader = "uniform float inkW;\n" + sh.vertexShader.replace("#include <begin_vertex>",
+        "#include <begin_vertex>\n transformed += normalize(objectNormal) * inkW;");
+    };
+    const o = new THREE.Mesh(m.geometry, line);
+    o.name = "ink";
+    m.add(o);
+  }
+}
+
+/** Толщина контура в метрах мира: сдвиг в осях детали делится на её масштаб (нормализация GLB, вписывание). */
+function setInk(root: THREE.Object3D, meters: number) {
+  root.updateMatrixWorld(true);
+  const s = new THREE.Vector3();
+  root.traverse((o) => {
+    if (o.name !== "ink") return;
+    const mat = (o as THREE.Mesh).material as THREE.MeshBasicMaterial;
+    o.getWorldScale(s);
+    if (mat.userData.inkW) mat.userData.inkW.value = meters / Math.max(1e-6, (s.x + s.y + s.z) / 3);
+  });
+}
 
 export interface PropsSpec {
-  /** Стол: высота столешницы, ближний край (z), ширина, глубина. */
-  desk?: { y: number; z: number; w?: number; d?: number; x?: number };
-  /** Клавиатура: центр (на столе), разворот. */
-  keyboard?: { pos: V3; yaw?: number };
-  mouse?: { pos: V3 };
+  /** Стол: высота столешницы, ближний край (z), ширина, глубина; model — вещь библиотеки (docs/3d/models.md). */
+  desk?: { y: number; z: number; w?: number; d?: number; x?: number; model?: string };
+  /** Клавиатура: центр (на столе), разворот; model — клавиатура библиотеки вместо нарисованной. */
+  keyboard?: { pos: V3; yaw?: number; model?: string };
+  mouse?: { pos: V3; model?: string };
   /** Спинка кресла за спиной: центр низа спинки, ширина, высота. */
   chair?: { pos: V3; w?: number; h?: number };
   /** Телефон в руке (left/right): экран — PhoneScreen из scene3d/ui.ts. */
@@ -288,6 +337,61 @@ export class Props {
     accessory(rig, o);
   }
 
+  /** Вещи библиотеки (desk/keyboard/mouse c полем model в props планов) — загрузить до первого кадра.
+   * Нет манифеста или модели — остаётся нарисованная вещь, в отчёт — предупреждение. */
+  lib: Record<string, LibProp> = {};
+  async loadLibrary(shots: { props?: PropsSpec }[], warn: (m: string) => void) {
+    const refs: Record<string, string> = {};
+    for (const sh of shots) for (const slot of ["desk", "keyboard", "mouse"] as const) {
+      const r = (sh.props?.[slot] as any)?.model;
+      if (r && !refs[slot]) refs[slot] = r;
+    }
+    if (!Object.keys(refs).length) return;
+    let lib: Library | null = null;
+    try {
+      lib = await (await fetch(LIB_ORIGIN + "manifest.json")).json();
+    } catch {
+      warn("библиотека вещей: нет manifest.json — нарисованные стол/клавиатура/мышь");
+      return;
+    }
+    const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    for (const [slot, ref] of Object.entries(refs)) {
+      const m = pickModel(lib, ref, { seed: "vtubika-vrm", key: slot });
+      if (!m) {
+        warn(`библиотека вещей: нет модели ${ref} (или она требует указать автора) — ${slot} нарисованный`);
+        continue;
+      }
+      try {
+        const g = await loader.loadAsync(LIB_ORIGIN + m.file);
+        const inner = g.scene;
+        toonify(inner);
+        const obj = new THREE.Group();
+        obj.add(inner);
+        obj.visible = false;
+        this.root.add(obj);
+        this.lib[slot] = { obj, size: m.size };
+      } catch (e) {
+        warn(`библиотека вещей: ${m.file} не загрузилась (${e}) — ${slot} нарисованный`);
+      }
+    }
+  }
+
+  /** Вписать вещь библиотеки в габарит box (основание — центр низа в base), разворот yaw, наклон tilt. */
+  private placeLib(slot: string, base: V3, box: V3, yaw: number, tilt = 0): boolean {
+    const p = this.lib[slot];
+    if (!p) return false;
+    p.obj.visible = true;
+    p.obj.position.set(...base);
+    p.obj.rotation.set(tilt, yaw, 0);
+    const inner = p.obj.children[0];
+    inner.scale.set(box[0] / p.size[0], box[1] / p.size[1], box[2] / p.size[2]);
+    if (!p.obj.userData.inked) {
+      setInk(p.obj, slot === "desk" ? 0.004 : 0.0016);
+      p.obj.userData.inked = true;
+    }
+    return true;
+  }
+
   update(spec: PropsSpec | undefined, rig: Rig, t: number, _stream: any) {
     const s = spec || {};
     const ph = s.phone && rig.hands[s.phone.hand || "right"];
@@ -307,6 +411,7 @@ export class Props {
         this.phoneTex.needsUpdate = true;
       }
     }
+    for (const p of Object.values(this.lib)) p.obj.visible = false;
     this.desk.visible = this.apron.visible = !!s.desk;
     if (s.desk) {
       const w = s.desk.w ?? 1.6, d = s.desk.d ?? 0.7, th = 0.05;
@@ -314,15 +419,26 @@ export class Props {
       this.desk.position.set(s.desk.x ?? 0, s.desk.y - th / 2, s.desk.z + d / 2);
       this.apron.scale.set(w * 0.96, 0.62, 1);
       this.apron.position.set(s.desk.x ?? 0, s.desk.y - th - 0.31, s.desk.z + d - 0.06);
+      // Стол библиотеки: та же столешница (верх на y), ящики — к героине; панель-фартук остаётся (колени).
+      if (s.desk.model && this.placeLib("desk", [s.desk.x ?? 0, 0, s.desk.z + d / 2], [w, s.desk.y, d], Math.PI)) this.desk.visible = false;
     }
     this.keyboard.visible = !!s.keyboard;
     if (s.keyboard) {
       this.keyboard.position.set(...s.keyboard.pos);
       // Текстура верхней грани лежит рядом цифр к героине — разворот на 180°: пробел ближе к ней.
       this.keyboard.rotation.set(-0.04, (s.keyboard.yaw ?? 0) + Math.PI, 0);
+      // Клавиатура библиотеки — в тот же габарит (верх там же, где у нарисованной): перёд модели (+z) — к героине.
+      const [x, y, z] = s.keyboard.pos;
+      if (s.keyboard.model && this.placeLib("keyboard", [x, y - KB_BOX[1] / 2, z], KB_BOX, (s.keyboard.yaw ?? 0) + Math.PI, -0.04)) {
+        this.keyboard.visible = false;
+      }
     }
     this.mouse.visible = !!s.mouse;
-    if (s.mouse) this.mouse.position.set(...s.mouse.pos);
+    if (s.mouse) {
+      this.mouse.position.set(...s.mouse.pos);
+      const [x, y, z] = s.mouse.pos;
+      if (s.mouse.model && this.placeLib("mouse", [x, y - 0.015, z], MOUSE_BOX, Math.PI)) this.mouse.visible = false;
+    }
     this.chair.visible = !!s.chair;
     if (s.chair) {
       const w = s.chair.w ?? 0.62, h = s.chair.h ?? 0.95;

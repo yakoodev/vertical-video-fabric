@@ -23,6 +23,8 @@ import { arkitAt, browsAt, composeFace, talkAt, type ArkitTrack, type BrowKey, t
  */
 export interface Timeline extends PerfLayers {
   clips: Record<string, string>;
+  /** Ширина постановки кистей на клавиатуре (множитель, typing.ts setKeySpread): у крупных кистей — шире. */
+  keysSpread?: number;
   tracks: Track[];
   /** IK рук: пресет typing / rest / null (руку ведёт мокап); переход за dur. */
   arms?: { t: number; dur?: number; left?: string | null; right?: string | null }[];

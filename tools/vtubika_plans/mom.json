@@ -1,0 +1,356 @@
+{
+  "id": "mom",
+  "title": "Лёша, ужинать",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "will",
+    "paid_ok": true
+  },
+  "voices_extra": [
+    {
+      "id": "mom1",
+      "after": 13,
+      "dt": 0.2,
+      "text": "Лёша! Ужинать!",
+      "caption": "— Лёша! Ужинать!",
+      "color": "#ff9ad6",
+      "gain_db": -2.5,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "mom2",
+      "after": 16,
+      "dt": 0.2,
+      "text": "Ой, а это кто такой красивый?",
+      "caption": "— Ой, а это кто такой красивый?",
+      "color": "#ff9ad6",
+      "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    }
+  ],
+  "script": "серия 7, первый герой-парень: Лёша три года стримит с выключенной камерой (стесняется, бардак, мама заходит без стука); покупает на Витубике Live2D-модель Midori (3 890 ₽, кошачьи уши, микрофон, 9 выражений); на эфире модель улыбается вместе с ним, чат оживает; поворот — мама из коридора кричит «Лёша, ужинать!», микрофон всё слышит, чат хором «Лёша, иди ужинать»; мама заглядывает: «а это кто такой красивый?» — «Это я, мам»; теперь каждый эфир чат начинает с «Лёша, ужинать!». Крючок — одно огромное слово «СТЕСНЯЕШЬСЯ?» на первом кадре. Товар — настоящие скриншоты и кадры видео-превью со страницы vtubika.store; комната — 3D-пресет cozy_desk на моделях библиотеки (CC0), клавиатура и мышь — модели библиотеки. Промокод Free10 в концовке и одной фразой",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {"word": "Стесняешься?", "until": 1.6, "y": 0.36, "accent": "#5fe0b8"},
+  "vrm": {
+    "heroine": "lyosha",
+    "arkit": true,
+    "props_models": {"keyboard": "keyboard/mech_tkl_dark", "mouse": "mouse/black"}
+  },
+  "pronounce": {
+    "Free10": "фри десять",
+    "Midori": "Мидори"
+  },
+  "music": {
+    "file": "chill-keys.mp3",
+    "under_db": 7.0
+  },
+  "tail": 1.0,
+  "pace": {
+    "tempo_cap": 1.0,
+    "tempo": 1.0,
+    "lead": 0.2
+  },
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "duration": 3.6,
+    "music_fade": 4.0
+  },
+  "presets3d": {
+    "room": {"name": "cozy_desk"},
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": [
+      "bloom",
+      "dust_motes",
+      {"name": "depth_of_field", "amount": 2},
+      "film_grain"
+    ]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {"keyColor": "#e6f0ff", "keyPower": 2.0, "fill": "#5a6a9a", "fillPower": 0.85}
+  },
+  "site_shots": {
+    "dir": "D:/vvf-offload/vtubika/site/2026-11-12_ep7",
+    "catalog": {"file": "catalog_midori.png", "from": 0, "scroll": 160, "tap": [288, 520]},
+    "product": {"file": "product_midori.png", "scroll": 1020, "tap": [195, 1459], "button": [16, 1433, 358, 52]}
+  },
+  "screen": {
+    "uptime": 3600,
+    "title": "стратегии до утра · камера off",
+    "camBg": ["#10141c", "#06080c"],
+    "viewers": [{"t": 0.0, "value": 9, "label": "9 зрителей"}],
+    "chat": [
+      {"t": 0.0, "user": "kot_v_shkafu", "color": "#ffb07e", "text": "го ещё катку"},
+      {"t": 0.0, "user": "nochnoy_dozor", "color": "#9af0ff", "text": "лёха, а ты вообще кто"}
+    ],
+    "product": {
+      "base": "hero",
+      "faces": {
+        "hero": {"url": "/site/media/midori_hero/f_001.jpg", "x": 0.5, "y": 0.5,
+                 "seq": {"pattern": "/site/media/midori_hero/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12},
+        "smile": {"url": "/site/media/midori_smile/f_001.jpg", "x": 0.5, "y": 0.5,
+                  "seq": {"pattern": "/site/media/midori_smile/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12},
+        "blush": {"url": "/site/media/midori_blush/f_001.jpg", "x": 0.5, "y": 0.5,
+                  "seq": {"pattern": "/site/media/midori_blush/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12},
+        "angry": {"url": "/site/media/midori_angry/f_001.jpg", "x": 0.5, "y": 0.5,
+                  "seq": {"pattern": "/site/media/midori_angry/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12},
+        "wink": {"url": "/site/media/midori_wink/f_001.jpg", "x": 0.5, "y": 0.5,
+                 "seq": {"pattern": "/site/media/midori_wink/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12},
+        "calm": {"url": "/site/media/midori_calm/f_001.jpg", "x": 0.5, "y": 0.5,
+                 "seq": {"pattern": "/site/media/midori_calm/f_{:03d}.jpg", "from": 1, "count": 36}, "fps": 12}
+      }
+    }
+  },
+  "highlight": {
+    "камеру": "#5fe0b8",
+    "чёрный": "#9aa4b8",
+    "квадрат.": "#9aa4b8",
+    "существуешь?»": "#ffd35c",
+    "мама,": "#ff9ad6",
+    "стука.": "#ff9ad6",
+    "Витубику.": "#6fd3ff",
+    "Midori:": "#6fd3ff",
+    "микрофоном.": "#6fd3ff",
+    "Девять": "#2ee86f",
+    "выражений,": "#2ee86f",
+    "Три": "#2ee86f",
+    "тысячи": "#2ee86f",
+    "восемьсот": "#2ee86f",
+    "девяносто": "#2ee86f",
+    "рублей.": "#2ee86f",
+    "минуты.": "#9af0ff",
+    "он.": "#5fe0b8",
+    "улыбается": "#ffd35c",
+    "лицо!»": "#ffd35c",
+    "коридора:": "#ff9ad6",
+    "слышал.": "#ff3b4e",
+    "ужинать».": "#ff9ad6",
+    "мама": "#ff9ad6",
+    "мам».": "#ff9ad6",
+    "ужинать!»": "#ff9ad6",
+    "Free10": "#ffd35c",
+    "десять": "#2ee86f",
+    "процентов.": "#2ee86f"
+  },
+  "sentences": [
+    {
+      "text": "Стесняешься включать камеру на стриме?",
+      "pause_after": 0.3,
+      "show": ["кадр 0: огромное «СТЕСНЯЕШЬСЯ?» поверх крупного плана Лёши — он прячет взгляд, за ним вечерняя комната"],
+      "shots": [{"cam": "face_close", "push": 0.12}],
+      "do": [
+        {"screen": "stream", "dt": -0.25},
+        {"avatar": "nocam", "dt": -0.25},
+        {"act": "Sit_Loop"},
+        {"face": "tired"}
+      ]
+    },
+    {
+      "text": "Ты Лёша, и три года твоя камера — чёрный квадрат.",
+      "pause_after": 0.3,
+      "show": ["эфир крупно: вместо вебки чёрный квадрат «камера выключена», 9 зрителей"],
+      "shots": [{"cam": "monitor", "zoom": 1.06, "push": 0.1,
+                 "flow": {"kind": "reveal_from", "shape": "rect", "dur": 0.7, "y": 0.42, "w": 360, "h": 220, "radius": 36,
+                          "edge": "#5fe0b8", "edgeWidth": 8}}],
+      "do": [{"face": "neutral"}]
+    },
+    {
+      "text": "Чат спрашивает: «Ты вообще существуешь?»",
+      "pause_after": 0.35,
+      "show": ["чат крупно: pelmen_404 «ты вообще существуешь?»"],
+      "shots": [{"cam": "chat", "push": 0.12}],
+      "do": [
+        {"at": "Чат", "dt": -0.1, "chat": {"user": "pelmen_404", "color": "#ffd35c", "text": "ты вообще существуешь?", "big": true}},
+        {"at": "существуешь", "dt": 0.25, "chat": {"user": "lena.lena", "color": "#ff8ad8", "text": "покажись уже"}}
+      ]
+    },
+    {
+      "text": "А включать страшно: за спиной бардак, и мама заходит без стука.",
+      "pause_after": 0.35,
+      "show": ["Лёша морщится и отводит глаза, средний план"],
+      "shots": [{"cam": "face_left", "push": 0.1}],
+      "do": [
+        {"face": "frown"},
+        {"at": "мама", "face": "wide"},
+        {"at": "стука", "face": "tired", "dt": 0.2}
+      ],
+      "vrm": [{"at": "мама", "look": [-1.3, 1.45, 0.6], "dur": 1.6}]
+    },
+    {
+      "text": "Однажды ночью ты открываешь Витубику.",
+      "pause_after": 0.3,
+      "show": ["телефон: настоящий сайт vtubika.store, поиск «Midori», карточка 3 890 ₽"],
+      "shots": [{"cam": "insert", "flow": {"kind": "push_slide", "direction": "up", "dur": 0.55, "dip": 0.0}}],
+      "do": [
+        {"phone": {"screen": "shop",
+                   "store": {"title": "Live2D модель витубера Midori", "price": "3 890 ₽", "preview": "vrm", "kind": "Live2D",
+                             "delivered": "Модель пришла"},
+                   "message": {"file": "midori_live2d.zip", "size": ""},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35},
+         "span": 4, "dt": -0.15, "dt_end": 1.0},
+        {"act": "Sit_Loop"},
+        {"face": "neutral"},
+        {"at": "Витубику", "face": "happy"}
+      ]
+    },
+    {
+      "text": "Live2D-модель Midori: парень с кошачьими ушами и микрофоном.",
+      "say": "Live2D модель Midori: парень с кошачьими ушами и микрофоном.",
+      "pause_after": 0.3,
+      "show": ["открывается настоящая страница товара Midori"],
+      "do": [{"at": "Midori", "site_step": "product", "dt": -0.3}]
+    },
+    {
+      "text": "Девять выражений, очки и даже чиби-версия.",
+      "pause_after": 0.3,
+      "show": ["страница листается к цене и кнопке"]
+    },
+    {
+      "text": "Три тысячи восемьсот девяносто рублей.",
+      "pause_after": 0.4,
+      "show": ["касание «Оформить сразу», «Оплачено»"],
+      "do": [
+        {"at": "рублей", "site_step": "tap", "dt": -0.3},
+        {"at": "рублей", "paid": true, "dt": 0.2}
+      ]
+    },
+    {
+      "text": "Файлы приходят примерно через две минуты.",
+      "pause_after": 0.6,
+      "show": ["«Модель пришла» в стиле сайта"],
+      "do": [
+        {"at": "end", "dt": 0.2, "site_step": "delivered"},
+        {"at": "end", "face": "happy", "dt": 0.3}
+      ]
+    },
+    {
+      "text": "Вечером эфир. Вместо чёрного квадрата — он.",
+      "pause_after": 0.35,
+      "show": ["средний план, над Лёшей карточка эфира: живая Midori из видео-превью товара"],
+      "shots": [{"cam": "two", "push": 0.08, "glide": 0.9}],
+      "do": [
+        {"avatar": "product", "dt": -0.3},
+        {"title": "стратегии до утра · камера on", "dt": -0.3},
+        {"act": "Sit_Loop"},
+        {"face": "neutral"},
+        {"at": "он", "face": "happy"},
+        {"screencard": {"x": 540, "y": 360, "w": 760}, "dt": -0.1, "span": 0, "dt_end": 0.25}
+      ]
+    },
+    {
+      "text": "Ты говоришь «всем привет» — и он улыбается вместе с тобой.",
+      "pause_after": 0.35,
+      "show": ["Лёша улыбается и говорит в микрофон", "эфир крупно: Midori улыбается"],
+      "shots": [
+        {"cam": "smile", "push": 0.1},
+        {"cam": "monitor", "zoom": 1.06, "at": "он", "dt": -0.15, "push": 0.1,
+         "flow": {"kind": "reveal_from", "shape": "circle", "dur": 0.6, "y": 0.42, "w": 160, "h": 160, "edge": "#5fe0b8", "edgeWidth": 10}}
+      ],
+      "do": [
+        {"face": "happy"},
+        {"at": "всем", "face": "happy", "talk": true, "dt": -0.05},
+        {"at": "и", "face": "happy"},
+        {"at": "улыбается", "product_face": "smile", "dt": -0.2}
+      ],
+      "vrm": [{"at": "всем", "look": "webcam", "dur": 1.6, "dt": -0.1}]
+    },
+    {
+      "text": "Чат оживает: «ОГО, у квадрата есть лицо!»",
+      "pause_after": 0.3,
+      "show": ["чат крупно: pelmen_404 «ОГО У КВАДРАТА ЕСТЬ ЛИЦО», зрителей больше"],
+      "shots": [{"cam": "chat", "push": 0.14, "flow": {"kind": "push_slide", "direction": "left", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"at": "Чат", "dt": -0.1, "chat": {"user": "pelmen_404", "color": "#ffd35c", "text": "ОГО У КВАДРАТА ЕСТЬ ЛИЦО", "big": true}},
+        {"at": "есть", "dt": 0.1, "chat": {"user": "kot_v_shkafu", "color": "#ffb07e", "text": "ушки!!"}},
+        {"at": "лицо", "dt": 0.3, "viewers": 31, "label": "31 зритель"},
+        {"at": "Чат", "product_face": "hero", "dt": -0.2}
+      ]
+    },
+    {
+      "text": "И тут из коридора:",
+      "pause_after": 2.05,
+      "show": ["крупно Лёша, улыбка", "голос мамы из коридора: «Лёша! Ужинать!» — Лёша замирает"],
+      "shots": [{"cam": "face_close", "push": 0.14}],
+      "do": [
+        {"face": "happy"},
+        {"at": "end", "face": "wide", "dt": 0.25}
+      ],
+      "vrm": [{"at": "end", "look": [-1.3, 1.45, 0.6], "dur": 1.4, "dt": 0.35}]
+    },
+    {
+      "text": "Микрофон, конечно, всё слышал.",
+      "pause_after": 0.3,
+      "show": ["эфир крупно: Midori краснеет, в чате «ЛЁША??»"],
+      "shots": [{"cam": "monitor", "zoom": 1.06, "push": 0.12}],
+      "do": [
+        {"at": "Микрофон", "product_face": "blush", "dt": -0.3},
+        {"at": "Микрофон", "dt": 0.1, "chat": {"user": "nochnoy_dozor", "color": "#9af0ff", "text": "ЛЁША??"}},
+        {"at": "слышал", "dt": 0.1, "chat": {"user": "lena.lena", "color": "#ff8ad8", "text": "его зовут лёша 😭"}}
+      ]
+    },
+    {
+      "text": "Чат хором пишет: «Лёша, иди ужинать».",
+      "pause_after": 0.35,
+      "show": ["чат крупно: все пишут «лёша иди ужинать»"],
+      "shots": [{"cam": "chat", "push": 0.14}],
+      "do": [
+        {"at": "Чат", "dt": -0.1, "chat": {"user": "kot_v_shkafu", "color": "#ffb07e", "text": "лёша иди ужинать"}},
+        {"at": "хором", "dt": 0.0, "chat": {"user": "lena.lena", "color": "#ff8ad8", "text": "лёша иди ужинать"}},
+        {"at": "пишет", "dt": 0.0, "chat": {"user": "nochnoy_dozor", "color": "#9af0ff", "text": "лёша иди ужинать"}},
+        {"at": "Лёша,", "dt": 0.0, "chat": {"user": "pelmen_404", "color": "#ffd35c", "text": "ЛЁША УЖИНАТЬ", "big": true}}
+      ]
+    },
+    {
+      "text": "А мама уже заглядывает в комнату и видит экран.",
+      "pause_after": 2.9,
+      "show": ["Лёша оборачивается к двери, замер", "голос мамы: «Ой, а это кто такой красивый?»"],
+      "shots": [{"cam": "face_left", "push": 0.12}],
+      "do": [
+        {"face": "wide"},
+        {"at": "экран", "face": "frown", "dt": 0.3}
+      ],
+      "vrm": [{"at": "мама", "look": [-1.3, 1.45, 0.6], "dur": 4.0, "dt": -0.1}]
+    },
+    {
+      "text": "«Это я, мам».",
+      "pause_after": 0.5,
+      "show": ["Лёша смущённо улыбается и отвечает", "эфир: Midori подмигивает"],
+      "shots": [
+        {"cam": "smile", "push": 0.1},
+        {"cam": "monitor", "zoom": 1.06, "at": "end", "dt": 0.15, "push": 0.1,
+         "flow": {"kind": "reveal_from", "shape": "circle", "dur": 0.6, "y": 0.42, "w": 160, "h": 160, "edge": "#ff9ad6", "edgeWidth": 10}}
+      ],
+      "do": [
+        {"face": "happy", "talk": true, "dt": -0.1},
+        {"at": "end", "face": "happy", "dt": 0.05},
+        {"at": "end", "product_face": "wink", "dt": 0.1}
+      ]
+    },
+    {
+      "text": "Теперь каждый эфир чат начинает одинаково: «Лёша, ужинать!»",
+      "pause_after": 0.35,
+      "show": ["средний план, над Лёшей карточка эфира с Midori, в чате «лёша ужинать»"],
+      "shots": [{"cam": "two", "push": 0.08, "glide": 0.8}],
+      "do": [
+        {"face": "laugh"},
+        {"screencard": {"x": 540, "y": 360, "w": 760}, "dt": -0.1, "span": 1, "dt_end": 0.4},
+        {"at": "Теперь", "product_face": "smile", "dt": -0.2},
+        {"at": "одинаково", "chat": {"user": "pelmen_404", "color": "#ffd35c", "text": "ЛЁША, УЖИНАТЬ!", "big": true}},
+        {"at": "одинаково", "viewers": 46, "label": "46 зрителей", "dt": 0.3}
+      ]
+    },
+    {
+      "text": "Кстати, промокод Free10 на Витубике даёт скидку десять процентов.",
+      "pause_after": 0.4,
+      "show": ["Лёша улыбается, над ним эфир с моделью"],
+      "do": [
+        {"face": "happy"},
+        {"at": "Кстати", "product_face": "hero"}
+      ]
+    }
+  ]
+}
