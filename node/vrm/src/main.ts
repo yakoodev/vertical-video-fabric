@@ -34,6 +34,7 @@ import { AvatarStage, type AvatarSpec } from "./avatar.ts";
 import { drawCats, type CatSpec } from "./cat.ts";
 import type { AccessorySpec } from "./props.ts";
 import { camPos, libraryNames, tuneSprings, type SpringTune } from "./stage.ts";
+import { gltfMorphNames, setupFace, type FaceCaps } from "./face.ts";
 
 export interface CamSpec {
   /** Камера и точка, куда смотрит (пространство модели), угол обзора по вертикали (длинный объектив — 12–20°). */
@@ -115,6 +116,8 @@ let lumaC: HTMLCanvasElement;
 let overlays: Overlays | null = null;
 let stage: AvatarStage | null = null;
 let hands: HandCheck | null = null;
+/** Ручки лица модели (face.ts): части бровей, глаз и рта — для лица по слоям (facemix.ts). */
+let faceCaps: FaceCaps = { handles: [], cleared: [], arkit: false };
 const warnings: string[] = [];
 
 /**
@@ -191,7 +194,7 @@ const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0,
   chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "" } };
 
 function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
-  if (spec.timeline) return sequencePose(spec.timeline, clips, time, { cam: camPos(shot, local), leg: rig.legLength });
+  if (spec.timeline) return sequencePose(spec.timeline, clips, time, { cam: camPos(shot, local), leg: rig.legLength, face: faceCaps });
   if (spec.poses?.length) {
     const p = poseAt(rig, spec.poses, time);
     const mouth = speechMouth(spec.speech, time, spec.mouthEnv);
@@ -342,6 +345,8 @@ async function load(s: Spec) {
   applyLook(vrm, s.look);
   scene.add(vrm.scene);
   rig = new Rig(vrm);
+  // Лицо по слоям: свои ручки из частичных морфов; перекрытия VRM 1.0 сняты (timeline.face: false — как раньше).
+  faceCaps = setupFace(vrm, { clear: s.timeline?.face !== false, names: gltfMorphNames(gltf.parser) });
   if (s.timeline) {
     // Дорожки пресетов игры (wave, laugh, stretch_yawn…) ссылаются на клипы CMU по имени — их не надо перечислять в clips.
     const map: Record<string, string> = { ...(s.timeline.clips || {}) };
@@ -410,7 +415,7 @@ async function preparePlate(t: number) {
     settle(t, shot, local);
     // hands — куда целилась IK (запястье), resolved — цели и полюса рук: сверка «цель ↔ кость» при отладке поз.
     return { t, arms: rig.info, hands: rig.hands, resolved: rig.resolved, bones: rig.dump(),
-      expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName) };
+      expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName), face: faceCaps };
   },
   warnings: () => warnings,
   /** Отладка проверки присутствия: потерять контекст WebGL, как при сбое GPU (render() дальше сообщит lost). */
