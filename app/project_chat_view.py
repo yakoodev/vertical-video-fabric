@@ -117,7 +117,15 @@ def thread_view(store: Any, thread_id: int, after: int = 0) -> dict:
         clip = {"id": clip_id, "title": _clip_title(store, clip_id), "source_id": plan.get("source_id")}
     if clip and not after:  # старая переписка клипа — перед новыми репликами, только для чтения
         messages = [*legacy_clip_messages(store, clip["id"]), *messages]
-    return {"thread": {k: v for k, v in thread.items()}, "project": project, "video": video, "clip": clip,
+    # Траты Gemini этой переписки: «потрачено N ₽» в шапке и под каждым ответом (app/gemini_usage.py).
+    from app.gemini_usage import session_summary
+
+    usage = session_summary(store, f"chat:{int(thread_id)}")
+    by_message = usage.pop("by_message", {})
+    for m in messages:
+        if m.get("role") == "assistant" and str(m.get("id")) in by_message:
+            m["usage"] = by_message[str(m["id"])]
+    return {"usage": usage, "thread": {k: v for k, v in thread.items()}, "project": project, "video": video, "clip": clip,
             "messages": _decorate(store, messages), "running": run is not None,
             "live": run.snapshot() if run else None, "summary": thread.get("summary") or "",
             "model": thread.get("model") or settings.gemini_agent_model, "ai": ai_status(),

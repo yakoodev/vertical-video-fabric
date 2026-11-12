@@ -333,6 +333,12 @@ class GeminiTTS:
                                                             "totalTokenCount") if k in usage})
 
     def _generate(self, payload: dict) -> dict:
+        """Запрос озвучки; каждый — строка учёта трат (``app/gemini_usage.py``, purpose ``tts``)."""
+        from app import gemini_usage
+
+        return gemini_usage.tracked(self.model, lambda: self._generate_once(payload), method="tts", purpose="tts")
+
+    def _generate_once(self, payload: dict) -> dict:
         import httpx
 
         from app.ai import gemini as G

@@ -48,6 +48,7 @@ from typing import Any, Callable
 from app import agent_settings as S
 from app import autopilot as A
 from app import chat_tools as CT
+from app import gemini_usage
 from app import project_knowledge as K
 from app import projects as P
 from app.agent_tools import ToolContext
@@ -377,6 +378,23 @@ def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat
     Возвращает ``{text, steps, learned, decided, ai, model, changes}``."""
     if not isinstance(thread, dict):
         thread = get_thread(store, int(thread))
+    with usage_scope(thread, reply_id):
+        return _run_turn(store, thread, message, actor=actor, message_id=message_id, reply_id=reply_id,
+                         history=history, client=client, on_step=on_step, run=run, max_rounds=max_rounds,
+                         model=model, max_steps=max_steps)
+
+
+def usage_scope(thread: dict, reply_id: int | None = None) -> Any:
+    """Контекст учёта трат Gemini для хода переписки: сессия ``chat:<id>``, ответ, проект/видео/клип."""
+    return gemini_usage.scope("clip_chat" if thread.get("clip_plan_id") else "agent_chat",
+                              session=f"chat:{int(thread['id'])}", message_id=reply_id,
+                              project_id=thread.get("project_id"), source_id=thread.get("source_id"),
+                              clip_id=thread.get("clip_plan_id"))
+
+
+def _run_turn(store: Any, thread: dict, message: str, *, actor: str, message_id: int | None, reply_id: int | None,
+              history: list[dict] | None, client: Any, on_step: Callable[[list], None] | None, run: _Run | None,
+              max_rounds: int, model: str | None, max_steps: int | None) -> dict:
     if thread.get("clip_plan_id"):
         from app.clip_chat import run_clip_turn
 
@@ -486,7 +504,7 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
         _RUNS[int(thread_id)] = run
         prompt = (text + ("\n" + note if note else "")).strip()
 
-        def work() -> None:
+        def _work() -> None:
             def on_step(steps: list) -> None:
                 update_message(store, reply_id, steps=steps)
 
@@ -527,6 +545,11 @@ def send_to_thread(store: Any, thread_id: int, text: str, *, origin: str = "ui",
                     on_done(reply)
                 except Exception as exc:  # noqa: BLE001
                     _log.info("chat on_done failed: %s", exc)
+
+        def work() -> None:
+            # Траты Gemini за ход (и резюме после него) — на эту переписку и этот ответ (app/gemini_usage.py).
+            with usage_scope(thread, reply_id):
+                _work()
 
         thread_obj = threading.Thread(target=work, name=f"chat-{thread_id}", daemon=True)
         run.thread = thread_obj
@@ -585,8 +608,9 @@ def decide_confirmation(store: Any, confirmation_id: int, approve: bool, actor: 
 
         return ToolContext(store=store, clip_plan_id=clip_id, on_first_change=first_change)
 
-    result, ok, _clip = CT.run(store, conf["tool"], conf["args"], project_id=thread.get("project_id"),
-                               clip_ctx=clip_ctx)
+    with usage_scope(thread, conf["message_id"]):
+        result, ok, _clip = CT.run(store, conf["tool"], conf["args"], project_id=thread.get("project_id"),
+                                   clip_ctx=clip_ctx)
     status = "done" if ok else "failed"
     store.db.execute("UPDATE chat_confirmations SET status = ?, result_json = ?, decided_at = CURRENT_TIMESTAMP "
                      "WHERE id = ?", (status, _dumps(CT.result_preview(result)), int(confirmation_id)))

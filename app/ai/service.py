@@ -74,6 +74,22 @@ class VideoAnalysisService:
         use_transcript: bool | None = None,
         output_format: str | None = None,
     ) -> dict:
+        """Анализ источника; траты Gemini за него — purpose ``analysis``, сессия ``analysis:<id>``."""
+        from app import gemini_usage
+
+        with gemini_usage.scope("analysis", source_id=source_id):
+            return self._run_analysis(source_id, provider, model, prompt, preprocessing, use_transcript, output_format)
+
+    def _run_analysis(
+        self,
+        source_id: int,
+        provider: str | None = None,
+        model: str | None = None,
+        prompt: str | None = None,
+        preprocessing: dict | None = None,
+        use_transcript: bool | None = None,
+        output_format: str | None = None,
+    ) -> dict:
         """``output_format`` — формат будущих клипов (app/formats.py): не задан — настройка
         приложения ``analysis_format``, нет и её — 9:16 (прежний запрос модели, слово в слово).
         Другой формат дописывает модели блок OUTPUT FORMAT (не шортс у 16:9, длина до
@@ -143,6 +159,9 @@ class VideoAnalysisService:
         self.store.update_source(source_id, status="analyzing", error="")
         self.store.mark_ai_analysis_running(analysis["id"])
         analysis_id = analysis["id"]
+        from app import gemini_usage
+
+        gemini_usage.annotate(session=f"analysis:{analysis_id}")
 
         def should_cancel() -> bool:
             return self.store.ai_analysis_cancel_requested(analysis_id)

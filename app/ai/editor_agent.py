@@ -338,8 +338,12 @@ def run_agent(
         contents[-2]["parts"][0]["text"] += "\n\n(ответа не было)"
         contents.insert(-1, {"role": "model", "parts": [{"text": "(ответ прерван)"}]})
     policy = ClipPolicy(store, clip_plan_id, message, ctx, hooks)
-    text, state = run_loop(policy, gemini, used_model, contents, limit=limit, should_cancel=should_cancel,
-                           on_step=on_step, run=run)
+    from app import gemini_usage
+
+    # Траты: из чата клипа — на его переписку (scope снаружи), из «ИИ-монтажа» без чата — montage_agent.
+    with gemini_usage.scope(default_purpose="montage_agent", clip_id=clip_plan_id):
+        text, state = run_loop(policy, gemini, used_model, contents, limit=limit, should_cancel=should_cancel,
+                               on_step=on_step, run=run)
     return {"text": text, "steps": state.steps, "changed": ctx.changed, "model": used_model, "rounds": state.rounds}
 
 

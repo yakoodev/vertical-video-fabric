@@ -645,6 +645,10 @@ class Database:
             from app.webpages import ensure_web_pages_schema
 
             ensure_web_pages_schema(conn)
+            # Траты Gemini: каждый запрос к модели с токенами и ценой (app/gemini_usage.py).
+            from app.gemini_usage import ensure_schema as ensure_gemini_usage_schema
+
+            ensure_gemini_usage_schema(conn)
             # Статистика опубликованных клипов (app/platform_stats.py): снимки чисел
             # площадки по времени — обратная связь «что заходит» для монтажа.
             # error — снимок не удался (причина для UI), числа тогда NULL.

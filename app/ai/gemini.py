@@ -181,6 +181,12 @@ class GeminiClient:
             current = self.get_file(str(current["name"]))
 
     def generate_content(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Ответ модели целиком. Каждый запрос — строка учёта трат (``app/gemini_usage.py``)."""
+        from app import gemini_usage
+
+        return gemini_usage.tracked(model, lambda: self._generate_content(model, payload))
+
+    def _generate_content(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured")
         response = _request_with_retries(
@@ -196,7 +202,13 @@ class GeminiClient:
     def stream_generate_content(self, model: str, payload: dict[str, Any]):
         """То же, что ``generate_content``, но ответ кусками по мере генерации
         (``:streamGenerateContent?alt=sse``): генератор ответов-чанков того же вида.
-        Сетевые сбои до первого чанка — исключение (вызывающий может повторить без потока)."""
+        Сетевые сбои до первого чанка — исключение (вызывающий может повторить без потока).
+        Учёт трат — по итоговому ``usageMetadata`` потока, когда он кончился или брошен."""
+        from app import gemini_usage
+
+        return gemini_usage.tracked_stream(model, self._stream_generate_content(model, payload))
+
+    def _stream_generate_content(self, model: str, payload: dict[str, Any]):
         if not self.api_key:
             raise RuntimeError("Gemini API key is not configured")
         kwargs = _with_proxy({
