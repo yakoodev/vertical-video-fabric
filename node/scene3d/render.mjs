@@ -283,6 +283,30 @@ export function chromeArgs(profile, gl) {
   return args;
 }
 
+/**
+ * Шум stderr headless Chromium в контейнере: dbus/systemd, шрифты, звук, железо — к сцене отношения не имеет и
+ * в тексте ошибки только прячет причину (агенты видели dbus вместо «нет клипа мокапа …»).
+ */
+const CHROME_NOISE = /dbus|org\.freedesktop|bus\.cc|object_proxy|Fontconfig|alsa|pulse|udev|libva|vaapi|bluez|floss|gtk|crashpad|sandbox|oom_|ozone|xdg|inotify|gcm|update_notifier|DevTools listening|^\s*$/i;
+
+/** Значимые строки stderr браузера (без шума); пусто — нечего сказать. */
+export function chromeErrorTail(stderr, max = 2) {
+  const lines = String(stderr || "").split("\n").map((l) => l.trim()).filter((l) => l && !CHROME_NOISE.test(l));
+  return lines.filter((l) => /error|fail|fatal|crash/i.test(l)).slice(-max);
+}
+
+/**
+ * Исключение страницы → одна строка: сообщение (первая строка description) и первый кадр стека из бандла.
+ * «Error: нет клипа мокапа cmu/clips/sit.json (404) (в scene3d.js:5041)» вместо стека, обрезанного посередине.
+ */
+export function pageErrorText(description) {
+  const lines = String(description ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+  const msg = lines.find((l) => !l.startsWith("at ")) || lines[0] || "неизвестная ошибка страницы";
+  const frame = lines.find((l) => l.startsWith("at "));
+  const where = frame && frame.match(/\/([^/()\s]+\.js:\d+)(?::\d+)?\)?$/);
+  return where ? `${msg} (в ${where[1]})` : msg;
+}
+
 /** Режим постобработки к спеке (копия): lite — без AO и DOF, off — без постобработки. */
 export function applyPostMode(spec, mode) {
   const post = spec?.environment?.post;
@@ -350,7 +374,7 @@ export async function openScene(opts, spec, log = () => {}) {
       if (consoleLines.length > 50) consoleLines.shift();
     });
     cdp.on("Runtime.exceptionThrown", (p, sid) => {
-      if (sid === sessionId) consoleLines.push(`exception: ${p.exceptionDetails?.exception?.description || p.exceptionDetails?.text}`.slice(0, 600));
+      if (sid === sessionId) consoleLines.push(`exception: ${pageErrorText(p.exceptionDetails?.exception?.description || p.exceptionDetails?.text)}`.slice(0, 600));
     });
     await s("Fetch.enable", { patterns: [{ urlPattern: "*" }] });
     await s("Page.enable");
@@ -362,8 +386,7 @@ export async function openScene(opts, spec, log = () => {}) {
     const evaluate = async (expression) => {
       const r = await s("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
       if (r.exceptionDetails) {
-        const msg = r.exceptionDetails.exception?.description || r.exceptionDetails.text;
-        throw new Error(`сцена: ${String(msg).split("\n").slice(0, 3).join(" ")}`);
+        throw new Error(`сцена: ${pageErrorText(r.exceptionDetails.exception?.description || r.exceptionDetails.text)}`);
       }
       return r.result?.value;
     };
@@ -391,8 +414,11 @@ export async function openScene(opts, spec, log = () => {}) {
     };
   } catch (err) {
     await close();
-    const tail = chromeErr && /error|fail/i.test(chromeErr) ? ` (браузер: ${chromeErr.trim().split("\n").slice(-2).join(" ")})` : "";
-    throw new Error(`${err.message}${consoleLines.length ? ` [консоль: ${consoleLines.slice(-4).join(" | ")}]` : ""}${tail}`);
+    // Сначала причина (сообщение страницы), потом консоль и только значимые строки браузера — без dbus и прочего шума.
+    const browser = chromeErrorTail(chromeErr);
+    const tail = browser.length ? ` (браузер: ${browser.join(" ").slice(0, 300)})` : "";
+    const cons = consoleLines.filter((l) => !err.message.includes(l.replace(/^exception: /, ""))).slice(-3);
+    throw new Error(`${err.message}${cons.length ? ` [консоль: ${cons.join(" | ").slice(0, 400)}]` : ""}${tail}`);
   }
 }
 

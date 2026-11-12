@@ -1,0 +1,13 @@
+CMU Graphics Lab Motion Capture Database, http://mocap.cs.cmu.edu (downloaded 2026-11-08, no login)
+Terms (site home + FAQ, see LICENSE-CMU.txt): free for all uses; may include in commercially-sold products; may not resell the data itself, even converted; data may be copied, modified, redistributed.
+
+clips/stretch_yawn.json  <- 141_13 "Stretch and Yawn" (subject 141, female)
+clips/wave.json          <- 141_16 "Wave Hello"
+clips/waiting.json       <- 141_20 "Waiting"
+clips/sit.json           <- 114_05 "Sitting in chair"
+clips/typing.json        <- 79_85 "typing on a laptop"
+clips/laugh.json         <- 79_70 "laughing"
+clips/comb.json          <- 79_84 "combing hair"
+clips/chin.json          <- 13_04 "sit on stepstool, chin in hand"
+Converter: tools/cmu_to_vrm.py (vertical-video-fabric)
+Repo copy (node/vrm/assets/cmu): app/s3d_render.seed_cmu_clips copies missing clips into the service VRM pack (SERIES3D_VRM_DIR/cmu/clips) before a 3D series render.

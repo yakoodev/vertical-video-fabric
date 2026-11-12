@@ -8,7 +8,8 @@
    ``awaiting_approval`` с карточкой владельцу (сумма в ₽), дальше — только после «Разрешить».
 3. ``render`` → в очереди тяжёлых задач и под замком Chromium (``app/browser_lock.browser_slot``, одно за раз):
    дорожка голоса, слова (Whisper), огибающая рта, спека VRM (``app/s3d_vrm.compile_vrm``), рендер
-   ``node/scene3d/render.mjs`` с бандлом ``node/vrm/dist/vrm.js``, проверки касаний ``node/vrm/contact.mjs``, лист
+   ``node/scene3d/render.mjs`` с бандлом ``node/vrm/dist/vrm.js`` (до запуска — пак VRM: недостающие клипы CMU из
+   ``node/vrm/assets/cmu``, модель на месте — ``ensure_vrm_packs``), проверки касаний ``node/vrm/contact.mjs``, лист
    кадров. Проверки (``checks``) — список {id, label, ok, detail}: пустой замер — провал, а не «всё хорошо».
    Пустые проверки или героини нет в кадре — ``failed`` (клип не собирается); нарушения касаний — клип есть, но в
    карточке серии видно, что не так.
@@ -23,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -80,6 +82,94 @@ def _gl() -> str:
     return os.environ.get("SCENE3D_GL", "swiftshader")
 
 
+# Клипы мокапа CMU, на которые ссылается спека VRM (``vtubika_vrm.to_vrm_spec``: sit/typing/laugh; пресеты игры —
+# wave, laugh…; список совпадает с CMU_CLIPS в node/vrm/src/main.ts). Лежат в репозитории (node/vrm/assets/cmu,
+# лицензия CMU — LICENSE-CMU.txt) и докладываются в пак VRM сервиса: без них страница падает на первом же клипе
+# («нет клипа мокапа cmu/clips/sit.json (404)»), так в образе не рисовалась ни одна серия.
+CMU_SOURCE = VRM_DIR / "assets" / "cmu"
+CMU_CLIPS = ("wave", "laugh", "stretch_yawn", "waiting", "chin", "typing", "comb", "sit")
+
+
+def seed_cmu_clips(packs: Path) -> list[str]:
+    """Недостающие клипы CMU из репозитория → ``<packs>/cmu/clips`` (свои файлы пака не трогаем). Что положили."""
+    src = CMU_SOURCE / "clips"
+    if not src.is_dir():
+        return []
+    dest = packs / "cmu" / "clips"
+    added: list[str] = []
+    for f in sorted(src.glob("*.json")):
+        target = dest / f.name
+        if target.is_file():
+            continue
+        try:
+            dest.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".json.part")
+            shutil.copyfile(f, tmp)
+            os.replace(tmp, target)
+            added.append(f"cmu/clips/{f.name}")
+        except OSError as exc:  # пак только для чтения — ниже скажем, какого файла нет
+            _log.warning("series3d: не положил %s в %s: %s", f.name, dest, exc)
+            break
+    lic = CMU_SOURCE / "LICENSE-CMU.txt"
+    if added and lic.is_file() and not (packs / "cmu" / lic.name).is_file():
+        try:
+            shutil.copyfile(lic, packs / "cmu" / lic.name)
+        except OSError:
+            pass
+    return added
+
+
+def pack_files(spec: dict) -> list[str]:
+    """Файлы пака VRM, которые страница запросит при load (как в node/vrm/src/main.ts): модель, клипы мокапа."""
+    need: list[str] = [str(spec["model"])] if spec.get("model") else []
+    tl = spec.get("timeline") or {}
+    clips = dict(tl.get("clips") or {})
+    names = [tr.get("clip") for tr in tl.get("tracks") or []] + [a.get("clip") for a in tl.get("actions") or []]
+    if tl.get("rootZero"):
+        names.append(tl["rootZero"])
+    for n in names:
+        if n and n not in clips:
+            clips[n] = f"cmu/clips/{n}.json" if n in CMU_CLIPS else f"anim/{n}.json"
+    need += [str(v) for v in clips.values()]
+    return list(dict.fromkeys(need))
+
+
+def ensure_vrm_packs(spec: dict) -> Path:
+    """Пак VRM готов к рендеру спеки: клипы CMU доложены, все нужные файлы на месте — иначе понятный отказ
+    до запуска Chromium (а не 404 посреди стека бандла)."""
+    packs = vrm_dir()
+    added = seed_cmu_clips(packs)
+    if added:
+        _log.info("series3d: в пак VRM %s доложены клипы CMU: %s", packs, ", ".join(added))
+    missing = [rel for rel in pack_files(spec) if not (packs / rel).is_file()]
+    if missing:
+        raise RenderFailed(f"в паке VRM {packs} нет файлов: {', '.join(missing[:8])}"
+                           + (f" и ещё {len(missing) - 8}" if len(missing) > 8 else "")
+                           + " (модели VRM кладутся в папку пака, клипы anim/ — app/animlib.sync, SERIES3D_VRM_DIR)")
+    return packs
+
+
+# Шум stderr Chromium в контейнере (dbus, шрифты, звук) — к сцене не относится и прятал причину провала.
+_NOISE = ("dbus", "org.freedesktop", "bus.cc", "object_proxy", "fontconfig", "alsa", "udev", "libva", "vaapi",
+          "bluez", "floss", "gtk", "crashpad", "devtools listening")
+
+
+def render_error(stderr: str, limit: int = 700) -> str:
+    """stderr render.mjs → причина для агента: строка «scene3d: …» (первая значимая ошибка JS), без стека и шума
+    браузера; обрезка с конца, а не с начала (раньше [-1200:] резал как раз сообщение)."""
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    main = next((ln for ln in reversed(lines) if ln.startswith("scene3d:")), None)
+    lines = [ln for ln in lines if not any(n in ln.lower() for n in _NOISE)]
+    text = main or (lines[-1] if lines else "")
+    text = text.removeprefix("scene3d:").strip()
+    # Хвосты из старых бандлов/сообщений: «at X (…js:1:2)» и «(браузер: …dbus…)».
+    text = re.sub(r"\s+at\s+(async\s+)?[^\s()]+(\s+\[as \w+\])?\s+\([^)]*\)", "", text)
+    cut = text.find(" (браузер:")
+    if cut >= 0 and any(n in text[cut:].lower() for n in _NOISE):
+        text = text[:cut]
+    return text.strip()[:limit]
+
+
 def _last_json(text: str) -> dict | None:
     for line in reversed((text or "").strip().splitlines()):
         try:
@@ -96,6 +186,10 @@ def render_vrm(spec_path: Path, out: Path) -> dict:
     from app.scene3d import chromium_path, node_bin
 
     ensure_vrm_bundle()
+    try:
+        ensure_vrm_packs(json.loads(spec_path.read_text("utf-8")))
+    except RenderFailed as exc:
+        return {"code": 1, "report": None, "error": str(exc)}
     args = [node_bin(), str(RENDERER), "--spec", str(spec_path), "--out", str(out), "--bundle", str(VRM_BUNDLE),
             "--packs", str(vrm_dir()), "--gl", _gl(), "--workers", "1"]
     chrome = chromium_path()
@@ -107,7 +201,8 @@ def render_vrm(spec_path: Path, out: Path) -> dict:
     except subprocess.TimeoutExpired:
         return {"code": -1, "report": None, "error": f"рендер не уложился в {TIMEOUT_SEC // 60} мин"}
     return {"code": proc.returncode, "report": _last_json(proc.stdout),
-            "error": " ".join((proc.stderr or "").strip().splitlines()[-4:])[-1200:]}
+            "error": (render_error(proc.stderr) if proc.returncode != 0
+                      else " ".join((proc.stderr or "").strip().splitlines()[-4:])[-1200:])}
 
 
 def check_vrm(spec_path: Path) -> dict | None:
@@ -120,7 +215,7 @@ def check_vrm(spec_path: Path) -> dict | None:
                               errors="replace", timeout=CHECK_TIMEOUT_SEC, check=False, stdin=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         return {"error": "проверки касаний не уложились во время"}
-    return _last_json(proc.stdout) or {"error": (proc.stderr or "").strip()[-400:] or f"код {proc.returncode}"}
+    return _last_json(proc.stdout) or {"error": render_error(proc.stderr, 400) or f"код {proc.returncode}"}
 
 
 def contact_sheet(video: Path, out: Path) -> Path:
@@ -143,14 +238,14 @@ def build_checks(spec: dict, render: dict, contact: dict | None, words_info: dic
     black = rep.get("black_frames") or []
     checks.append({"id": "render", "label": "3D отрисовано", "ok": rendered,
                    "detail": (f"{rep.get('frames')} кадров за {rep.get('seconds')} с" if rendered
-                              else (err or "рендер не вернул отчёт")[-500:])})
+                              else (err or "рендер не вернул отчёт")[:500])})
     checks.append({"id": "black", "label": "без чёрных кадров", "ok": bool(rep) and not black,
                    "detail": (f"чёрные кадры: {black[:12]}" if black else ("нет" if rep else "не измерено"))})
     probs = VRM.render_problems(rep if rep else None, spec) if rendered else []
     cut = [p for p in probs if "разрезан" in p] + (["персонаж разрезан"] if "разрезан" in err else [])
     pres = [p for p in probs if "разрезан" not in p]
     if not rendered and ("модели нет" in err or "холст пуст" in err or "контекст GPU" in err):
-        pres.append(err[-300:])
+        pres.append(err[:300])
     pres_info = rep.get("presence") or {}
     checks.append({"id": "presence", "label": "героиня в кадре", "ok": rendered and not pres and bool(pres_info),
                    "detail": "; ".join(pres) or (f"проверено {pres_info.get('frames')} кадров, нет героини — "

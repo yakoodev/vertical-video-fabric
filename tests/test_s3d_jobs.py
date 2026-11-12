@@ -57,7 +57,9 @@ class Render:
 
 
 GOOD = {"ok": True, "frames": 100, "fingers": {"min_gap_mm": 4.4}, "chair": {"min_gap_mm": 9.0}, "hair": {"min_gap_mm": 3.0},
-        "hands": {"left": {"min_gap_mm": 6.0}}, "hand_spans": 0, "empty": []}
+        "hands": {"left": {"min_gap_mm": 6.0}}, "hand_spans": 0, "empty": [],
+        # Скрутка рук (contact.mjs → twist, проверка с 6ee86c8): без замера серия не выпускается.
+        "twist": {"frames": 100, "bad": 0, "first": []}}
 
 
 @pytest.fixture
