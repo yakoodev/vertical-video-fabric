@@ -179,6 +179,7 @@ def mcp_tool_list(store: Any = None) -> list[dict]:
                     "openWorldHint": tool.name in ("search_web_images", "add_image_from_url", "generate_image",
                                                    "add_video_from_url"),
                 },
+                **({"_meta": {"vvf/cost": list(tool.cost)}} if tool.cost else {}),
             }
         )
     return out

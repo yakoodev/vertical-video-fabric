@@ -448,7 +448,7 @@ def latest_render(store: Any, clip_plan_id: int) -> dict:
     for clip in store.list_clips_for_plan(int(clip_plan_id)):
         if clip.get("status") == "succeeded":
             return clip
-    raise ValueError(f"у клипа #{clip_plan_id} нет готового рендера — сначала render")
+    raise ValueError(f"у клипа #{clip_plan_id} нет готового рендера — сначала render_clip (MCP; дождись render_status done)")
 
 
 def _base_frame(store: Any, clip: dict, video: Path, t: float, out: Path) -> str:

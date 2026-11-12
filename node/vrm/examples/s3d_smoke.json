@@ -1,0 +1,395 @@
+{
+ "width": 1080,
+ "height": 1920,
+ "fps": 30,
+ "duration": 3.4,
+ "model": "three-vrm-girl.vrm",
+ "look": {
+  "outline": 0.0034,
+  "shade": "#9aa0d0",
+  "toony": 0.97,
+  "shift": -0.05,
+  "rim": "#8ff0e0",
+  "rimPower": 4,
+  "skin": "^(face|body)",
+  "skinShade": "#e8a8a0",
+  "tint": {
+   "Hair": "#ffffff"
+  },
+  "repaint": {
+   "Hair": [
+    "#c4963c",
+    "#fff2c0"
+   ],
+   "Tops": [
+    "#0e5a5a",
+    "#6fe0d0"
+   ],
+   "EyeIris": [
+    "#0a3a3a",
+    "#6adfc8"
+   ]
+  }
+ },
+ "stream": {
+  "uptime": 11560,
+  "title": "Стрим до утра · день 27",
+  "viewers": [],
+  "chat": [],
+  "alerts": [],
+  "modes": [],
+  "avatars": [],
+  "mouth": [],
+  "wolf": {
+   "blinks": [],
+   "wag": [],
+   "laugh": [],
+   "squint": []
+  },
+  "guy": {
+   "blinks": [],
+   "nods": [],
+   "yawns": [],
+   "talk": []
+  },
+  "vtuber": {
+   "blinks": []
+  },
+  "titles": [],
+  "shops": [],
+  "declines": [],
+  "noChat": true
+ },
+ "overlays": [],
+ "headphones": {
+  "kind": "headphones",
+  "color": "#f4f1ff",
+  "accent": "#35d0c0",
+  "ring": 0.02,
+  "scale": 1.06,
+  "lift": 0.035
+ },
+ "strictContact": true,
+ "timeline": {
+  "clips": {
+   "sit": "cmu/clips/sit.json",
+   "typing": "cmu/clips/typing.json",
+   "laugh": "cmu/clips/laugh.json"
+  },
+  "chair": {
+   "pos": [
+    0,
+    0.775,
+    -0.24
+   ],
+   "h": 0.56,
+   "w": 0.6
+  },
+  "tracks": [
+   {
+    "clip": "sit",
+    "start": -2,
+    "end": 4.4,
+    "offset": 1.0,
+    "speed": 0.5,
+    "pingpong": [
+     1.0,
+     7.5,
+     21
+    ],
+    "smooth": 0.15,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "mask": [
+     "spine",
+     "chest",
+     "upperChest",
+     "leftShoulder",
+     "leftUpperArm",
+     "leftLowerArm",
+     "leftHand",
+     "rightShoulder",
+     "rightUpperArm",
+     "rightLowerArm",
+     "rightHand"
+    ]
+   },
+   {
+    "clip": "sit",
+    "start": -2,
+    "end": 4.4,
+    "offset": 1.0,
+    "speed": 0.5,
+    "pingpong": [
+     1.0,
+     7.5,
+     21
+    ],
+    "smooth": 0.2,
+    "fadeIn": 0,
+    "fadeOut": 0,
+    "mask": "head",
+    "scale": 0.3
+   }
+  ],
+  "arms": [
+   {
+    "t": -3,
+    "left": "idle",
+    "right": "idle"
+   }
+  ],
+  "hands": [
+   {
+    "t": -3,
+    "left": "relaxed",
+    "right": "relaxed"
+   }
+  ],
+  "faces": [
+   {
+    "t": -1.0,
+    "dur": 0.3,
+    "expr": {}
+   }
+  ],
+  "look": [
+   {
+    "t": -3,
+    "target": [
+     0,
+     1.43,
+     1.15
+    ],
+    "head": 0.6
+   },
+   {
+    "t": 0.6,
+    "target": [
+     0.0,
+     1.5,
+     1.1
+    ],
+    "head": 0.7
+   }
+  ],
+  "speech": [
+   [
+    0.6,
+    1.25
+   ]
+  ],
+  "surfaces": [
+   {
+    "name": "стол",
+    "y": 1.05,
+    "x0": -0.8,
+    "x1": 0.8,
+    "z0": 0.22,
+    "z1": 0.92
+   },
+   {
+    "name": "клавиатура",
+    "y": 1.072,
+    "x0": -0.22,
+    "x1": 0.22,
+    "z0": 0.286,
+    "z1": 0.434
+   },
+   {
+    "name": "мышь",
+    "y": 1.082,
+    "x0": -0.39,
+    "x1": -0.33,
+    "z0": 0.375,
+    "z1": 0.465
+   }
+  ],
+  "nods": [],
+  "bows": []
+ },
+ "shots": [
+  {
+   "name": "00_face",
+   "t0": 0.0,
+   "t1": 1.6,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      0.36,
+      1.42,
+      2.6
+     ],
+     "target": [
+      -0.02,
+      1.36,
+      0
+     ],
+     "fov": 13.0,
+     "roll": 0.0
+    },
+    {
+     "t": 1.6,
+     "pos": [
+      0.36,
+      1.42,
+      2.6
+     ],
+     "target": [
+      -0.02,
+      1.36,
+      0
+     ],
+     "fov": 11.928,
+     "roll": 0.0
+    }
+   ],
+   "plate": {
+    "kind": "front",
+    "dx": 60,
+    "dy": -40,
+    "zoom": 1.15,
+    "fgDesk": {
+     "y": 1690,
+     "cup": false,
+     "mic": true
+    },
+    "cats": false
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.36
+     ]
+    },
+    "mouse": {
+     "pos": [
+      -0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.775,
+      -0.24
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     0,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  },
+  {
+   "name": "01_wide",
+   "t0": 1.6,
+   "t1": 3.4,
+   "camKeys": [
+    {
+     "t": 0,
+     "pos": [
+      0.6,
+      3.585,
+      -12.99
+     ],
+     "target": [
+      0,
+      0.985,
+      0.0
+     ],
+     "fov": 14.0,
+     "roll": 0.0
+    },
+    {
+     "t": 1.8,
+     "pos": [
+      0.6,
+      3.585,
+      -12.99
+     ],
+     "target": [
+      0,
+      0.985,
+      0.0
+     ],
+     "fov": 13.23,
+     "roll": 0.0
+    }
+   ],
+   "plate": {
+    "kind": "wide",
+    "cx": 720,
+    "cy": 1300,
+    "zoom": 0.84,
+    "anchor": {
+     "bone": {
+      "bone": "head"
+     },
+     "at": [
+      640,
+      1170
+     ]
+    }
+   },
+   "props": {
+    "desk": {
+     "y": 1.05,
+     "z": 0.22
+    },
+    "keyboard": {
+     "pos": [
+      0,
+      1.061,
+      0.36
+     ]
+    },
+    "mouse": {
+     "pos": [
+      -0.36,
+      1.065,
+      0.42
+     ]
+    },
+    "chair": {
+     "pos": [
+      0,
+      0.775,
+      -0.24
+     ],
+     "h": 0.56,
+     "w": 0.6
+    }
+   },
+   "light": {
+    "key": [
+     0,
+     0.6,
+     1
+    ],
+    "keyColor": "#f2ecff",
+    "keyPower": 2.1,
+    "fill": "#7a64b8",
+    "fillPower": 0.75
+   }
+  }
+ ],
+ "cats": []
+}

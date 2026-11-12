@@ -1,0 +1,15 @@
+ How can I use this data? 
+The motion capture data may be copied, modified, or redistributed 
+without permission.
+ Disclaimers...? 
+Disclaimer 1: We do not guarantee the quality of the data. 
+Disclaimer 2: Data classification is provided to assist users. The sincerest efforts have been to describe and categorize our motion data, so as to be generally helpful to all motion capture data seekers. However, as all motions are subject to individual interpretation, we cannot be held responsible for inaccuracies or mispresentations of data, arising from our classification.
+ Welcome to the Carnegie Mellon University Motion Capture Database! This dataset of motions is free for all uses. Search above by subject # or motion category. Check out the "Info" tab for information on the mocap process, the "FAQs" for miscellaneous questions about our dataset, or the "Tools" page for code to work with mocap data. Enjoy! 
+ 
+ The collection of the data in this database was supported by NSF Grant #0196217. 
+ 
+--
+ This data is free for use in research projects. 
+You may include this data in commercially-sold products,
+ but you may not resell this data directly, even in converted form. 
+If you publish results obtained using this data, we would appreciate it 

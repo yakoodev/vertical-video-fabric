@@ -73,7 +73,7 @@
     реклама или просьба заказчика — глушить как в `stream-shorts`, шаг 6 (`censor_profanity`, если есть).
 12. **Плашка канала** — `set_nameplate(platform, handle, position: "top-left")`. Правый нижний угол
     16:9 не занимать — там водяной знак YouTube.
-13. **Рендер** — `vvf.py render <clip>`; замечание QC «длиннее 3 минут» для 16:9 не ошибка (это не Shorts).
+13. **Рендер** — MCP `render_clip` → `render_status(render_id, wait_sec=30)` (или `vvf.py render <clip>`); замечание QC «длиннее 3 минут» для 16:9 не ошибка (это не Shorts).
 
 ## Инструменты MCP
 

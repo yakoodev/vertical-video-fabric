@@ -24,7 +24,7 @@ def h_lint_clip(ctx: ToolContext, args: dict) -> dict:
         result["truncated"] = len(findings) - MAX_FINDINGS
     result["note"] = ("Только предупреждения — сдаче не мешают. t — шкала clip (view_frame(t), перемотка в редакторе), "
                       "final_t — секунды готового ролика. Поправь warn (fix — как), info — на твоё усмотрение; "
-                      "вспышки и луп — по последнему рендеру: после правок перерендерь и проверь снова.")
+                      "вспышки и луп — по последнему рендеру: после правок перерендерь (render_clip → render_status) и проверь снова.")
     return result
 
 
@@ -47,7 +47,7 @@ def tools() -> list[Tool]:
             "больше 0.7 с, конец уплыл, слов не слышно; первый запуск на клип распознаёт речь, дольше) и против VAD; "
             "by_text в ответе — сверялся ли текст. "
             "platforms — tiktok|reels|shorts (или "
-            "youtube|instagram; пусто — площадки проекта). media — auto (вспышки и луп, если есть готовый рендер) | "
+            "youtube|instagram; пусто — площадки проекта). media — auto (вспышки и луп, если есть готовый рендер; рендер — render_clip) | "
             "true | false (только план, мгновенно). Ответ: findings [{check, severity warn|info, message, fix, t, "
             "final_t, layer, platforms}], counts, skipped. / Pre-publish quality lint (platform UI zones, reading speed, "
             "flashes, loop).",

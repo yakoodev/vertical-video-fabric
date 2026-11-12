@@ -22,6 +22,21 @@ class ToolError(Exception):
         self.problems = list(problems or [])
 
 
+# Имена инструментов, которые принимает ``agent_tools.run_tool`` (реестр, поиск, проектные): реестр ставит
+# app/agent_tools при импорте — домены его не импортируют (list_modules сверяет с этим свои списки).
+_callable_names: Callable[[], set[str]] | None = None
+
+
+def set_callable_names(fn: Callable[[], set[str]]) -> None:
+    global _callable_names
+    _callable_names = fn
+
+
+def callable_tool_names() -> set[str]:
+    """Вызываемые инструменты; пусто — реестр ещё не собран."""
+    return set(_callable_names()) if _callable_names is not None else set()
+
+
 @dataclass
 class ImageResult:
     """Картинка как результат инструмента (кадр клипа) — модель её «видит»."""
@@ -74,6 +89,9 @@ class Tool:
     mutating: bool = False
     scope: str = "clip"  # clip — нужен клип; global — нет (поиск, справочники)
     label: Callable[[dict], str] | None = None
+    # Чем дорог вызов (как у модулей, app/modules.COST_LABELS: cpu | ram | gpu | network | paid); пусто — дёшево.
+    # В MCP tools/list — ``_meta["vvf/cost"]``.
+    cost: tuple[str, ...] = ()
 
     def step_label(self, args: dict) -> str:
         try:
@@ -93,6 +111,7 @@ class Tool:
             "parameters": self.parameters,
             "mutating": self.mutating,
             "scope": self.scope,
+            **({"cost": list(self.cost)} if self.cost else {}),
         }
 
 

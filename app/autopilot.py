@@ -99,7 +99,7 @@ def submit_clip(store: Any, clip_plan_id: int, title: str = "", description: str
         raise ValueError(f"источник клипа #{clip_plan_id} не в проекте-серии — без проекта нет доверия и расписания")
     clips = [c for c in store.list_clips_for_plan(int(clip_plan_id)) if c.get("status") == "succeeded"]
     if not clips:
-        raise ValueError(f"у клипа #{clip_plan_id} нет готового рендера — сначала render")
+        raise ValueError(f"у клипа #{clip_plan_id} нет готового рендера — сначала render_clip (MCP; дождись render_status done)")
     clip = clips[0]
     cfg = get_config(store, project_id)
     platforms_list = _platforms(platforms) or list(cfg["platforms"])
