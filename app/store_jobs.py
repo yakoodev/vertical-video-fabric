@@ -22,6 +22,10 @@ class RepostNeedsConfirm(ValueError):
     """Этот файл уже вышел или мог выйти на этом аккаунте: ещё раз только с согласия владельца."""
 
 
+# Итоги площадки задания, после которых её можно вернуть в очередь (``retry_target``).
+RETRYABLE_TARGET_STATUSES = ("failed", "needs_reauth")
+
+
 def _hash_path_and_size(path: Path) -> tuple[str, int]:
     hasher = hashlib.sha256()
     size = 0
@@ -167,6 +171,12 @@ class JobsStore:
     def _refuse_double_post(self, accounts: list[dict], clip_id: int | None, sha256: str, allow_repost: bool) -> None:
         """Тот же клип или файл на том же аккаунте. В очереди — отказ всегда: это двойной клик или забытое расписание.
         Уже вышел или мог выйти — отказ, пока владелец не подтвердит. Точный сбой (ролик не ушёл) повторять можно сразу."""
+        self._refuse_same_video(accounts, clip_id, sha256, allow_repost)
+
+    def _refuse_same_video(self, accounts: list[dict], clip_id: int | None, sha256: str, allow_repost: bool,
+                           exclude_target_id: int | None = None) -> None:
+        """``_refuse_double_post``; ``exclude_target_id`` — площадка, которую повторяют (``retry_target``):
+        сама с собой она не дубль."""
         by_account = {int(account["id"]): account for account in accounts}
         marks = ", ".join("?" for _ in by_account)
         # Готовый клип узнаётся по номеру (версия — свой номер), загруженный файл — по содержимому.
@@ -175,11 +185,11 @@ class JobsStore:
             f"""
             SELECT j.id AS job_id, jt.account_id, jt.status, jt.maybe_posted
             FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
-            WHERE jt.account_id IN ({marks}) AND j.status != 'cancelled' AND {same[0]}
+            WHERE jt.account_id IN ({marks}) AND j.status != 'cancelled' AND {same[0]} AND jt.id != ?
               AND (jt.status IN ('queued', 'running', 'succeeded') OR jt.maybe_posted = 1)
             ORDER BY j.id DESC
             """,
-            (*by_account, same[1]),
+            (*by_account, same[1], int(exclude_target_id or 0)),
         )
 
         def where(row) -> str:
@@ -193,6 +203,56 @@ class JobsStore:
             row = rows[0]
             state = "уже опубликован" if row["status"] == "succeeded" else "мог уже выйти (проверьте на площадке)"
             raise RepostNeedsConfirm(f"Этот ролик {state}: {where(row)}")
+
+    def retry_target(self, target_id: int, allow_repost: bool = False) -> dict:
+        """Вернуть в очередь площадку задания после сбоя (failed / needs_reauth) — ту же строку того же задания:
+        нового задания и второго поста не появляется. Работник берёт задание снова и идёт только на площадки
+        в очереди (у остальных итог уже есть). Отказ (ValueError): площадка не в сбое или задание ещё идёт;
+        ролик мог уже выйти (maybe_posted / есть ссылка) или этот же ролик на этом аккаунте уже в очереди или
+        вышел в другом задании — как у нового поста: RepostNeedsConfirm, пока не подтвердят ``allow_repost``."""
+        with self.db.transaction():
+            row = self.db.query_one(
+                """
+                SELECT jt.id, jt.job_id, jt.account_id, jt.status, jt.remote_id, jt.remote_url, jt.maybe_posted,
+                       j.status AS job_status, j.clip_id, j.source_sha256
+                FROM job_targets jt JOIN jobs j ON j.id = jt.job_id
+                WHERE jt.id = ?
+                """,
+                (int(target_id),),
+            )
+            if not row:
+                raise KeyError(f"job target not found: {target_id}")
+            if row["status"] not in RETRYABLE_TARGET_STATUSES:
+                raise ValueError(f"Повторить можно только сбой (failed / needs_reauth), а у площадки №{row['id']} "
+                                 f"статус {row['status']}")
+            if row["job_status"] in ("queued", "running"):
+                raise ValueError(f"Публикация №{row['job_id']} ещё идёт ({row['job_status']}): дождитесь итога")
+            if (row["maybe_posted"] or row["remote_id"] or row["remote_url"]) and not allow_repost:
+                raise RepostNeedsConfirm(f"Ролик мог уже выйти на этом аккаунте (публикация №{row['job_id']}): "
+                                         "проверьте на площадке; повтор — только с подтверждением")
+            account = self.get_account(int(row["account_id"]), include_secret=False)
+            self._refuse_same_video([account], row["clip_id"], row["source_sha256"], allow_repost,
+                                    exclude_target_id=int(row["id"]))
+            marks = ", ".join("?" for _ in RETRYABLE_TARGET_STATUSES)
+            requeued = self.db.execute(
+                f"""
+                UPDATE job_targets
+                SET status = 'queued', remote_id = '', remote_url = '', error = '', response_json = '{{}}',
+                    maybe_posted = 0, started_at = NULL, finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status IN ({marks})
+                """,
+                (int(row["id"]), *RETRYABLE_TARGET_STATUSES),
+            ).rowcount
+            if not requeued:
+                raise ValueError(f"Площадка №{row['id']} уже не в сбое: повторять нечего")
+            self.db.execute(
+                """
+                UPDATE jobs SET status = 'queued', error = '', finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status NOT IN ('queued', 'running')
+                """,
+                (int(row["job_id"]),),
+            )
+        return self.get_job(int(row["job_id"]))
 
     def cancel_job(self, job_id: int) -> bool:
         """Снять задание, пока работник его не взял. Уже идёт или закончилось — False: отменять нечего."""

@@ -151,3 +151,110 @@ def test_reschedule_never_leaves_two_jobs_when_the_worker_took_the_old_one(env, 
     result = A._place(store, card["id"], actor="ui", use_proposed=False)
     assert not result["ok"] and "уже идёт" in result["error"]
     assert [j["id"] for j in store.list_jobs()] == [placed["job_id"]]
+
+
+# --- Повтор площадки после сбоя: POST /api/job-targets/{id}/retry ----------------------------------- #
+
+def _retry(env, target_id, **body):
+    return env["client"].post(f"/api/job-targets/{target_id}/retry", json=body or None)
+
+
+def _failed_job(env, result: ProviderResult) -> dict:
+    env["provider"].result = result
+    assert _post(env).status_code == 200
+    assert JobWorker(env["store"]).process_once()
+    return env["store"].list_jobs()[0]
+
+
+@pytest.mark.parametrize("status", ["failed", "needs_reauth"])
+def test_retry_requeues_the_same_target_without_a_new_job(env, status):
+    job = _failed_job(env, ProviderResult(status=status, error="Сессия истекла"))
+    target = job["targets"][0]
+    assert job["status"] == status and target["status"] == status
+
+    response = _retry(env, target["id"])
+    assert response.status_code == 200
+    again = response.json()
+    assert again["id"] == job["id"] and again["status"] == "queued" and again["error"] == ""
+    assert [t["id"] for t in again["targets"]] == [target["id"]]
+    assert again["targets"][0]["status"] == "queued" and again["targets"][0]["error"] == ""
+    assert again["targets"][0]["finished_at"] is None
+
+    env["provider"].result = ProviderResult(status="succeeded", remote_id="7", remote_url="https://www.tiktok.com/@/video/7")
+    assert JobWorker(env["store"]).process_once()
+    jobs = env["store"].list_jobs()
+    assert len(jobs) == 1 and jobs[0]["status"] == "succeeded"
+    assert jobs[0]["targets"][0]["remote_url"] == "https://www.tiktok.com/@/video/7"
+    assert len(env["provider"].calls) == 2  # первая попытка + повтор, второго поста нет
+
+
+def test_retry_goes_only_to_the_failed_platform(env, monkeypatch):
+    store = env["store"]
+    second = store.upsert_account("tiktok", "tt-second", COOKIE_TT)
+    calls: list[str] = []
+
+    class PerAccount:
+        def upload(self, **kwargs):
+            calls.append(kwargs["account_label"])
+            if kwargs["account_label"] == "tt-main" and len(calls) <= 2:
+                return ProviderResult(status="failed", error="Нет связи через прокси: ролик не отправлен")
+            return ProviderResult(status="succeeded", remote_id="1", remote_url="https://www.tiktok.com/@/video/1")
+
+    monkeypatch.setattr("app.worker.get_provider", lambda platform: PerAccount())
+    assert _post(env, targets=[env["account"]["id"], second["id"]]).status_code == 200
+    assert JobWorker(store).process_once()
+    job = store.list_jobs()[0]
+    failed = next(t for t in job["targets"] if t["status"] == "failed")
+    assert {t["status"] for t in job["targets"]} == {"failed", "succeeded"} and job["status"] == "failed"
+
+    assert _retry(env, failed["id"]).status_code == 200
+    assert JobWorker(store).process_once()
+    assert calls == ["tt-main", "tt-second", "tt-main"]  # удачная площадка второй раз не загружается
+    assert store.get_job(job["id"])["status"] == "succeeded"
+
+
+def test_retry_refuses_what_is_not_a_failure(env):
+    assert _retry(env, 999999).status_code == 404
+    queued = _post(env, scheduled_at="2099-01-01 10:00").json()
+    refused = _retry(env, queued["targets"][0]["id"])
+    assert refused.status_code == 409 and "только сбой" in refused.json()["detail"]
+    env["client"].post(f"/api/jobs/{queued['id']}/cancel")
+    assert _retry(env, queued["targets"][0]["id"]).status_code == 409  # отменённая — не сбой
+
+    assert _post(env).status_code == 200
+    assert JobWorker(env["store"]).process_once()
+    done = env["store"].list_jobs()[0]
+    assert done["targets"][0]["status"] == "succeeded"
+    assert _retry(env, done["targets"][0]["id"]).status_code == 409
+    assert len(env["store"].list_jobs()) == 2
+
+
+def test_retry_refuses_while_the_job_is_still_running(env):
+    store = env["store"]
+    job = _failed_job(env, ProviderResult(status="failed", error="сбой"))
+    store.db.execute("UPDATE jobs SET status = 'running' WHERE id = ?", (job["id"],))
+    refused = _retry(env, job["targets"][0]["id"])
+    assert refused.status_code == 409 and "ещё идёт" in refused.json()["detail"]
+    assert store.get_job(job["id"])["targets"][0]["status"] == "failed"
+
+
+def test_retry_of_maybe_posted_needs_explicit_yes(env):
+    job = _failed_job(env, ProviderResult(status="failed", maybe_posted=True, error="Связь оборвалась на самом посте"))
+    target = job["targets"][0]
+    refused = _retry(env, target["id"])
+    assert refused.status_code == 409 and "мог уже выйти" in refused.json()["detail"]
+    assert env["store"].get_job(job["id"])["targets"][0]["status"] == "failed"
+    confirmed = _retry(env, target["id"], allow_repost=True)
+    assert confirmed.status_code == 200
+    assert confirmed.json()["targets"][0]["maybe_posted"] is False
+
+
+def test_retry_refuses_when_the_clip_already_went_out_in_another_job(env):
+    job = _failed_job(env, ProviderResult(status="failed", error="Нет связи через прокси: ролик не отправлен"))
+    env["provider"].result = ProviderResult(status="succeeded", remote_id="1", remote_url="https://www.tiktok.com/@/video/1")
+    assert _post(env).status_code == 200  # точный сбой: новый пост можно сразу
+    assert JobWorker(env["store"]).process_once()
+    refused = _retry(env, job["targets"][0]["id"])
+    assert refused.status_code == 409 and "уже опубликован" in refused.json()["detail"]
+    assert env["store"].get_job(job["id"])["status"] == "failed"
+    assert _retry(env, job["targets"][0]["id"], allow_repost=True).status_code == 200
