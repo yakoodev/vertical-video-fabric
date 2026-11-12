@@ -370,6 +370,18 @@ def _lock(episode_id: int) -> threading.Lock:
 
 
 def advance(store: Any, episode_id: int, client: Any = None, max_steps: int = 8) -> dict:
+    """Шаги ролика (см. ``_advance``); траты Gemini — на сессию ``story:<id>`` и проект (app/gemini_usage.py)."""
+    from app import gemini_usage
+
+    try:
+        project_id = S.get_episode(store, episode_id, full=False).get("project_id")
+    except Exception:  # noqa: BLE001 - нет ролика — _advance скажет сам
+        project_id = None
+    with gemini_usage.scope(session=f"story:{int(episode_id)}", project_id=project_id):
+        return _advance(store, episode_id, client=client, max_steps=max_steps)
+
+
+def _advance(store: Any, episode_id: int, client: Any = None, max_steps: int = 8) -> dict:
     """Двигать эпизод по шагам, пока не упрётся в ожидание (карточка, запуски) или конец.
     Ошибка шага — ``failed`` с текстом (продолжить — ``resume``/``story_continue``)."""
     lock = _lock(episode_id)

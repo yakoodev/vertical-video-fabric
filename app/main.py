@@ -256,6 +256,11 @@ from app.settings_api import build_settings_router  # noqa: E402
 
 app.include_router(build_settings_router(AuthDep, lambda: store))
 
+# Траты Gemini: итоги по назначению, модели, дням, сессиям; цены и курс (app/usage_api.py).
+from app.usage_api import build_usage_router  # noqa: E402
+
+app.include_router(build_usage_router(AuthDep, lambda: store))
+
 # Раньше publishing_api: /api/clips/{clip_id} (GET, PATCH, DELETE) шёл перед POST /api/clips/posts-batch.
 from app.clips_api import build_clips_router  # noqa: E402
 

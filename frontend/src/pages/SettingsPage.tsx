@@ -8,6 +8,7 @@ import { ProxySettings } from "@/pages/settings/ProxySettings";
 import { BrandsSettings } from "@/pages/settings/BrandsSettings";
 import { TelegramSettings } from "@/pages/settings/TelegramSettings";
 import { ModulesSettings } from "@/pages/settings/ModulesSettings";
+import { UsageSettings } from "@/pages/settings/UsageSettings";
 import { useModules } from "@/hooks/useModules";
 import { SECTIONS, visibleTabs } from "@/lib/tabs";
 
@@ -16,7 +17,7 @@ export function SettingsPage() {
   const telegramOn = on("telegram");
   return (
     <>
-      <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, бренды, промпты, модули" />
+      <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, бренды, промпты, модули, траты Gemini" />
       <div className="settings-layout">
         <nav className="settings-rail">
           {visibleTabs(SECTIONS.settings.tabs, on).map((t) => (
@@ -40,6 +41,7 @@ export function SettingsPage() {
             <Route path="prompts" element={<PromptsSettings />} />
             <Route path="defaults" element={<DefaultsSettings />} />
             <Route path="modules" element={<ModulesSettings />} />
+            <Route path="usage" element={<UsageSettings />} />
             <Route path="backup" element={<BackupSettings />} />
             <Route path="proxy" element={<ProxySettings />} />
             <Route
