@@ -172,8 +172,53 @@ export const GESTURES: Record<string, PerfDef> = {
   },
 };
 
+/**
+ * Движения из библиотеки клипов (node/vrm/animlib.json → tools/anim_library.py): только у VRM-героини (node/vrm,
+ * слои blend.ts). У героя из примитивов и робота мем-пилота их нет — реплика просто ничего не меняет.
+ */
+const PM = {
+  intensity: P.intensity,
+  hand: { name: "hand", type: "enum", options: ["left", "right"], default: "right", ru: "какой рукой (left / right — рука персонажа)" } as Param,
+  face: P.face("none"),
+};
+export const MOTIONS: Record<string, PerfDef> = {
+  cheer: {
+    meta: { name: "cheer", title: "Ликует", ru: "Руки вверх, корпус подпрыгивает, смеётся в камеру — победа, донат, «ура!». Сидя — руки над столом, стоя — во весь рост (клип KayKit Cheering).",
+      tags: ["joy", "library"], params: [PM.intensity] },
+    dur: 2.6, vrm: VRM_PERF.cheer,
+  },
+  wave_big: {
+    meta: { name: "wave_big", title: "Машет (клип)", ru: "Живой взмах из записанного клипа: плечо, локоть и кисть работают вместе, корпус чуть качается. Привет и пока — заметнее простого wave.",
+      tags: ["cute", "library"], params: [PM.intensity, PM.hand, P.face("happy")] },
+    dur: 2.2, vrm: VRM_PERF.wave_big,
+  },
+  talk_hands: {
+    meta: { name: "talk_hands", title: "Говорит руками", ru: "Объясняет: руки над столом жестикулируют в такт речи (клип Sitting Talking). Класть на длинные реплики.",
+      tags: ["talk", "library"], params: [PM.intensity, P.face("talk")] },
+    dur: 3.0, vrm: VRM_PERF.talk_hands,
+  },
+  stand_up: {
+    meta: { name: "stand_up", title: "Встаёт из-за стола", ru: "Опирается ладонями о стол, встаёт и остаётся стоять (then — что делать стоя: idle_breathe, cheer, arms_folded, dance_a…). Камеру — шире.",
+      tags: ["library", "body"], params: [{ name: "then", type: "string", default: "idle_breathe", ru: "клип библиотеки после подъёма (list_animations)" } as Param, PM.face] },
+    dur: 1.8, vrm: VRM_PERF.stand_up,
+  },
+  sit_down: {
+    meta: { name: "sit_down", title: "Садится", ru: "Садится обратно на стул, руки возвращаются к столу.",
+      tags: ["library", "body"], params: [PM.face] },
+    dur: 1.8, vrm: VRM_PERF.sit_down,
+  },
+  anim: {
+    meta: { name: "anim", title: "Клип из библиотеки", ru: "Любой клип библиотеки движений по имени (clip — см. list_animations): жест корпусом и руками поверх позы или всё тело (body: full — например, танец стоя).",
+      tags: ["library"], params: [{ name: "clip", type: "string", default: "head_yes", ru: "имя клипа (list_animations)" } as Param,
+        { name: "body", type: "enum", options: ["upper", "full"], default: "upper", ru: "upper — корпус и руки поверх позы, full — всё тело" } as Param,
+        { name: "mask", type: "enum", options: ["upper", "arms", "left", "right", "head", "torso"], default: "upper", ru: "какие кости берёт жест (body: upper)" } as Param,
+        { name: "speed", type: "number", default: 1, min: 0.4, max: 2, ru: "скорость клипа" } as Param, PM.face] },
+    dur: 2.5, vrm: VRM_PERF.anim,
+  },
+};
+
 export function perfDef(name: string): PerfDef | undefined {
-  return EMOTIONS[name] || GESTURES[name];
+  return EMOTIONS[name] || GESTURES[name] || MOTIONS[name];
 }
 
 /** Заплатка персонажа по реплике игры (engine: voxel; vrm — для node/vrm; deskbot — робот мем-пилота). */

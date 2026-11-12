@@ -467,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
     rwork.mkdir(exist_ok=True)
     tag = f"_{sfx}" if sfx else ""
     spec_path = rwork / "spec.json"
+    from app import lipsync  # рот героини по гласным (иначе по громкости)
+    lipsync.attach_psx(spec, her_wav, her_words, her_len)
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=1), "utf-8")
     write_script(a.out / f"script{tag}.md", script, beats, roll, events, total)
     if a.preview:

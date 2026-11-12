@@ -31,10 +31,10 @@ ROOT = Path(__file__).resolve().parent.parent
 CATALOG_PATH = ROOT / "node" / "scene3d" / "presets" / "catalog.json"
 DUMP_SCRIPT = ROOT / "node" / "scene3d" / "presets_dump.mjs"
 
-CATEGORIES = ("look", "light", "camera", "fx", "mood", "room", "emotion", "gesture", "transition")
+CATEGORIES = ("look", "light", "camera", "fx", "mood", "room", "emotion", "gesture", "motion", "transition")
 #: Поле плана → категория(и) пресетов.
 FIELDS = {"look": ("look",), "light": ("light",), "mood": ("mood",), "room": ("room",), "fx": ("fx",),
-          "camera": ("camera",), "transitions": ("transition",), "performance": ("emotion", "gesture")}
+          "camera": ("camera",), "transitions": ("transition",), "performance": ("emotion", "gesture", "motion")}
 EXTRA_FIELDS = ("subject", "heading")
 
 _CACHE: dict[str, Any] = {}
@@ -200,10 +200,16 @@ def validate_presets(block: Any, *, duration: float | None = None, characters: l
                 problems.append(f"{where}: {{who, preset, t}}")
                 continue
             name = cue.get("preset")
-            if not (get("emotion", name) or get("gesture", name)):
-                allp = [*names("emotion"), *names("gesture")]
+            if not (get("emotion", name) or get("gesture", name) or get("motion", name)):
+                allp = [*names("emotion"), *names("gesture"), *names("motion")]
                 near = difflib.get_close_matches(str(name), allp, n=3, cutoff=0.45)
                 problems.append(f"{where}: нет эмоции/жеста «{name}»" + (f" (может, {', '.join(near)}?)" if near else f" (есть: {', '.join(allp)})"))
+            for key in ("clip", "then"):
+                clip = cue.get(key)
+                if name in ("anim", "stand_up") and clip is not None and str(clip) not in animation_names():
+                    near = difflib.get_close_matches(str(clip), animation_names(), n=3, cutoff=0.45)
+                    problems.append(f"{where}: нет клипа «{clip}» в библиотеке движений"
+                                    + (f" (может, {', '.join(near)}?)" if near else " (list_animations)"))
             if not _num(cue.get("t")):
                 problems.append(f"{where}: нужен t — когда начать, с")
             if characters is not None and cue.get("who") is not None and cue["who"] not in characters:
@@ -211,6 +217,13 @@ def validate_presets(block: Any, *, duration: float | None = None, characters: l
     if problems:
         raise PresetError(problems)
     return block
+
+
+def animation_names() -> list[str]:
+    """Имена клипов библиотеки движений VRM (каталог + собранные свои клипы, app/animlib.py)."""
+    from app import animlib
+
+    return animlib.animation_names()
 
 
 def compose(base: dict | None = None, **fields: Any) -> dict:

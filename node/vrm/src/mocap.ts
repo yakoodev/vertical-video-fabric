@@ -99,8 +99,11 @@ export function trackWeight(tr: Track, t: number): number {
 }
 
 /** Смешанная поза мокапа на t: кость → локальный поворот (в осях модели), только кости с весом. */
-export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number): Record<string, [number, number, number, number]> {
+export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number,
+  base?: Record<string, THREE.Quaternion>): Record<string, [number, number, number, number]> {
+  // base — поза клипов библиотеки (blend.ts): дорожки смешиваются с ней, а не с позой покоя.
   const acc: Record<string, THREE.Quaternion> = {};
+  for (const [b, q] of Object.entries(base || {})) acc[b] = q.clone();
   for (const tr of tracks) {
     const w = trackWeight(tr, t);
     if (w <= 0) continue;
@@ -122,6 +125,9 @@ export function mocapAt(clips: Record<string, Clip>, tracks: Track[], t: number)
         q = new THREE.Quaternion(acc4[0], acc4[1], acc4[2], acc4[3]).normalize();
       }
       if (tr.scale !== undefined && tr.scale !== 1) q = ID.clone().slerp(q, tr.scale);
+      // Позвоночник CMU — от вертикали (tools/cmu_to_vrm.py), у клипов библиотеки — от таза: под тазом основы
+      // (сидит, наклонён) поворот CMU пересчитывается в «от таза», иначе корпус наклоняется дважды.
+      if (b === "spine" && base?.hips && (c as { spine?: string }).spine !== "hips") q = base.hips.clone().invert().multiply(q);
       acc[b] = acc[b] ? acc[b].slerp(q, w) : ID.clone().slerp(q, w);
     }
   }

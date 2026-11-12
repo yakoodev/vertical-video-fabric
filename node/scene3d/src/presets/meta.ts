@@ -8,9 +8,9 @@
 
 export type V3 = [number, number, number];
 
-export type Category = "look" | "light" | "camera" | "fx" | "mood" | "room" | "emotion" | "gesture" | "transition";
+export type Category = "look" | "light" | "camera" | "fx" | "mood" | "room" | "emotion" | "gesture" | "motion" | "transition";
 
-export const CATEGORIES: Category[] = ["look", "light", "camera", "fx", "mood", "room", "emotion", "gesture", "transition"];
+export const CATEGORIES: Category[] = ["look", "light", "camera", "fx", "mood", "room", "emotion", "gesture", "motion", "transition"];
 
 /** Русские названия категорий (каталог, docs/3d/presets.md, агент). */
 export const CATEGORY_RU: Record<Category, string> = {
@@ -22,13 +22,14 @@ export const CATEGORY_RU: Record<Category, string> = {
   room: "Окружение",
   emotion: "Эмоция персонажа",
   gesture: "Жест персонажа",
+  motion: "Движение из библиотеки (VRM-героиня)",
   transition: "Переход между кадрами",
 };
 
 /** Поле плана, которым пресет категории задаётся (``{"look": "anime_soft", "light": "golden_hour", ...}``). */
 export const PLAN_FIELD: Record<Category, string> = {
   look: "look", light: "light", camera: "camera", fx: "fx", mood: "mood", room: "room",
-  emotion: "performance", gesture: "performance", transition: "transitions",
+  emotion: "performance", gesture: "performance", motion: "performance", transition: "transitions",
 };
 
 export interface Param {

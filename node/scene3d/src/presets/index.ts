@@ -18,7 +18,7 @@ import { LIGHT_RIGS, lightRig } from "./lights.ts";
 import { LOOKS } from "./looks.ts";
 import { FX, fxPatch, MOODS } from "./fx.ts";
 import { ROOMS, buildRoomPreset, type Anchor } from "./rooms.ts";
-import { EMOTIONS, GESTURES, perfPatch, type PerfCue } from "./performance.ts";
+import { EMOTIONS, GESTURES, MOTIONS, perfPatch, type PerfCue } from "./performance.ts";
 import { TRANSITIONS, type TransitionSpec } from "./transitions.ts";
 import { DESKBOT_PERF } from "./performance_deskbot.ts";
 
@@ -30,7 +30,7 @@ const paramsOf = (v: Named | undefined): Record<string, any> => (v && typeof v =
 
 const REG: Record<Category, Record<string, { meta: Meta }>> = {
   look: LOOKS, light: LIGHT_RIGS, camera: CAMERA_MOVES, fx: FX, mood: MOODS, room: ROOMS,
-  emotion: EMOTIONS, gesture: GESTURES, transition: TRANSITIONS,
+  emotion: EMOTIONS, gesture: GESTURES, motion: MOTIONS, transition: TRANSITIONS,
 };
 
 /** Каталог для людей и агента: по категориям — имя, русское название и описание, параметры, статус. */
@@ -40,7 +40,7 @@ export function presetCatalog() {
     out[c] = {
       title: CATEGORY_RU[c], field: PLAN_FIELD[c],
       presets: Object.values(REG[c]).map((d) => ({ ...d.meta, ...(c === "mood" ? { light: (d as any).light, fx: (d as any).fx.map((f: any) => nameOf(f)) } : {}),
-        ...(c === "transition" ? { duration: (d as any).duration } : {}), ...(c === "room" ? roomInfo(d.meta.name) : {}), ...(c === "emotion" || c === "gesture" ? { duration: (d as any).dur, engines: [...["voxel", "vrm"].filter((e) => (d as any)[e]), ...(DESKBOT_PERF[d.meta.name] ? ["deskbot"] : [])] } : {}) })),
+        ...(c === "transition" ? { duration: (d as any).duration } : {}), ...(c === "room" ? roomInfo(d.meta.name) : {}), ...(c === "emotion" || c === "gesture" || c === "motion" ? { duration: (d as any).dur, engines: [...["voxel", "vrm"].filter((e) => (d as any)[e]), ...(DESKBOT_PERF[d.meta.name] ? ["deskbot"] : [])] } : {}) })),
     };
   }
   return out;

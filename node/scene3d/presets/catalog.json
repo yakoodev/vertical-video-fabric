@@ -3192,6 +3192,319 @@
    }
   ]
  },
+ "motion": {
+  "title": "Движение из библиотеки (VRM-героиня)",
+  "field": "performance",
+  "presets": [
+   {
+    "name": "cheer",
+    "title": "Ликует",
+    "ru": "Руки вверх, корпус подпрыгивает, смеётся в камеру — победа, донат, «ура!». Сидя — руки над столом, стоя — во весь рост (клип KayKit Cheering).",
+    "tags": [
+     "joy",
+     "library"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     }
+    ],
+    "duration": 2.6,
+    "engines": [
+     "vrm"
+    ]
+   },
+   {
+    "name": "wave_big",
+    "title": "Машет (клип)",
+    "ru": "Живой взмах из записанного клипа: плечо, локоть и кисть работают вместе, корпус чуть качается. Привет и пока — заметнее простого wave.",
+    "tags": [
+     "cute",
+     "library"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "hand",
+      "type": "enum",
+      "options": [
+       "left",
+       "right"
+      ],
+      "default": "right",
+      "ru": "какой рукой (left / right — рука персонажа)"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "happy",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2.2,
+    "engines": [
+     "vrm"
+    ]
+   },
+   {
+    "name": "talk_hands",
+    "title": "Говорит руками",
+    "ru": "Объясняет: руки над столом жестикулируют в такт речи (клип Sitting Talking). Класть на длинные реплики.",
+    "tags": [
+     "talk",
+     "library"
+    ],
+    "params": [
+     {
+      "name": "intensity",
+      "type": "number",
+      "default": 1,
+      "min": 0.3,
+      "max": 1.6,
+      "ru": "сила игры: 1 — как задумано, 0.5 — сдержанно, 1.5 — через край"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "talk",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 3,
+    "engines": [
+     "vrm"
+    ]
+   },
+   {
+    "name": "stand_up",
+    "title": "Встаёт из-за стола",
+    "ru": "Опирается ладонями о стол, встаёт и остаётся стоять (then — что делать стоя: idle_breathe, cheer, arms_folded, dance_a…). Камеру — шире.",
+    "tags": [
+     "library",
+     "body"
+    ],
+    "params": [
+     {
+      "name": "then",
+      "type": "string",
+      "default": "idle_breathe",
+      "ru": "клип библиотеки после подъёма (list_animations)"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "none",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.8,
+    "engines": [
+     "vrm"
+    ]
+   },
+   {
+    "name": "sit_down",
+    "title": "Садится",
+    "ru": "Садится обратно на стул, руки возвращаются к столу.",
+    "tags": [
+     "library",
+     "body"
+    ],
+    "params": [
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "none",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 1.8,
+    "engines": [
+     "vrm"
+    ]
+   },
+   {
+    "name": "anim",
+    "title": "Клип из библиотеки",
+    "ru": "Любой клип библиотеки движений по имени (clip — см. list_animations): жест корпусом и руками поверх позы или всё тело (body: full — например, танец стоя).",
+    "tags": [
+     "library"
+    ],
+    "params": [
+     {
+      "name": "clip",
+      "type": "string",
+      "default": "head_yes",
+      "ru": "имя клипа (list_animations)"
+     },
+     {
+      "name": "body",
+      "type": "enum",
+      "options": [
+       "upper",
+       "full"
+      ],
+      "default": "upper",
+      "ru": "upper — корпус и руки поверх позы, full — всё тело"
+     },
+     {
+      "name": "mask",
+      "type": "enum",
+      "options": [
+       "upper",
+       "arms",
+       "left",
+       "right",
+       "head",
+       "torso"
+      ],
+      "default": "upper",
+      "ru": "какие кости берёт жест (body: upper)"
+     },
+     {
+      "name": "speed",
+      "type": "number",
+      "default": 1,
+      "min": 0.4,
+      "max": 2,
+      "ru": "скорость клипа"
+     },
+     {
+      "name": "face",
+      "type": "enum",
+      "options": [
+       "neutral",
+       "happy",
+       "laugh",
+       "wide",
+       "frown",
+       "talk",
+       "tired",
+       "yawn",
+       "angry",
+       "sad",
+       "smug",
+       "pout",
+       "think",
+       "panic",
+       "shock",
+       "eyeroll",
+       "sigh",
+       "wince",
+       "meh",
+       "none"
+      ],
+      "default": "none",
+      "ru": "лицо на время жеста (none — не менять)"
+     }
+    ],
+    "duration": 2.5,
+    "engines": [
+     "vrm"
+    ]
+   }
+  ]
+ },
  "transition": {
   "title": "Переход между кадрами",
   "field": "transitions",

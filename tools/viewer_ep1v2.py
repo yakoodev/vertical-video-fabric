@@ -156,6 +156,8 @@ def main(argv: list[str] | None = None) -> int:
     spec = E2.build_ep2_spec(E.scene_base("street"), beats, shifted, total, env, roll, her_len, her_env, her_words)
     events = spec.pop("_events")
     spec_path = work / "spec.json"
+    from app import lipsync  # рот героини по гласным (иначе по громкости)
+    lipsync.attach_psx(spec, her_wav, her_words, her_len)
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=1), "utf-8")
     if a.preview:
         res = render(spec_path, a.out, a.gl, a.preview, work / (f"preview_{a.tag}" if a.tag else "preview"))
