@@ -15,7 +15,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts"; export { speechMouth, envLevel } from "./src/anim.ts";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -185,4 +185,19 @@ test("кадр: разрез и камера в теле — проблема", 
   assert.match(frameProblem({ presence: { ...p, cut: { ...p.cut, x: { at: 148, run: 0.5 } } }, lost: [] }), /вертикалью x=148/);
   assert.match(frameProblem({ presence: { ...p, cut: { ...p.cut, y: { at: 1500, run: 0.7 } } }, lost: [] }), /горизонталью/);
   assert.match(frameProblem({ presence: { ...p, near: 0.1 }, lost: [] }), /камера в теле/);
+});
+
+test("рот по огибающей голоса: в тишине почти закрыт, на громком — открыт, без огибающей — как раньше", () => {
+  const speech = [[0, 2]];
+  const env = { fps: 10, start: 0, values: [...Array(10).fill(0), ...Array(10).fill(1)] };
+  const peak = (from, to, e) => {
+    let m = 0;
+    for (let t = from; t < to; t += 0.01) m = Math.max(m, ...Object.values(M.speechMouth(speech, t, e)), 0);
+    return m;
+  };
+  assert.ok(peak(0.2, 0.9, env) < 0.15, "тишина внутри окна — рот почти закрыт");
+  assert.ok(peak(1.1, 1.8, env) > 0.5, "громко — рот открыт");
+  assert.ok(Math.abs(peak(0.2, 0.9) - peak(0.2, 0.9, { values: [] })) < 1e-9, "пустая огибающая не меняет рот");
+  assert.equal(M.envLevel(undefined, 3), 1);
+  assert.equal(M.envLevel(env, 50), env.floor ?? 0.12, "за концом огибающей — тишина");
 });
