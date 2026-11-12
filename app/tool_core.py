@@ -22,6 +22,21 @@ class ToolError(Exception):
         self.problems = list(problems or [])
 
 
+# Имена инструментов, которые принимает ``agent_tools.run_tool`` (реестр, поиск, проектные): реестр ставит
+# app/agent_tools при импорте — домены его не импортируют (list_modules сверяет с этим свои списки).
+_callable_names: Callable[[], set[str]] | None = None
+
+
+def set_callable_names(fn: Callable[[], set[str]]) -> None:
+    global _callable_names
+    _callable_names = fn
+
+
+def callable_tool_names() -> set[str]:
+    """Вызываемые инструменты; пусто — реестр ещё не собран."""
+    return set(_callable_names()) if _callable_names is not None else set()
+
+
 @dataclass
 class ImageResult:
     """Картинка как результат инструмента (кадр клипа) — модель её «видит»."""

@@ -239,6 +239,30 @@ def test_list_modules_tool_is_read_only(env):
     assert {"generate_covers", "list_covers", "choose_cover", "compose_cover"}.isdisjoint(names)
 
 
+def test_list_modules_names_only_callable_tools(env):
+    """Агент эксперимента звал analyze_source, load_tools, delete_clip, add_source_from_url и approve_publication
+    из list_modules и получал «нет такого инструмента»: в tools — только то, что принимает MCP, остальное — chat_only."""
+    client, _store = env
+    data = _rpc(client, "tools/call", {"name": "list_modules", "arguments": {}})["structuredContent"]
+    listed = {t for m in data["modules"] for t in m["tools"]}
+    chat_only = {t for m in data["modules"] for t in m.get("chat_only_tools", [])}
+    assert listed, "list_modules без инструментов"
+    for name in sorted(listed):
+        agent_tools.get_tool(name)  # KeyError — значит list_modules назвал несуществующий инструмент
+    missing = sorted(n for n in listed if n not in agent_tools.callable_tool_names())
+    assert not missing, missing
+    assert {"analyze_source", "load_tools", "delete_clip", "add_source_from_url", "approve_publication"} <= chat_only
+    assert not listed & chat_only
+    assert chat_only <= {t.name for t in chat_tools.chat_only_tools()}
+    # Включённый модуль: каждый его вызываемый инструмент — в MCP tools/list.
+    mcp = {t["name"] for t in _rpc(client, "tools/list")["tools"]}
+    enabled_tools = {t for m in data["modules"] if m["enabled"] for t in m["tools"]}
+    assert enabled_tools <= mcp, sorted(enabled_tools - mcp)
+    for name in sorted(chat_only):
+        called = _rpc(client, "tools/call", {"name": name, "arguments": {}})
+        assert called["isError"] is True
+
+
 def test_workers_stop_and_restart_without_service_restart(env, monkeypatch):
     _client_, store = env
     import app.main as app_main

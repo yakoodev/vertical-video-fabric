@@ -44,6 +44,7 @@ from app.tool_core import (  # noqa: F401
     _to_clip_time, ASSET_OWNER_PARAMS, clip_timeline, ImageResult, plan_clock, SOURCE_ARGS, SOURCE_ID_TOOLS, Tool,
     ToolContext, ToolError,
 )
+from app.tool_core import set_callable_names as _set_callable_names
 from app.layer_lint import (  # noqa: F401
     _cover_problems, _layer_box, _lint_scene, _ref, _rgb, _secondary_captions, _side_warnings, _zone, cam_strip,
     CAPTION_ACTIVE_COLORS, caption_highlight_warnings, caption_overlap_warnings, caption_zone_warnings,
@@ -645,6 +646,15 @@ def get_tool(name: str) -> Tool:
     if tool is None:
         raise KeyError(name)
     return tool
+
+
+def callable_tool_names() -> set[str]:
+    """Всё, что принимает ``run_tool``: реестр, поиск (DISCOVERY_TOOLS) и проектные. Инструменты чата сервиса
+    (``app/chat_tools.chat_only_tools``) сюда не входят — их вызывает только чат."""
+    return set(registry()) | {t.name for t in DISCOVERY_TOOLS} | {t.name for t in _project_tools()}
+
+
+_set_callable_names(callable_tool_names)
 
 
 def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]:

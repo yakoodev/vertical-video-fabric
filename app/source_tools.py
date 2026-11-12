@@ -265,13 +265,26 @@ def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
     """Модули сервиса (app/modules.py) — только чтение."""
     from app import modules
 
+    from app.tool_core import callable_tool_names
+
     view = modules.describe(ctx.store)
-    keep = ("id", "name", "group", "description", "enabled", "depends", "blocked_by", "cost", "cost_note", "tools")
-    mods = [{k: m[k] for k in keep} for m in view["modules"]]
+    keep = ("id", "name", "group", "description", "enabled", "depends", "blocked_by", "cost", "cost_note")
+    callable_ = callable_tool_names() or {t for m in view["modules"] for t in m["tools"]}
+    mods = []
+    for m in view["modules"]:
+        row = {k: m[k] for k in keep}
+        # tools — только то, что вызывается здесь (MCP и агенты); инструменты чата сервиса (кнопки подтверждения
+        # владельца) — отдельно: через MCP их нет, «нет такого инструмента» сбивал внешних агентов.
+        row["tools"] = [t for t in m["tools"] if t in callable_]
+        chat_only = [t for t in m["tools"] if t not in callable_]
+        if chat_only:
+            row["chat_only_tools"] = chat_only
+        mods.append(row)
     off = [m["id"] for m in mods if not m["enabled"]]
     return {"ok": True, "modules": mods, "disabled": off,
             "note": "переключает только владелец: Настройки → Модули" + (
-                f"; выключены: {', '.join(off)}" if off else "; включены все")}
+                f"; выключены: {', '.join(off)}" if off else "; включены все")
+            + ". tools — инструменты, которые можно вызвать; chat_only_tools — только в чате сервиса (UI), не через MCP"}
 
 
 def h_list_clips(ctx: ToolContext, args: dict) -> dict:
