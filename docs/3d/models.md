@@ -160,3 +160,5 @@ poly.pizza (поле `Licence` страницы) 2026-11-12. Свои клави
 | `sofa/wide` | Диван широкий тёмный | 2.20×0.72×0.90 | 716 | [poly.pizza](https://poly.pizza/m/7Q_Ab2HLll1) | Danni Bittman | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
 | `window/white_double` | Окно белое двойное | 1.54×1.30×0.33 | 228 | [poly.pizza](https://poly.pizza/m/98ZJrd80Q1V) | Poly by Google | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
 | `window/wood_cross` | Окно деревянное с крестовиной | 1.12×1.20×0.10 | 124 | [poly.pizza](https://poly.pizza/m/dwBpM-aSA_t) | Justin Randall | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) |
+
+> 12.11: по решению владельца ролики берут только модели без обязательной атрибуции (CC0 и свои). Модели CC BY в библиотеке остаются, но движок и справка агента их пропускают; включить можно только явно (`allowAttribution`) вместе со строкой автора в описании.
