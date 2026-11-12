@@ -24,7 +24,7 @@ function workstation(id: string, c: Record<string, string>, seed: number, chairY
   const kinds = ["chart", "code", "calm"];
   o.push(...put(monitor(`${id}.mon`, { w: 0.54, h: 0.31, screen: c.screen, content: kinds[Math.floor(r() * 3)], seed: seed + 1, light: false }), [r() * 0.2 - 0.1, 0.74, -0.16], 0));
   o.push(...put(keyboardSet(`${id}.kb`, { body: "#2a2b31", keys: "#e8e6e0", mat: "#3a3d46" }), [-0.05, 0.74, 0.12], 0));
-  if (r() < 0.6) o.push({ id: `${id}.mug`, primitive: "mug", position: [0.48, 0.74, 0.05], rotation: [0, r() * 360, 0], params: { color: ["#f2b84b", "#e86a5a", "#f3efe8", "#6ab0ff"][Math.floor(r() * 4)] } });
+  if (r() < 0.6) o.push({ id: `${id}.mug`, model: "mug", fitMax: [0.13, 0.105, 0.13], primitive: "mug", position: [0.48, 0.74, 0.05], rotation: [0, r() * 360, 0], params: { color: ["#f2b84b", "#e86a5a", "#f3efe8", "#6ab0ff"][Math.floor(r() * 4)] } });
   if (r() < 0.5) o.push(...put(plant(`${id}.plant`, { kind: r() < 0.5 ? "bush" : "snake", pot: "#f1ede6", leaf: "#4f8a5b", leaf2: "#7fb36a", size: 0.5, seed: seed + 5 }), [-0.5, 0.74, -0.18], 0));
   for (let i = 0; i < 2 + Math.floor(r() * 3); i++) o.push(box(`${id}.paper${i}`, [-0.45 + r() * 0.15, 0.741 + i * 0.002, 0.1 + r() * 0.05], [0.21, 0.002, 0.297], "#f6f5f0", { rot: [0, r() * 30 - 15, 0] }));
   o.push(...put(chair(`${id}.chair`, { color: c.chair, frame: "#26272c" }), [0, 0, 0.62], chairYaw ?? 180 + r() * 40 - 20));
@@ -255,7 +255,7 @@ function cityRooftop(p: Record<string, any>, c: Record<string, string>) {
   }
   o.push(cyl("table", [0.1, 0.55, -1.4], [0.55, 0.03], c.wood, { roughness: 0.6 }));
   o.push(cyl("table.leg", [0.1, 0, -1.4], [0.05, 0.55], c.metal, { metalness: 0.6 }));
-  o.push({ id: "table.mug", primitive: "mug", position: [0.0, 0.58, -1.35], params: { color: "#f2b84b" } });
+  o.push({ id: "table.mug", model: "mug", fitMax: [0.13, 0.105, 0.13], primitive: "mug", position: [0.0, 0.58, -1.35], params: { color: "#f2b84b" } });
   o.push(glow("cylinder", "table.candle", [0.25, 0.58, -1.45], [0.06, 0.08], "#ffcf86", 1.6, { light: { type: "point", id: "table.light", color: "#ffb860", intensity: 0.5, position: [0, 0.12, 0], distance: 2.5, decay: 2, halo: { size: 0.12, opacity: 0.5 } } }));
   for (const [i, x, z, k] of [[0, -2.5, -2.05, "rosette"], [1, 0.9, -2.15, "bush"], [2, -0.5, -2.2, "snake"]] as [number, number, number, string][]) {
     o.push(rbox(`planters.${i}`, [x, 0, z], [0.5, 0.42, 0.5], c.planter, 0.03, { roughness: 0.85 }));

@@ -66,6 +66,25 @@ def lights() -> list[dict]:
     ]
 
 
+def lib(obj: dict, model: str, fit_max: list[float], tags: list[str] | None = None) -> dict:
+    """Вещь из библиотеки моделей (docs/3d/models.md): модель категории ``model`` (вариант — от засева сцены), вписанная
+    в ``fit_max``; нет библиотеки — тот же объект из своего примитива (``primitive``/``params``) или ``fallback``."""
+    out = {**obj, "model": model, "fitMax": fit_max}
+    if tags:
+        out["modelTags"] = tags
+    return out
+
+
+BOOKS = [
+    {"id": "book1", "primitive": "rounded_box", "params": {"size": [0.04, 0.2, 0.13], "color": PALETTE["teal"], "radius": 0.006},
+     "position": [-0.68, TOP + 0.43, -0.52]},
+    {"id": "book2", "primitive": "rounded_box", "params": {"size": [0.035, 0.17, 0.13], "color": PALETTE["mustard"], "radius": 0.006},
+     "position": [-0.635, TOP + 0.43, -0.52]},
+    {"id": "book3", "primitive": "rounded_box", "params": {"size": [0.045, 0.22, 0.13], "color": PALETTE["bot_trim"], "radius": 0.006},
+     "position": [-0.59, TOP + 0.43, -0.52], "rotation": [0, 0, -8]},
+]
+
+
 def objects(browser: dict, monitor_state: list[dict], bubbles: list[dict]) -> list[dict]:
     P = PALETTE
     objs: list[dict] = [
@@ -81,12 +100,9 @@ def objects(browser: dict, monitor_state: list[dict], bubbles: list[dict]) -> li
          "position": [-0.55, TOP + 0.52, -0.6]},
         {"id": "shelf", "primitive": "rounded_box", "params": {"size": [0.5, 0.03, 0.16], "color": P["desk"], "radius": 0.01},
          "position": [-0.52, TOP + 0.4, -0.52]},
-        {"id": "book1", "primitive": "rounded_box", "params": {"size": [0.04, 0.2, 0.13], "color": P["teal"], "radius": 0.006},
-         "position": [-0.68, TOP + 0.43, -0.52]},
-        {"id": "book2", "primitive": "rounded_box", "params": {"size": [0.035, 0.17, 0.13], "color": P["mustard"], "radius": 0.006},
-         "position": [-0.635, TOP + 0.43, -0.52]},
-        {"id": "book3", "primitive": "rounded_box", "params": {"size": [0.045, 0.22, 0.13], "color": P["bot_trim"], "radius": 0.006},
-         "position": [-0.59, TOP + 0.43, -0.52], "rotation": [0, 0, -8]},
+        # Книги на полке: ряд книг из библиотеки (в длину полки), без неё — три корешка.
+        {"id": "books", "model": "books", "modelTags": ["shelf"], "fitMax": [0.3, 0.22, 0.14], "position": [-0.6, TOP + 0.43, -0.52],
+         "fallback": BOOKS},
         # Стол.
         {"id": "desk", "primitive": "rounded_box", "params": {"size": [1.9, 0.06, 0.95], "color": P["desk"], "radius": 0.02},
          "position": [0, TOP - 0.06, -0.12]},
@@ -95,15 +111,16 @@ def objects(browser: dict, monitor_state: list[dict], bubbles: list[dict]) -> li
         {"id": "monitor", "primitive": "monitor", "params": {**SCREEN, "color": P["cream"], "stand": "#c8b59b", "browser": browser,
                                                              "px": 1280, "notes": ["#ffe27a", "#ffb4a2"]},
          "position": MONITOR_POS, "rotation": [0, MONITOR_YAW, 0], "state": monitor_state},
-        {"id": "keyboard", "primitive": "keyboard", "params": {"width": 0.4, "depth": 0.13}, "position": [-0.07, TOP, 0.08],
-         "rotation": [0, 12, 0]},
-        {"id": "mug", "primitive": "mug", "params": {"color": P["teal"], "radius": 0.038, "height": 0.085},
-         "position": [0.48, TOP, 0.08], "rotation": [0, -30, 0]},
-        {"id": "plant", "primitive": "plant", "params": {"pot": P["bot_trim"], "leaf": P["leaf"], "radius": 0.055, "height": 0.08,
-                                                         "leaves": 8, "leafLen": 0.1},
-         "position": [0.58, TOP, -0.3]},
-        {"id": "lamp", "primitive": "desk_lamp", "params": {"color": P["mustard"]}, "position": [0.4, TOP, -0.42],
-         "rotation": [0, 200, 0]},
+        # Клавиатура, кружка, растение, лампа — модели библиотеки; без неё — свои примитивы (deskprops.ts).
+        lib({"id": "keyboard", "primitive": "keyboard", "params": {"width": 0.4, "depth": 0.13}, "position": [-0.07, TOP, 0.08],
+             "rotation": [0, 12, 0]}, "keyboard", [0.4, 0.05, 0.16]),
+        lib({"id": "mug", "primitive": "mug", "params": {"color": P["teal"], "radius": 0.038, "height": 0.085},
+             "position": [0.48, TOP, 0.08], "rotation": [0, -30, 0]}, "mug", [0.12, 0.1, 0.12]),
+        lib({"id": "plant", "primitive": "plant", "params": {"pot": P["bot_trim"], "leaf": P["leaf"], "radius": 0.055, "height": 0.08,
+                                                             "leaves": 8, "leafLen": 0.1},
+             "position": [0.58, TOP, -0.3]}, "plant", [0.26, 0.3, 0.26], ["desk"]),
+        lib({"id": "lamp", "primitive": "desk_lamp", "params": {"color": P["mustard"]}, "position": [0.4, TOP, -0.42],
+             "rotation": [0, 200, 0]}, "lamp", [0, 0.45, 0]),
         {"id": "notes", "primitive": "rounded_box", "params": {"size": [0.09, 0.012, 0.09], "color": "#ffe27a", "radius": 0.003},
          "position": [-0.45, TOP, 0.08], "rotation": [0, 18, 0]},
     ]
