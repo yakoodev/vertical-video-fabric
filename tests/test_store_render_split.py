@@ -23,7 +23,7 @@ import pytest
 GOLDEN = Path(__file__).parent / "fixtures" / "split_surface_golden.json"
 APP = Path(__file__).parent.parent / "app"
 # И до разбора были отдельными модулями, частями не считаются.
-NOT_PARTS = {"render_qc", "render_queue", "render_library_api"}
+NOT_PARTS = {"render_qc", "render_queue", "render_library_api", "render_jobs"}  # render_jobs — задания render_clip, не часть разбора
 # Что тесты подменяют на app.render: подмена должна доходить до кода частей.
 PATCHED_ON_RENDER = ("_run_ffmpeg", "_run_compositor", "probe_media", "run_qc", "_has_audio_stream", "music_volume_for",
                      "uuid4", "fit_loudness", "_measure_loudness")
