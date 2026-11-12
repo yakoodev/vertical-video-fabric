@@ -128,7 +128,24 @@ export interface ChatMsg {
   };
   changes?: ChatChange[];
   confirmations?: ChatConfirmation[];
+  /** Траты Gemini на этот ответ (app/gemini_usage.py). */
+  usage?: MsgUsage;
   created_at: string;
+}
+
+export interface MsgUsage {
+  calls: number;
+  cost_rub: number;
+  cost_usd: number;
+  total_tokens: number;
+}
+
+/** Траты Gemini переписки: сессия chat:<id>. */
+export interface ThreadUsage extends MsgUsage {
+  session: string;
+  errors: number;
+  /** Запросы, у которых модель не нашлась в таблице цен. */
+  unpriced: number;
 }
 
 export interface LiveRun {
@@ -150,6 +167,7 @@ export interface ChatThreadView {
   model: string;
   ai: AiStatus;
   tool_groups: string[];
+  usage?: ThreadUsage;
 }
 
 export interface ChatModels extends AiStatus {

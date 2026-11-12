@@ -136,6 +136,7 @@ export const SECTIONS: Record<string, Section> = {
       { key: "prompts", label: "Промпты", to: "/settings/prompts" },
       { key: "defaults", label: "По умолчанию", to: "/settings/defaults" },
       { key: "modules", label: "Модули", to: "/settings/modules" },
+      { key: "usage", label: "Траты Gemini", to: "/settings/usage" },
       { key: "proxy", label: "Прокси", to: "/settings/proxy" },
       { key: "telegram", label: "Telegram", to: "/settings/telegram", module: "telegram" },
       { key: "backup", label: "Экспорт и импорт", to: "/settings/backup" },

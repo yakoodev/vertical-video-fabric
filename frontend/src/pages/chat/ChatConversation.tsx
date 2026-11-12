@@ -19,6 +19,7 @@ import { qk } from "@/api/keys";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { projectPath } from "@/lib/paths";
+import { requestsWord, rub, spendTitle } from "@/lib/usage";
 import { ApprovalCard } from "@/pages/ApprovalsPage";
 import { Markdown, type MediaRef } from "@/pages/chat/Markdown";
 import "@/styles/chat.css";
@@ -486,6 +487,11 @@ function AssistantMessage({
           </div>
         ) : null}
         {m.changes?.length ? <Changes changes={m.changes} threadId={threadId} onRef={onRef} clipEdit={clipEdit} /> : null}
+        {m.usage && m.usage.calls && !running ? (
+          <div className="chat-small muted chat-spend" title={spendTitle(m.usage)}>
+            Gemini: {rub(m.usage.cost_rub)} · {m.usage.calls} {requestsWord(m.usage.calls)}
+          </div>
+        ) : null}
         {m.status === "error" || m.status === "interrupted" || m.status === "cancelled" ? (
           <div className={`chat-small chat-status-${m.status}`}>
             {m.status === "error" ? "Ошибка ответа" : m.status === "cancelled" ? "Остановлено" : "Прервано"}
@@ -851,6 +857,13 @@ export function ChatConversation({
           {!ai.available ? (
             <div className="chat-banner warn">
               <strong>ИИ-агент недоступен.</strong> {ai.hint}
+            </div>
+          ) : null}
+          {view.data!.usage?.calls ? (
+            <div className="chat-small muted chat-spend" title={spendTitle(view.data!.usage)}>
+              Потрачено на Gemini в этой переписке: <strong>{rub(view.data!.usage.cost_rub)}</strong> ·{" "}
+              {view.data!.usage.calls} {requestsWord(view.data!.usage.calls)}
+              {view.data!.usage.unpriced ? ` · без цены: ${view.data!.usage.unpriced}` : ""}
             </div>
           ) : null}
           {view.data!.summary ? (
