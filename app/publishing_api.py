@@ -139,6 +139,13 @@ class JobRead(BaseModel):
     cover_sec: float | None = None  # секунда кадра-обложки TikTok; None — кадр TikTok по умолчанию
 
 
+class TargetRetry(BaseModel):
+    allow_repost: bool = Field(
+        default=False,
+        description="Retry even though the video may already be out on this account (checked on the platform).",
+    )
+
+
 class ClipPostRequest(BaseModel):
     title: str = ""
     description: str = ""
@@ -461,6 +468,26 @@ def build_publishing_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIR
             return get_store().get_job(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post(
+        "/api/job-targets/{target_id}/retry",
+        response_model=JobRead,
+        tags=["Jobs"],
+        summary="Requeue one failed / needs_reauth platform of a job (same job, no duplicate post)",
+        description=(
+            "Only a target in `failed` or `needs_reauth` whose job has finished. The same target row goes back to "
+            "`queued` and its job to `queued`: the worker uploads to this platform again and skips the others. "
+            "409 — not a failure, the job is still running, or the video may already be out (`maybe_posted`, a link, "
+            "or the same clip on this account in another job): resend with `allow_repost: true` after checking."
+        ),
+    )
+    def api_retry_job_target(target_id: int, _auth: auth_dep, payload: TargetRetry | None = None) -> dict:
+        try:
+            return get_store().retry_target(target_id, allow_repost=bool(payload and payload.allow_repost))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:  # и RepostNeedsConfirm
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     async def _create_post_from_upload(
         file: UploadFile,

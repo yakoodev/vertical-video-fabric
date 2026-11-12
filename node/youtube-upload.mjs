@@ -113,6 +113,45 @@ export function metadataUpdate(payload) {
   return update;
 }
 
+// Не studio.updateVideoMetadata: он шлёт protobuf от клиента ANDROID, и на cookie-входе YouTube отвечает
+// 400 INVALID_ARGUMENT (проверено 12.11 на 5ItVRliP5bY, тело — без имени поля). Студия в браузере шлёт тот
+// же /video_manager/metadata_update JSON-ом от WEB_CREATOR — так он проходит (200). Имена перечислений
+// сверены с сервером: на чужое значение он отвечает «Invalid value at 'made_for_kids.new_mfk'
+// (…MdeMadeForKidsType)», а все три ниже принимает. Канал-бренд — как у всех innertube-запросов youtubei.js:
+// context.user.onBehalfOfUser и X-Goog-PageId.
+export const MFK_OPERATION_SET = 'MDE_MADE_FOR_KIDS_UPDATE_OPERATION_SET';
+export const MFK_NOT_FOR_KIDS = 'MDE_MADE_FOR_KIDS_TYPE_NOT_MFK';
+export const MFK_FOR_KIDS = 'MDE_MADE_FOR_KIDS_TYPE_MFK';
+
+/** Тело /video_manager/metadata_update (Студия, WEB_CREATOR) для аудитории и категории; нечего менять — null. */
+export function metadataUpdateRequest(videoId, update) {
+  const body = { client: 'WEB_CREATOR', encryptedVideoId: videoId };
+  if (typeof update.made_for_kids === 'boolean') {
+    body.madeForKids = { operation: MFK_OPERATION_SET, newMfk: update.made_for_kids ? MFK_FOR_KIDS : MFK_NOT_FOR_KIDS };
+  }
+  if (Number.isInteger(update.category) && update.category > 0) body.category = { newCategoryId: update.category };
+  return Object.keys(body).length > 2 ? body : null;
+}
+
+// Что Студия видит у ролика после правки. audienceRestriction — настройка «для детей» (COPPA):
+// selfRating VIDEO_TARGETED_AUDIENCE_ALL — «не для детей», …_KIDS — «для детей»; category — внутреннее
+// имя (20 «Игры» = CREATOR_VIDEO_CATEGORY_GADGETS).
+export async function readVideoMetadata(yt, videoId) {
+  const response = await yt.actions.execute('/creator/get_creator_videos', {
+    client: 'WEB_CREATOR',
+    videoIds: [videoId],
+    mask: { videoId: true, category: true, audienceRestriction: { all: true } },
+    failOnError: true
+  });
+  const video = response?.data?.videos?.[0];
+  if (!video) return null;
+  return {
+    category: video.category || '',
+    audience: video.audienceRestriction?.selfRating || '',
+    audienceBy: video.audienceRestriction?.imposer || ''
+  };
+}
+
 // cookieJar — снаружи (main), чтобы свежие cookie ушли в ответ и при исключении: 10.11 задание 117
 // упало на загрузке, ответ без них — сохранённые cookie устарели, Google разлогинил вход.
 export async function run(payload, { createClient, readFile = fs.readFile, sleep, log = () => {}, cookieJar = new Map() } = {}) {
@@ -174,12 +213,21 @@ export async function run(payload, { createClient, readFile = fs.readFile, sleep
   const extra = { uploadAttempts: attempts.upload, channel: channelInfo };
   // Best effort: видео уже загружено, неудача с метаданными/миниатюрой не делает загрузку проваленной.
   const update = metadataUpdate(payload);
-  if (videoId && Object.keys(update).length) {
+  const request = videoId ? metadataUpdateRequest(videoId, update) : null;
+  if (request) {
     try {
-      await yt.studio.updateVideoMetadata(videoId, update);
+      await yt.actions.execute('/video_manager/metadata_update', request);
       extra.metadataSet = update;
     } catch (error) {
       extra.metadataError = errorDetail(error);
+    }
+    if (extra.metadataSet) {
+      // Проверка: ответ правки пустой ({}), применилось ли — видно только чтением.
+      try {
+        extra.metadataCheck = await readVideoMetadata(yt, videoId);
+      } catch (error) {
+        extra.metadataCheckError = errorDetail(error);
+      }
     }
   }
   // Обычное (горизонтальное 16:9) видео: обложка — миниатюрой.
