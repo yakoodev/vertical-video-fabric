@@ -471,10 +471,11 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     from app import vtubika_room3d as ROOM
 
     spec = to_vrm_spec(plan, built, words, total)
-    # Рот по гласным (голос + слова) и слой жизни; голос в ролике — с lead.
+    # Рот по гласным (голос + слова), брови на ударениях (и выделенных словах) и слой жизни; голос — с lead.
     from app import lipsync
 
-    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead)
+    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead,
+                            highlight=list((plan.get("highlight") or {}).keys()))
     # Комната 3D-пресета (presets3d.room): отрисована отдельно той же камерой — подложкой под героиню.
     plates = ROOM.apply(plan, spec, work, gl=args.gl, log=_log)
     if plates:

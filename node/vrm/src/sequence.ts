@@ -14,7 +14,8 @@ import { holdKeys, perfBones, type PerfLayers } from "./perf.ts";
 import { perfArm } from "./perfarms.ts";
 import { blendActions, type Action, type LibClip } from "./blend.ts";
 import { lifeAt, type LifeSpec } from "./life.ts";
-import { visemeAt, type Visemes } from "./lipsync.ts";
+import { openness, visemeAt, type Visemes } from "./lipsync.ts";
+import { arkitAt, browsAt, composeFace, talkAt, type ArkitTrack, type BrowKey, type FaceSpec } from "./facemix.ts";
 
 /**
  * Ключи faces / look / arms / hands могут быть «на время» (hold, out — perf.ts): после hold возвращается прежнее.
@@ -52,6 +53,12 @@ export interface Timeline extends PerfLayers {
   life?: LifeSpec | boolean;
   /** Рот по гласным (app/lipsync.py): вместо рта по громкости. */
   visemes?: Visemes;
+  /** Лицо по слоям (facemix.ts): эмоция под речью, улыбка по умолчанию, микродвижения; false — как раньше. */
+  face?: FaceSpec | false;
+  /** Брови на ударных словах (app/lipsync.py emphasis): начало слова, сила, длина. */
+  brows?: BrowKey[];
+  /** Формы ARKit от звука (app/wav2arkit.py) — рот perfect-sync модели. */
+  arkit?: ArkitTrack;
   /**
    * Руки клипов чуть в стороны (градусы): у манекенов паков бёдра и корпус уже, чем у аниме-модели, — опущенные
    * руки клипа входят в бока. По умолчанию 6° при клипах основы.
@@ -63,6 +70,31 @@ export interface Timeline extends PerfLayers {
 export interface FrameCtx {
   cam?: V3;
   leg?: number;
+  /** Ручки лица модели (face.ts): части бровей, глаз и рта. */
+  face?: { handles: string[]; arkit?: boolean };
+}
+
+/** Моргание на движениях головы: кивок, мотание, поклон, вздрагивание — глаза закрываются в начале движения. */
+export function headBlink(tl: Timeline, t: number): number {
+  let v = 0;
+  const at = (t0: number) => {
+    const u = t - t0 - 0.03;
+    if (u >= 0 && u < 0.2) v = Math.max(v, u < 0.07 ? u / 0.07 : 1 - (u - 0.07) / 0.13);
+  };
+  for (const k of tl.nods || []) at(k.t);
+  for (const k of tl.bows || []) at(k.t);
+  for (const k of tl.shakes || []) at(k.t);
+  for (const k of tl.flinches || []) at(k.t);
+  return Math.max(0, Math.min(1, v));
+}
+
+/** Идёт ли речь (0..1): по окнам speech, без них — по гласным рядом с t (±0.3 с). */
+function talkLevel(tl: Timeline, t: number): number {
+  if (tl.speech?.length) return talkAt(tl.speech, t);
+  if (!tl.visemes) return 0;
+  let m = 0;
+  for (let d = -0.3; d <= 0.301; d += 0.1) m = Math.max(m, openness(visemeAt(tl.visemes, t + d)));
+  return Math.min(1, m * 5);
 }
 
 /** Добавка кивков и поклонов к костям на t (градусы). */
@@ -318,10 +350,15 @@ export function sequencePose(tl0: Timeline, clips: Record<string, Clip>, t: numb
     const u = t - k.t - 0.03;
     if (u >= 0 && u < 0.18) blink = Math.max(blink, u < 0.07 ? u / 0.07 : 1 - (u - 0.07) / 0.11);
   }
-  expr.blink = Math.max(expr.blink ?? 0, blink * (1 - (expr.happy ?? 0)));
-  if (Object.keys(mouth).length) Object.assign(expr, { aa: 0, oh: 0, ee: 0, ih: 0, ou: 0 }, mouth);
+  blink = Math.max(blink, headBlink(tl, t));
+  // Лицо по слоям: эмоция ключей под речью, гласные поверх улыбки, брови на ударениях (facemix.ts).
+  const brow = tl.face === false ? 0 : browsAt(tl.brows, t);
+  if (brow > 0) add("head", [-1.6 * brow, 0, 0]); // на ударении голова чуть вверх вместе с бровями
+  const arkit = tl.face !== false && ctx.face?.arkit ? arkitAt(tl.arkit, t) : null;
+  const face = composeFace({ expr, mouth: Object.keys(mouth).length ? mouth : null, talk: talkLevel(tl, t), blink, brow, arkit, t },
+    ctx.face?.handles, tl.face === false ? false : { seed: life?.seed ?? 1, ...(tl.face || {}) });
   return {
-    bones, mocap, expr, look: gazeEyes,
+    bones, mocap, expr: face, look: gazeEyes,
     hipsModel: hipsModel.some((v) => v !== 0) ? hipsModel : undefined, plant,
     left: left || undefined, right: right || undefined,
     hands: { left: handFingers(left, fing("left")), right: handFingers(right, fing("right")) },

@@ -85,3 +85,60 @@ def test_attach_timeline_shifts_voice_and_enables_life(monkeypatch) -> None:
     assert ok and tl["visemes"]["start"] == 2.0 and tl["life"] == {"seed": 7}
     tl2: dict = {"speech": []}
     assert L.attach_timeline(tl2, "voice.wav", [], 3.0) is False and "visemes" not in tl2
+
+
+def test_stressed_syllable_opens_widest_and_service_words_less() -> None:
+    n = 200
+    level = np.full(n, 0.6)
+    level[40:60] = 0.95  # громкий слог
+    words = [{"word": "папапа", "start": 0.2, "end": 0.8}, {"word": "и", "start": 1.2, "end": 1.4}]
+    g = L.syllable_gain(words, level)
+    assert g.max() == 1.0 and g[50] == 1.0  # ударный (громкий и долгий) слог — полный
+    vow = [j0 for k, _v, j0, _j1 in L._phone_spans(words[0], n, 0.01)[2] if k == "V"]
+    assert all(g[j] < 0.9 for j in vow if not 40 <= j < 60)  # безударные — меньше
+    assert abs(g[130] - 0.7) < 1e-9  # «и» — служебное слово
+    assert (g[100:120] == 1.0).all()  # вне слов — как есть
+
+
+def test_openings_are_smaller_than_shout() -> None:
+    words = [{"word": "мама", "start": 0.4, "end": 1.2}, {"word": "папа", "start": 1.5, "end": 2.3}]
+    vis = L.visemes(voiced(2.8, [(0.4, 1.2), (1.5, 2.3)]), SR, words, 2.8)
+    assert max(vis["aa"]) <= L.VOWEL_MAX["aa"] + 1e-9 < 0.8
+
+
+def test_emphasis_brows_on_highlight_question_and_loud_words() -> None:
+    spans = [(0.2, 0.6), (0.7, 1.1), (1.2, 1.6), (2.0, 2.6), (3.5, 4.0), (5.2, 5.8)]
+    pcm = voiced(6.2, spans)
+    t = np.arange(len(pcm)) / SR
+    pcm = pcm * np.where((t >= 2.0) & (t < 2.6), 4.0, 1.0).astype(np.float32)  # громкое слово
+    words = [{"word": w, "start": a, "end": b} for w, (a, b) in
+             zip(["один", "два", "три", "громко", "Витубика", "правда?"], spans)]
+    br = L.emphasis(pcm, SR, words, highlight=["витубика"])
+    assert [b["t"] for b in br] == [2.0, 3.5, 5.2]
+    by = {b["t"]: b["amp"] for b in br}
+    assert by[3.5] == 0.8 and by[5.2] == 0.7 and 0.4 <= by[2.0] <= 0.65
+    assert br == L.emphasis(pcm, SR, words, highlight=["витубика"])  # детерминированно
+    # Не чаще одного на min_gap: два соседних выделенных слова — одно.
+    close = L.emphasis(pcm, SR, words, highlight=["один", "два"])
+    assert sum(1 for b in close if b["t"] < 1.2) == 1
+    assert L.emphasis(pcm, SR, []) == []
+
+
+def test_emotion_faces_from_plan_tags() -> None:
+    f = L.emotion_faces([{"start": 1.0, "end": 3.0, "emotion": "радость"}, {"start": 4.0, "end": 5.0, "emotion": "Surprised"},
+                         {"start": 6.0, "end": 7.0, "emotion": "непонятно"}, {"start": 8.0, "end": 9.0, "emotion": "neutral"}])
+    assert [k["expr"] for k in f] == [{"happy": 0.55}, {"surprised": 0.75, "happy": 0.15}, {"neutral": 1.0}]
+    assert f[0]["t"] == 0.85 and f[0]["hold"] == 2.3
+    assert L.emotion_name("ухмылка") == "smirk" and L.emotion_name(None) is None
+
+
+def test_attach_timeline_adds_brows_and_moods_shifted(monkeypatch) -> None:
+    pcm = voiced(1.5, [(0.2, 1.0)])
+    monkeypatch.setattr(L, "from_track",
+                        lambda _t, words, total, windows=None, fps=30: L.visemes(pcm, SR, words, total, windows=windows))
+    monkeypatch.setattr(L, "brows_from_track", lambda _t, words, hl=None: [{"t": words[0]["start"], "dur": 0.8, "amp": 0.7}])
+    tl = {"speech": [[2.2, 3.0]], "faces": [{"t": 0, "expr": {}}]}
+    assert L.attach_timeline(tl, "v.wav", [{"word": "да?", "start": 2.2, "end": 3.0}], 3.5, offset=2.0,
+                             moods=[{"start": 2.2, "end": 3.0, "emotion": "happy"}])
+    assert tl["brows"] == [{"t": 2.2, "dur": 0.8, "amp": 0.7}]
+    assert [f["t"] for f in tl["faces"]] == [0, 2.05] and tl["faces"][1]["expr"] == {"happy": 0.55}
