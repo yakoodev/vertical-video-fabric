@@ -11,9 +11,10 @@ from typing import Any
 # Общее
 # --------------------------------------------------------------------------- #
 
-PROJECT_KINDS = ("stream_channel", "series", "promo", "ai_video", "explainer", "other")
+PROJECT_KINDS = ("stream_channel", "series", "promo", "ai_video", "explainer", "series3d", "other")
 PROJECT_KIND_LABELS = {"stream_channel": "стрим-канал", "series": "сериал / аниме", "promo": "промо",
-                       "ai_video": "ИИ-видео", "explainer": "канал объяснялок", "other": "другое"}
+                       "ai_video": "ИИ-видео", "explainer": "канал объяснялок", "series3d": "3D-серия",
+                       "other": "другое"}
 
 
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}([ T]\d{2}:\d{2}(:\d{2})?)?$")
