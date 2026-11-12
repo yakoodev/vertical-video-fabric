@@ -469,7 +469,7 @@ def captions(video: Path, words: list[dict], out: Path, work: Path) -> None:
                    "uppercase": True, "lineHeight": 1.04, "stroke": {"color": "#2b1810", "width": 13},
                    "bg": {"color": "#c96f4a", "opacity": 1, "radius": 30, "padX": 40, "padY": 22}},
          "out": {"type": "fade", "duration": 0.2}},
-        {"id": "caps", "type": "captions", "start": 0.0, "end": DURATION, "x": 0.5, "y": 0.73,
+        {"id": "caps", "type": "captions", "start": 0.0, "end": DURATION, "x": 0.5, "y": 0.785,
          "props": {"style": "hormozi", "size": 78, "activeColor": "#FFD23F", "uppercase": True, "maxWords": 1,
                    "maxLines": 1, "stroke": {"color": "#2b1810", "width": 11}}},
     ]
