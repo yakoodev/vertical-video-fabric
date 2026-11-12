@@ -1301,12 +1301,37 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "2f1d36ed2ae92f39",
+"description": "b60ce4ec8b8e8806",
 "parameters": "ef824d7d877a5ee2",
 "mutating": false,
 "scope": "clip",
 "module": null,
 "handler": "h_lint_clip",
+"label": true
+},
+{
+"name": "render_clip",
+"title": "Рендерю клип",
+"description": "df7c02329b10eab8",
+"parameters": "47055dafa1144126",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_render_clip",
+"label": true,
+"cost": [
+"cpu"
+]
+},
+{
+"name": "render_status",
+"title": "Смотрю рендер",
+"description": "574adf7aff0d1707",
+"parameters": "9ce00faba8df6b7c",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_render_status",
 "label": true
 },
 {
@@ -1657,7 +1682,7 @@
 {
 "name": "submit_for_approval",
 "title": "Отправляю на одобрение",
-"description": "aa174242a56874cd",
+"description": "d37fdeb2f73903f5",
 "parameters": "cf75e82f07264841",
 "mutating": true,
 "scope": "clip",

@@ -97,7 +97,7 @@
 
 ### 9. Рендер и контроль
 
-- `vvf.py render <clip>` (или `POST /api/clip-plans/{id}/render`) — отчёт QC.
+- MCP `render_clip` → `render_status(render_id, wait_sec=30)` (или `vvf.py render <clip>`, `POST /api/clip-plans/{id}/render`) — отчёт QC.
 - `lint_clip` — плашка, субтитры и титры не под кнопками и подписью TikTok/Reels/Shorts, титры успевают
   прочитать, вспышек > 3/с нет. `warn` — правка и рендер снова.
 - Дальше чек-лист ниже. Что-то не так — правка и рендер снова; сдаём только с пройденным чек-листом.

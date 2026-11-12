@@ -41,7 +41,7 @@ def h_submit_for_approval(ctx: ToolContext, args: dict) -> dict:
         # Линт перед сдачей (app/quality_lint.py) — предупреждения, отправку не останавливают.
         out["lint"] = lint
         if (lint.get("counts") or {}).get("warn"):
-            out["note"] += (f" Линт: {lint['summary']} — посмотри lint_clip; поправь, перерендерь и отправь заново, "
+            out["note"] += (f" Линт: {lint['summary']} — посмотри lint_clip; поправь, перерендерь (render_clip → render_status) и отправь заново, "
                             "если это ошибка, а не замысел.")
     return out
 
@@ -73,7 +73,7 @@ def autopilot_tools() -> list[Tool]:
     return [
         Tool(
             "submit_for_approval", "Отправляю на одобрение",
-            "Клип (готовый рендер) — на одобрение владельцу: title, description, tags [без #], platforms "
+            "Клип (готовый рендер: render_clip → render_status done) — на одобрение владельцу: title, description, tags [без #], platforms "
             "[youtube|tiktok|instagram] (пусто — площадки проекта), when — «ГГГГ-ММ-ДД ЧЧ:ММ» пояса проекта (пусто — "
             "ближайший свободный слот), content_type (meme, ad…; пусто — по тегам клипа). Без approved НИЧЕГО не "
             "публикуется. Сразу в расписание только при настройке проекта «Публиковать самому» (get_agent_settings) "

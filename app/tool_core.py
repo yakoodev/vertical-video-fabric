@@ -74,6 +74,9 @@ class Tool:
     mutating: bool = False
     scope: str = "clip"  # clip — нужен клип; global — нет (поиск, справочники)
     label: Callable[[dict], str] | None = None
+    # Чем дорог вызов (как у модулей, app/modules.COST_LABELS: cpu | ram | gpu | network | paid); пусто — дёшево.
+    # В MCP tools/list — ``_meta["vvf/cost"]``.
+    cost: tuple[str, ...] = ()
 
     def step_label(self, args: dict) -> str:
         try:
@@ -93,6 +96,7 @@ class Tool:
             "parameters": self.parameters,
             "mutating": self.mutating,
             "scope": self.scope,
+            **({"cost": list(self.cost)} if self.cost else {}),
         }
 
 

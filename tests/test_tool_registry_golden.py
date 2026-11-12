@@ -32,6 +32,8 @@ def _row(tool, modules) -> dict:
         "module": modules.module_of_tool(tool.name),
         "handler": tool.handler.__name__,
         "label": tool.label is not None,
+        # Цена вызова (Tool.cost) — только у тех, где она указана: старые строки эталона не меняются.
+        **({"cost": list(tool.cost)} if tool.cost else {}),
     }
 
 
@@ -55,7 +57,7 @@ def test_registry_matches_golden():
         names = [row["name"] for row in rows]
         assert [row["name"] for row in got[section]] == names, f"{section}: другой состав или порядок инструментов"
         changed = {
-            row["name"]: [key for key in row if row[key] != new[key]]
+            row["name"]: sorted(key for key in {*row, *new} if row.get(key) != new.get(key))
             for row, new in zip(rows, got[section])
             if row != new
         }
