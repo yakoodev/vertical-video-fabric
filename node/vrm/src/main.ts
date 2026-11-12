@@ -61,6 +61,8 @@ export interface Shot {
   props?: PropsSpec;
   /** Свет: направление ключевого (от монитора), цвет, сила; заполняющий. */
   light?: { key?: V3; keyColor?: string; keyPower?: number; fill?: string; fillPower?: number };
+  /** Без героини (камера на её месте смотрит на монитор): стол, клавиатура, монитор — в 3D, героиня не рисуется. */
+  hideHero?: boolean;
 }
 
 export interface Spec {
@@ -270,7 +272,7 @@ function render(t: number) {
   key.intensity = L.keyPower ?? 2.6;
   fill.color.set(L.fill || "#6a58b0");
   fill.intensity = L.fillPower ?? 1.1;
-  props.update(shot.props, rig, local, spec.stream);
+  props.update(shot.props, rig, local, spec.stream, t);
   const c = shot.camKeys?.length ? camAt(rig, shot.camKeys, local)
     : { pos: rig.point(shot.cam!.pos), target: rig.point(shot.cam!.target), fov: shot.cam!.fov ?? 18, roll: shot.cam!.roll ?? 0 };
   camera.fov = c.fov;
@@ -291,7 +293,9 @@ function render(t: number) {
     camera.setViewOffset(W, H, sx - tx, sy - ty, W, H);
   }
   stage?.render(t, 1 / (spec.fps || 30), gl, rig);
+  vrm.scene.visible = !shot.hideHero;
   if (!shot.plate?.insert) gl.render(scene, camera);
+  vrm.scene.visible = true;
   g.setTransform(1, 0, 0, 1, 0, 0);
   g.globalAlpha = 1;
   g.globalCompositeOperation = "source-over";
@@ -311,7 +315,7 @@ function render(t: number) {
   const gone = [...lost];
   if (gl.getContext().isContextLost()) gone.push("webgl героини: isContextLost");
   if ((g as any).isContextLost?.()) gone.push("2d кадра: isContextLost");
-  return { luma: sum / (d.length / 4), presence: presence(pl.insert ? 0 : 1, off), lost: gone };
+  return { luma: sum / (d.length / 4), presence: presence(pl.insert || shot.hideHero ? 0 : 1, off), lost: gone };
 }
 
 async function load(s: Spec) {

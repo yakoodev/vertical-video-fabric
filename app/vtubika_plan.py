@@ -25,7 +25,8 @@
   ``app.vtubika.SFX``);
 * «Без лица»: ``title`` (подпись эфира), ``avatar`` hoodie/vtuber/nocam, ``guy_nod``, ``guy_yawn`` (сек),
   ``guy_talk`` (сек), ``vt_blink``, ``shop_page`` (0/1/2 — зарубежные магазины), ``decline`` (ещё одна «Оплата
-  отклонена» каскадом), ``screencard`` ({x, y, w} + ``until``/``dur``: карточка эфира поверх кадра), ``alertcard``
+  отклонена» каскадом), ``screencard`` ({x, y, w} + ``until``/``dur``: карточка эфира поверх кадра; у VRM-историй с монитором на столе —
+  только с ``"float": true``, иначе эфир показывает сам монитор), ``alertcard``
   ({title, amount, from, note, y, scale} + ``dur``: алерт доната крупно);
 * каст и локации (``app/vtubika_cast.py``, ``app/vtubika_sets.py``): ``"sets": ["warehouse"]``, ``"cast": {id:
   {hero, at}}``, события с ``"who": id`` — ``act``, ``face``, ``place``, ``walk`` (+``dur``), ``carry``. План может

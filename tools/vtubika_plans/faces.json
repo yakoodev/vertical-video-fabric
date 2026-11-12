@@ -11,6 +11,7 @@
   "hero": "alina",
   "look": "cozy",
   "vrm": {
+    "monitor": false,
     "heroine": "sonya",
     "avatars": [
       "sonya_free"

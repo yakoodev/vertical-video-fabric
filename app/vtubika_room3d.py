@@ -89,7 +89,10 @@ def frame_cameras(spec: dict) -> list[tuple[int, dict] | None]:
         if not (sh.get("plate") or {}).get("room") or not sh.get("camKeys"):
             out.append(None)
             continue
-        out.append((i, cam_at(sh["camKeys"], t - float(sh.get("t0", 0)))))
+        cam = cam_at(sh["camKeys"], t - float(sh.get("t0", 0)))
+        if sh.get("focus"):
+            cam["focus"] = [float(v) for v in sh["focus"]]  # резкость плана (монитор на столе), иначе — лицо героини
+        out.append((i, cam))
     return out
 
 
@@ -141,7 +144,8 @@ def room_spec(plan: dict, spec: dict) -> dict:
         shot, cam = c if c else (last_shot, last)
         pos = [cam["pos"][i] + off[i] for i in range(3)]
         tgt = [cam["target"][i] + off[i] for i in range(3)]
-        focus = math.dist(pos, [face[i] + off[i] for i in range(3)])
+        sharp = cam.get("focus") or face
+        focus = math.dist(pos, [sharp[i] + off[i] for i in range(3)])
         key = {"t": round(f / fps, 6), "position": [round(v, 5) for v in pos], "target": [round(v, 5) for v in tgt],
                "fov": round(cam["fov"], 4), "dof": dof, "focus": round(focus, 4), "ease": "linear"}
         if keys and shot != last_shot:

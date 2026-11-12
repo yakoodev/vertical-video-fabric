@@ -44,3 +44,14 @@ def test_mouth_only_while_she_talks():
     talk = [(f["t"], faces[i + 1]["t"] if i + 1 < len(faces) else total) for i, f in enumerate(faces) if f["face"] == "talk"]
     for a, _b in spec["timeline"]["speech"]:
         assert any(x <= a < y for x, y in talk)
+
+
+def test_room_plate_focus_follows_shot_focus():
+    from app import vtubika_room3d as ROOM
+
+    spec = {"fps": 30, "duration": 1.0, "shots": [
+        {"t0": 0, "t1": 0.5, "plate": {"kind": "front", "room": True}, "camKeys": [{"t": 0, "pos": [0, 1.4, 2.6], "target": [0, 1.4, 0], "fov": 12}]},
+        {"t0": 0.5, "t1": 1.0, "plate": {"kind": "front", "room": True}, "focus": [0, 1.33, 0.74],
+         "camKeys": [{"t": 0, "pos": [0, 1.4, 0], "target": [0, 1.3, 0.74], "fov": 50}]}]}
+    cams = ROOM.frame_cameras(spec)
+    assert "focus" not in cams[0][1] and cams[20][1]["focus"] == [0, 1.33, 0.74]
