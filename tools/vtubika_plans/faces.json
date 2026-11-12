@@ -236,12 +236,15 @@
           "zoom": 1.06,
           "push": 0.12,
           "flow": {
-            "kind": "zoom_through",
-            "dur": 0.75,
-            "w": 420,
-            "h": 300,
+            "kind": "reveal_from",
+            "shape": "rect",
+            "dur": 0.7,
             "y": 0.42,
-            "radius": 40
+            "w": 360,
+            "h": 220,
+            "radius": 36,
+            "edge": "#ff3b4e",
+            "edgeWidth": 8
           }
         }
       ],
