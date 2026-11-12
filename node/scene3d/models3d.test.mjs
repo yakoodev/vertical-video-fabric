@@ -199,3 +199,17 @@ test("браузер: модель из библиотеки грузится, �
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("лицензии: CC BY не берётся без allowAttribution — ни по категории, ни по точному id", () => {
+  const lib = {
+    version: 1,
+    categories: { mug: ["mug/a", "mug/b"] },
+    models: {
+      "mug/a": { id: "mug/a", category: "mug", file: "mug/a.glb", size: [0.1, 0.1, 0.1], license: "CC-BY-3.0" },
+      "mug/b": { id: "mug/b", category: "mug", file: "mug/b.glb", size: [0.1, 0.1, 0.1], license: "CC0-1.0" },
+    },
+  };
+  for (let s = 0; s < 20; s++) assert.equal(pickModel(lib, "mug", { seed: s })?.id, "mug/b");
+  assert.equal(pickModel(lib, "mug/a"), null);
+  assert.equal(pickModel(lib, "mug/a", { allowAttribution: true })?.id, "mug/a");
+});

@@ -56,14 +56,21 @@ def manifest(root: Path | None = None) -> dict | None:
     return data
 
 
+def attribution_free(m: dict) -> bool:
+    """CC0 или своя модель — ставим без строки «автор» в описании. CC BY не берём (решение владельца 12.11)."""
+    return not str(m.get("license") or "").upper().startswith("CC-BY")
+
+
 def resolve(ref: str, root: Path | None = None) -> list[str]:
-    """Какие модели подходят под ссылку: точный id — [id], категория — все её варианты; [] — ничего."""
+    """Какие модели подходят под ссылку: точный id — [id], категория — все её варианты; [] — ничего.
+    Модели, требующие атрибуции (CC BY), не подходят — как и в движке (pickModel)."""
     man = manifest(root)
     if not man:
         return []
+    models = man["models"]
     if "/" in ref:
-        return [ref] if ref in man["models"] else []
-    return list((man.get("categories") or {}).get(ref) or [])
+        return [ref] if ref in models and attribution_free(models[ref]) else []
+    return [i for i in (man.get("categories") or {}).get(ref) or [] if i in models and attribution_free(models[i])]
 
 
 def list_models(category: str | None = None, q: str | None = None, root: Path | None = None) -> dict:
@@ -75,6 +82,8 @@ def list_models(category: str | None = None, q: str | None = None, root: Path | 
     cats: dict[str, list[dict]] = {}
     for mid, m in sorted(man["models"].items()):
         if category and m.get("category") != category:
+            continue
+        if not attribution_free(m):
             continue
         hay = f"{mid} {m.get('title', '')} {' '.join(m.get('tags') or [])}".lower()
         if query and query not in hay:

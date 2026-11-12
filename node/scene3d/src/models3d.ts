@@ -76,6 +76,13 @@ export interface PickOptions {
   tags?: string[];
   /** Не брать эти id (уже стоят рядом). */
   exclude?: string[];
+  /** Разрешить модели, требующие указать автора (CC BY). По умолчанию нет: в описаниях роликов атрибуцию не пишем (решение владельца 12.11). */
+  allowAttribution?: boolean;
+}
+
+/** Модель можно ставить без строки «автор» в описании: CC0 или своя (без лицензии-атрибуции). */
+export function attributionFree(m: LibModel): boolean {
+  return !/^CC-BY/i.test(m.license || "");
 }
 
 /**
@@ -84,10 +91,14 @@ export interface PickOptions {
  */
 export function pickModel(lib: Library | null, ref: string, opt: PickOptions = {}): LibModel | null {
   if (!lib || !isLibraryRef(ref)) return null;
-  if (ref.includes("/")) return lib.models[ref] || null;
+  if (ref.includes("/")) {
+    const m = lib.models[ref];
+    return m && (opt.allowAttribution || attributionFree(m)) ? m : null;
+  }
   const ids = (lib.categories[ref] || []).filter((id) => {
     const m = lib.models[id];
     if (!m || (m.weight ?? 1) <= 0) return false;
+    if (!opt.allowAttribution && !attributionFree(m)) return false;
     if (opt.exclude?.includes(id)) return false;
     return !opt.tags?.length || opt.tags.every((t) => (m.tags || []).includes(t));
   });

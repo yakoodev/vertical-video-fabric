@@ -28,8 +28,10 @@ def test_list_and_resolve(tmp_path, monkeypatch):
     monkeypatch.setenv("SCENE3D_MODELS_DIR", str(_lib(tmp_path)))
     assert models3d.is_library_ref("keyboard") and models3d.is_library_ref("keyboard/rgb_black")
     assert not models3d.is_library_ref("kenney-furniture/desk.glb")
-    assert models3d.resolve("keyboard") == ["keyboard/mech_tkl_dark", "keyboard/rgb_black"]
-    assert models3d.resolve("keyboard/rgb_black") == ["keyboard/rgb_black"]
+    # CC BY без атрибуции в описаниях не берём (решение владельца 12.11): ни по категории, ни по точному id.
+    assert models3d.resolve("keyboard") == ["keyboard/mech_tkl_dark"]
+    assert models3d.resolve("keyboard/rgb_black") == []
+    assert [m["id"] for m in models3d.list_models()["categories"]["keyboard"]] == ["keyboard/mech_tkl_dark"]
     assert models3d.resolve("sofa") == []
     out = models3d.list_models(q="механ")
     assert out["available"] and [m["id"] for m in out["categories"]["keyboard"]] == ["keyboard/mech_tkl_dark"]
