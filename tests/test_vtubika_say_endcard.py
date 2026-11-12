@@ -56,7 +56,7 @@ def test_fox_tts_text_reads_live2d_but_captions_keep_spelling():
     assert "Live2D" not in say and "лайв-ту-ди" not in say
     assert f"одну {LIVE2D}-модель:" in say
     assert "одну Live2D-модель:" in caps and LIVE2D not in caps
-    assert "витубика точка стор" in say  # ручной «say» фразы по-прежнему работает
+    assert "виту́бика точка стор" in say  # ручной «say» фразы работает (ударение — словарь PRONOUNCE)
 
 
 @pytest.mark.parametrize("heard", [

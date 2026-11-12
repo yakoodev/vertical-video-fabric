@@ -6,6 +6,7 @@
      "screen": {… постоянное содержимое монитора: uptime, title, camBg …},
      "highlight": {"слово": "#цвет"},            # ключевые слова субтитров цветом
      "sentences": [{"text": "фраза сценария (субтитры)", "say": "как читать TTS (необязательно)",
+                    "revoice": true,     # переозвучить только эту фразу поверх прошлой озвучки (app/vtubika_revoice.py)
                     "show": ["что должно быть видно"],
                     "shots": [{"cam": "face", "at": "слово", "push": 0.2, "roll": -6}],
                     "do": [{"at": "слово", "dt": 0.1, …событие…}]}]}
@@ -110,13 +111,18 @@ def validate_plan(plan: dict) -> None:
                 raise PlanError(f"фраза {n + 1}: оформление эфира «{ev['decor']}» — одно из {', '.join(DECORS)}")
 
 
-def narration_text(plan: dict) -> str:
-    """Текст для TTS: ``say`` фразы (как читать), иначе её текст; термины — по словарю произношения
+def narration_sentences(plan: dict) -> list[str]:
+    """Текст для TTS по фразам: ``say`` фразы (как читать), иначе её текст; термины — по словарю произношения
     (``app.vtubika_say``: «Live2D» → «лайв-два-дэ»; субтитры этого не видят)."""
     from app import vtubika_say as SAY
 
     mapping = SAY.pronounce_map(plan)
-    return " ".join(SAY.apply(str(s.get("say") or s["text"]).strip(), mapping) for s in plan["sentences"])
+    return [SAY.apply(str(s.get("say") or s["text"]).strip(), mapping) for s in plan["sentences"]]
+
+
+def narration_text(plan: dict) -> str:
+    """Весь текст для TTS (фразы через пробел, ``narration_sentences``)."""
+    return " ".join(narration_sentences(plan))
 
 
 def caption_text(plan: dict) -> str:

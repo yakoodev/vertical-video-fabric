@@ -182,6 +182,7 @@
     },
     {
       "text": "Однажды ночью ты открываешь Витубику.",
+      "revoice": true,
       "pause_after": 0.3,
       "show": ["телефон: настоящий сайт vtubika.store, поиск «Midori», карточка 3 890 ₽"],
       "shots": [{"cam": "insert", "flow": {"kind": "push_slide", "direction": "up", "dur": 0.55, "dip": 0.0}}],
