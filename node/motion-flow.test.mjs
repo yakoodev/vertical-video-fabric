@@ -126,6 +126,11 @@ test("zoom_through: камера пролетает сквозь кнопку A,
   const s1 = E.flowState(t, 1.9999, env(), reg);
   assert.ok(Math.abs(s1.b.s - 1) < 0.01, `в конце B в масштабе 1 (${s1.b.s})`);
   assert.ok(s1.a.s > 10, "кнопка выросла на весь кадр");
+  // fill — фон рамки под B: есть посередине, к концу гаснет.
+  const tf = { ...t, props: { ...t.props, fill: "#111111" } };
+  assert.ok(E.flowState(tf, 1.5, env(), reg).fill.alpha > 0.9 && E.flowState(tf, 1.9999, env(), reg).fill.alpha < 0.01);
+  // В начале B заполняет рамку элемента (cover): по большей стороне — ширина кнопки 75 из 270.
+  assert.ok(Math.abs(s0.b.s - 75 / 270) < 1e-6, `B в рамке элемента ${s0.b.s}`);
   // Посередине центр кнопки — уже B внутри неё, вокруг — увеличенная кнопка/фон A.
   const mid = frame(layers, 1.6);
   assert.ok(isBlue(px(mid, 0.5, 0.5)) || isBlue(px(mid, 0.5, 0.6)), `центр ${px(mid, 0.5, 0.55)}`);
@@ -134,6 +139,10 @@ test("zoom_through: камера пролетает сквозь кнопку A,
   const cy = (0.75 * H) * st.a.s + st.a.ty;
   assert.ok(cy < 0.75 * H && cy > 0.5 * H, `центр кнопки ${cy}`);
   assert.ok(isBlue(px(frame(layers, 1.999), 0.02, 0.02)));
+  // Приходящая сцена — над уходящей, даже если её дорожка ниже (фон B на дорожке 0, экран A — на 3).
+  const low = [full("a", "#ff0000", 0, 2, { track: 3 }), { ...btn, track: 3 }, full("b", "#0000ff", 1, 4, { track: 0 }),
+    tr({ kind: "zoom_through", target: "btn", from: ["a", "btn"], to: ["b"] })];
+  assert.ok(isBlue(px(frame(low, 1.6), 0.5, 0.5)), `B над A: ${px(frame(low, 1.6), 0.5, 0.5)}`);
 });
 
 test("shared_element: квадрат A перетекает в плашку B — место, размер, скругление и цвет плавно", () => {
@@ -171,6 +180,14 @@ test("push_slide: A уезжает влево, B въезжает справа �
   assert.ok(Math.abs(st.a.s - 0.9) < 0.02, "посередине камера отъехала на dip");
   const up = E.flowState({ ...layers[2], props: { kind: "push_slide", direction: "up", dip: 0 } }, 2.0, env(), { cx: 0, cy: 0, w: 0, h: 0 });
   assert.ok(Math.abs(up.a.ty + H) < 1e-6 && Math.abs(up.b.ty) < 1e-6);
+  // distance < 1: путь — доля кадра, сцены перетекают прозрачностью; концы — ровно A и ровно B.
+  const half = { ...layers[2], props: { kind: "push_slide", direction: "up", dip: 0, distance: 0.5, ease: "linear" } };
+  const m = E.flowState(half, 1.5, env(), { cx: 0, cy: 0, w: 0, h: 0 });
+  assert.ok(Math.abs(m.a.ty + H * 0.25) < 1e-6 && Math.abs(m.b.ty - H * 0.25) < 1e-6);
+  assert.ok(Math.abs(m.a.alpha - 0.5) < 1e-6 && Math.abs(m.b.alpha - 0.5) < 1e-6);
+  const e0 = E.flowState(half, 1.0, env(), { cx: 0, cy: 0, w: 0, h: 0 });
+  const e1 = E.flowState(half, 2.0, env(), { cx: 0, cy: 0, w: 0, h: 0 });
+  assert.ok(e0.a.alpha === 1 && e0.b.alpha === 0 && e1.b.alpha === 1 && Math.abs(e1.b.ty) < 1e-6);
 });
 
 test("слой перехода сам не рисуется; без фабрики холстов — без падений", () => {

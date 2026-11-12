@@ -87,7 +87,7 @@ def h_flow_transition(ctx: ToolContext, args: dict) -> dict:
             props[name] = str(key)
     simple = {"ease": "ease", "shape": "shape", "w": "w", "h": "h", "radius": "radius", "feather": "feather",
               "depth": "depth", "edge": "edge", "edge_width": "edgeWidth", "edgeWidth": "edgeWidth", "fill": "fill",
-              "direction": "direction", "dip": "dip"}
+              "direction": "direction", "dip": "dip", "distance": "distance"}
     for arg, prop in simple.items():
         if args.get(arg) is not None:
             props[prop] = args[arg]
@@ -130,11 +130,13 @@ def flow_tools() -> list[Tool]:
             "в цифре, значок) растёт круг (shape rect — скруглённый прямоугольник) и раскрывает B, A вокруг "
             "уходит; depth 0..0.5 — «пролёт камеры» (0.12), feather — растушёвка края px, edge — цвет кольца по "
             "краю, fill — заливка под B (гаснет к концу). zoom_through — камера пролетает сквозь элемент target "
-            "(кнопка, карточка) или область x/y + w/h: он растёт на весь кадр, внутри него из миниатюры вырастает "
-            "B (radius — скругление элемента px). shared_element — элемент есть в обеих сценах: target (в A) "
-            "едет и меняет размер, скругление, цвет в match (в B), остальное A гаснет, B приходит вокруг. "
-            "push_slide — A и B одной лентой встык: direction left|right|up|down (куда уезжает A), dip 0..0.4 — "
-            "отъезд камеры посередине (0.08). at — секунда начала, duration 0.2..3 (по умолчанию 0.55–0.8), "
+            "(кнопка, карточка) или область x/y + w/h: он растёт на весь кадр, B заполняет его рамку и вырастает "
+            "до кадра (radius — скругление элемента px, fill — непрозрачный фон рамки под B). shared_element — "
+            "элемент есть в обеих сценах: target (в A) едет и меняет размер, скругление, цвет в match (в B), "
+            "остальное A гаснет, B приходит вокруг. push_slide — A и B одной лентой встык: direction "
+            "left|right|up|down (куда уезжает A), dip 0..0.4 — отъезд камеры посередине (0.08), distance 0.2..1 — "
+            "путь в долях кадра (меньше 1 — сцены едут на часть кадра и перетекают прозрачностью: у редких сцен нет "
+            "пустого кадра посередине). at — секунда начала, duration 0.2..3 (по умолчанию 0.55–0.8), "
             "ease — кривая (inOutCubic). Группы: from/to — id слоёв сцен A и B (или from_prefix/to_prefix); "
             "без них — по времени: A — слои, что кончаются к концу перехода, B — что начинаются на нём; фон, "
             "субтитры и слои через весь стык не трогаются. fit_timing (по умолчанию да): A живут ровно до конца "
@@ -159,6 +161,7 @@ def flow_tools() -> list[Tool]:
                   "edge": {"type": "string", "description": "цвет кольца по краю маски #rrggbb"},
                   "edge_width": {"type": "number"}, "fill": {"type": "string", "description": "заливка под B #rrggbb"},
                   "direction": {"type": "string", "enum": list(FLOW_DIRECTIONS)}, "dip": {"type": "number"},
+                  "distance": {"type": "number", "description": "push_slide: путь в долях кадра 0.2..1"},
                   "ease": {"type": "string", "enum": motion_enums()["easings"]},
                   "fit_timing": {"type": "boolean"}, "keep_in": {"type": "boolean"}},
                  ["kind", "at"]),

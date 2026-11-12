@@ -49,9 +49,11 @@ export type TransitionProps = {
   edge?: string | null;
   edgeWidth?: number;
   fill?: string | null;
-  /** push_slide: куда уезжает A; dip — насколько камера «отъезжает» посередине (0..0.4). */
+  /** push_slide: куда уезжает A; dip — насколько камера «отъезжает» посередине (0..0.4); distance — путь в долях кадра
+   *  (0.2..1, по умолчанию 1 — встык; меньше — сцены едут на часть кадра и перетекают прозрачностью). */
   direction?: FlowDirection;
   dip?: number;
+  distance?: number;
 };
 
 export type TransitionLayer = LayerOf<"transition">;
@@ -218,13 +220,18 @@ export function flowState(tr: TransitionLayer, t: number, env: RenderEnv, region
     const Cx = lerp(region.cx, W / 2, k);
     const Cy = lerp(region.cy, H / 2, k);
     a = { s, tx: Cx - region.cx * s, ty: Cy - region.cy * s, alpha: 1 - smoothstep(0.7, 1, p), mask: null };
-    // B — кадр, который растёт вместе с камерой: в начале он — миниатюра внутри элемента, в конце — 1:1.
-    const bs = s / S;
+    // B растёт вместе с камерой: в начале заполняет рамку элемента (cover — элемент становится кадром B),
+    // к концу — ровно 1:1 (contain = s/S); между ними — геометрическое среднее по ходу наезда.
+    const contain = s / S;
+    const cover = s * Math.max(ew / W, eh / H);
+    const bs = Math.pow(cover, 1 - k) * Math.pow(contain, k);
     const mask: FlowMask = {
       shape: "rect", cx: Cx, cy: Cy, hw: (ew * s) / 2, hh: (eh * s) / 2,
       r: Math.max(0, Number(P.radius ?? 0)) * u * s * (1 - p), feather: feather * (1 - p), invert: false,
     };
     b = { s: bs, tx: Cx - (W / 2) * bs, ty: Cy - (H / 2) * bs, alpha: smoothstep(0.1, 0.45, p), mask };
+    // Заливка рамки под B (фон сцены B): A не просвечивает сквозь прозрачные места B; гаснет вместе с A.
+    if (P.fill) fill = { mask, color: P.fill, alpha: smoothstep(0.1, 0.45, p) * (1 - smoothstep(0.7, 1, p)) };
     if (P.edge) ring = { mask, color: P.edge, width: Math.max(0.5, Number(P.edgeWidth ?? 6)) * u, alpha: smoothstep(0.05, 0.25, p) * (1 - smoothstep(0.6, 0.95, p)) };
   } else if (kind === "shared_element") {
     const ca = region;
@@ -236,14 +243,17 @@ export function flowState(tr: TransitionLayer, t: number, env: RenderEnv, region
     const dx = dir === "left" ? -1 : dir === "right" ? 1 : 0;
     const dy = dir === "up" ? -1 : dir === "down" ? 1 : 0;
     const dip = Math.max(0, Math.min(0.4, Number(P.dip ?? 0.08)));
+    // distance < 1 — сцены едут на долю кадра и перетекают прозрачностью (у редких сцен без пустого кадра посередине).
+    const dist = Math.max(0.2, Math.min(1, Number(P.distance ?? 1)));
+    const fade = dist < 0.999;
     const z = 1 - dip * Math.sin(Math.PI * p);
-    const slide = (q: number): GroupXf => {
-      const ox = dx * W * q;
-      const oy = dy * H * q;
-      return { s: z, tx: (ox - W / 2) * z + W / 2, ty: (oy - H / 2) * z + H / 2, alpha: 1, mask: null };
+    const slide = (q: number, alpha: number): GroupXf => {
+      const ox = dx * W * q * dist;
+      const oy = dy * H * q * dist;
+      return { s: z, tx: (ox - W / 2) * z + W / 2, ty: (oy - H / 2) * z + H / 2, alpha, mask: null };
     };
-    a = slide(p);
-    b = slide(p - 1);
+    a = slide(p, fade ? 1 - smoothstep(0.3, 0.7, p) : 1);
+    b = slide(p - 1, fade ? smoothstep(0.3, 0.7, p) : 1);
   }
   return { kind, p, a, b, fill, ring };
 }
@@ -283,8 +293,10 @@ export function lerpValue(a: unknown, b: unknown, k: number): unknown {
 /** Ключи, которые копия «застывшего» слоя теряет: их значения уже посчитаны в состоянии. */
 const FROZEN_KEYS = ["x", "y", "scale", "rotation", "opacity", "z", "rotX", "rotY"];
 
-/** Копия слоя без анимации положения: стоит в (x, y) с масштабом, поворотом и прозрачностью. */
-function frozen(layer: Layer, t: number, at: { x: number; y: number; scale: number; rotation: number; opacity: number }, props?: unknown): Layer {
+type FrozenAt = { x: number; y: number; scale: number; rotation: number; opacity: number; rotX?: number; rotY?: number };
+
+/** Копия слоя без анимации положения: стоит в (x, y) с масштабом, поворотом, наклоном и прозрачностью. */
+function frozen(layer: Layer, t: number, at: FrozenAt, props?: unknown): Layer {
   const keys: Record<string, unknown> = { ...(layer.keys || {}) };
   for (const k of FROZEN_KEYS) delete keys[k];
   const copy = {
@@ -305,6 +317,9 @@ function frozen(layer: Layer, t: number, at: { x: number; y: number; scale: numb
   delete (copy as { z?: number }).z;
   delete (copy as { rotX?: number }).rotX;
   delete (copy as { rotY?: number }).rotY;
+  // Остаточный наклон (экран группой после screen_tilt) — тот же, вокруг центра копии: без скачка на краях перехода.
+  if (Math.abs(at.rotX ?? 0) > 0.01) (copy as { rotX?: number }).rotX = at.rotX;
+  if (Math.abs(at.rotY ?? 0) > 0.01) (copy as { rotY?: number }).rotY = at.rotY;
   if (props !== undefined) (copy as { props: unknown }).props = props;
   return copy;
 }
@@ -326,10 +341,11 @@ export function morphLayers(
   t: number,
   env: RenderEnv,
 ): Layer[] {
-  if (!b || !sb || !bb) return [frozen(a, t, { x: ba.cx / env.width, y: ba.cy / env.height, scale: sa.scale, rotation: sa.rotation, opacity: sa.opacity })];
+  if (!b || !sb || !bb) return [frozen(a, t, { x: ba.cx / env.width, y: ba.cy / env.height, scale: sa.scale, rotation: sa.rotation, opacity: sa.opacity, rotX: sa.rotX, rotY: sa.rotY })];
   const x = lerp(ba.cx, bb.cx, p) / env.width;
   const y = lerp(ba.cy, bb.cy, p) / env.height;
   const rotation = lerp(sa.rotation, sb.rotation, p);
+  const tilt = { rotX: lerp(sa.rotX ?? 0, sb.rotX ?? 0, p), rotY: lerp(sa.rotY ?? 0, sb.rotY ?? 0, p) };
   const same =
     a.type === "shape" &&
     b.type === "shape" &&
@@ -337,7 +353,7 @@ export function morphLayers(
   if (same) {
     const props = lerpValue(a.props, b.props, p);
     const shadow = a.shadow && b.shadow ? lerpValue(a.shadow, b.shadow, p) : p < 0.5 ? a.shadow : b.shadow;
-    const one = frozen(b, t, { x, y, scale: lerp(sa.scale, sb.scale, p), rotation, opacity: lerp(sa.opacity, sb.opacity, p) }, props);
+    const one = frozen(b, t, { x, y, scale: lerp(sa.scale, sb.scale, p), rotation, opacity: lerp(sa.opacity, sb.opacity, p), ...tilt }, props);
     (one as { shadow?: unknown }).shadow = shadow;
     return [one];
   }
@@ -348,7 +364,7 @@ export function morphLayers(
   const ka = lerp(1, k, p);
   const kb = lerp(1 / k, 1, p);
   return [
-    frozen(a, t, { x, y, scale: sa.scale * ka, rotation, opacity: sa.opacity * Math.min(1, 2 * (1 - q)) }),
-    frozen(b, t, { x, y, scale: sb.scale * kb, rotation, opacity: sb.opacity * Math.min(1, 2 * q) }),
+    frozen(a, t, { x, y, scale: sa.scale * ka, rotation, opacity: sa.opacity * Math.min(1, 2 * (1 - q)), ...tilt }),
+    frozen(b, t, { x, y, scale: sb.scale * kb, rotation, opacity: sb.opacity * Math.min(1, 2 * q), ...tilt }),
   ];
 }

@@ -346,9 +346,17 @@ function drawFlowPart(
     return;
   }
   if (f.drawn.has(part.side)) return;
+  // Приходящая сцена — всегда над уходящей (B внутри кнопки A, B в дыре A): группа B, встреченная
+  // раньше A (дорожка ниже), рисуется сразу после A.
+  if (part.side === "B" && !f.drawn.has("A")) return;
   f.drawn.add(part.side);
   if (part.side === "B" && f.st.fill && f.st.fill.alpha > 0.002) paintFlowFill(ctx, f.st.fill);
   drawGroup(ctx, part.side === "A" ? f.A : f.B, part.side === "A" ? f.st.a : f.st.b, t, env, data, cam, cam3, keys);
+  if (part.side === "A" && !f.drawn.has("B")) {
+    f.drawn.add("B");
+    if (f.st.fill && f.st.fill.alpha > 0.002) paintFlowFill(ctx, f.st.fill);
+    drawGroup(ctx, f.B, f.st.b, t, env, data, cam, cam3, keys);
+  }
   if (f.st.ring && f.drawn.has("A") && f.drawn.has("B") && !f.drawn.has("ring")) {
     f.drawn.add("ring");
     if (f.st.ring.alpha > 0.002) paintFlowRing(ctx, f.st.ring);

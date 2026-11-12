@@ -54,6 +54,7 @@ TRANSITION: dict = {
     "fill": Opt(Color(None, nullable=True)),
     "direction": Opt(Choice("left", FLOW_DIRECTIONS)),
     "dip": Opt(Num(0.08, 0, 0.4, 3)),
+    "distance": Opt(Num(1, 0.2, 1, 3)),
 }
 
 KIND_ABOUT = {

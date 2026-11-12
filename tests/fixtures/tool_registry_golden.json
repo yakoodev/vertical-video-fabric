@@ -267,8 +267,8 @@
 {
 "name": "flow_transition",
 "title": "Ставлю перетекающий переход",
-"description": "00728a81337c7256",
-"parameters": "44ab0f60e021f574",
+"description": "9539b398e8a83a5d",
+"parameters": "3e7eaa9378f24ec3",
 "mutating": true,
 "scope": "clip",
 "module": null,
