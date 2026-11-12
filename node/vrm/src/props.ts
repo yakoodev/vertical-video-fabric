@@ -10,6 +10,7 @@ import { drawPhone, phoneSignature, type PhoneScreen } from "../../scene3d/src/u
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { LIB_ORIGIN, pickModel, type Library } from "../../scene3d/src/models3d.ts";
+import { DeskMonitor, type MonitorSpec } from "./monitor.ts";
 
 /** Размер нарисованной клавиатуры и мыши (м): в этот габарит вписывается модель библиотеки, чтобы руки, поверхности
  * проверок касаний (timeline.surfaces) и вещь совпадали. */
@@ -19,7 +20,7 @@ const MOUSE_BOX: V3 = [0.06, 0.033, 0.09];
 /** Вещь библиотеки в кадре VRM: материалы → «мультяшные» в 3 тона (свет сцены), чернильный контур по нормалям. */
 interface LibProp { obj: THREE.Group; size: number[] }
 
-function toonify(root: THREE.Object3D, ink = 0.0025) {
+export function toonify(root: THREE.Object3D, ink = 0.0025, outline = true) {
   const ramp = new THREE.DataTexture(new Uint8Array([90, 90, 90, 255, 175, 175, 175, 255, 255, 255, 255, 255]), 3, 1);
   ramp.minFilter = ramp.magFilter = THREE.NearestFilter;
   ramp.needsUpdate = true;
@@ -30,6 +31,7 @@ function toonify(root: THREE.Object3D, ink = 0.0025) {
     const conv = src.map((s) => new THREE.MeshToonMaterial({ color: s.color ?? new THREE.Color("#888"), map: s.map ?? null,
       gradientMap: ramp, transparent: s.transparent, opacity: s.opacity ?? 1, alphaTest: s.alphaTest ?? 0 }));
     m.material = Array.isArray(m.material) ? conv : conv[0];
+    if (!outline) continue;
     // Контур: обратные грани, сдвинутые по нормали (толщина в метрах, не зависит от центра детали).
     const line = new THREE.MeshBasicMaterial({ color: "#120c1e", side: THREE.BackSide, toneMapped: false });
     const inkW = { value: ink };
@@ -46,7 +48,7 @@ function toonify(root: THREE.Object3D, ink = 0.0025) {
 }
 
 /** Толщина контура в метрах мира: сдвиг в осях детали делится на её масштаб (нормализация GLB, вписывание). */
-function setInk(root: THREE.Object3D, meters: number) {
+export function setInk(root: THREE.Object3D, meters: number) {
   root.updateMatrixWorld(true);
   const s = new THREE.Vector3();
   root.traverse((o) => {
@@ -65,6 +67,8 @@ export interface PropsSpec {
   mouse?: { pos: V3; model?: string };
   /** Спинка кресла за спиной: центр низа спинки, ширина, высота. */
   chair?: { pos: V3; w?: number; h?: number };
+  /** Монитор на столе (monitor.ts): модель библиотеки, экран — окно стрим-приложения с эфиром spec.stream. */
+  monitor?: MonitorSpec;
   /** Телефон в руке (left/right): экран — PhoneScreen из scene3d/ui.ts. */
   phone?: { hand?: "left" | "right"; screen?: PhoneScreen; along?: number };
 }
@@ -340,21 +344,29 @@ export class Props {
   /** Вещи библиотеки (desk/keyboard/mouse c полем model в props планов) — загрузить до первого кадра.
    * Нет манифеста или модели — остаётся нарисованная вещь, в отчёт — предупреждение. */
   lib: Record<string, LibProp> = {};
+  /** Монитор на столе — только если он есть хоть в одном плане (props.monitor). */
+  monitor: DeskMonitor | null = null;
   async loadLibrary(shots: { props?: PropsSpec }[], warn: (m: string) => void) {
     const refs: Record<string, string> = {};
     for (const sh of shots) for (const slot of ["desk", "keyboard", "mouse"] as const) {
       const r = (sh.props?.[slot] as any)?.model;
       if (r && !refs[slot]) refs[slot] = r;
     }
-    if (!Object.keys(refs).length) return;
+    const mon = shots.find((sh) => sh.props?.monitor)?.props?.monitor;
+    if (!Object.keys(refs).length && !mon) return;
     let lib: Library | null = null;
     try {
       lib = await (await fetch(LIB_ORIGIN + "manifest.json")).json();
     } catch {
-      warn("библиотека вещей: нет manifest.json — нарисованные стол/клавиатура/мышь");
-      return;
+      warn("библиотека вещей: нет manifest.json — нарисованные стол/клавиатура/мышь, свой монитор");
     }
     const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
+    if (mon) {
+      this.monitor = new DeskMonitor(this.root);
+      await this.monitor.load(lib, loader, mon.model, (o) => toonify(o, 0, false), warn);
+      await this.monitor.loadEggs(mon.eggs, "http://scene3d.local/packs", warn);
+    }
+    if (!lib) return;
     for (const [slot, ref] of Object.entries(refs)) {
       const m = pickModel(lib, ref, { seed: "vtubika-vrm", key: slot });
       if (!m) {
@@ -392,8 +404,10 @@ export class Props {
     return true;
   }
 
-  update(spec: PropsSpec | undefined, rig: Rig, t: number, _stream: any) {
+  /** t — время от начала плана (телефон), now — время ролика (эфир на мониторе: чат, зрители, часы). */
+  update(spec: PropsSpec | undefined, rig: Rig, t: number, stream: any, now = t) {
     const s = spec || {};
+    this.monitor?.update(s.monitor, stream || {}, now);
     const ph = s.phone && rig.hands[s.phone.hand || "right"];
     this.phone.visible = !!ph;
     if (s.phone && ph) {

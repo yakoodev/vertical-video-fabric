@@ -5,6 +5,11 @@
 Ракурсы плана → кадры VRM: ``wide`` — нарисованная комната целиком (героиня со спины), ``face*``/``smile`` — крупные
 планы (руки вне кадра), ``ots`` — через плечо на монитор, ``insert`` — средний план под телефоном-вставкой;
 ``monitor*``/``chat``/``tablet``/``jar`` — вставки без героини (страницы эфира, чат, планшет с эскизом, копилка).
+
+Монитор на столе (``desk_monitor``, по умолчанию у историй с 3D-комнатой): ``monitor``/``monitor_close``/``chat`` —
+настоящие 3D-кадры её глазами на модель монитора библиотеки с окном стрим-приложения на экране, ``ots`` — через плечо
+на тот же монитор; плоская «карточка эфира» (``screencard``) в воздухе — только с ``"float": true``, а средний план
+``two`` под ней становится ``ots``.
 Руки видны только там, где выглядят хорошо: на клавиатуре в среднем плане и подбородок на кулаке.
 """
 
@@ -45,25 +50,75 @@ CAMS: dict[str, dict] = {
 }
 INSERTS = {"monitor", "monitor_close", "chat", "tablet", "jar"}
 
+# Настоящий монитор на столе (node/vrm/src/monitor.ts): модель библиотеки (только CC0), экран на её якоре ``screen`` —
+# окно стрим-приложения в плоской теме (node/scene3d/src/ui_stream_flat.ts). Стоит за клавиатурой экраном к героине;
+# ракурсы на эфир — настоящими камерами в 3D вместо плоских вставок и «карточки эфира» в воздухе (поле ``vrm.monitor``
+# плана: false — прежние вставки, объект — свои поля поверх MONITOR; по умолчанию — у историй с 3D-комнатой).
+MONITOR: dict[str, Any] = {"model": "monitor/flat_black", "pos": [0.0, 1.05, 0.74], "yaw": 3.14159, "scale": 1.2,
+                           "app": {"theme": "dark", "accent": "#8b6cff", "app": "Эфир"}, "px": 3200}
+# Ракурсы на монитор (пространство героини; экран — центр ~[0, 1.33, 0.74], ширина 0.67 м). ``hideHero`` — камера
+# на месте героини («её глазами», героиня не рисуется), ``focus`` — точка резкости комнаты-подложки.
+MON_CAMS: dict[str, dict] = {
+    # Эфир крупно: окно превью почти во весь кадр, слева — край рамки, справа уходит колонка чата.
+    "monitor": {"pos": [0.27, 1.4, 0.04], "target": [0.15, 1.3, 0.74], "fov": 49, "hideHero": True},
+    "monitor_close": {"pos": [0.16, 1.39, 0.2], "target": [0.08, 1.33, 0.74], "fov": 50, "hideHero": True},
+    # Чат крупно: колонка чата (правая часть окна) под небольшим углом, новые сообщения выше субтитров.
+    "chat": {"pos": [-0.04, 1.4, 0.26], "target": [-0.2, 1.3, 0.74], "fov": 52, "hideHero": True},
+    # Через плечо: затылок и плечо героя, за ним — монитор с эфиром целиком.
+    "ots": {"pos": [0.22, 1.68, -0.6], "target": [-0.02, 1.25, 0.74], "fov": 38},
+}
+MON_FOCUS = [0.0, 1.33, 0.74]
+
 # Действия героини (клипы воксельного движка) → руки, взгляд, мокап корпуса.
 ACT_ARMS = {"Typing_Loop": ("keys", "keys"), "Chin_Rest_Loop": ("idle", "chin")}
 ACT_LOOK = {"Talk_Loop": WEBCAM, "Draw_Loop": TABLET, "Coin_Drop": JAR, "Typing_Loop": MON, "Chin_Rest_Loop": MON,
             "Laugh_Loop": WEBCAM, "Gasp": WEBCAM}
 FACES = {"neutral": {}, "talk": {"relaxed": 0.2}, "happy": {"happy": 0.55}, "laugh": {"happy": 1.0, "aa": 0.4},
          "frown": {"angry": 0.55, "sad": 0.25}, "wide": {"surprised": 0.9}, "tired": {"relaxed": 0.5}, "blink": {},
-         "sleep": {"blink": 1}, "yawn": {"aa": 0.8, "blink": 1}, "blink_once": {}}
+         "sleep": {"blink": 1}, "yawn": {"aa": 0.8, "blink": 1}, "blink_once": {},
+         # Паника/смущение (крючок и обложка): брови домиком, глаза круглые, рот приоткрыт «о» — частями лица
+         # (face.ts: browSorrow, browSurprised, eyeSurprised, mouthSurprised); neutral — без улыбки по умолчанию.
+         "panic": {"neutral": 1, "browSorrow": 0.8, "browSurprised": 0.45, "eyeSurprised": 1.0, "mouthSurprised": 0.9, "aa": 0.25},
+         "shock": {"neutral": 1, "surprised": 1.0, "aa": 0.45}}
 
 
-def _cam(name: str, t0: float, t1: float, push: float, roll: float) -> dict:
+def _cam(name: str, t0: float, t1: float, push: float, roll: float, fov: float | None = None) -> dict:
+    """Камера плана; ``fov`` плана — свой угол (уже — крупнее: лицо во весь кадр на обложке)."""
     c = CAMS[name]
-    end_fov = c["fov"] * (1 - 0.55 * push)
-    keys = [{"t": 0, "pos": c["pos"], "target": c["target"], "fov": c["fov"], "roll": roll * 0.4},
+    fov0 = float(fov or c["fov"])
+    end_fov = fov0 * (1 - 0.55 * push)
+    keys = [{"t": 0, "pos": c["pos"], "target": c["target"], "fov": fov0, "roll": roll * 0.4},
             {"t": round(t1 - t0, 3), "pos": c["pos"], "target": c["target"], "fov": round(end_fov, 3), "roll": roll}]
     plate = {"kind": "front", **c["plate"]}
     if plate["kind"] == "front":
         plate["fgDesk"] = {"y": 1690, "cup": name in ("typing", "insert"), "mic": name not in ("face_close", "two")}
         plate["cats"] = name in ("two", "typing", "insert")  # кот на краю стола — только там, где виден стол
     return {"camKeys": keys, "plate": plate}
+
+
+def desk_monitor(plan: dict) -> dict | None:
+    """Монитор на столе для плана: ``vrm.monitor`` — false (прежние плоские вставки), объект (поверх MONITOR) или нет
+    поля — по умолчанию у историй с 3D-комнатой (``presets3d.room``): за героем настоящая комната, в которой стоит
+    монитор."""
+    from app import vtubika_room3d as ROOM
+
+    cfg = (plan.get("vrm") or {}).get("monitor")
+    if cfg is False:
+        return None
+    if cfg is None and not ROOM.room_name(plan):
+        return None
+    own = cfg if isinstance(cfg, dict) else {}
+    return {**MONITOR, **own, "app": {**MONITOR["app"], **(own.get("app") or {})}}
+
+
+def _mon_cam(name: str, t0: float, t1: float, push: float) -> dict:
+    """Камера ракурса на монитор: наезд — тележкой к экрану (параллакс рамки и стены), чуть уже угол."""
+    c = MON_CAMS[name]
+    pos, tgt = c["pos"], c["target"]
+    k = 0.3 * push
+    end = [round(pos[i] + (tgt[i] - pos[i]) * k, 4) for i in range(3)]
+    return {"camKeys": [{"t": 0, "pos": pos, "target": tgt, "fov": c["fov"], "roll": 0},
+                        {"t": round(t1 - t0, 3), "pos": end, "target": tgt, "fov": round(c["fov"] * (1 - 0.2 * push), 3), "roll": 0}]}
 
 
 def _act_windows(actions: list[dict]) -> list[tuple[float, float, str]]:
@@ -101,10 +156,28 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
         shots_in.append({"cam": "wide", "t0": tail, "t1": round(total, 3), "push": 0.1, "roll": 0})
     acts_mid = lambda a, b: max(((min(b, e) - max(a, s), c) for s, e, c in actions if s < b and e > a), default=(0, "Sit_Loop"))[1]  # noqa: E731
     jar = objs.get("jar", {}).get("params", {})
+    mon = desk_monitor(plan)
+    overlays = list(spec.get("overlays") or [])
+    cards: list[tuple[float, float]] = []
+    if mon:
+        # Плоская «карточка эфира» в воздухе — только по явной просьбе плана ("screencard": {…, "float": true}):
+        # иначе эфир — на мониторе, а средний план под карточкой — через плечо на монитор.
+        cards = [(float(o["start"]), float(o["end"])) for o in overlays if o.get("kind") == "screen" and not o.get("float")]
+        overlays = [o for o in overlays if not (o.get("kind") == "screen" and not o.get("float"))]
     shots: list[dict] = []
     for i, sh in enumerate(shots_in):
         cam, t0, t1 = sh["cam"], float(sh["t0"]), float(sh["t1"])
         push, roll = float(sh.get("push", 0.15)), float(sh.get("roll", 0.0))
+        if mon and cam == "two" and any(a < t1 and b > t0 for a, b in cards):
+            cam = "ots"
+        if mon and cam in MON_CAMS:
+            made = {"name": f"{i:02d}_{cam}_desk", "t0": t0, "t1": t1, **_mon_cam(cam, t0, t1, push),
+                    "plate": {"kind": "front"}, "props": {**props, "monitor": mon}, "light": LIGHT, "focus": MON_FOCUS,
+                    "deskMonitor": True}
+            if MON_CAMS[cam].get("hideHero"):
+                made["hideHero"] = True
+            shots.append(made)
+            continue
         if cam in INSERTS:
             ins = {"kind": cam, "t0": t0, "t1": t1, "push": push, "roll": roll}
             if cam == "jar":
@@ -121,10 +194,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             name = "ots"
         if name in ("face", "face_left") and acts_mid(t0, t1) == "Typing_Loop":
             name = "typing"  # печать — средним планом: руки на клавиатуре видны
-        made = {"name": f"{i:02d}_{name}", "t0": t0, "t1": t1, **_cam(name, t0, t1, push, roll), "props": props, "light": LIGHT}
+        made = {"name": f"{i:02d}_{name}", "t0": t0, "t1": t1, **_cam(name, t0, t1, push, roll, sh.get("fov")), "props": props, "light": LIGHT}
         glide = float(sh.get("glide") or 0)
         prev = shots[-1] if shots else None
-        if glide > 0 and prev and not (prev.get("plate") or {}).get("insert") and prev.get("camKeys"):
+        if glide > 0 and prev and not (prev.get("plate") or {}).get("insert") and prev.get("camKeys") and not prev.get("deskMonitor"):
             # Плавный переезд камеры вместо склейки: план начинается камерой конца прошлого и за glide с приезжает
             # в свою (дальше — свой наезд). Подложка-комната отрисована той же камерой, кадр за кадром.
             end = prev["camKeys"][-1]
@@ -176,7 +249,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             fk += [{"t": round(f["t"], 3), "dur": 0.08, "expr": {**prev, "blink": 1}},
                    {"t": round(f["t"] + 0.16, 3), "dur": 0.1, "expr": prev}]
             continue
-        fk.append({"t": round(float(f["t"]), 3), "dur": 0.3, "expr": FACES.get(name, {})})
+        t_f = float(f["t"])
+        if not fk and t_f <= 0.05:
+            t_f = -1.0  # первое лицо — уже целиком на кадре 0 (обложка), без наплыва из пустого
+        fk.append({"t": round(t_f, 3), "dur": 0.3, "expr": FACES.get(name, {})})
     # Рот слогами: слова озвучки, пока героиня «говорит в эфир» (лицо talk или любое лицо с "talk": true).
     talk = []
     for i, f in enumerate(faces):
@@ -189,7 +265,7 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
                 "arms": arms, "hands": [{"t": -3, "left": "relaxed", "right": "relaxed"}], "faces": fk, "look": look,
                 "speech": speech, "surfaces": SURFACES, "nods": extra["nods"], "bows": extra["bows"]}
     out = {"width": 1080, "height": 1920, "fps": int(fps), "duration": round(total, 3), "model": her["model"], "look": her["look"],
-           "stream": stream, "overlays": spec.get("overlays") or [], "headphones": her["headphones"], "strictContact": True,
+           "stream": stream, "overlays": overlays, "headphones": her["headphones"], "strictContact": True,
            "timeline": timeline, "shots": shots, "cats": extra["cats"]}
     if her.get("keys_spread"):
         timeline["keysSpread"] = float(her["keys_spread"])
@@ -242,7 +318,7 @@ class VrmRenderError(RuntimeError):
 
 
 def hero_frames(spec: dict, fps: int | None = None) -> int:
-    """Сколько кадров ролика героиня должна быть в кадре (планы без вставки)."""
+    """Сколько кадров ролика героиня должна быть в кадре (планы без вставки и не «её глазами» — ``hideHero``)."""
     fps = int(fps or spec.get("fps") or 30)
     n = round(float(spec.get("duration") or 0) * fps)
     shots = spec.get("shots") or []
@@ -252,7 +328,7 @@ def hero_frames(spec: dict, fps: int | None = None) -> int:
     for i in range(n):
         t = i / fps
         sh = next((s for s in shots if float(s.get("t0", 0)) <= t < float(s.get("t1", 1e9))), shots[-1])
-        if not (sh.get("plate") or {}).get("insert"):
+        if not (sh.get("plate") or {}).get("insert") and not sh.get("hideHero"):
             count += 1
     return count
 

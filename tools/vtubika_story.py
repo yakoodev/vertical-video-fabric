@@ -18,7 +18,8 @@
    ``app.motion_render.build_audio_layers_args``, затем громкость −14 LUFS.
 7. **Концовка** — карточка бренда (``app.vtubika_endcard``: значок, «vtubika», сайт, слоган сайта) ~2.8 с после
    ролика, мягкий стинг паков, музыка затихает под ней; ``"end_card": false`` в плане — без неё.
-8. **Проверка** — лист кадров (12), лист концовки (endcard_sheet.jpg), кадр на каждую фразу и список «фраза → что в
+8. **Проверка** — лист кадров (12), обложка (cover.jpg — кадр 0), лист планов с монитором на столе
+   (monitor_stills.jpg, VRM), лист концовки (endcard_sheet.jpg), кадр на каждую фразу и список «фраза → что в
    кадре» (check.md); звук (``app.vtubika_audio``: слова, оборванные тишиной, стыки пауз не в тишине, провалы голоса,
    рассинхрон — не прошёл, код 4); VRM — ещё скрутка рук (node/vrm/src/twist.ts) и лист кистей крупно
    (hands_sheet.jpg, node/vrm/hands.mjs).
@@ -522,6 +523,36 @@ def end_card_sheet(video: Path, report: dict, out: Path) -> None:
     report["end_card_sheet"] = str(out)
 
 
+def cover_frame(video: Path, out: Path, report: dict) -> None:
+    """Обложка — кадр 0 готового ролика (TikTok берёт его по умолчанию): полный размер, JPG."""
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-frames:v", "1", "-q:v", "2", str(out)], "обложка")
+    report["cover"] = str(out)
+
+
+def monitor_stills(video: Path, spec: dict, out: Path, report: dict, count: int = 4) -> None:
+    """Лист планов с монитором на столе (``deskMonitor`` спеки VRM): середина каждого, не больше ``count`` — разных
+    ракурсов в первую очередь. Нет таких планов — листа нет."""
+    shots = [s for s in spec.get("shots") or [] if s.get("deskMonitor")]
+    if not shots:
+        return
+    picked: list[dict] = []
+    for s in shots:  # сначала по одному на ракурс (имя без номера), потом остальные по порядку
+        if s["name"].split("_", 1)[1] not in {p["name"].split("_", 1)[1] for p in picked}:
+            picked.append(s)
+    picked += [s for s in shots if s not in picked]
+    picked = sorted(picked[:count], key=lambda s: s["t0"])
+    frames = []
+    for k, s in enumerate(picked):
+        f = out.with_name(f"{out.stem}_{k}.jpg")
+        _run(["ffmpeg", "-y", "-v", "error", "-ss", f"{(s['t0'] + s['t1']) / 2:.3f}", "-i", str(video), "-frames:v", "1",
+              "-q:v", "3", str(f)], "кадр монитора")
+        frames.append(f)
+    tile(frames, out, len(frames), [f"{(s['t0'] + s['t1']) / 2:.1f}s {s['name'].split('_', 1)[1]}" for s in picked])
+    for f in frames:
+        f.unlink(missing_ok=True)
+    report["monitor_stills"] = str(out)
+
+
 def sentence_frames(video: Path, built: dict, out_dir: Path) -> dict[int, str]:
     """Кадр на каждую фразу (середина фразы) — для проверки «фраза → что в кадре»."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -694,6 +725,8 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
         endcard_compare(args, plan, built, capped, narration, full, lead, music_fade, work, report)
     audio_check(narration, final, lead, report, lines)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
+    cover_frame(final, out_dir / "cover.jpg", report)
+    monitor_stills(final, spec, out_dir / "monitor_stills.jpg", report)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     hands_sheet(spec_path, total, out_dir / "hands_sheet.jpg", work, args, report)
     frames = sentence_frames(final, built, out_dir / "check")
@@ -866,6 +899,7 @@ def main(argv: list[str] | None = None) -> int:
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)
     audio_check(narration, final, lead, report)
     S3.contact_sheet(final, out_dir / args.sheet, count=12, cols=4, width=360)
+    cover_frame(final, out_dir / "cover.jpg", report)
     end_card_sheet(final, report, out_dir / "endcard_sheet.jpg")
     frames = sentence_frames(final, built, out_dir / "check")
     tile([Path(frames[n]) for n in sorted(frames)], out_dir / "check_sheet.jpg", 6,
