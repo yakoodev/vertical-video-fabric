@@ -84,6 +84,32 @@ export function chinFistArm(side: 1 | -1): ArmSpec {
   };
 }
 
+/**
+ * Руки скрещены на груди («хмф!», обиделась): предплечья поперёк корпуса перед грудью, кисть — у локтя другой
+ * руки, ладонь к телу. Левое предплечье — ниже и впереди, правое — выше и ближе к груди (лежат друг на друге, не
+ * сквозь). Точки — в осях модели, перед корпусом с запасом: проверка рук (handcheck.ts) не терпит проникновения.
+ */
+export function crossArm(side: 1 | -1, t: number): ArmSpec {
+  const low = side > 0;
+  const breath = 0.003 * Math.sin(t * 1.7);
+  return {
+    target: [-side * (low ? 0.0 : 0.03), (low ? 1.075 : 1.19) + breath, low ? 0.21 : 0.205], maxFlex: 150,
+    pole: [side * 1.0, 0.7, low ? 0.3 : 0.05], autoPole: false,
+    // Нижняя кисть — пальцы вниз-вбок под верхнее предплечье, ладонь к телу; верхняя — ладонью вниз поверх нижней руки.
+    fingers: low ? [-side, -0.1, 0.4] : [-side, 0.1, 0.1], palm: low ? [0, 0.2, -1] : [0, -1, 0.15],
+    curl: [0.35, 0.3, 0.38, 0.46, 0.54], spread: 0.08, thumbOut: 0.25,
+  };
+}
+
+/** Руки разведены перед грудью, каждая — на своей стороне: промежуточная поза, чтобы расплести скрещённые руки, не
+ * проводя одну сквозь другую (из cross и обратно к столу — каждая кисть по своей стороне). */
+export function crossOpenArm(side: 1 | -1): ArmSpec {
+  return {
+    target: [side * 0.14, side > 0 ? 1.1 : 1.17, 0.2], maxFlex: 150, pole: [side * 1.0, 0.7, 0.2], autoPole: false,
+    fingers: [-side * 0.3, 0, 1], palm: [-side * 0.3, -1, 0], curl: [0.3, 0.3, 0.38, 0.46, 0.54], spread: 0.08, thumbOut: 0.25,
+  };
+}
+
 /** Рука пресета игры по имени (или null — не наш пресет). */
 export function perfArm(name: string | null | undefined, side: 1 | -1, t: number): ArmSpec | null {
   if (name === "facepalm") return facepalmArm(side);
@@ -94,5 +120,7 @@ export function perfArm(name: string | null | undefined, side: 1 | -1, t: number
   if (name === "guard") return guardArm(side);
   if (name === "yawn") return yawnArm(side);
   if (name === "chinfist") return chinFistArm(side);
+  if (name === "cross") return crossArm(side, t);
+  if (name === "cross_open") return crossOpenArm(side);
   return null;
 }

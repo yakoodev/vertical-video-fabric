@@ -7,6 +7,11 @@
  * paperTint), wobble (дрожь контуров 8 раз в секунду), hatch (штриховка теней), halftone (растровые точки),
  * mono (чёрно-белое) + scratches (царапины плёнки), vhs (растёкшийся цвет, полоса трекинга, шум головки) +
  * scanlines + stamp (надпись-дата в углу), softness (мягкость резкости).
+ * Акварель: watercolor (растекание пигмента), wash (заливки слоями: мягкая лесенка яркости), paperGrain (волокно и
+ * пятна бумаги), paperEdge (неокрашенная бумага рваным краем по рамке кадра).
+ * Объектив: tiltShift (размытие выше и ниже полосы резкости — «миниатюра»; tiltCenter — высота полосы, по умолчанию
+ * — экранная высота субъекта), anamorphic (горизонтальные голубые полосы от ярких мест — анаморфот), letterbox
+ * (чёрные поля сверху и снизу, доля высоты кадра).
  * Свет: rays (лучи от яркого источника — радиальное размытие ярких мест к нему), flare (кольца и полоса блика),
  * leak (засветка плёнки). Переходы: smash, whip, glitch, iris, film_burn, dip_black, dip_white.
  *
@@ -21,6 +26,8 @@ export interface StylizeSpec {
   watercolor?: number; paper?: number; paperTint?: string; wobble?: number; hatch?: number; halftone?: number;
   mono?: number; scratches?: number; vhs?: number; scanlines?: number; stamp?: string; softness?: number;
   rays?: { strength?: number; from?: string }; flare?: { strength?: number; from?: string }; leak?: { strength?: number; color?: string };
+  wash?: number; paperGrain?: number; paperEdge?: number;
+  tiltShift?: number; tiltCenter?: number; anamorphic?: number; letterbox?: number;
   fallbackOnly?: boolean;
 }
 
@@ -28,6 +35,7 @@ const FRAG = /* glsl */ `
 uniform sampler2D tDiffuse, tStamp;
 uniform vec2 res;
 uniform float time, pixel, posterize, dither, edges, watercolor, paper, wobble, hatch, halftone, mono, scratches, vhs, scanlines, softness, stampOn;
+uniform float wash, paperGrain, paperEdge, tiltShift, tiltCenter, anamorphic, letterbox;
 uniform vec3 edgeColor, paperTint, leakColor;
 uniform float raysK, flareK, leakK, lightVis;
 uniform vec2 lightUv;
@@ -105,6 +113,19 @@ void main() {
     vec2 o = vec2(softness * s) / res;
     col = mix(col, (tex(uv + vec2(o.x, 0)) + tex(uv - vec2(o.x, 0)) + tex(uv + vec2(0, o.y)) + tex(uv - vec2(0, o.y))) * 0.25, 0.6);
   }
+  // --- тилт-шифт: резкая полоса на высоте субъекта, выше и ниже — нарастающее размытие диском ---
+  if (tiltShift > 0.0) {
+    float r = tiltShift * smoothstep(0.06, 0.4, abs(uv.y - tiltCenter)) * 11.0 * s;
+    if (r > 0.25) {
+      vec2 o = vec2(r) / res;
+      vec3 acc = col;
+      for (int i = 0; i < 20; i++) {
+        float a = float(i) * 2.39996, rr = sqrt((float(i) + 0.5) / 20.0);
+        acc += tex(uv + vec2(cos(a), sin(a)) * o * rr);
+      }
+      col = acc / 21.0;
+    }
+  }
   if (trCode == 3.0) { // глитч: разъезд RGB
     float k = 0.012 * bell * (0.5 + h21(vec2(frame, 4.0)));
     col = vec3(tex(uv + vec2(k, 0)).r, col.g, tex(uv - vec2(k, 0)).b);
@@ -121,23 +142,47 @@ void main() {
     }
     col += acc / 40.0 * raysK * 2.2 * lightVis;
   }
-  // --- акварель: растекание и края заливок ---
-  if (watercolor > 0.0) {
-    vec2 o = vec2(3.0 * s) / res;
-    vec3 bleed = vec3(0.0);
-    for (int i = 0; i < 6; i++) {
-      float a = float(i) * 1.047 + fbm(uv * 30.0) * 3.0;
-      bleed += tex(uv + vec2(cos(a), sin(a)) * o * (1.0 + 1.5 * fbm(uv * 12.0 + float(i))));
+  // --- анаморфот: длинные горизонтальные голубые полосы от ярких мест ---
+  if (anamorphic > 0.0) {
+    vec3 acc = vec3(0.0);
+    for (int i = -24; i <= 24; i++) {
+      float x = float(i) / 24.0;
+      acc += max(tex(uv + vec2(x * 0.5, 0.0)) - 0.74, 0.0) * exp(-abs(x) * 2.5);
     }
-    bleed /= 6.0;
-    col = mix(col, bleed, 0.55 * watercolor);
-    float gx = luma(tex(uv + vec2(o.x, 0))) - luma(tex(uv - vec2(o.x, 0)));
-    float gy = luma(tex(uv + vec2(0, o.y))) - luma(tex(uv - vec2(0, o.y)));
-    float edge = smoothstep(0.03, 0.2, length(vec2(gx, gy)));
-    col *= 1.0 - edge * 0.22 * watercolor;                                   // пигмент скапливается у края
-    col = mix(col, vec3(1.0), (1.0 - smoothstep(0.0, 0.9, luma(col))) * 0.0 + 0.06 * watercolor * fbm(uv * vec2(4.0, 7.0)));
-    float gran = fbm(uv * vec2(160.0, 284.0) * s);
-    col *= 1.0 - (gran - 0.5) * 0.12 * watercolor;
+    col += luma(acc) / 49.0 * anamorphic * vec3(0.3, 0.62, 1.35) * 22.0;
+  }
+  // --- акварель: растекание пигмента, заливки слоями, потемневшие края, пятна и зерно бумаги ---
+  if (watercolor > 0.0) {
+    vec2 o = vec2(4.0 * s) / res * (0.6 + 0.8 * watercolor);
+    vec3 bleed = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float a = float(i) * 0.785 + fbm(uv * 24.0) * 3.0;
+      bleed += tex(uv + vec2(cos(a), sin(a)) * o * (0.8 + 2.0 * fbm(uv * 10.0 + float(i))));
+    }
+    bleed /= 8.0;
+    col = mix(col, bleed, min(1.0, 0.7 * watercolor));
+    if (wash > 0.0) {
+      // Заливки слоями: яркость — мягкая лесенка (ступень = один прозрачный слой краски).
+      float L0 = luma(col), st = 4.0 + fbm(uv * 3.0) * 1.5;
+      float q = floor(L0 * st), f = fract(L0 * st);
+      float Lq = (q + smoothstep(0.3, 0.7, f)) / st;
+      col = mix(col, col * (Lq + 0.03) / (L0 + 0.03), wash);
+    }
+    // Краска прозрачная: цвет разбавлен, бумага просвечивает (света — почти белые).
+    float Lw = luma(col);
+    col = mix(vec3(Lw), col, 1.0 - 0.18 * watercolor);
+    col = mix(col, vec3(1.0), watercolor * (0.16 + 0.4 * smoothstep(0.45, 0.9, Lw)));
+    // Пигмент скапливается у края заливки: тёмная кайма по перепаду яркости (шире и рваная).
+    vec2 o2 = o * (1.2 + 0.8 * fbm(uv * 18.0 + 5.0));
+    float gx = luma(tex(uv + vec2(o2.x, 0))) - luma(tex(uv - vec2(o2.x, 0)));
+    float gy = luma(tex(uv + vec2(0, o2.y))) - luma(tex(uv - vec2(0, o2.y)));
+    float edge = smoothstep(0.025, 0.16, length(vec2(gx, gy)));
+    col *= 1.0 - edge * 0.32 * watercolor;
+    // Неравномерная плотность пигмента: крупные пятна-«цветы» и мелкая грануляция в тёмном.
+    float bl = fbm(uv * vec2(3.2, 5.6) + 2.3);
+    col *= 1.0 - (bl - 0.5) * 0.22 * watercolor;
+    float gran = fbm(uv * vec2(170.0, 300.0) * s + 1.3);
+    col *= 1.0 - (gran - 0.5) * (0.12 + 0.2 * (1.0 - Lw)) * watercolor;
   }
   // --- линии по перепаду яркости ---
   if (edges > 0.0) {
@@ -221,10 +266,28 @@ void main() {
     float f = fbm(gl_FragCoord.xy / s * vec2(0.9, 0.9)) * 0.6 + fbm(gl_FragCoord.xy / s * 0.04) * 0.4;
     col *= mix(vec3(1.0), paperTint * (0.92 + 0.08 * f), paper);
   }
+  if (paperGrain > 0.0) {
+    // Волокно акварельной бумаги (холодный пресс): мелкие ямки и редкие волокна, видно в заливках.
+    vec2 q = gl_FragCoord.xy / s;
+    float pits = fbm(q * 0.35) * 0.6 + fbm(q * 0.11 + 7.0) * 0.4;
+    float fib = smoothstep(0.82, 0.95, fbm(vec2(q.x * 0.02, q.y * 0.6) + 3.0));
+    col *= 1.0 - paperGrain * ((pits - 0.5) * 0.22 + fib * 0.06);
+  }
+  if (paperEdge > 0.0) {
+    // Неокрашенная бумага по краю кадра: край заливки рваный (шум), у самой кромки — тонкая тёмная кайма пигмента.
+    float d = max(abs(vUv.x - 0.5) * 2.0, abs(vUv.y - 0.5) * 2.0 * (0.85 + 0.15 * res.x / res.y));
+    float n = fbm(vUv * vec2(7.0, 12.0) + 1.7) * 0.06 + fbm(vUv * vec2(24.0, 40.0)) * 0.025;
+    float e0 = 1.0 - paperEdge * 0.05 - n;
+    float m = smoothstep(e0, e0 + 0.012, d);
+    float rim = smoothstep(e0 - 0.03, e0, d) * (1.0 - m);
+    col *= 1.0 - rim * 0.25;
+    col = mix(col, paperTint * (0.96 + 0.04 * fbm(gl_FragCoord.xy / s * 0.3)), m);
+  }
   if (stampOn > 0.0) {
     vec4 st = texture2D(tStamp, vUv);
     col = mix(col, st.rgb, st.a);
   }
+  if (letterbox > 0.0) col *= step(letterbox * 0.5, vUv.y) * step(vUv.y, 1.0 - letterbox * 0.5);
   // --- переходы ---
   if (trCode == 1.0) col += vec3(1.0) * smoothstep(0.75, 1.0, bell) * 0.7;
   if (trCode == 4.0) { // ирис
@@ -286,6 +349,9 @@ export class Stylize {
       wobble: { value: spec.wobble ?? 0 }, hatch: { value: spec.hatch ?? 0 }, halftone: { value: spec.halftone ?? 0 },
       mono: { value: spec.mono ?? 0 }, scratches: { value: spec.scratches ?? 0 }, vhs: { value: spec.vhs ?? 0 },
       scanlines: { value: spec.scanlines ?? 0 }, softness: { value: spec.softness ?? 0 }, stampOn: { value: spec.stamp ? 1 : 0 },
+      wash: { value: spec.wash ?? 0 }, paperGrain: { value: spec.paperGrain ?? 0 }, paperEdge: { value: spec.paperEdge ?? 0 },
+      tiltShift: { value: spec.tiltShift ?? 0 }, tiltCenter: { value: spec.tiltCenter ?? 0.5 }, anamorphic: { value: spec.anamorphic ?? 0 },
+      letterbox: { value: spec.letterbox ?? 0 },
       raysK: { value: spec.rays?.strength ?? 0 }, flareK: { value: spec.flare?.strength ?? 0 }, leakK: { value: spec.leak?.strength ?? 0 },
       leakColor: { value: new THREE.Color(spec.leak?.color || "#ff9a4a") }, lightVis: { value: 0 }, lightUv: { value: new THREE.Vector2(0.5, 0.8) },
       trCode: { value: 0 }, trPhase: { value: 0 }, trDir: { value: 1 }, trCenter: { value: new THREE.Vector2(0.5, 0.5) },
@@ -318,7 +384,8 @@ export class Stylize {
   /** Нужен ли проход вообще (стиль, свет или переходы). */
   static needed(spec: StylizeSpec | undefined, transitions: TransitionSpec[] | undefined): boolean {
     const s = spec || {};
-    const any = ["pixel", "posterize", "edges", "watercolor", "paper", "wobble", "hatch", "halftone", "mono", "vhs", "scanlines", "softness"].some((k) => ((s as any)[k] ?? 0) > 0);
+    const any = ["pixel", "posterize", "edges", "watercolor", "paper", "wobble", "hatch", "halftone", "mono", "vhs", "scanlines", "softness",
+      "paperGrain", "paperEdge", "tiltShift", "anamorphic", "letterbox"].some((k) => ((s as any)[k] ?? 0) > 0);
     return any || !!s.stamp || !!s.rays || !!s.flare || !!s.leak || !!transitions?.length;
   }
 }

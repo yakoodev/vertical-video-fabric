@@ -15,7 +15,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const dir = mkdtempSync(join(tmpdir(), "vrm-test-"));
 const out = join(dir, "m.mjs");
 await build({
-  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts"; export { speechMouth, envLevel } from "./src/anim.ts";`, resolveDir: HERE, loader: "ts" },
+  stdin: { contents: `export * from "./src/mocap.ts"; export { lookPoint, FINGERS, nodBow, armChain } from "./src/sequence.ts"; export { straightCut, CUT_X, CUT_Y } from "./src/cutcheck.ts"; export { speechMouth, envLevel } from "./src/anim.ts"; export { waveArm } from "./src/typing.ts"; export { crossArm, crossOpenArm, perfArm } from "./src/perfarms.ts"; export { chatLane } from "./src/chatlane.ts";`, resolveDir: HERE, loader: "ts" },
   bundle: true, format: "esm", platform: "node", outfile: out, logLevel: "error",
 });
 const M = await import(pathToFileURL(out).href);
@@ -200,4 +200,35 @@ test("рот по огибающей голоса: в тишине почти з
   assert.ok(Math.abs(peak(0.2, 0.9) - peak(0.2, 0.9, { values: [] })) < 1e-9, "пустая огибающая не меняет рот");
   assert.equal(M.envLevel(undefined, 3), 1);
   assert.equal(M.envLevel(env, 50), env.floor ?? 0.12, "за концом огибающей — тишина");
+});
+
+test("машет любой рукой: левая — зеркало правой по x, ключ arms left: wave — левая машет, правая на месте", () => {
+  for (const t of [0, 0.3, 1.1]) {
+    const r = M.waveArm(t), l = M.waveArm(t, 1);
+    assert.deepEqual(l.target, [-r.target[0], r.target[1], r.target[2]]);
+    assert.deepEqual(l.pole, [-r.pole[0], r.pole[1], r.pole[2]]);
+    assert.ok(Math.abs(l.fingers[0] + r.fingers[0]) < 1e-12 && Math.abs(l.palm[0] + r.palm[0]) < 1e-12);
+  }
+  const keys = [{ t: -3, left: "idle", right: "idle" }, { t: 1, dur: 0.5, left: "wave", right: "idle" }];
+  assert.ok(M.armChain(keys, 1, 2).target[1] > 1.35, "левая у головы");
+  assert.ok(M.armChain(keys, -1, 2).target[1] < 1.2, "правая — на столе");
+});
+
+test("скрещённые руки: кисти перед грудью, нижняя левая под верхней правой, локти наружу; разводка — по своим сторонам", () => {
+  const l = M.crossArm(1, 0), r = M.crossArm(-1, 0);
+  assert.ok(r.target[1] - l.target[1] > 0.08, "предплечья друг над другом, не сквозь");
+  assert.ok(l.target[2] < 0.22 && r.target[2] < 0.22, "перед краем стола (z 0.22): кисти не поднимает над столешницей");
+  assert.ok(l.pole[0] > 0.5 && r.pole[0] < -0.5 && l.autoPole === false, "локти наружу");
+  assert.ok(M.perfArm("cross", 1, 0) && M.perfArm("cross_open", -1, 0));
+  const ol = M.crossOpenArm(1), or = M.crossOpenArm(-1);
+  assert.ok(ol.target[0] > 0.1 && or.target[0] < -0.1);
+});
+
+test("чат-вставка и субтитры: карточка по ту сторону полосы, где больше места, с зазором", () => {
+  const low = M.chatLane(1920, [1386, 1686]);
+  assert.equal(low.edge, "bottom");
+  assert.ok(low.at <= 1386 - 30 && low.h > 1100);
+  const high = M.chatLane(1920, [300, 600]);
+  assert.equal(high.edge, "top");
+  assert.ok(high.at >= 630);
 });

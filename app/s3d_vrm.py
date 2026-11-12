@@ -292,6 +292,49 @@ def apply_presets(spec: dict, built_shots: list[dict], plan: dict, perf: list[di
     return applied
 
 
+# --------------------------------------------------------------------------- субтитры и карточки
+# Субтитры холст-клипа (app/s3d_clip.py) стоят по центру captions.y (доля кадра 1920), крупный шрифт (110 px) в
+# одну-две строки: полоса ±CAPTION_HALF px. Карточки чата видео (вставка «чат крупно», карточка комментария)
+# в эту полосу не заходят — иначе субтитры ложатся на свежие сообщения.
+
+FRAME_H = 1920
+CAPTION_HALF = 150
+
+
+def caption_band(plan: dict) -> tuple[float, float]:
+    """Полоса субтитров серии [y0, y1] в пикселях кадра 1080×1920."""
+    y = float((plan.get("captions") or {}).get("y") or 0.8)
+    c = y * FRAME_H
+    return round(max(0.0, c - CAPTION_HALF), 1), round(min(float(FRAME_H), c + CAPTION_HALF), 1)
+
+
+def keep_cards_clear(spec: dict, band: tuple[float, float]) -> int:
+    """Вставкам «чат» — полосу субтитров (кладут карточку по свою сторону от неё); карточку комментария,
+    задевающую полосу, — на другую сторону полосы. Возвращает, сколько карточек поправлено."""
+    y0, y1 = band
+    n = 0
+    for sh in spec.get("shots") or []:
+        ins = (sh.get("plate") or {}).get("insert")
+        if isinstance(ins, dict) and ins.get("kind") == "chat":
+            ins["avoid"] = [y0, y1]
+            n += 1
+    for o in spec.get("overlays") or []:
+        if o.get("kind") != "chat":
+            continue
+        h = float(o.get("h") or 620)
+        cy = float(o.get("y") or 560)
+        top, bottom = cy - h / 2, cy + h / 2
+        if bottom <= y0 - 24 or top >= y1 + 24:
+            continue
+        # Больше места выше полосы — карточка над субтитрами, иначе — под ними (не вылезая за кадр).
+        if y0 >= FRAME_H - y1:
+            o["y"] = round(max(h / 2 + 40, y0 - 36 - h / 2), 1)
+        else:
+            o["y"] = round(min(FRAME_H - h / 2 - 40, y1 + 36 + h / 2), 1)
+        n += 1
+    return n
+
+
 # --------------------------------------------------------------------------- сборка спеки
 
 
@@ -348,6 +391,7 @@ def compile_vrm(plan: dict, lib: dict, words: list[dict], total: float, *, envel
             sh["light"] = {**(sh.get("light") or {}), **{k: v for k, v in light.items() if k != "rim"}}
     if not fg.get("cats"):
         spec["cats"] = []
+    keep_cards_clear(spec, caption_band(plan))
 
     # Игра: пресеты эмоций и жестов героини на словах реплик.
     perf: list[dict] = []
@@ -360,7 +404,8 @@ def compile_vrm(plan: dict, lib: dict, words: list[dict], total: float, *, envel
             t = round(P.anchor(st, cue.get("at"), n) + float(cue.get("dt") or 0), 3)
             perf.append({"who": hero, "preset": cue["preset"], "t": t,
                          **({"dur": cue["dur"]} if cue.get("dur") else {}),
-                         **({"intensity": cue["intensity"]} if cue.get("intensity") is not None else {})})
+                         **({"intensity": cue["intensity"]} if cue.get("intensity") is not None else {}),
+                         **{k: cue[k] for k in ("hand", "side") if cue.get(k) in ("left", "right")}})
     loc_light = bool((loc.get("plate") or {}).get("light"))
     applied = apply_presets(spec, built["shots"], plan, perf, hero)
     if loc_light and applied.get("light"):

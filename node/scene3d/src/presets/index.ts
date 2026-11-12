@@ -12,8 +12,8 @@
  * сильнее пресетов (лампы и вещи добавляются к пресетным, environment/post — поверх). Любое значение — имя или
  * объект ``{"name": ..., ...параметры}``. Справка по всем пресетам — ``presetCatalog()`` (русские описания).
  */
-import { CATEGORIES, CATEGORY_RU, PLAN_FIELD, type Category, type Meta, type V3 } from "./meta.ts";
-import { CAMERA_MOVES, moveAt, moveKeys, type CamState, type MoveSpec } from "./cameras.ts";
+import { CATEGORIES, CATEGORY_RU, PLAN_FIELD, r4, withDefaults, type Category, type Meta, type V3 } from "./meta.ts";
+import { CAMERA_MOVES, moveAt, moveKeys, punchStrength, type CamState, type MoveSpec } from "./cameras.ts";
 import { LIGHT_RIGS, lightRig } from "./lights.ts";
 import { LOOKS } from "./looks.ts";
 import { FX, fxPatch, MOODS } from "./fx.ts";
@@ -131,7 +131,10 @@ export function cameraKeys(moves: Record<string, any>[], ctx: ExpandCtx, fps: nu
     const ks = moveKeys(spec, fps, prev?.end, dof);
     keys.push(...ks);
     prev = { end: moveAt(spec, t1, prev?.end), target: tg.point };
-    if (m.move === "crash_zoom" || m.move === "punch_in") shakes.push({ t: t0 + (t1 - t0) * (m.at ?? 0.15) + 0.06, amp: 0.006 * (m.strength ?? 1), duration: 0.35 });
+    if (m.move === "crash_zoom" || m.move === "punch_in") {
+      const s = m.strength ?? (m.move === "punch_in" ? punchStrength(m.distance ?? 2.4, m.fov ?? 35) : 1);
+      shakes.push({ t: t0 + (t1 - t0) * (m.at ?? 0.15) + 0.06, amp: r4(0.006 * s), duration: 0.35 });
+    }
   });
   return { keys, shakes };
 }
@@ -201,7 +204,7 @@ export function expandPresets<T extends Record<string, any>>(spec: T): T {
   if (lightName) {
     if (!LIGHT_RIGS[lightName]) warnings.push(`нет световой схемы «${lightName}»`);
     else {
-      const lr = lightRig(lightName, { subject: ctx.subject, heading: ctx.heading, duration, indoor, p: { ...(P.light ? {} : mood?.lightParams || {}), ...paramsOf(P.light) } });
+      const lr = lightRig(lightName, { subject: ctx.subject, heading: ctx.heading, duration, indoor, anchors, p: { ...(P.light ? {} : mood?.lightParams || {}), ...paramsOf(P.light) } });
       rigLights = lr.lights;
       lightEnv = lr.env;
       lightGrade = lr.grade || {};
@@ -220,6 +223,11 @@ export function expandPresets<T extends Record<string, any>>(spec: T): T {
   const fxList: Named[] = [...(mood?.fx || []), ...(Array.isArray(P.fx) ? P.fx : P.fx ? [P.fx] : [])];
   let post: Record<string, any> = deepMerge({ grain: 0.03, vignette: 0.25, ca: 0.6 }, lookEnv.post || {});
   let stylize: Record<string, any> = lookEnv.stylize ? { ...lookEnv.stylize } : {};
+  // Параметры стиля (letterbox, anamorphic, tiltShift…) — поля последнего прохода с тем же именем.
+  if (look?.meta.params?.length) {
+    const lp = withDefaults(look.meta, paramsOf(P.look));
+    for (const p of look.meta.params) if (typeof lp[p.name] === "number") stylize[p.name] = lp[p.name];
+  }
   const atmosphere: Record<string, any>[] = [];
   let dof: number | undefined = look?.dof;
   const fxNames: string[] = [];

@@ -7,6 +7,7 @@ import { drawChatScreen, drawLive, drawStream, liveImages, type StreamScreen } f
 import { drawDrawApp } from "../../scene3d/src/ui_pages.ts";
 import { glow, layer, rgba } from "./plate/draw.ts";
 import type { Room } from "./plate/room.ts";
+import { chatLane } from "./chatlane.ts";
 import { BH, BW } from "./plate/room.ts";
 
 type G = CanvasRenderingContext2D;
@@ -24,6 +25,8 @@ export interface InsertSpec {
   coins?: number;
   /** Планшет: вместо эскиза лисички — свой персонаж (живая картинка аватара карандашом, цвет проявляется). */
   sketch?: boolean;
+  /** Чат: полоса субтитров клипа [y0, y1] (px кадра) — карточка чата не заходит в неё ни в начале, ни на наезде. */
+  avoid?: [number, number];
 }
 
 const sk = layer(1200, 800);
@@ -116,9 +119,25 @@ function monitor(g: G, W: number, H: number, s: InsertSpec, t: number, stream: S
 function chatInsert(g: G, W: number, H: number, s: InsertSpec, t: number, stream: StreamScreen, room: Room) {
   backdrop(g, room, W, H, 0.5);
   drawChatScreen(chat.getContext("2d")!, chat.width, chat.height, stream, t);
-  const w = 760, h = (w * chat.height) / chat.width, x = (W - w) / 2, y = (H - h) / 2 - 40;
+  let w = 760, h = (w * chat.height) / chat.width, x = (W - w) / 2, y = (H - h) / 2 - 40;
   g.save();
-  camera(g, W, H, s, t, W / 2, y + h * 0.62, 1.0);
+  const lane = s.avoid ? chatLane(H, s.avoid) : null;
+  if (lane) {
+    // Субтитры в кадре: карточка целиком по свою сторону от их полосы, наезд держит неподвижным край у
+    // субтитров (растёт от них) — новые сообщения внизу чата не уходят под строку субтитров.
+    const k = Math.min(1, lane.h / h);
+    w *= k;
+    h *= k;
+    x = (W - w) / 2;
+    y = lane.edge === "bottom" ? lane.at - h : lane.at;
+    const ey = lane.at;
+    const kk = ease((t - s.t0) / Math.max(0.1, s.t1 - s.t0));
+    const z = 1 + (s.push ?? 0.15) * 0.6 * kk;
+    g.translate(W / 2, ey);
+    g.rotate((((s.roll ?? 0) * Math.PI) / 180) * (0.4 + 0.6 * kk));
+    g.scale(z, z);
+    g.translate(-W / 2, -ey);
+  } else camera(g, W, H, s, t, W / 2, y + h * 0.62, 1.0);
   g.globalCompositeOperation = "lighter";
   glow(g, W / 2, y + h / 2, w * 0.8, h * 0.7, "#c9a0ff", 0.18);
   g.globalCompositeOperation = "source-over";

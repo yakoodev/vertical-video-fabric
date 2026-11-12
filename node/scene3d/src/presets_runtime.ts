@@ -18,6 +18,7 @@ export class PresetRuntime {
   stylize: Stylize | null = null;
   caustics: Caustics | null = null;
   source: { light: THREE.Light; dir?: THREE.Vector3 } | null = null;
+  focus = new THREE.Vector3(0, 1, 0);
   e: any;
 
   constructor(e: any) {
@@ -30,6 +31,7 @@ export class PresetRuntime {
     const hasToon = "toon" in e;
     const toonOn = hasToon && !!e.toon;
     const focus = new THREE.Vector3(...((spec.presetsApplied?.subject || [0, 1, 0]) as [number, number, number]));
+    this.focus = focus;
     if ((spec.atmosphere && spec.atmosphere.length) || env.sky) {
       this.atmos = new Atmosphere(e.scene, spec.atmosphere || [], env.sky, focus,
         { far: e.camera.far, H, fogColor: env.fog?.color || env.background || "#9aa0aa" });
@@ -78,6 +80,12 @@ export class PresetRuntime {
     this.caustics?.update(t);
     if (!this.stylize) return;
     this.stylize.update(t);
+    const sp = this.stylize.spec;
+    if ((sp.tiltShift ?? 0) > 0 && sp.tiltCenter === undefined) {
+      // Полоса резкости тилт-шифта — на экранной высоте субъекта (герой в кадре остаётся резким).
+      const ndc = this.focus.clone().project(cam);
+      this.stylize.pass.uniforms.tiltCenter.value = Math.min(0.85, Math.max(0.15, ndc.y * 0.5 + 0.5));
+    }
     if (!this.source) return;
     const L: any = this.source.light;
     const p = new THREE.Vector3();

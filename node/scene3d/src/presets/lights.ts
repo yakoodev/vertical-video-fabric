@@ -19,6 +19,8 @@ export interface LightCtx {
   duration: number;
   /** В помещении (есть комната): «солнце» светит через окно, небо не рисуется. */
   indoor?: boolean;
+  /** Якоря окружения (костёр — fire): схема ставит свет туда, где его источник в кадре. */
+  anchors?: Record<string, { pos: number[] }>;
   p: Record<string, any>;
 }
 
@@ -178,15 +180,18 @@ export const LIGHT_RIGS: Record<string, RigDef> = {
   campfire: {
     meta: { name: "campfire", title: "Костёр", ru: "Тёплый живой свет снизу, дрожащий как пламя, и холодная луна в спину. Лагерь, страшилки у огня, уют.", params: [PI], tags: ["night", "warm", "outdoor"] },
     fn: (c) => {
-      const base = 4.2 * k(c);
-      const fire = at(c, [0, -c.subject[1] + 0.35, 1.0]);
+      // Огонь — там, где костёр окружения (якорь fire); без костра — сбоку-спереди от героя, вне кадра по центру.
+      // Лампа — на высоте языков пламени (0.55 м), не у земли: у земли точечный свет даёт жгучее пятно под собой.
+      // Ореола у рига нет: у костра окружения свой, а без костра светящийся шар висел бы в пустоте.
+      const anchor = c.anchors?.fire?.pos;
+      const fire: V3 = anchor ? r4v([anchor[0], 0.55, anchor[2]]) : at(c, [0.9, -c.subject[1] + 0.55, 1.3]);
+      const base = (anchor ? 2.6 : 3.4) * k(c);
       return {
         lights: [
           { type: "hemisphere", id: "night", color: "#2a3a66", ground: "#120c0a", intensity: 0.3 * k(c) },
           { type: "directional", id: "moon", color: "#8fa8ff", intensity: 0.7 * k(c), position: sunPos(c, 160, 35), target: c.subject, castShadow: true, shadow: SH(5, 3) },
-          { type: "point", id: "fire", color: "#ff7a2c", intensity: base, position: fire, distance: 8, decay: 2, castShadow: true, shadow: { size: 1024, radius: 3 },
-            keys: flickerKeys(c.duration, base, 0.45, 5, 15), halo: { size: 0.9, opacity: 0.55, color: "#ff8c3a" } },
-          { type: "point", id: "embers", color: "#ff3c10", intensity: 2 * k(c), position: add3(fire, [0, -0.2, 0]), distance: 3, decay: 2, keys: flickerKeys(c.duration, 2 * k(c), 0.6, 9, 15) },
+          { type: "point", id: "fire", color: "#ff7a2c", intensity: base, position: fire, distance: 5.5, decay: 2, castShadow: true, shadow: { size: 1024, radius: 3 },
+            keys: flickerKeys(c.duration, base, 0.4, 5, 15) },
         ],
         env: { background: "#06070e", exposure: 1.05, envIntensity: 0.06, fog: { color: "#0a0b16", near: 4, far: 16 },
           sky: { top: "#03040a", horizon: "#141a33", bottom: "#050507" } },
@@ -198,8 +203,9 @@ export const LIGHT_RIGS: Record<string, RigDef> = {
     meta: { name: "underwater", title: "Под водой", ru: "Сине-зелёная толща, сверху бегут блики каустики, даль тонет в мути. Сон, глубина, тишина.", params: [PI], tags: ["fantasy"] },
     fn: (c) => ({
       lights: [
-        { type: "hemisphere", id: "water", color: "#5fd6d0", ground: "#0b2a3a", intensity: 0.9 * k(c) },
-        { type: "spot", id: "caustics", color: "#bff6ff", intensity: 45 * k(c), position: at(c, [0.4, 5, 0.6]), target: at(c, [0, -c.subject[1], 0]), angle: 46, penumbra: 0.5, cookie: "caustics", castShadow: true, shadow: { size: 1024, radius: 2 } },
+        // Заливка слабее, чем ключ с каустикой: иначе бегущие блики тонут в ровном свете.
+        { type: "hemisphere", id: "water", color: "#5fd6d0", ground: "#0b2a3a", intensity: 0.62 * k(c) },
+        { type: "spot", id: "caustics", color: "#c8f8ff", intensity: 62 * k(c), position: at(c, [0.4, 5, 0.6]), target: at(c, [0, -c.subject[1], 0]), angle: 32, penumbra: 0.6, cookie: "caustics", castShadow: true, shadow: { size: 1024, radius: 2 } },
         { type: "directional", id: "down", color: "#7fe0e8", intensity: 0.6 * k(c), position: sunPos(c, 10, 80), target: c.subject },
       ],
       env: { background: "#0b4a5c", exposure: 1.05, envIntensity: 0.2, fog: { color: "#0d5566", near: 1.5, far: 11 },
