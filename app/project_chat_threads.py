@@ -478,16 +478,28 @@ def ai_status() -> dict:
                                           "сервиса и перезапусти его. Платный Polza чат не использует.")}
 
 
+def configured_chat_models() -> list[tuple[str, str]]:
+    """``GEMINI_CHAT_MODELS`` (app/settings.py): [(модель, подпись)] — «модель=подпись» или просто «модель»."""
+    out = []
+    for item in settings.gemini_chat_models or []:
+        model, _sep, label = str(item).partition("=")
+        if model.strip():
+            out.append((model.strip(), label.strip()))
+    return out
+
+
 def models() -> dict:
     """Модели для выбора в шапке чата. Провайдер один — Gemini сервиса (Polza не используем,
-    других текстовых провайдеров с инструментами в сервисе нет)."""
+    других текстовых провайдеров с инструментами в сервисе нет). Список — из настроек (``GEMINI_CHAT_MODELS``), к нему
+    — модель агента и модели ролей сервиса: раньше он собирался только из ролей, и рабочей gemini-3.8-flash в нём не было."""
     seen: dict[str, str] = {}
-    for model, label in ((settings.gemini_agent_model, "умнее (как ИИ-монтажёр)"),
-                         (settings.gemini_text_model, "быстрее и дешевле"),
-                         (settings.gemini_video_model, "как анализ видео"),
-                         (settings.gemini_montage_model, "как ИИ-монтаж")):
+    roles = ((settings.gemini_agent_model, "умнее (как ИИ-монтажёр)"),
+             (settings.gemini_text_model, "быстрее и дешевле"),
+             (settings.gemini_video_model, "как анализ видео"),
+             (settings.gemini_montage_model, "как ИИ-монтаж"))
+    for model, label in [*configured_chat_models(), *roles]:
         if model and model not in seen:
-            seen[model] = label
+            seen[model] = label or dict(roles).get(model, "")
     items = [{"id": m, "label": m, "note": label, "provider": "gemini"} for m, label in seen.items()]
     return {"provider": "gemini", "default": settings.gemini_agent_model, "models": items, **ai_status()}
 
