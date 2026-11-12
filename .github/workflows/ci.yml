@@ -113,4 +113,5 @@ jobs:
           node/motion-blocks.test.mjs
           node/motion-page.test.mjs
           node/motion-ads.test.mjs
+          node/motion-flat.test.mjs
           node/motion-flow.test.mjs

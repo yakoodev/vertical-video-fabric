@@ -119,6 +119,24 @@ def _ads() -> dict:
     return {"name": "ads", "layers": layers, "camera": [], "sizes": {}}
 
 
+def _flat() -> dict:
+    """Плоский UI (слой ui, frontend/src/motion/flat): рамка — оценка по компоненту и пунктам (aspect.ui_size)."""
+    layers = normalize_layers([
+        {"id": "hook", "type": "ui", "start": 0, "end": 1.2, "y": 0.5,
+         "props": {"component": "hook", "title": "НАБИРАЮТ", "variant": "fill", "theme": "red"}},
+        {"id": "err", "type": "ui", "start": 1.2, "end": 4, "y": 0.12,
+         "props": {"component": "title", "label": "Ошибка 1", "title": "Скучное начало", "theme": "red"}},
+        {"id": "bars", "type": "ui", "start": 1.2, "end": 4, "y": 0.34,
+         "props": {"component": "bars", "label": "Монетизация", "items": [{"text": "0:50", "value": 50}, {"text": "1:04", "value": 64}]}},
+        {"id": "chip", "type": "ui", "start": 2, "end": 4, "x": 0.3, "y": 0.6,
+         "props": {"component": "chip", "title": "3 секунды", "icon": "clock"}},
+        {"id": "cnt", "type": "ui", "start": 2, "end": 4, "x": 0.6, "y": 0.75,
+         "props": {"component": "counter", "value": 942692, "unit": "просмотров", "icon": "eye"}},
+        {"id": "blur", "type": "fx", "start": 1.2, "end": 4, "props": {"kind": "backdrop"}},
+    ])
+    return {"name": "flat", "layers": layers, "camera": [], "sizes": {}}
+
+
 def _scaffold() -> dict:
     """Настоящий клип промо-заготовки (клип 581: 40 слоёв, 18 ключей камеры)."""
     data = json.loads((FIXTURES / "clip581_scaffold.json").read_text(encoding="utf-8"))
@@ -131,7 +149,7 @@ def _scaffold() -> dict:
 def build_cases() -> dict:
     """Входы (``bases``) и ответ Python по всем парам форматов (``cases``)."""
     bases, cases = {}, []
-    for base in (_promo(), _scenes(), _scaffold(), _in_place(), _social(), _ads()):
+    for base in (_promo(), _scenes(), _scaffold(), _in_place(), _social(), _ads(), _flat()):
         name = base.pop("name")
         bases[name] = base
         sizes = {k: tuple(v) for k, v in base["sizes"].items()}

@@ -239,6 +239,19 @@ props по типу:
          overlay 0.55 (затемнение под текст) — фон сцены во весь кадр (на видео закрывает его — только на холсте/заставке)
   flow_diagram: nodes [{{label, sub, icon|image}}] 2..6, center (щит с замком), layout row|column, stepGap 0.8 (шаги
          появления), done «Готово» (плашка с галочкой в конце; "" — без), doneAt, w 1000, h 620
+  ПЛОСКИЙ UI (плашки, карточки, окна в одном стиле; готовое — list_motion_templates(category: "Плоский UI") →
+         add_motion_template, theme red|dark|light|brand): ui: component {'|'.join(motion.FLAT_COMPONENTS)},
+         theme {'|'.join(motion.FLAT_THEMES)} (red — чёрно-красная как реф «ошибки», dark — графит+индиго, light — светлая,
+         brand — accent + plate бренда), accent (перекрасить акцент), variant (chip solid|soft|outline|neutral, title
+         plain|card, hook plain|fill|accent, counter pill|accent|plain, checklist card|window, window app|browser|chat, toast
+         light|dark), w, size, label (подпись капсом / чип над заголовком / имя приложения), title, text, icon (Lucide: eye,
+         hourglass, circle-check, trending-up, message-circle, bell, zap, lock… или «глаз», «галочка»), value/from/prefix/
+         suffix/unit/delta (число растёт по progress), progress 0..1 (полоса в карточке), items [{{text, sub, note, value, max,
+         dim, done, at, from me|them}}] ≤10 (пункты чек-листа / полосы / сообщения), marker 0..1 + markerLabel (порог на
+         полосах), url (браузер), time, badge (уведомление), delay 0.5 + stagger 0.6 (галочки/полосы/сообщения по очереди),
+         reveal check|appear. Хук: component hook, title — одно слово, без in (читается с кадра 0), variant fill — своя
+         заставка во весь кадр (≤ 3 с). Фон под плашками: fx kind backdrop (size — размытие 22, intensity — затемнение 0.45)
+         на track ниже карточки — кадр размыт, субтитры резкие
   transition (перетекающий переход, сам не рисуется — ставь инструментом flow_transition): kind reveal_from|zoom_through|
          shared_element|push_slide, from [id слоёв A], to [id слоёв B] (пусто — по времени), target, match, ease, shape,
          w, h, radius, feather, depth, edge, edgeWidth, fill, direction, dip; start..end слоя — отрезок перехода

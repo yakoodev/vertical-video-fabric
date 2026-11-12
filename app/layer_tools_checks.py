@@ -96,6 +96,7 @@ def _layer_summary(layer: dict) -> str:
         "waveform": lambda: f"волна голоса {props.get('style') or 'bars'} ({props.get('source') or 'auto'})",
         "tile_wall": lambda: f"стена плиток ×{len(props.get('images') or []) or 'свои'}",
         "flow_diagram": lambda: "схема " + " → ".join(_short(n.get("label")) for n in props.get("nodes") or []),
+        "ui": lambda: f"плоский {props.get('component') or 'ui'} «{_short(props.get('title') or props.get('label') or props.get('text'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),

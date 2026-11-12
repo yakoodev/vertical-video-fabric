@@ -378,6 +378,7 @@ TEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "chart": ("title", "centerLabel"),
     "nameplate": ("handle",),
     "social": ("name", "text", "handle", "time"),
+    "ui": ("label", "title", "text", "unit", "delta", "markerLabel"),
 }
 # Gemini пишет перенос в JSON двойным экранированием ("СТРОКА\\nСТРОКА") — в строке
 # остаются обратный слэш и n, а капс в движке делал из них «\N» прямо в кадре (прогон 578).
@@ -436,6 +437,13 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
             rep(f"{where}.props.{key}", f"пустой список {key} — слой ничего не покажет")
         elif ltype == "flow_diagram" and len(props[key]) < 2:
             rep(f"{where}.props.nodes", "у схемы нужно хотя бы 2 узла")
+    elif ltype == "ui":
+        comp = props.get("component")
+        texts = [props.get(k) for k in ("title", "text", "label")]
+        if comp in ("bars", "checklist") and not props.get("items"):
+            rep(f"{where}.props.items", f"у {comp} пустой items — карточка без пунктов")
+        elif comp in ("hook", "chip", "title", "toast") and not any(str(t or "").strip() for t in texts):
+            rep(f"{where}.props.title", f"у {comp} нет текста (title) — слой ничего не скажет")
     elif ltype == "waveform" and props.get("audio_layer") and props.get("asset_id"):
         rep(f"{where}.props", "волна: audio_layer и asset_id сразу — берётся audio_layer, asset_id лишний")
     elif ltype == "nameplate" and not props["handle"].strip() and props["platform"] == "none":

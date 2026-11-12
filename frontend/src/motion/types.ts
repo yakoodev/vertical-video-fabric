@@ -7,6 +7,7 @@
  * здесь необязательное, а значения по умолчанию подставляют рендереры.
  */
 import type { BubblesProps, CarouselProps, FlowDiagramProps, LayerPivot, TileWallProps, WaveformProps } from "./adtypes";
+import type { FlatUiProps } from "./flat/kit";
 import type { TransitionProps } from "./flow";
 
 export type * from "./adtypes";
@@ -532,7 +533,9 @@ export type FxKind =
   | "datamosh_lite"
   | "pixel_sort_lite"
   // Ч/б на отрезке (панчлайн): насыщенность кадра → 0 с силой intensity.
-  | "grayscale";
+  | "grayscale"
+  // Фон под плашками: всё ниже по дорожкам размыто (size — радиус, опорн. px) и притушено (intensity, color).
+  | "backdrop";
 
 export type FxProps = {
   kind?: FxKind;
@@ -717,6 +720,8 @@ export type LayerPropsMap = {
   waveform: WaveformProps;
   tile_wall: TileWallProps;
   flow_diagram: FlowDiagramProps;
+  /** Плоский интерфейс на токенах темы (flat/): чип, заголовок, хук, карточка с числом, полосы, чек-лист, окно… */
+  ui: FlatUiProps;
   /** Перетекающий переход между сценами (flow.ts): сам не рисуется, ведёт группы слоёв A и B. */
   transition: TransitionProps;
 };
@@ -824,6 +829,7 @@ export type CarouselLayer = LayerOf<"carousel">;
 export type WaveformLayer = LayerOf<"waveform">;
 export type TileWallLayer = LayerOf<"tile_wall">;
 export type FlowDiagramLayer = LayerOf<"flow_diagram">;
+export type UiLayer = LayerOf<"ui">;
 export type TransitionLayerOf = LayerOf<"transition">;
 
 export type Layer =
@@ -851,6 +857,7 @@ export type Layer =
   | WaveformLayer
   | TileWallLayer
   | FlowDiagramLayer
+  | UiLayer
   | TransitionLayerOf;
 
 /**

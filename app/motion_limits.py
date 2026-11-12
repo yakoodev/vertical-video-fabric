@@ -34,6 +34,8 @@ LAYER_TYPES = (
     "chat", "audio", "pngtuber", "nameplate", "fx", "scene", "social", "page",
     # Рекламный пакет (frontend/src/motion/layers/{bubbles,carousel,waveform,tilewall,flow}.ts).
     "bubbles", "carousel", "waveform", "tile_wall", "flow_diagram",
+    # Плоский интерфейс на токенах темы (frontend/src/motion/flat, layers/flatui.ts; app/motion_schema_flat.py).
+    "ui",
     # Перетекающий переход между сценами (app/motion_flow.py, frontend/src/motion/flow.ts): сам не рисуется.
     "transition",
 )
@@ -66,14 +68,18 @@ FX_KINDS = ("vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain
             # Глитч на отрезке (app/glitch.py, add_glitch).
             "rgb_split", "tear", "datamosh_lite", "pixel_sort_lite",
             # Ч/б на отрезке (панчлайн): насыщенность → 0 с силой intensity, сила по времени — ключи scale.
-            "grayscale")
+            "grayscale",
+            # Фон под плашками (плоская тема): всё ниже размыто (size — радиус, опорн. px) и притушено
+            # (intensity, color); субтитры и плашка канала остаются резкими поверх.
+            "backdrop")
 FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", "lines": "scanlines",
               "leak": "light_leak", "lightleak": "light_leak", "light-leak": "light_leak", "rgb": "chromatic",
               "aberration": "chromatic", "chromatic_aberration": "chromatic", "flash": "flash_frame",
               "white_flash": "flash_frame", "grain": "grain_overlay", "film_grain": "grain_overlay", "noise": "grain_overlay",
               "rgb_shift": "rgb_split", "tearing": "tear", "datamosh": "datamosh_lite", "pixel_sort": "pixel_sort_lite",
               "pixelsort": "pixel_sort_lite", "bw": "grayscale", "b/w": "grayscale", "mono": "grayscale",
-              "monochrome": "grayscale", "black_white": "grayscale", "desaturate": "grayscale"}
+              "monochrome": "grayscale", "black_white": "grayscale", "desaturate": "grayscale",
+              "blur": "backdrop", "backdrop_blur": "backdrop", "dim": "backdrop", "frosted": "backdrop"}
 # Сколько эффектов кадра одновременно — уже каша (предупреждение агенту, не ошибка).
 FX_MAX_AT_ONCE = 2
 # Реакция слоя на звук (frontend/src/motion/levels.ts): огибающую считает app/audio_react.py.
@@ -108,6 +114,11 @@ PAGE_EASES = ("inOut", "linear", "out", "in")
 AD_ICONS = ("shield", "lock", "check", "user", "users", "store", "card", "star", "bolt", "heart", "chat", "music", "play",
             "cart", "gift", "bell", "mic", "coin", "globe", "phone", "headphones", "sparkle", "trend", "game")
 AD_THEMES = ("dark", "light")
+# Плоская тема (слой ui): компоненты, темы палитр, предел пунктов, режимы чек-листа.
+FLAT_COMPONENTS = ("hook", "chip", "title", "stat", "bars", "counter", "checklist", "toast", "window")
+FLAT_THEMES = ("red", "dark", "light", "brand")
+FLAT_ITEMS_MAX = 10
+FLAT_REVEALS = ("check", "appear")
 AD_ACCENT = "#6c5cff"
 AD_FONT = "Manrope"
 BUBBLES_MAX = 12

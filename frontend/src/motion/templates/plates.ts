@@ -3,6 +3,7 @@ import { NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES } from "../layers/nameplate";
 import type { NameplatePlatform } from "../types";
 import { REF_W } from "../types";
 import { dur, durationParam, FONT, glow, layer, type MotionTemplate, num, RED, SOFT, str } from "./kit";
+import { flatLowerThirdFromLegacy, isFlat, legacyThemeParam } from "./flat";
 
 export function lowerThird(style: "bar" | "box" | "pill" | "neon", name: string, description: string, accent: string, skew: number): MotionTemplate {
   return {
@@ -18,9 +19,11 @@ export function lowerThird(style: "bar" | "box" | "pill" | "neon", name: string,
       { name: "accent", label: "Акцент", type: "color", default: accent },
       { name: "y", label: "Высота", type: "number", default: 0.8, min: 0, max: 1 },
       durationParam(4),
+      legacyThemeParam,
     ],
     build(p, at) {
       const end = at + dur(p, 4);
+      if (isFlat(p)) return { layers: flatLowerThirdFromLegacy({ ...p, accent: "" }, at, end) };
       const inType = style === "pill" ? "slideRight" : style === "neon" ? "zoom" : "wipe";
       return {
         layers: [

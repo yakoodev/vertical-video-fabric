@@ -48,7 +48,7 @@ export {
   type Plane,
   type Projector,
 } from "./space3d";
-export { drawFrame, drawLayer, inScene, has3dFields, layerPlane, visibleLayers, holdFinalLayers, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
+export { drawFrame, drawLayer, inScene, has3dFields, layerPlane, visibleLayers, holdFinalLayers, liftOverGrayscale, FINAL_HOLD_EPS, layerBox, hitLayer, layerShutter, layerBlurPlan, type LayerBox } from "./render";
 export {
   MOTION_BLUR_MIN_SAMPLES,
   MOTION_BLUR_MAX_SAMPLES,
@@ -191,3 +191,9 @@ export {
   type BackgroundOptions,
 } from "./backgrounds";
 export { readEndScreen, endScreenAt, endScreenFor, paintEndScreen, END_SCREEN_LAYER_ID, END_SCREEN_MAX_BLUR, END_SCREEN_MAX_DIM, type EndScreenFx } from "./endscreen";
+// Плоская тема (flat/): токены, палитры тем, значки Lucide, компоненты слоя ui — те же рисуют плоские экраны в 3D.
+export { FLAT_THEMES, FLAT_THEME_LABELS, FLAT_PALETTES, FLAT_FONTS, RADII, SPACE, SHADOWS, TYPE, flatTheme, brandPalette, type FlatThemeName, type FlatPalette } from "./flat/tokens";
+export { FLAT_ICONS, FLAT_ICON_NAMES, ICON_ALIASES, LUCIDE_LICENSE, LUCIDE_VERSION, flatIconName, drawFlatIcon, parseSvgPath } from "./flat/icons";
+export { FLAT_COMPONENTS, FLAT_COMPONENT_LABELS, itemAt, type FlatComponent, type FlatItem, type FlatUiProps } from "./flat/kit";
+export { drawFlat, measureFlat } from "./flat/components";
+export { uiSize } from "./reframe";

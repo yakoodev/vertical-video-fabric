@@ -44,6 +44,7 @@ import { pageRenderer } from "./layers/page";
 import { bubblesRenderer } from "./layers/bubbles";
 import { carouselRenderer } from "./layers/carousel";
 import { flowRenderer } from "./layers/flow";
+import { uiRenderer } from "./layers/flatui";
 import { tileWallRenderer } from "./layers/tilewall";
 import { waveformRenderer } from "./layers/waveform";
 import { textRenderer } from "./layers/text";
@@ -91,6 +92,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   waveform: waveformRenderer as LayerRenderer,
   tile_wall: tileWallRenderer as LayerRenderer,
   flow_diagram: flowRenderer as LayerRenderer,
+  ui: uiRenderer as LayerRenderer,
 };
 
 const NO_WORDS: CaptionWord[] = [];
@@ -160,12 +162,14 @@ const ABOVE_GRAYSCALE = new Set<Layer["type"]>(["captions", "nameplate"]);
 /**
  * Ч/б (fx grayscale) красит всё, что ниже по дорожкам, — и субтитры на дорожке 0 (QA 02.11, клип 895:
  * жёлтая подсветка слова на панчлайне стала серой). Субтитры и плашку ниже последнего ч/б рисуем сразу
- * над ним, в прежнем порядке; остальное — как было.
+ * над ним, в прежнем порядке; остальное — как было. Так же и фон под плашками (fx backdrop): кадр под
+ * плашками размыт, а субтитры читаются резкими.
  */
 export function liftOverGrayscale(visible: Layer[]): Layer[] {
   let last = -1;
   visible.forEach((layer, i) => {
-    if (layer.type === "fx" && !layer.behind && (layer as FxLayer).props?.kind === "grayscale") last = i;
+    const kind = layer.type === "fx" && !layer.behind ? (layer as FxLayer).props?.kind : null;
+    if (kind === "grayscale" || kind === "backdrop") last = i;
   });
   if (last < 0) return visible;
   const lifted = visible.slice(0, last).filter((l) => ABOVE_GRAYSCALE.has(l.type) && !l.behind);

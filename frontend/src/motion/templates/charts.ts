@@ -18,6 +18,7 @@ import {
   VIOLET_DEEP,
   YELLOW,
 } from "./kit";
+import { flatCounterFromLegacy, flatProgressFromLegacy, flatTop3FromLegacy, isFlat, legacyThemeParam } from "./flat";
 
 export const counter: MotionTemplate = {
   id: "counter",
@@ -33,9 +34,11 @@ export const counter: MotionTemplate = {
     { name: "color", label: "Цвет числа", type: "color", default: YELLOW },
     { name: "y", label: "Высота", type: "number", default: 0.4, min: 0, max: 1 },
     durationParam(4),
+    legacyThemeParam,
   ],
   build(p, at) {
     const end = at + dur(p, 4);
+    if (isFlat(p)) return { layers: flatCounterFromLegacy(p, at, end) };
     const y = num(p, "y", 0.4);
     return {
       layers: [
@@ -87,9 +90,11 @@ export const progressBar: MotionTemplate = {
     { name: "color", label: "Цвет", type: "color", default: VIOLET },
     { name: "y", label: "Высота", type: "number", default: 0.45, min: 0, max: 1 },
     durationParam(4),
+    legacyThemeParam,
   ],
   build(p, at) {
     const end = at + dur(p, 4);
+    if (isFlat(p)) return { layers: flatProgressFromLegacy(p, at, end) };
     const y = num(p, "y", 0.45);
     const value = Math.max(0, Math.min(100, num(p, "value", 86)));
     const color = str(p, "color", VIOLET);
@@ -271,9 +276,11 @@ export const top3: MotionTemplate = {
     { name: "item3", label: "Пункт 3", type: "text", default: "Отличный результат" },
     { name: "accent", label: "Акцент", type: "color", default: YELLOW },
     durationParam(6),
+    legacyThemeParam,
   ],
   build(p, at) {
     const end = at + dur(p, 6);
+    if (isFlat(p)) return { layers: flatTop3FromLegacy({ ...p, accent: "" }, at, end) };
     const accent = str(p, "accent", YELLOW);
     const out = { type: "fade" as const, duration: 0.3 };
     const layers: Layer[] = [

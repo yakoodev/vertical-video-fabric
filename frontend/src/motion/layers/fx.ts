@@ -30,6 +30,7 @@ export const FX_KINDS: FxKind[] = [
   "datamosh_lite",
   "pixel_sort_lite",
   "grayscale",
+  "backdrop",
 ];
 
 /** Сила и наложение по умолчанию у каждого вида. */
@@ -45,6 +46,7 @@ export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }
   datamosh_lite: { intensity: 0.6, blend: "normal" },
   pixel_sort_lite: { intensity: 0.6, blend: "normal" },
   grayscale: { intensity: 1, blend: "normal" },
+  backdrop: { intensity: 0.45, blend: "normal" },
 };
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -80,9 +82,9 @@ export function resolveFx(layer: FxLayer): ResolvedFx {
     intensity: clamp01(num(p.intensity, def.intensity)),
     speed: clamp(num(p.speed, 1), 0.1, 4),
     blend,
-    color: p.color || "#ffffff",
+    color: p.color || (kind === "backdrop" ? "#07060a" : "#ffffff"),
     colors: Array.isArray(p.colors) && p.colors.length ? p.colors.slice(0, 4) : LEAK_COLORS,
-    size: clamp(num(p.size, kind === "scanlines" ? 4 : 1.6), 0.5, 12),
+    size: kind === "backdrop" ? clamp(num(p.size, 22), 0, 64) : clamp(num(p.size, kind === "scanlines" ? 4 : 1.6), 0.5, 12),
     seed: Number.isFinite(p.seed) && (p.seed as number) > 0 ? Math.floor(p.seed as number) : hashString(layer.id || "fx"),
   };
 }
@@ -353,6 +355,61 @@ function grayscale({ ctx, env, fx, alpha }: FxCtx): void {
   ctx.drawImage(src(b.chan.canvas), 0, 0, env.width, env.height);
 }
 
+/* ---------- фон под плашками (плоская тема) ---------- */
+
+const smallByEnv = new WeakMap<RenderEnv, { w: number; h: number; buf: Buf }>();
+
+/** Холст в 1/4 кадра — размытие на нём в 16 раз дешевле и мягче (апскейл сглаживает). */
+function smallBuffer(env: RenderEnv, w: number, h: number): Buf | null {
+  if (!env.createCanvas) return null;
+  const sw = Math.max(8, Math.round(w / 4));
+  const sh = Math.max(8, Math.round(h / 4));
+  let hit = smallByEnv.get(env);
+  if (!hit || hit.w !== sw || hit.h !== sh) {
+    hit = { w: sw, h: sh, buf: makeBuf(env, sw, sh) };
+    smallByEnv.set(env, hit);
+  }
+  return hit.buf;
+}
+
+function backdrop({ ctx, env, fx, alpha, k }: FxCtx): void {
+  // Всё ниже по дорожкам — размыто (size — радиус, опорн. px) и притушено (intensity, цвет `color` —
+  // по умолчанию почти чёрный): плашки поверх читаются, как в рефе «ошибки новичка». Вход/выход — fade слоя:
+  // резкий кадр плавно уходит в размытый. Размытие — на копии в 1/4 кадра (быстро, края без ореола:
+  // копия чуть шире кадра).
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const radius = fx.size * k;
+  if (radius > 0.5) {
+    const s = smallBuffer(env, b.w, b.h);
+    if (!s) return;
+    const c = s.ctx;
+    const sw = (s.canvas as ScratchCanvas).width;
+    const sh = (s.canvas as ScratchCanvas).height;
+    reset(c, sw, sh);
+    c.filter = `blur(${(radius / 4).toFixed(2)}px)`;
+    const m = (radius / 4) * 2.2;
+    c.drawImage(src(b.frame.canvas), -m, -m, sw + m * 2, sh + m * 2);
+    c.filter = "none";
+    ctx.globalAlpha = clamp01(alpha);
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(src(s.canvas), 0, 0, sw, sh, 0, 0, env.width, env.height);
+  }
+  // Притушить: ровная заливка + чуть темнее к краям (виньетка) — центр, где плашки, светлее.
+  const dim = clamp01(fx.intensity) * clamp01(alpha);
+  if (dim > 0.002) {
+    const color = fx.color;
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = rgba(color, dim);
+    ctx.fillRect(0, 0, env.width, env.height);
+    const g = ctx.createRadialGradient(env.width / 2, env.height / 2, Math.min(env.width, env.height) * 0.35, env.width / 2, env.height / 2, Math.max(env.width, env.height) * 0.75);
+    g.addColorStop(0, rgba(color, 0));
+    g.addColorStop(1, rgba(color, dim * 0.6));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, env.width, env.height);
+  }
+}
+
 /* ---------- глитч на отрезке (add_glitch) ---------- */
 
 function rgbSplit({ ctx, env, fx, local, alpha, k }: FxCtx): void {
@@ -544,6 +601,7 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   datamosh_lite: datamoshLite,
   pixel_sort_lite: pixelSortLite,
   grayscale,
+  backdrop,
 };
 
 /**
@@ -554,7 +612,7 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
 export function drawFx(ctx: Ctx2D, layer: FxLayer, st: LayerState, env: RenderEnv): void {
   const fx = resolveFx(layer);
   const strength = clamp01(fx.intensity * Math.max(0, st.scale));
-  if (strength <= 0.002 || st.opacity <= 0.002) return;
+  if ((strength <= 0.002 && fx.kind !== "backdrop") || st.opacity <= 0.002) return;
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.globalAlpha = 1;
