@@ -218,10 +218,50 @@ def pace_beats(plan: dict, narration: Path, words: list[dict], work: Path, repor
     return out, paced
 
 
+FLOW_ASSET = "1"
+
+
+def flow_layers(shots: list[dict], total: float, fps: int = 30) -> list[dict]:
+    """Перетекающие переходы (слой ``transition`` моушна, frontend/src/motion/flow.ts) на склейках планов с полем
+    ``flow`` в плане: ``{"cam": "monitor", "at": "над", "flow": {"kind": "zoom_through", "dur": 0.8, "w": 300, …}}``.
+
+    Сцены A и B — видео-слои того же отрисованного ролика: A — до склейки живьём и стоп-кадр после, B — стоп-кадр
+    первого кадра до склейки и живьём после (у ролика нет «B до склейки»). Переход объединяет их в группы и ведёт
+    маску/матрицу; концы отрезка совпадают с роликом без перехода."""
+    from app.motion_flow import FLOW_DEFAULT_SEC
+
+    def vid(lid: str, a: float, b: float, src: float, hold: bool = False) -> dict:
+        props = {"asset_id": FLOW_ASSET, "from": round(src, 4), "w": 1080}
+        if hold:
+            props["hold"] = True
+        return {"id": lid, "type": "video", "start": round(a, 4), "end": round(b, 4), "track": 1, "x": 0.5, "y": 0.5,
+                "props": props, "in": None, "out": None}
+
+    out: list[dict] = []
+    for i, sh in enumerate(shots):
+        fl = sh.get("flow")
+        if not fl or i == 0:
+            continue
+        kind = str(fl.get("kind") or "push_slide")
+        h = float(fl.get("dur") or FLOW_DEFAULT_SEC.get(kind, 0.6)) / 2
+        c = round(float(sh["t0"]) * fps) / fps
+        if c - h < 0 or c + h > total:
+            continue
+        a, ah, bh, b = f"fa{i}", f"fah{i}", f"fbh{i}", f"fb{i}"
+        out += [vid(a, c - h, c, c - h), vid(ah, c, c + h, c - 1 / fps, hold=True),
+                vid(bh, c - h, c, c, hold=True), vid(b, c, c + h, c)]
+        props = {k: v for k, v in fl.items() if k not in ("dur", "x", "y")}
+        props.update({"kind": kind, "from": [a, ah], "to": [bh, b]})
+        out.append({"id": f"tr{i}", "type": "transition", "start": round(c - h, 4), "end": round(c + h, 4), "track": 0,
+                    "x": float(fl.get("x", 0.5)), "y": float(fl.get("y", 0.5)), "props": props, "in": None, "out": None})
+    return out
+
+
 def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float,
-                  y: float | None = None) -> None:
+                  y: float | None = None, shots: list[dict] | None = None) -> None:
     from app import vtubika_plan as P
     from app.motion_render_comp import build_compositor_args, write_comp
+    from app.motion_render_video import prepare_video_frames
     from app.stories_3d import _captions
     from app.stories_library import DEFAULT_CAPTIONS
 
@@ -229,13 +269,20 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
     comp_words, marks = P.caption_words(words, plan.get("highlight") or {})
     props["highlightWords"] = marks
     layer = {"id": "caps", "type": "captions", "start": 0.0, "end": round(total, 3), "x": 0.5,
-             "y": float(DEFAULT_CAPTIONS["y"] if y is None else y), "props": props}
-    comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[layer], camera=[],
+             "y": float(DEFAULT_CAPTIONS["y"] if y is None else y), "props": props, "track": 9}
+    flows = flow_layers(shots or [], total)
+    comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[*flows, layer], camera=[],
                       words=comp_words)
-    (work / "assets.json").write_text("{}", "utf-8")
+    (work / "assets.json").write_text(json.dumps({FLOW_ASSET: str(video)} if flows else {}), "utf-8")
+    videos = None
+    if flows:
+        videos, notes = prepare_video_frames(flows, {FLOW_ASSET: str(video)}, work, fps=30, out_width=1080)
+        if notes or videos is None:
+            raise RuntimeError(f"переходы: кадры видео-слоёв не нарезались: {notes}")
     # stdin=DEVNULL: компоновщик (node + @napi-rs/canvas) на Windows падает 0xC0000409 с недействительным
     # унаследованным stdin (запуск из агента/планировщика).
-    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out),
+    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out,
+                                                videos_path=videos),
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                           stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out.is_file():
@@ -421,16 +468,23 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
 
     if args.endcard_sounds_only:
         return endcard_sounds_only(args, plan, built, total, narration, lead, work, report)
+    from app import vtubika_room3d as ROOM
+
     spec = to_vrm_spec(plan, built, words, total)
     # Рот по гласным (голос + слова) и слой жизни; голос в ролике — с lead.
     from app import lipsync
 
     lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead)
+    # Комната 3D-пресета (presets3d.room): отрисована отдельно той же камерой — подложкой под героиню.
+    plates = ROOM.apply(plan, spec, work, gl=args.gl, log=_log)
+    if plates:
+        report["room3d"] = {"room": ROOM.room_name(plan), "plates": str(plates),
+                            "render": json.loads((plates / "render.json").read_text("utf-8")) if (plates / "render.json").is_file() else None}
     spec_path = work / "scene_vrm.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
     render = ["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(spec_path), "--bundle",
               str(ROOT / "node" / "vrm" / "dist" / "vrm.js"), "--packs", args.vrm_packs, "--gl", args.gl, "--workers", "1",
-              *(["--site", spec["siteDir"]] if spec.get("siteDir") else [])]
+              *(["--site", spec["siteDir"]] if spec.get("siteDir") else []), *(["--plates", str(plates)] if plates else [])]
     subprocess.run(["npm", "run", "build:vrm"], cwd=ROOT, check=True, shell=sys.platform == "win32",
                    stdin=subprocess.DEVNULL)
     if args.preview:
@@ -447,7 +501,8 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
         return 0
     raw_video = work / "scene_vrm.mp4"
     bundle = ROOT / "node" / "vrm" / "dist" / "vrm.js"
-    key = hashlib.sha1(spec_path.read_bytes() + bundle.read_bytes()).hexdigest()
+    key = hashlib.sha1(spec_path.read_bytes() + bundle.read_bytes()
+                       + ((plates / "key.txt").read_bytes() if plates else b"")).hexdigest()
     key_file = work / "scene_vrm.key"
     render_report = work / "scene_vrm.report.json"
     t3d = time.time()
@@ -475,7 +530,8 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
-    burn_captions(plan, script, raw_video, capped, work, total, y=0.8)
+    burn_captions(plan, script, raw_video, capped, work, total, y=0.8, shots=built["shots"])
+    report["flow"] = [{"t": round(float(sh["t0"]), 3), **sh["flow"]} for sh in built["shots"] if sh.get("flow")]
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)
     final = out_dir / f"{args.name}.mp4"
     mix(plan, capped, narration, built["sfx"] + card_sfx, full, final, work, report, lead, music_fade)

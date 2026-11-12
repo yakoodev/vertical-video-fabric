@@ -115,8 +115,17 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
             name = "ots"
         if name in ("face", "face_left") and acts_mid(t0, t1) == "Typing_Loop":
             name = "typing"  # печать — средним планом: руки на клавиатуре видны
-        shots.append({"name": f"{i:02d}_{name}", "t0": t0, "t1": t1, **_cam(name, t0, t1, push, roll),
-                      "props": props, "light": LIGHT})
+        made = {"name": f"{i:02d}_{name}", "t0": t0, "t1": t1, **_cam(name, t0, t1, push, roll), "props": props, "light": LIGHT}
+        glide = float(sh.get("glide") or 0)
+        prev = shots[-1] if shots else None
+        if glide > 0 and prev and not (prev.get("plate") or {}).get("insert") and prev.get("camKeys"):
+            # Плавный переезд камеры вместо склейки: план начинается камерой конца прошлого и за glide с приезжает
+            # в свою (дальше — свой наезд). Подложка-комната отрисована той же камерой, кадр за кадром.
+            end = prev["camKeys"][-1]
+            own = made["camKeys"]
+            g = round(min(glide, (t1 - t0) * 0.6), 3)
+            made["camKeys"] = [{**end, "t": 0}, {**own[0], "t": g}, own[-1]]
+        shots.append(made)
 
     # Руки: по действиям; по умолчанию — лежат на клавишах без набора.
     arms = [{"t": -3, "left": "idle", "right": "idle"}]
@@ -185,6 +194,12 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
     if site:
         out["siteShots"] = site["urls"]  # страницы всех покупок истории (основной набор и site_shots.sets)
         out["siteDir"] = site["dir"]
+    # Купленная модель в эфире (аватар product) — картинки со страницы товара из той же папки снимков.
+    product = (stream.get("product") or {}).get("faces") or {}
+    if product:
+        if not out.get("siteDir"):
+            raise ValueError("screen.product: картинки товара берутся из папки site_shots.dir — её нет")
+        out["siteShots"] = list(dict.fromkeys([*(out.get("siteShots") or []), *(f["url"] for f in product.values())]))
     return out
 
 

@@ -74,10 +74,17 @@ const chat = layer(1200, 2000);
 const tab = layer(1200, 800);
 const ease = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : 0.5 - 0.5 * Math.cos(Math.PI * x));
 
+/** Кадр комнаты 3D-пресета под вставкой (Backdrop ставит на кадр с plate.room): вместо нарисованной стены. */
+let roomPlate: HTMLImageElement | null = null;
+export function setInsertPlate(img: HTMLImageElement | null) {
+  roomPlate = img;
+}
+
 function backdrop(g: G, room: Room, W: number, H: number, dim: number) {
   g.save();
   g.filter = `blur(14px) brightness(${dim})`;
-  g.drawImage(room.far, (W - BW) / 2, (H - BH) / 2);
+  if (roomPlate) g.drawImage(roomPlate, -40, -70, W + 80, H + 140);
+  else g.drawImage(room.far, (W - BW) / 2, (H - BH) / 2);
   g.restore();
 }
 

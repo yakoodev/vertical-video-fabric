@@ -1,0 +1,818 @@
+{
+  "id": "faces",
+  "title": "Одно лицо",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "lily",
+    "paid_ok": true
+  },
+  "script": "серия 6: Соня стримит хорроры по ночам; у бесплатной модели одно лицо — улыбка, даже когда Соню съели; покупает на Витубике Live2D-модель TaomianMian (3 590 ₽, 11 переключателей выражений); на следующем хорроре над моделью «!», румянец, вопросики — чат теперь просит хоррор каждый день ради лиц; pelmen_404 один раз; промокод Free10 в концовке и одной фразой. Картинки товара — со страницы vtubika.store, комната — 3D-пресет cozy_desk ночью",
+  "hero": "alina",
+  "look": "cozy",
+  "vrm": {
+    "heroine": "sonya",
+    "avatars": [
+      "sonya_free"
+    ]
+  },
+  "pronounce": {
+    "Free10": "фри десять"
+  },
+  "music": {
+    "file": "chill-keys.mp3",
+    "under_db": 7.0
+  },
+  "tail": 1.0,
+  "pace": {
+    "tempo_cap": 1.0,
+    "tempo": 1.0,
+    "lead": 0.2
+  },
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "duration": 3.6,
+    "music_fade": 4.0
+  },
+  "presets3d": {
+    "room": {
+      "name": "cozy_desk"
+    },
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": [
+      "bloom",
+      "dust_motes",
+      {
+        "name": "depth_of_field",
+        "amount": 2
+      },
+      "film_grain"
+    ]
+  },
+  "room3d": {
+    "origin": [
+      0.1,
+      0.2,
+      0.9
+    ],
+    "dof": 2.8,
+    "vrm_light": {
+      "keyColor": "#e6ebff",
+      "keyPower": 2.0,
+      "fill": "#6c5ab4",
+      "fillPower": 0.8
+    }
+  },
+  "site_shots": {
+    "dir": "D:/vvf-offload/vtubika/site/2026-11-12",
+    "catalog": {
+      "file": "catalog_taomianmian.png",
+      "from": 0,
+      "scroll": 200,
+      "tap": [
+        288,
+        560
+      ]
+    },
+    "product": {
+      "file": "product_taomianmian.png",
+      "scroll": 1100,
+      "tap": [
+        195,
+        1541
+      ],
+      "button": [
+        16,
+        1515,
+        358,
+        52
+      ]
+    }
+  },
+  "screen": {
+    "uptime": 5400,
+    "title": "ночной хоррор · не пугайте меня",
+    "camBg": [
+      "#141022",
+      "#07060c"
+    ],
+    "viewers": [
+      {
+        "t": 0.0,
+        "value": 19,
+        "label": "19 зрителей"
+      }
+    ],
+    "chat": [
+      {
+        "t": 0.0,
+        "user": "nochnoy_dozor",
+        "color": "#9af0ff",
+        "text": "сзади!!"
+      },
+      {
+        "t": 0.0,
+        "user": "lena.lena",
+        "color": "#ff8ad8",
+        "text": "не открывай дверь"
+      }
+    ],
+    "product": {
+      "base": "hero",
+      "faces": {
+        "hero": {
+          "url": "/site/media/tao_hero.png",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "alarm": {
+          "url": "/site/media/tao_alarm.png",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "question": {
+          "url": "/site/media/tao_question.png",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "blush": {
+          "url": "/site/media/tao_blush.png",
+          "x": 0.5,
+          "y": 0.5
+        },
+        "shadow": {
+          "url": "/site/media/tao_shadow.png",
+          "x": 0.5,
+          "y": 0.5
+        }
+      }
+    }
+  },
+  "highlight": {
+    "съели": "#ff3b4e",
+    "улыбается.": "#ffd35c",
+    "одно": "#ff9a3d",
+    "лицо": "#ff9a3d",
+    "радуется?»": "#ff8ad8",
+    "решаешься.": "#ff9a3d",
+    "Витубике": "#6fd3ff",
+    "выражениями.": "#6fd3ff",
+    "одиннадцать": "#2ee86f",
+    "Три": "#2ee86f",
+    "тысячи": "#2ee86f",
+    "пятьсот": "#2ee86f",
+    "девяносто": "#2ee86f",
+    "рублей.": "#2ee86f",
+    "минуты.": "#9af0ff",
+    "восклицательный": "#ff3b4e",
+    "знак.": "#ff3b4e",
+    "краснеешь": "#ff8ad8",
+    "краснеет.": "#ff8ad8",
+    "вопросики.": "#c9a0ff",
+    "каждый": "#ff9a3d",
+    "день.": "#ff9a3d",
+    "лиц.": "#ffd35c",
+    "Free10": "#ffd35c",
+    "десять": "#2ee86f",
+    "процентов.": "#2ee86f"
+  },
+  "sentences": [
+    {
+      "text": "Тебя опять съели в хорроре.",
+      "pause_after": 0.25,
+      "show": [
+        "крупно Соня: застыла с открытыми глазами (испуг), за ней ночная комната — окно с городом, неон, гирлянда в расфокусе"
+      ],
+      "shots": [
+        {
+          "cam": "face_close",
+          "push": 0.12
+        }
+      ],
+      "do": [
+        {
+          "screen": "stream",
+          "dt": -0.25
+        },
+        {
+          "avatar": "live",
+          "dt": -0.25
+        },
+        {
+          "act": "Sit_Loop"
+        },
+        {
+          "face": "wide"
+        }
+      ],
+      "vrm": [
+        {
+          "av_show": [
+            "sonya_free"
+          ],
+          "dt": -0.25
+        },
+        {
+          "av": "png",
+          "who": "sonya_free",
+          "dt": -0.25
+        },
+        {
+          "av_cam": "bust",
+          "dt": -0.25
+        }
+      ]
+    },
+    {
+      "text": "А модель на экране улыбается.",
+      "pause_after": 0.35,
+      "show": [
+        "эфир крупно: бесплатная модель застыла с улыбкой, в чате «сзади!!»"
+      ],
+      "shots": [
+        {
+          "cam": "monitor",
+          "zoom": 1.06,
+          "push": 0.12,
+          "flow": {
+            "kind": "reveal_from",
+            "shape": "rect",
+            "dur": 0.7,
+            "y": 0.42,
+            "w": 360,
+            "h": 220,
+            "radius": 36,
+            "edge": "#ff3b4e",
+            "edgeWidth": 8
+          }
+        }
+      ],
+      "do": [
+        {
+          "at": "улыбается",
+          "chat": {
+            "user": "kot_v_shkafu",
+            "color": "#ffb07e",
+            "text": "ахахах её съели"
+          }
+        },
+        {
+          "face": "wide"
+        }
+      ]
+    },
+    {
+      "text": "У бесплатной модели одно лицо на все случаи.",
+      "pause_after": 0.35,
+      "show": [
+        "Соня устало смотрит в экран, камера плавно переезжает на средний план"
+      ],
+      "shots": [
+        {
+          "cam": "face_left",
+          "push": 0.1
+        }
+      ],
+      "do": [
+        {
+          "face": "tired"
+        }
+      ]
+    },
+    {
+      "text": "Скример — улыбается. Проиграла — улыбается.",
+      "pause_after": 0.35,
+      "show": [
+        "эфир крупно: модель всё так же улыбается"
+      ],
+      "shots": [
+        {
+          "cam": "monitor_close",
+          "push": 0.14
+        }
+      ],
+      "do": [
+        {
+          "at": "Скример",
+          "viewers": 21,
+          "label": "21 зритель"
+        }
+      ]
+    },
+    {
+      "text": "Чат спрашивает: «А чего она радуется?»",
+      "pause_after": 0.4,
+      "show": [
+        "чат крупно: «а чего она радуется?»"
+      ],
+      "shots": [
+        {
+          "cam": "chat",
+          "push": 0.12
+        }
+      ],
+      "do": [
+        {
+          "at": "А",
+          "dt": -0.1,
+          "chat": {
+            "user": "nochnoy_dozor",
+            "color": "#9af0ff",
+            "text": "а чего она радуется?",
+            "big": true
+          }
+        },
+        {
+          "at": "радуется",
+          "dt": 0.2,
+          "chat": {
+            "user": "lena.lena",
+            "color": "#ff8ad8",
+            "text": "она всегда радуется"
+          }
+        }
+      ]
+    },
+    {
+      "text": "И однажды ты решаешься.",
+      "pause_after": 0.3,
+      "show": [
+        "Соня решается и печатает"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.12
+        }
+      ],
+      "do": [
+        {
+          "act": "Typing_Loop"
+        },
+        {
+          "face": "frown"
+        },
+        {
+          "at": "решаешься",
+          "face": "happy"
+        },
+        {
+          "sfx": "keyboard",
+          "dt": 0.2
+        }
+      ]
+    },
+    {
+      "text": "На Витубике ищешь Live2D-модель с выражениями.",
+      "say": "На Витубике ищешь Live2D модель с выражениями.",
+      "pause_after": 0.3,
+      "show": [
+        "телефон: настоящий сайт vtubika.store, поиск «TaomianMian», карточка модели 3 590 ₽"
+      ],
+      "shots": [
+        {
+          "cam": "insert",
+          "flow": {
+            "kind": "push_slide",
+            "direction": "up",
+            "dur": 0.55,
+            "dip": 0.0
+          }
+        }
+      ],
+      "do": [
+        {
+          "phone": {
+            "screen": "shop",
+            "store": {
+              "title": "Live2D модель TaomianMian",
+              "price": "3 590 ₽",
+              "preview": "vrm",
+              "kind": "Live2D",
+              "delivered": "Модель пришла"
+            },
+            "message": {
+              "file": "taomianmian_live2d.zip",
+              "size": ""
+            },
+            "x": 540,
+            "y": 820,
+            "scale": 1.45,
+            "dim": 0.35
+          },
+          "span": 3,
+          "dt": -0.15,
+          "dt_end": 1.0
+        },
+        {
+          "act": "Sit_Loop"
+        },
+        {
+          "face": "neutral"
+        },
+        {
+          "at": "Витубике",
+          "face": "happy"
+        }
+      ]
+    },
+    {
+      "text": "Кошко-девочка в розовом, одиннадцать переключателей выражений.",
+      "pause_after": 0.3,
+      "show": [
+        "открывается настоящая страница товара, листается до цены и кнопки"
+      ],
+      "do": [
+        {
+          "at": "Кошко-девочка",
+          "site_step": "product",
+          "dt": -0.3
+        }
+      ]
+    },
+    {
+      "text": "Три тысячи пятьсот девяносто рублей.",
+      "pause_after": 0.4,
+      "show": [
+        "касание «Оформить сразу», «Оплачено»"
+      ],
+      "do": [
+        {
+          "at": "рублей",
+          "site_step": "tap",
+          "dt": -0.3
+        },
+        {
+          "at": "рублей",
+          "paid": true,
+          "dt": 0.2
+        }
+      ]
+    },
+    {
+      "text": "Файлы приходят примерно через две минуты.",
+      "pause_after": 0.7,
+      "show": [
+        "«Модель пришла» в стиле сайта"
+      ],
+      "do": [
+        {
+          "at": "end",
+          "dt": 0.2,
+          "site_step": "delivered"
+        },
+        {
+          "at": "end",
+          "face": "happy",
+          "dt": 0.3
+        }
+      ]
+    },
+    {
+      "text": "Вешаешь выражения на клавиши.",
+      "pause_after": 0.3,
+      "show": [
+        "Соня печатает, довольная"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.1
+        }
+      ],
+      "do": [
+        {
+          "act": "Typing_Loop"
+        },
+        {
+          "face": "happy"
+        },
+        {
+          "sfx": "keyboard",
+          "dt": 0.1
+        }
+      ]
+    },
+    {
+      "text": "Вечером снова хоррор.",
+      "pause_after": 0.3,
+      "show": [
+        "средний план, над Соней карточка эфира: новая модель — настоящая картинка товара"
+      ],
+      "shots": [
+        {
+          "cam": "two",
+          "push": 0.08,
+          "glide": 0.9
+        }
+      ],
+      "do": [
+        {
+          "avatar": "product",
+          "dt": -0.3
+        },
+        {
+          "title": "ночной хоррор · новая модель",
+          "dt": -0.3
+        },
+        {
+          "act": "Sit_Loop"
+        },
+        {
+          "face": "neutral"
+        },
+        {
+          "screencard": {
+            "x": 540,
+            "y": 360,
+            "w": 760
+          },
+          "dt": -0.1,
+          "span": 0,
+          "dt_end": 0.25
+        }
+      ]
+    },
+    {
+      "text": "Скример — и над моделью восклицательный знак.",
+      "pause_after": 0.35,
+      "show": [
+        "Соня вздрагивает",
+        "эфир крупно: у модели «!»"
+      ],
+      "shots": [
+        {
+          "cam": "face_close",
+          "push": 0.16
+        },
+        {
+          "cam": "monitor",
+          "zoom": 1.06,
+          "at": "над",
+          "dt": -0.15,
+          "push": 0.1,
+          "flow": {
+            "kind": "reveal_from",
+            "shape": "circle",
+            "dur": 0.6,
+            "y": 0.42,
+            "w": 160,
+            "h": 160,
+            "edge": "#ff3b4e",
+            "edgeWidth": 10
+          }
+        }
+      ],
+      "do": [
+        {
+          "at": "Скример",
+          "face": "wide"
+        },
+        {
+          "at": "Скример",
+          "dt": 0.1,
+          "product_face": "alarm"
+        },
+        {
+          "at": "Скример",
+          "sfx": "pop",
+          "dt": 0.1
+        }
+      ]
+    },
+    {
+      "text": "Чат взрывается.",
+      "pause_after": 0.3,
+      "show": [
+        "чат крупно: pelmen_404 «ОНА ИСПУГАЛАСЬ!!»"
+      ],
+      "shots": [
+        {
+          "cam": "chat",
+          "push": 0.14,
+          "flow": {
+            "kind": "push_slide",
+            "direction": "left",
+            "dur": 0.5,
+            "dip": 0.0
+          }
+        }
+      ],
+      "do": [
+        {
+          "at": "Чат",
+          "dt": -0.15,
+          "chat": {
+            "user": "pelmen_404",
+            "color": "#ffd35c",
+            "text": "ОНА ИСПУГАЛАСЬ!!",
+            "big": true
+          }
+        },
+        {
+          "at": "взрывается",
+          "dt": 0.05,
+          "chat": {
+            "user": "kot_v_shkafu",
+            "color": "#ffb07e",
+            "text": "наконец-то эмоции"
+          }
+        },
+        {
+          "at": "взрывается",
+          "dt": 0.4,
+          "viewers": 34,
+          "label": "34 зрителя"
+        }
+      ]
+    },
+    {
+      "text": "Кто-то пишет, что у тебя милый голос.",
+      "pause_after": 0.25,
+      "show": [
+        "Соня читает чат и улыбается"
+      ],
+      "shots": [
+        {
+          "cam": "smile",
+          "push": 0.1
+        }
+      ],
+      "do": [
+        {
+          "at": "Кто-то",
+          "dt": -0.2,
+          "chat": {
+            "user": "lena.lena",
+            "color": "#ff8ad8",
+            "text": "у тебя милый голос"
+          }
+        },
+        {
+          "face": "neutral"
+        },
+        {
+          "at": "голос",
+          "face": "happy"
+        },
+        {
+          "at": "Кто-то",
+          "product_face": "hero",
+          "dt": -0.3
+        }
+      ]
+    },
+    {
+      "text": "Ты краснеешь — и модель краснеет.",
+      "pause_after": 0.35,
+      "show": [
+        "Соня смущённо улыбается",
+        "эфир крупно: у модели румянец"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.1
+        },
+        {
+          "cam": "monitor",
+          "at": "модель",
+          "dt": -0.2,
+          "push": 0.1,
+          "flow": {
+            "kind": "reveal_from",
+            "shape": "circle",
+            "dur": 0.6,
+            "y": 0.4,
+            "w": 160,
+            "h": 160,
+            "edge": "#ff8ad8",
+            "edgeWidth": 10
+          },
+          "zoom": 1.06
+        }
+      ],
+      "do": [
+        {
+          "face": "laugh"
+        },
+        {
+          "at": "модель",
+          "dt": -0.1,
+          "product_face": "blush"
+        }
+      ]
+    },
+    {
+      "text": "Загадка в игре — над головой вопросики.",
+      "pause_after": 0.35,
+      "show": [
+        "эфир: у модели вопросики над головой"
+      ],
+      "shots": [
+        {
+          "cam": "monitor",
+          "zoom": 1.06,
+          "push": 0.12
+        }
+      ],
+      "do": [
+        {
+          "at": "вопросики",
+          "dt": -0.2,
+          "product_face": "question"
+        },
+        {
+          "at": "вопросики",
+          "dt": 0.2,
+          "chat": {
+            "user": "nochnoy_dozor",
+            "color": "#9af0ff",
+            "text": "ахах, она думает"
+          }
+        }
+      ]
+    },
+    {
+      "text": "Теперь чат просит хоррор каждый день.",
+      "pause_after": 0.3,
+      "show": [
+        "Соня смеётся, камера плавно отъезжает на средний план"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.08
+        }
+      ],
+      "do": [
+        {
+          "face": "laugh"
+        },
+        {
+          "at": "Теперь",
+          "product_face": "hero",
+          "dt": -0.2
+        }
+      ]
+    },
+    {
+      "text": "Не ради игры. Ради твоих лиц.",
+      "pause_after": 0.4,
+      "show": [
+        "средний план, над Соней карточка эфира: модель меняет выражения — «!», румянец, вопросики"
+      ],
+      "shots": [
+        {
+          "cam": "two",
+          "push": 0.08,
+          "glide": 0.8
+        }
+      ],
+      "do": [
+        {
+          "face": "happy"
+        },
+        {
+          "screencard": {
+            "x": 540,
+            "y": 360,
+            "w": 760
+          },
+          "dt": -0.1,
+          "span": 1,
+          "dt_end": 0.4
+        },
+        {
+          "at": "Ради",
+          "product_face": "alarm"
+        },
+        {
+          "at": "твоих",
+          "product_face": "blush"
+        },
+        {
+          "at": "лиц",
+          "product_face": "question"
+        }
+      ]
+    },
+    {
+      "text": "Кстати, промокод Free10 на Витубике даёт скидку десять процентов.",
+      "pause_after": 0.4,
+      "show": [
+        "Соня улыбается, над ней эфир с моделью"
+      ],
+      "do": [
+        {
+          "face": "happy"
+        },
+        {
+          "at": "Кстати",
+          "product_face": "hero"
+        }
+      ]
+    }
+  ]
+}
