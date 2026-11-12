@@ -227,4 +227,62 @@ export const VRM_PERF: Record<string, VrmPerfFn> = {
       flinches: [{ t: r4(t0), dur: r4(d), amp: k, side: s }],
     });
   },
+  // ---- клипы библиотеки движений (node/vrm/animlib.json, tools/anim_library.py): actions — слои blend.ts ----
+  cheer: (t0, d, p) => {
+    const k = k1(p);
+    return merge({
+      faces: faces(t0, d, [[0, "laugh"], [0.6, "happy"]], k),
+      look: [look(t0, d, LOOK.camera, 0.6)],
+      // Руки и корпус — клип «ликует» поверх позы (сидя — руки вверх над столом, стоя — с подскоком).
+      actions: [{ clip: "cheer", t: r4(t0), dur: r4(d), layer: "gesture", mask: "upper", weight: r4(Math.min(1, k)), fade: 0.35, out: 0.5 }],
+      arms: [arms(t0, d - 0.1, { left: null, right: null }, 0.35, 0.5)],
+      hands: [{ t: r4(t0), dur: 0.25, left: "open", right: "open", hold: r4(d - 0.2), out: 0.4 }],
+    });
+  },
+  wave_big: (t0, d, p) => {
+    const left = (p.hand ?? p.side) === "left";
+    const s = left ? "left" : "right";
+    return merge({
+      faces: faces(t0, d, [[0, "happy"]], k1(p), p.face),
+      look: [look(t0, d, LOOK.camera, 0.7)],
+      // Взмах из клипа KayKit (правой рукой; левой — зеркально), рука уходит из IK на время взмаха.
+      actions: [{ clip: "wave", t: r4(t0), dur: r4(d), layer: "gesture", mask: s, mirror: left, fade: 0.4, out: 0.45 }],
+      arms: [arms(t0, d - 0.2, { [s]: null }, 0.4, 0.5)],
+      hands: [{ t: r4(t0), dur: 0.3, [s]: "wave", hold: r4(d - 0.2), out: 0.4 }],
+    });
+  },
+  talk_hands: (t0, d, p) => merge({
+    faces: faces(t0, d, [[0, "talk"], [0.85, "none"]], k1(p), p.face),
+    look: [look(t0, d, LOOK.camera, 0.6)],
+    actions: [{ clip: "talk_gesture_sit", t: r4(t0), dur: r4(d), layer: "gesture", mask: "arms", weight: r4(0.75 * k1(p)), fade: 0.45, out: 0.5 }],
+    arms: [arms(t0, d - 0.2, { left: null, right: null }, 0.45, 0.55)],
+  }),
+  stand_up: (t0, d, p) => {
+    const then = typeof p.then === "string" && p.then ? p.then : "idle_breathe";
+    return merge({
+      // Основа: сидит (клип сидения — «ноль» таза) → встаёт → стоит (then); петля сидения CMU гаснет (solo).
+      actions: [{ clip: "sit_idle", t: r4(t0 - 0.8), layer: "base", fade: 0.6 },
+        { clip: "stand_up", t: r4(t0), layer: "base", fade: 0.35, solo: true },
+        { clip: then, t: r4(t0 + 1.05), layer: "base", fade: 0.6, solo: true }],
+      // Ладони на стол — опора при подъёме, дальше руки ведёт клип.
+      arms: [arms(t0 - 0.05, 0.75, { left: "rest", right: "rest" }, 0.35, 0.4), arms(t0 + 0.75, Math.max(0.6, d + 600), { left: null, right: null }, 0.45, 0.5)],
+      postures: [posture(t0, 1.0, { spine: [-7, 0, 0], chest: [-6, 0, 0], neck: [-6, 0, 0], head: [-5, 0, 0] }, 0.3, 0.4)],
+      faces: p.face && p.face !== "none" ? faces(t0, d, [[0, p.face]], k1(p)) : [],
+    });
+  },
+  sit_down: (t0, d, p) => merge({
+    actions: [{ clip: "sit_down", t: r4(t0), layer: "base", fade: 0.4, solo: true }, { clip: "sit_idle", t: r4(t0 + 1.25), layer: "base", fade: 0.5 }],
+    arms: [arms(t0 + 1.0, 1e3, { left: "idle", right: "idle" }, 0.5, 0.5)],
+    faces: p.face && p.face !== "none" ? faces(t0, d, [[0, p.face]], k1(p)) : [],
+  }),
+  anim: (t0, d, p) => {
+    const clip = String(p.clip || "idle_breathe");
+    const body = p.body === "full";
+    return merge({
+      actions: [{ clip, t: r4(t0), ...(body ? { layer: "base", solo: true } : { dur: r4(d), layer: "gesture", mask: p.mask || "upper", fade: 0.4, out: 0.45 }),
+        ...(p.speed ? { speed: p.speed } : {}), ...(p.mirror ? { mirror: true } : {}) }],
+      arms: [arms(t0, body ? 1e3 : d - 0.2, { left: null, right: null }, 0.4, 0.5)],
+      faces: p.face && p.face !== "none" ? faces(t0, d, [[0, p.face]], k1(p)) : [],
+    });
+  },
 };

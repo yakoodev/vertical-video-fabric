@@ -290,7 +290,7 @@
 "name": "list_3d_presets",
 "title": "Смотрю 3D-пресеты",
 "description": "cae092a0ee4ff44a",
-"parameters": "dd2cd19a0caedfc7",
+"parameters": "1b735a36d6fbf0e5",
 "mutating": false,
 "scope": "global",
 "module": null,
@@ -306,6 +306,17 @@
 "scope": "global",
 "module": null,
 "handler": "h_check_3d_plan",
+"label": true
+},
+{
+"name": "list_animations",
+"title": "Смотрю библиотеку движений",
+"description": "75b9e46bb15fc519",
+"parameters": "9c25305d18fb7a0b",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_list_animations",
 "label": true
 },
 {

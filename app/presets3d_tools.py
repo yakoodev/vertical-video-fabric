@@ -46,8 +46,35 @@ def h_check_3d_plan(_ctx: ToolContext, args: dict) -> dict:
             "note": "Блок кладётся в сцену как поле presets (движок развернёт его сам: свет, камера, атмосфера, переходы)."}
 
 
+def h_list_animations(_ctx: ToolContext, args: dict) -> dict:
+    from app import animlib
+
+    layer = str(args.get("layer") or "").strip() or None
+    if layer and layer not in animlib.LAYER_RU:
+        raise ToolError(f"нет слоя «{layer}»", ["есть: full (всё тело), upper (корпус и руки поверх позы)"])
+    found = animlib.search(str(args.get("q") or "").strip() or None, layer)
+    return {
+        "animations": [{**c, "layer_ru": animlib.LAYER_RU.get(c.get("layer") or "full", "")} for c in found],
+        "count": len(found),
+        "how": "В плане 3D-серии (VRM-героиня): performance — {\"preset\": \"anim\", \"clip\": <имя>, \"body\": \"upper\" | \"full\"}; "
+               "готовые: cheer (ликует), wave_big (машет), talk_hands (говорит руками), stand_up (встаёт, then — что стоя), "
+               "sit_down. Клипы CC0 (Quaternius, KayKit), in_* — свои из папки anim_inbox.",
+    }
+
+
 def tools() -> list[Tool]:
     return [
+        Tool(
+            "list_animations", "Смотрю библиотеку движений",
+            "Библиотека движений VRM-героини (клипы, перенесённые на её скелет): стоит, сидит, встаёт, садится, идёт, бежит, "
+            "машет, ликует, танцует, говорит руками, кивает «да», качает «нет», злится, грустит, оглядывается, падает, "
+            "прыгает… Имя, русское название, теги, слой (full — всё тело, upper — жест поверх позы), длительность, источник "
+            "и лицензия. q — поиск по имени/названию/тегам, layer — full или upper. / List the VRM animation library.",
+            _obj({"q": {"type": "string", "description": "поиск: «танец», «встаёт», «wave»…"},
+                  "layer": {"type": "string", "enum": ["full", "upper"], "description": "full — всё тело, upper — жест"}}),
+            h_list_animations, scope="global",
+            label=lambda a: f"Смотрю движения {a.get('q') or ''}".strip(),
+        ),
         Tool(
             "list_3d_presets", "Смотрю 3D-пресеты",
             "Готовые 3D-пресеты движка сцен (эпизоды с 3D-героем): look — стиль картинки (мягкое аниме, тушь toon, PS1, "

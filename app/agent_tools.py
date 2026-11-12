@@ -503,7 +503,7 @@ TOOL_ORDER = (
     "source_contact_sheet", "source_loudness", "chat_activity", "get_chat", "set_source_audio",
     "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "add_pngtuber",
     "update_layer", "track_layer", "untrack_layer", "remove_layers", "clear_layers", "set_camera", "camera_preset",
-    "list_motion_templates", "add_motion_template", "list_3d_presets", "check_3d_plan",
+    "list_motion_templates", "add_motion_template", "list_3d_presets", "check_3d_plan", "list_animations",
     "list_fonts", "upload_font", "search_emoji", "list_packs", "search_pack", "list_assets", "search_web_images",
     "add_image_from_url", "upload_image", "upload_video", "add_video_from_source", "add_video_from_url",
     "generate_image", "list_subtitle_styles", "set_subtitles", "set_layout", "detect_avatar", "set_chroma_key",
