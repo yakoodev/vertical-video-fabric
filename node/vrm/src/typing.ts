@@ -15,6 +15,14 @@ export function setKeySpread(k: number | undefined) {
   keySpread = k && k > 0 ? k : 1;
 }
 
+/** Насколько ближе к себе ставить запястья на клавиатуре (м): у героя с руками короче, чем у героинь, под которых
+ * поставлены стол и кресло (мужская база ×0.885), иначе рука на клавишах выпрямлена до конца — ось локтя не
+ * определена и предплечье с кистью крутятся штопором (twist.ts). Ставит main.ts из timeline.keysPull. */
+let keyPull = 0;
+export function setKeyPull(dz: number | undefined) {
+  keyPull = dz && Number.isFinite(dz) ? Math.max(0, Math.min(0.05, dz)) : 0;
+}
+
 const hash = (n: number) => {
   const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
   return x - Math.floor(x);
@@ -53,7 +61,7 @@ export function typingArm(side: 1 | -1, t: number, seed = 0, idle = false): ArmS
   const curl = base.map((c, i) => (i === 0 ? c : c - 0.12 * lifts[i - 1]));
   // Кисть: к дальней клавише чуть вперёд и в сторону, лёгкое дыхание запястья.
   const reach = lifts.reduce((s, v, i) => s + v * (i - 1.5), 0);
-  const target: V3 = [side * 0.088 * keySpread + side * 0.004 * reach, KB_TOP + 0.03 + 0.002 * Math.sin(t * 1.7 + side), KB_Z - 0.078 + 0.003 * act];
+  const target: V3 = [side * 0.088 * keySpread + side * 0.004 * reach, KB_TOP + 0.03 + 0.002 * Math.sin(t * 1.7 + side), KB_Z - 0.078 - keyPull + 0.003 * act];
   return {
     // Предплечья почти горизонтально, локти у корпуса и ниже; ладонь вниз, параллельно клавиатуре.
     target, pole: [side * 0.2, 0.72, -0.42],

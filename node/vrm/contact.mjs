@@ -4,6 +4,9 @@
  * spec.timeline.surfaces (стол, клавиатура) с допуском 4 мм на толщину пальца. Печатает JSON
  * {ok, frames, min_gap_mm, at, point, surface}; код выхода 1 — есть кадр с нарушением.
  *
+ * Скрутка рук (src/twist.ts): кисть относительно предплечья и предплечье относительно плеча в пределах, ладонь
+ * вниз при печати, без рывка скрутки за кадр и без прямой руки на клавишах — иначе ok: false.
+ *
  * Руки против тела (src/handcheck.ts): кисти, пальцы, ладонь и предплечье против лица/головы, корпуса, ног и
  * другой руки — без допуска (зазор < 0 — проникновение); волосы — отдельной строкой (пружины, не валит проверку).
  * --hands-out FILE — список отрезков с проникновением (JSON) для разбора по кадрам.
@@ -54,11 +57,16 @@ if (get("--hands-out")) writeFileSync(resolve(get("--hands-out")), JSON.stringif
 const full = i0 === 0 && i1 === n;
 // Пустой замер — не «ок»: проверка, которая ничего не измерила, валит ролик (checks.mjs).
 const empty = emptyChecks(c, spec, heroFrames, presenceBad);
-const ok = (!full || c.frames === n) && c.min >= MIN_GAP && !(c.chair.min < 0) && hs.length === 0 && empty.length === 0;
+// Скрутка рук (twist.ts): запястье и предплечье в пределах, ладонь вниз при печати, без рывков и прямой руки.
+const tw = c.twist;
+const ok = (!full || c.frames === n) && c.min >= MIN_GAP && !(c.chair.min < 0) && hs.length === 0 && empty.length === 0 &&
+  !!tw && tw.bad === 0;
 process.stdout.write(JSON.stringify({ ok, frames: c.frames, fingers: { min_gap_mm: mm(c.min), at: c.at, point: c.point, surface: c.surface },
   chair: { min_gap_mm: mm(c.chair.min), at: c.chair.at, point: c.chair.point },
   hair: { min_gap_mm: mm(c.hair.min), at: c.hair.at, point: c.hair.point },
   hands: Object.fromEntries(Object.entries(H.gaps || {}).map(([k, g]) => [k, { min_gap_mm: mm(g.min), at: g.at, point: g.point, against: g.against }])),
-  hand_spans: hs.length, hero_frames: heroFrames, empty }) + "\n");
+  hand_spans: hs.length, hero_frames: heroFrames,
+  twist: tw ? { frames: tw.frames, wrist_max: tw.wrist, forearm_max: tw.forearm, palm_y_max: tw.palm, jump_max: tw.jump,
+    typing_flex_min: tw.typing_flex, bad: tw.bad, first: tw.first, limits: tw.limits } : null, empty }) + "\n");
 if (empty.length) process.stderr.write(`проверки пустые: ${empty.join("; ")}\n`);
 process.exit(ok ? 0 : 1);

@@ -188,7 +188,7 @@ export class HandCheck {
         const x = wp[i * 3], y = wp[i * 3 + 1], z = wp[i * 3 + 2];
         if (x >= lo.x && x <= hi.x && y >= lo.y && y <= hi.y && z >= lo.z && z <= hi.z) near.push(i);
       }
-      if (!near.length) continue;
+      let measured = false;
       for (const { name, p } of pts) {
         const r = this.radius.get(name) ?? 0.006;
         // K ближайших вершин каждой группы: «внутри» — если точка за касательной плоскостью у большинства из них
@@ -207,6 +207,7 @@ export class HandCheck {
           }
         }
         for (const [gname, list] of best) {
+          measured = true;
           const dist = Math.sqrt(list[0].d2);
           let gap = dist - r;
           // Волосы — тонкие пряди-ленты, не объём: проникновение — прядь ближе толщины руки в этой точке.
@@ -224,6 +225,9 @@ export class HandCheck {
           if (!g || gap < g.min) this.gaps[key] = { min: gap, at: t, point: name, against: gname };
         }
       }
+      // Ни одной вершины тела ближе 6 см к кисти и предплечью — тоже замер (зазор не меньше 6 см), а не «проверка не
+      // шла»: у героя с руками на клавишах поодаль (серия 7) иначе выходил пустой отчёт рук.
+      if (!measured && !this.gaps.clear) this.gaps.clear = { min: 0.06, at: t, point: `${side > 0 ? "left" : "right"}Hand`, against: "ничего ближе 6 см" };
     }
     for (const [key, o] of Object.entries(out)) if (o.gap < 0 && this.bad.length < 20000) this.bad.push({ t, key, ...o });
     return out;

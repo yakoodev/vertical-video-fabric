@@ -30,6 +30,9 @@ export interface ArmSpec {
   thumbOut?: number;
   /** Предел сгиба локтя (градусы, по умолчанию 135). */
   maxFlex?: number;
+  /** Наименьший сгиб локтя (градусы, по умолчанию MIN_FLEX): прямая рука — ось локтя не определена, предплечье
+   * и кисть крутятся вокруг себя от кадра к кадру (штопор, twist.ts). Цель дальше — кисть не дотягивается. */
+  minFlex?: number;
   /** Подбирать положение локтя по скрутке кисти (по умолчанию да). */
   autoPole?: boolean;
   /** Насколько держаться полюса против уменьшения скрутки кисти (по умолчанию 0.9). */
@@ -91,6 +94,8 @@ export interface Surface {
 }
 
 const D = Math.PI / 180;
+/** Наименьший сгиб локтя по умолчанию, градусы (ArmSpec.minFlex). */
+export const MIN_FLEX = 14;
 const tmpV = new THREE.Vector3();
 
 export class Rig {
@@ -180,6 +185,8 @@ export class Rig {
     this.reset();
     this.hands = {};
     this.resolved = {};
+    // Рука на клавишах (пресет с касанием, IK ведёт больше половины) — для проверки «ладонь вниз» (twist.ts).
+    this.touch = { left: !!p.left?.touch && (p.left.weight ?? 1) > 0.5, right: !!p.right?.touch && (p.right.weight ?? 1) > 0.5 };
     const hips = this.node("hips");
     let feet: THREE.Vector3[] | null = null;
     let footQ: THREE.Quaternion[] = [];
@@ -298,7 +305,11 @@ export class Rig {
     const dist = toT.length();
     const maxFlex = (a.maxFlex ?? 135) * D;
     const dMin = Math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * Math.cos(maxFlex));
-    const d = Math.min(Math.max(toT.length(), dMin), L1 + L2 - 1e-4);
+    // Рука не выпрямляется до конца: у прямой руки ось сгиба локтя (векторное произведение плеча и предплечья)
+    // — шум, скрутка предплечья и кисти скачет на ±180° от кадра к кадру. Цель дальше — кисть чуть не дотягивается.
+    const minFlex = Math.min(a.minFlex ?? MIN_FLEX, (a.maxFlex ?? 135) - 1) * D;
+    const dMax = Math.sqrt(L1 * L1 + L2 * L2 + 2 * L1 * L2 * Math.cos(minFlex));
+    const d = Math.min(Math.max(toT.length(), dMin), dMax);
     const dir = toT.normalize();
     const along = (L1 * L1 - L2 * L2 + d * d) / (2 * d);
     const h = Math.sqrt(Math.max(0, L1 * L1 - along * along));
@@ -353,7 +364,7 @@ export class Rig {
     // Кости руки в покое этой модели лежат не строго по оси X: решение выше ставит запястье мимо цели на 1–2 см
     // (и подъём кисти над клавиатурой, повторяя IK от фактического запястья, уводил кисти внутрь — руки
     // заходили одна на другую). Досчитываем: цель сдвигается на промах, 2–3 прохода — запястье в цели (< 0.5 мм).
-    if (!before && depth < 4 && dist <= L1 + L2 - 2e-3 && dist >= dMin) {
+    if (!before && depth < 4 && dist <= dMax - 2e-3 && dist >= dMin) {
       const goal = aim ?? W;
       const miss = goal.clone().sub(this.pos(`${pre}Hand`));
       if (miss.length() > 5e-4) {
@@ -376,8 +387,12 @@ export class Rig {
     }
     if (!a.keepFingers) this.fingers(side, a);
     const flex = Math.acos(Math.max(-1, Math.min(1, best.upDir.dot(best.loDir))));
-    this.info[pre] = { flex: Math.round(flex / D), roll: Math.round(best.roll / D), short: Math.round(Math.max(0, dMin - dist) * 1000) };
+    this.info[pre] = { flex: Math.round(flex / D), roll: Math.round(best.roll / D),
+      short: Math.round(Math.max(0, dMin - dist, dist - dMax) * 1000) };
   }
+
+  /** Руки на клавишах в последней позе (apply). */
+  touch: { left: boolean; right: boolean } = { left: false, right: false };
 
   /** Куда целилась рука (точки в пространстве модели) — для смешивания поз. */
   resolved: Record<string, { T: V3; P: V3 }> = {};

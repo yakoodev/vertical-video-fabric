@@ -25,6 +25,8 @@ export interface Timeline extends PerfLayers {
   clips: Record<string, string>;
   /** Ширина постановки кистей на клавиатуре (множитель, typing.ts setKeySpread): у крупных кистей — шире. */
   keysSpread?: number;
+  /** Запястья на клавиатуре ближе к себе, м (typing.ts setKeyPull): у героя с короткими руками. */
+  keysPull?: number;
   tracks: Track[];
   /** IK рук: пресет typing / rest / null (руку ведёт мокап); переход за dur. */
   arms?: { t: number; dur?: number; left?: string | null; right?: string | null }[];

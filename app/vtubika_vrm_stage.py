@@ -66,10 +66,12 @@ HEROINES["sonya"] = {"model": GIRL, "chair_y": 0.775, "headphones": SONYA_HEADSE
 # v1.1.3, README: коммерческое использование разрешено, указывать автора не нужно; D:\vvf-offload\vtubika\vrm\vendor\hinzka).
 # Каштановые волосы, оливковое худи, тёмные штаны, карие глаза, чёрная гарнитура с мятным кольцом. Рот — ещё и по
 # Wav2ARKit (план: "vrm": {"arkit": true}). База выше героинь (голова 1.55 м против 1.37) — scale 0.885: кресло, стол,
-# клавиатура и камеры настроены под их рост.
+# клавиатура и камеры настроены под их рост. Руки после масштаба короче (0.415 м против 0.433), а кресло и стол —
+# те же: запястья на клавишах ближе к себе на 3 см (keys_pull), иначе левая рука выпрямлена до конца и кисть
+# крутится штопором (серия 7, «руки выкручиваются»; проверка — node/vrm/src/twist.ts).
 MALE = "hinzka/VRoid_V110_Male_v1.1.3.vrm"
 LYOSHA_HEADSET = {"kind": "headphones", "color": "#1c1d22", "accent": "#5fe0b8", "ring": 0.02, "scale": 1.06, "lift": 0.035}
-HEROINES["lyosha"] = {"model": MALE, "scale": 0.885, "keys_spread": 1.25, "chair_y": 0.775, "headphones": LYOSHA_HEADSET,
+HEROINES["lyosha"] = {"model": MALE, "scale": 0.885, "keys_spread": 1.25, "keys_pull": 0.03, "chair_y": 0.775, "headphones": LYOSHA_HEADSET,
                       "look": {"outline": 0.0034, "shade": "#98a0b8", "toony": 0.97, "shift": -0.05, "rim": "#9af0d0", "rimPower": 4,
                                "skin": "^(face|body)|_SKIN", "skinShade": "#e0a890", "tint": {"Hair": "#ffffff"},
                                "repaint": {"Hair": ["#1e120c", "#9a6a46"], "Tops": ["#2a3018", "#9aa86a"],

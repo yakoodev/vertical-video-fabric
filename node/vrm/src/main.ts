@@ -13,7 +13,7 @@
  * creditNotation unnecessary, allowRedistribution true, modification allowModificationRedistribution.
  * Сборка: npm run build:vrm; стопкадры: node node/vrm/stills.mjs --spec node/vrm/examples/stills.json --out DIR.
  */
-import { setKeySpread } from "./typing.ts";
+import { setKeyPull, setKeySpread } from "./typing.ts";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { VRMLoaderPlugin, VRMUtils, type VRM } from "@pixiv/three-vrm";
@@ -25,6 +25,7 @@ import { loadClips, type Clip } from "./mocap.ts";
 import { sequencePose, type Timeline } from "./sequence.ts";
 import { addColliders, chairGap, hairGap } from "./body.ts";
 import { HandCheck } from "./handcheck.ts";
+import { armTwist, TwistCheck } from "./twist.ts";
 import { straightCut, CUT_X, CUT_Y } from "./cutcheck.ts";
 import { Overlays, type OverlaySpec } from "../../scene3d/src/overlay.ts";
 import { Backdrop, type PlateSpec } from "./backdrop.ts";
@@ -119,6 +120,8 @@ let lumaC: HTMLCanvasElement;
 let overlays: Overlays | null = null;
 let stage: AvatarStage | null = null;
 let hands: HandCheck | null = null;
+/** Скрутка запястий и предплечий по кадрам (twist.ts). */
+let twist: TwistCheck | null = null;
 /** Ручки лица модели (face.ts): части бровей, глаз и рта — для лица по слоям (facemix.ts). */
 let faceCaps: FaceCaps = { handles: [], cleared: [], arkit: false };
 const warnings: string[] = [];
@@ -259,6 +262,8 @@ function render(t: number) {
   }
   // Руки против лица, головы, корпуса, ног и другой руки — без допуска (handcheck.ts).
   if (hands && spec.handCheck !== false) hands.frame(t);
+  // Скрутка запястий/предплечий и ладонь вниз при печати (twist.ts).
+  twist?.frame(rig, t, (side) => rig.touch[side > 0 ? "left" : "right"], 1 / (spec.fps || 30));
   const L = shot.light || {};
   key.position.set(...(L.key || [0.3, 0.6, 1]));
   key.color.set(L.keyColor || "#dfe6ff");
@@ -352,6 +357,7 @@ async function load(s: Spec) {
   // Лицо по слоям: свои ручки из частичных морфов; перекрытия VRM 1.0 сняты (timeline.face: false — как раньше).
   faceCaps = setupFace(vrm, { clear: s.timeline?.face !== false, names: gltfMorphNames(gltf.parser) });
   setKeySpread(s.timeline?.keysSpread);
+  setKeyPull(s.timeline?.keysPull);
   if (s.timeline) {
     // Дорожки пресетов игры (wave, laugh, stretch_yawn…) ссылаются на клипы CMU по имени — их не надо перечислять в clips.
     const map: Record<string, string> = { ...(s.timeline.clips || {}) };
@@ -363,6 +369,7 @@ async function load(s: Spec) {
   if (s.timeline?.chair) addColliders(vrm, s.timeline.chair);
   tuneSprings(vrm, s.springs ?? (s.timeline?.life ? {} : undefined));
   if (s.timeline && s.handCheck !== false) hands = new HandCheck(vrm, rig);
+  if (s.timeline) twist = new TwistCheck();
   backdrop = new Backdrop(W, H, s.stream || {});
   props = new Props(scene);
   await props.loadLibrary(s.shots || [], (m) => warnings.push(m));
@@ -420,11 +427,13 @@ async function preparePlate(t: number) {
     simT = NaN;
     settle(t, shot, local);
     // hands — куда целилась IK (запястье), resolved — цели и полюса рук: сверка «цель ↔ кость» при отладке поз.
-    return { t, arms: rig.info, hands: rig.hands, resolved: rig.resolved, bones: rig.dump(),
+    return { t, arms: rig.info, hands: rig.hands, resolved: rig.resolved, bones: rig.dump(), touch: rig.touch,
+      twist: { left: armTwist(rig, 1), right: armTwist(rig, -1) },
       expressions: vrm.expressionManager?.expressions.map((e) => e.expressionName), face: faceCaps };
   },
   warnings: () => warnings,
   /** Отладка проверки присутствия: потерять контекст WebGL, как при сбое GPU (render() дальше сообщит lost). */
   loseGpu: () => gl.forceContextLoss(),
-  contact: () => ({ ...contact, hands: hands ? { frames: hands.frames, gaps: hands.gaps, groups: hands.counts(), bad: hands.bad } : null }),
+  contact: () => ({ ...contact, hands: hands ? { frames: hands.frames, gaps: hands.gaps, groups: hands.counts(), bad: hands.bad } : null,
+    twist: twist ? twist.summary() : null }),
 };
