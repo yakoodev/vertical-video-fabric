@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import json
 from typing import Any
 
@@ -45,6 +46,7 @@ from app.tool_core import (  # noqa: F401
     ToolContext, ToolError,
 )
 from app.tool_core import set_callable_names as _set_callable_names
+from app.tool_core import set_tool_lookup as _set_tool_lookup
 from app.layer_lint import (  # noqa: F401
     _cover_problems, _layer_box, _lint_scene, _ref, _rgb, _secondary_captions, _side_warnings, _zone, cam_strip,
     CAPTION_ACTIVE_COLORS, caption_highlight_warnings, caption_overlap_warnings, caption_zone_warnings,
@@ -143,6 +145,7 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "clip_id": plan["id"],
         "title": plan["title"],
         "description": plan.get("description") or "",
+        **_project_view(ctx, source),
         "source": {"id": source["id"], "name": source.get("original_filename") or "",
                    "width": source.get("width"), "height": source.get("height"),
                    "audio": _source_audio_view(source)},
@@ -185,6 +188,25 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
         "owner": _owner_marks(ctx),
     }
+
+
+def _project_view(ctx: ToolContext, source: dict) -> dict:
+    """Проект-серия клипа (источник или приписка холста) — не источник. Клип другого проекта или ничей холст —
+    с пометкой: агенты брали чужие черновики из общего скрытого источника и выдавали за свои (эксперимент 12.11)."""
+    from app.projects import project_of_plan
+
+    project = project_of_plan(ctx.store, ctx.plan_id)
+    out: dict = {"project_id": project}
+    if project is not None:
+        row = ctx.store.db.query_one("SELECT name FROM projects WHERE id = ?", (int(project),))
+        out["project_name"] = str(row["name"]) if row else ""
+    elif str(source.get("source_type") or "") in ("canvas", "clip_upload"):
+        out["project_unassigned"] = True
+    hint = getattr(ctx, "project_hint", None)
+    if hint is not None and project != int(hint):
+        out["project_warning"] = (f"клип не из этого проекта (#{hint}): " + ("ничей холст" if project is None else
+                                  f"проект #{project}") + " — не выдавай его за свою работу и не правь без просьбы")
+    return out
 
 
 def _owner_marks(ctx: ToolContext) -> dict:
@@ -655,20 +677,31 @@ def callable_tool_names() -> set[str]:
 
 
 _set_callable_names(callable_tool_names)
+_set_tool_lookup(get_tool)
 
 
-def run_tool(ctx: ToolContext, name: str, args: dict | None) -> tuple[Any, bool]:
+def run_tool(ctx: ToolContext, name: str, args: dict | None, *, validate: bool = False,
+             injected: frozenset[str] = frozenset()) -> tuple[Any, bool]:
     """Выполнить инструмент. Возвращает (результат, ok). Никогда не бросает:
-    ошибка — это результат ``{ok: false, error, problems}``, который увидит модель."""
+    ошибка — это результат ``{ok: false, error, problems}``, который увидит модель.
+
+    ``validate`` — вызов модели (MCP, чат, ИИ-монтажёр): аргументы сверяются со схемой (app/tool_args.py), лишний или
+    пропущенный обязательный — отказ с ожидаемыми именами. Вызовы самого сервиса (API, сборки) не сверяются: они
+    передают свои поля. ``injected`` — что подставил вызывающий (чат — project_id проекта): это не ошибка модели."""
     try:
         tool = get_tool(name)
     except KeyError:
-        return {"ok": False, "error": f"нет инструмента {name}"}, False
+        near = difflib.get_close_matches(str(name), sorted(callable_tool_names()), n=3, cutoff=0.6)
+        return {"ok": False, "error": f"нет инструмента {name}" + (f" — может, {', '.join(near)}?" if near else "")}, False
     from app import modules
+    from app.tool_args import check_args
 
     if not modules.tool_enabled(name, getattr(ctx, "store", None)):
         return modules.disabled_tool_error(name), False
     args = dict(args or {})
+    bad = check_args(tool, args, injected) if validate else None
+    if bad:
+        return bad, False
     if (_takes_source(tool) and getattr(ctx, "clip_plan_id", None)
             and args.get("source_id") in (None, "") and args.get("project_id") in (None, "")):
         # Монтажёр работает внутри клипа: источник — источник этого клипа (Gemini спотыкался

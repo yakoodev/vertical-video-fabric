@@ -124,10 +124,12 @@ def update_brief(store: Any, project_id: int, patch: Any, base_rev: int | None =
     return get_brief(store, project_id)
 
 
-def covered_clips(store: Any, project_id: int, limit: int = 150) -> dict:
+def covered_clips(store: Any, project_id: int, limit: int = 150, offset: int = 0) -> dict:
     """«Что уже нарезано»: клипы проекта, которые сделаны всерьёз — отрендерены, ★,
     собраны агентом руками или опубликованы. Кандидаты анализа без рендера сюда не
-    попадают: это ещё не нарезка, а предложения."""
+    попадают: это ещё не нарезка, а предложения. Холсты проекта (``plan_projects``) — тоже клипы проекта.
+    ``by_source`` — по каждому источнику занятые отрезки (секунды источника) всех таких клипов, слитые: коротко, а
+    повторять моменты не даёт так же, как полный список."""
     rows = store.db.query_all(
         """
         SELECT cp.id, cp.title, cp.source_id, cp.status, cp.favorite, cp.created_at,
@@ -140,19 +142,47 @@ def covered_clips(store: Any, project_id: int, limit: int = 150) -> dict:
         FROM clip_plans cp
         JOIN sources s ON s.id = cp.source_id
         LEFT JOIN ai_analyses a ON a.id = cp.analysis_id
-        WHERE s.project_id = ? AND cp.hidden = 0 AND cp.status != 'rejected'
+        WHERE (s.project_id = ? OR (s.project_id IS NULL AND cp.id IN
+               (SELECT pp.clip_plan_id FROM plan_projects pp WHERE pp.project_id = ?)))
+          AND cp.hidden = 0 AND cp.status != 'rejected'
           AND (cp.favorite = 1 OR cp.status IN ('rendered', 'rendering') OR a.provider = 'manual'
                OR EXISTS (SELECT 1 FROM clips c WHERE c.clip_plan_id = cp.id)
                OR EXISTS (SELECT 1 FROM project_publications mp WHERE mp.clip_plan_id = cp.id))
         ORDER BY cp.id DESC
         """,
-        (int(project_id),),
+        (int(project_id), int(project_id)),
     )
     total = len(rows)
-    rows = rows[: max(1, int(limit))]
+    every = [int(r["id"]) for r in rows]
+    names = {int(r["source_id"]): r["source_name"] or "" for r in rows}
+    source_of = {int(r["id"]): int(r["source_id"]) for r in rows}
+    start_at = max(0, int(offset))
+    rows = rows[start_at: start_at + max(1, int(limit))]
     ids = [int(r["id"]) for r in rows]
     pieces: dict[int, list] = {}
     tags = clip_tags_map(store, ids)
+    spans: dict[int, list[list[float]]] = {}
+    for start in range(0, len(every), 500):
+        chunk = every[start:start + 500]
+        marks = ",".join("?" * len(chunk))
+        for seg in store.db.query_all(
+            f"""SELECT cps.clip_plan_id, s.start_sec, s.end_sec FROM clip_plan_segments cps
+                JOIN ai_segments s ON s.id = cps.segment_id WHERE cps.clip_plan_id IN ({marks})""",
+            chunk,
+        ):
+            spans.setdefault(source_of[int(seg["clip_plan_id"])], []).append(
+                [float(seg["start_sec"]), float(seg["end_sec"])])
+    by_source = []
+    for source_id in sorted(spans):
+        merged: list[list[float]] = []
+        for a, b in sorted(spans[source_id]):
+            if merged and a <= merged[-1][1] + 1.0:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        by_source.append({"source_id": source_id, "source": names.get(source_id, ""),
+                          "clips": sum(1 for s in source_of.values() if s == source_id),
+                          "spans": [[round(a), round(b)] for a, b in merged]})
     if ids:
         marks = ",".join("?" * len(ids))
         for seg in store.db.query_all(
@@ -169,15 +199,19 @@ def covered_clips(store: Any, project_id: int, limit: int = 150) -> dict:
         "status": r["status"], "favorite": bool(r["favorite"]), "rendered": bool(r["renders"]),
         "published": bool(r["published_service"] or r["published_manual"]), "tags": tags.get(int(r["id"]), []),
     } for r in rows]
-    return {"clips": clips, "total": total}
+    return {"clips": clips, "total": total, "by_source": by_source}
 
 
-def project_brief(store: Any, project_id: int, covered_limit: int = 150) -> dict:
+def project_brief(store: Any, project_id: int, covered_limit: int = 150, covered_offset: int = 0,
+                  compact: bool = False) -> dict:
     """Всё, что агент читает перед нарезкой и названиями: проект, лор, активные правила
-    (проекта и глобальные), что уже нарезано, гипотезы и короткая статистика."""
+    (проекта и глобальные), что уже нарезано, гипотезы и короткая статистика.
+
+    ``compact`` — ответ инструмента по умолчанию (эксперимент 12.11: 53 КБ, почти всё — список нарезанного): из
+    нарезанного — страница последних клипов и слитые занятые отрезки по источникам (``covered_by_source``)."""
     project = get_project(store, project_id)
     brief = get_brief(store, project_id)
-    covered = covered_clips(store, project_id, limit=covered_limit)
+    covered = covered_clips(store, project_id, limit=covered_limit, offset=covered_offset)
     stats = project_stats(store, project_id, top=3)
     hypotheses = [{key: h[key] for key in ("id", "statement", "status", "conclusion", "group", "metric")}
                   for h in list_hypotheses(store, project_id)]
@@ -194,6 +228,11 @@ def project_brief(store: Any, project_id: int, covered_limit: int = 150) -> dict
         **brief_extras(store, project_id),
         "covered": covered["clips"],
         "covered_total": covered["total"],
+        **({"covered_by_source": covered["by_source"], "covered_offset": int(covered_offset),
+            "covered_note": (f"covered — {len(covered['clips'])} последних из {covered['total']} (с covered_offset="
+                             f"{int(covered_offset)}); занятые отрезки всех — covered_by_source.spans (секунды "
+                             "источника). Ещё — covered_offset/covered_limit, всё как раньше — full=true")}
+           if compact else {}),
         "hypotheses": hypotheses,
         "stats": {"totals": stats["totals"], "best": stats["best"], "worst": stats["worst"], "note": stats["note"]},
         "how_to": ("Перед нарезкой и названиями: держись лора (люди, шутки, арки), не бери темы из taboo, "

@@ -21,6 +21,8 @@ def _setup(tmp_path, monkeypatch):
 
 
 def test_source_id_and_old_name_resolve_the_same(tmp_path, monkeypatch):
+    """У list_clips с 12.11 project_id — проект-серия (холсты находятся только по проекту), но id, которого нет
+    среди проектов, а среди источников есть, по-прежнему читается как источник. В ответе project_id — проект."""
     store, source, _other, plan = _setup(tmp_path, monkeypatch)
     ctx = ToolContext(store=store)
     for args in ({"source_id": source["id"]}, {"project_id": source["id"]},
@@ -28,8 +30,11 @@ def test_source_id_and_old_name_resolve_the_same(tmp_path, monkeypatch):
         out, ok = run_tool(ctx, "list_clips", args)
         assert ok, out
         assert [c["clip_id"] for c in out["clips"]] == [plan["id"]]
-        # Прежние вызовы читают project_id в ответе, новые — source_id.
-        assert out["source_id"] == out["project_id"] == source["id"]
+        assert out["source_id"] == source["id"] and out["project_id"] is None
+        assert out["clips"][0]["source_id"] == source["id"] and out["clips"][0]["project_id"] is None
+    project = P.create_project(store, "Серия", source_ids=[source["id"]])
+    out, ok = run_tool(ctx, "list_clips", {"project_id": project["id"]})
+    assert ok and [c["clip_id"] for c in out["clips"]] == [plan["id"]] and out["clips"][0]["project_id"] == project["id"]
 
 
 @pytest.mark.parametrize("name", sorted(SOURCE_ID_TOOLS))
@@ -44,7 +49,7 @@ def test_disagreement_is_refused_by_every_tool(tmp_path, monkeypatch, name):
 
 
 @pytest.mark.parametrize("name", ["list_clips", "get_shots", "get_source_transcript", "create_clip"])
-def test_missing_or_bad_id_names_source_id(tmp_path, monkeypatch, name):
+def test_missing_or_bad_id_names_source_id(tmp_path, monkeypatch, name):  # list_clips: project_id — проект-серия
     store, *_ = _setup(tmp_path, monkeypatch)
     ctx = ToolContext(store=store)
     out, ok = run_tool(ctx, name, {})

@@ -17,6 +17,7 @@ JSON-RPC, а не официальный SDK ``mcp``: SDK тянет десят�
 from __future__ import annotations
 
 import json
+import re
 import logging
 from typing import Any
 
@@ -39,8 +40,11 @@ MCP_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
 MCP_SERVER_INFO = {"name": "vertical-video-fabric", "title": "Vertical Video Fabric", "version": "1.0.0"}
 MCP_INSTRUCTIONS = """\
 Инструменты монтажа клипов Vertical Video Fabric: вертикаль 9:16, а также 1:1, 4:5 и 16:9.
-Порядок: list_projects → list_clips(source_id) → get_clip(clip_id) → правки → view_frame(clip_id, t),
-чтобы посмотреть результат. Время — секунды готового клипа, x/y — доли кадра. Кадр — формата клипа:
+Порядок: list_channel_projects / list_projects → list_clips(project_id или source_id) → get_clip(clip_id) → правки →
+view_frame(clip_id, t), чтобы посмотреть результат; готовый mp4 — render_clip → render_status.
+Проект работы: адрес /mcp?project_id=N (или заголовок X-VVF-Project) — list_clips и create_canvas_clip без project_id
+берут его; холсты чужих проектов в списках не видны. Клип с project_warning / project_unassigned — не твой: не выдавай
+его за свою работу. Время — секунды готового клипа, x/y — доли кадра. Кадр — формата клипа:
 get_clip → render.format и render.frame (9:16 — 1080×1920, 1:1 — 1080×1080, 4:5 — 1080×1350,
 16:9 — 1920×1080); px слоёв — опорные кадра разметки render.layers_format (render.layers_ref).
 Формат выбирает владелец (set_format — только по его просьбе).
@@ -55,6 +59,9 @@ page_edit (подсветка, убрать баннер, crop_to цены — �
 add_layers; ключевой экран — page_to_layers: фон и блоки отдельными слоями (карточку приблизить, кнопку нажать,
 цену выпрыгнуть — update_layer). Ссылки у владельца не спрашивай, пока поиск что-то находит.
 Каждая правка делает снимок истории: владелец откатит её Ctrl+Z в редакторе.
+Длинные описания инструментов здесь укорочены («… Полностью — describe_tool»): правила и примеры — describe_tool(name).
+Аргументы сверяются со схемой: лишний или пропущенный — ошибка с ожидаемыми именами и «может, …?».
+«Готово»/«отрендерено» — только после render_status со status done.
 Что можно без владельца, решает он в настройках проекта: get_agent_settings (ждать ли ответов, стоп на списке клипов,
 траты, публикация). Отказ называет настройку и где её менять: перескажи ему, сам не меняй и не обходи."""
 
@@ -153,8 +160,42 @@ def api_agent_tools() -> dict:
 # --------------------------------------------------------------------------- #
 
 
+# Длинные описания в tools/list укорочены (эксперимент 12.11: ответ ~70 КБ+, бо́льшая часть — правила и примеры
+# десятка инструментов): первые фразы до предела + отсылка к describe_tool. Схемы аргументов — целиком.
+MCP_DESCRIPTION_LIMIT = 500
+
+
+def short_description(name: str, text: str, limit: int = MCP_DESCRIPTION_LIMIT) -> str:
+    """Описание для tools/list: целиком, если короче ``limit``; иначе — начало до конца фразы, «полностью —
+    describe_tool» и английская сводка (хвост после « / »), если она короткая."""
+    text = str(text or "")
+    if len(text) <= limit:
+        return text
+    head, sep, english = text.rpartition(" / ")
+    if not sep or len(english) > 240:
+        head, english = text, ""
+    cut = head[:limit]
+    stop = max(cut.rfind(". "), cut.rfind("; "), cut.rfind(".\n"))
+    if stop > limit // 2:
+        cut = cut[:stop + 1]
+    # Запреты и деньги не теряются: такие фразы из отрезанного остаются (коротко).
+    rest = head[len(cut):]
+    keep = [s.strip() for s in _SENTENCE_RE.split(rest) if s.strip() and _CRITICAL_RE.search(s)]
+    kept = " ".join(s if len(s) <= 220 else s[:219] + "…" for s in keep[:3])
+    tail = f" … Полностью — describe_tool(name=\"{name}\")."
+    short = cut.rstrip() + (f" … {kept}" if kept else "") + tail + (f" / {english}" if english else "")
+    return short if len(short) < len(text) - 100 else text  # чуть длиннее предела — не режем: выигрыша нет
+
+
+_SENTENCE_RE = re.compile(r"(?<=[.!?;])\s+")
+# Фразы, которые нельзя отрезать: платное, запреты, «только владелец/с разрешения».
+_CRITICAL_RE = re.compile(r"ПЛАТН|платн|confirm|₽|\bНЕ\b|НЕЛЬЗЯ|нельзя|запрещ|только владел|только с разреш|"
+                          r"только по «да»|не публикуй|не обходи|сам не", re.UNICODE)
+
+
 def mcp_tool_list(store: Any = None) -> list[dict]:
-    """Инструменты включённых модулей (app/modules.py); выключенные в tools/list не попадают."""
+    """Инструменты включённых модулей (app/modules.py); выключенные в tools/list не попадают. Все до одного, со
+    схемами целиком; длинные описания укорочены (``short_description``) — полностью их даёт describe_tool."""
     out = []
     for tool in agent_tools.list_tools(include_discovery=True, store=store):
         schema = json.loads(json.dumps(tool.parameters))
@@ -169,7 +210,7 @@ def mcp_tool_list(store: Any = None) -> list[dict]:
             {
                 "name": tool.name,
                 "title": tool.title,
-                "description": tool.description,
+                "description": short_description(tool.name, tool.description),
                 "inputSchema": schema,
                 "annotations": {
                     "title": tool.title,
@@ -185,8 +226,9 @@ def mcp_tool_list(store: Any = None) -> list[dict]:
     return out
 
 
-def mcp_call_tool(store: Any, name: str, arguments: dict) -> dict:
-    """Вызов инструмента → MCP CallToolResult (text + image)."""
+def mcp_call_tool(store: Any, name: str, arguments: dict, project_hint: int | None = None) -> dict:
+    """Вызов инструмента → MCP CallToolResult (text + image). ``project_hint`` — проект работы клиента
+    (``/mcp?project_id=N``): списки и новые холсты — в нём."""
     from app.clip_history import snapshot
 
     try:
@@ -206,8 +248,9 @@ def mcp_call_tool(store: Any, name: str, arguments: dict) -> dict:
         store=store,
         clip_plan_id=clip_id,
         on_first_change=(lambda: snapshot(store, clip_id, f"агент: {tool.title.lower()}")) if clip_id else None,
+        project_hint=project_hint,
     )
-    result, ok = agent_tools.run_tool(ctx, name, args)
+    result, ok = agent_tools.run_tool(ctx, name, args, validate=True)
     if isinstance(result, agent_tools.ImageResult):
         data, mime = editor_agent._shrink_frame(result)
         import base64
@@ -254,7 +297,7 @@ def _rpc_error(request_id: Any, code: int, message: str) -> dict:
     return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
 
-def mcp_handle(store: Any, message: Any) -> dict | None:
+def mcp_handle(store: Any, message: Any, project_hint: int | None = None) -> dict | None:
     """Один JSON-RPC объект → ответ (None для уведомлений и ответов клиента)."""
     if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
         return _rpc_error(None, -32600, "Invalid Request")
@@ -285,7 +328,7 @@ def mcp_handle(store: Any, message: Any) -> dict | None:
             if not isinstance(name, str) or not name:
                 return _rpc_error(request_id, -32602, "params.name is required")
             arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-            result = mcp_call_tool(store, name, arguments)
+            result = mcp_call_tool(store, name, arguments, project_hint)
         elif method == "prompts/list":
             result = {"prompts": mcp_prompt_list()}
         elif method == "prompts/get":
@@ -322,6 +365,16 @@ def _unauthorized() -> JSONResponse:
     )
 
 
+def mcp_project(request: Request) -> int | None:
+    """Проект работы MCP-клиента: ``/mcp?project_id=N`` или заголовок ``X-VVF-Project``; нет или не число — None."""
+    raw = request.query_params.get("project_id") or request.headers.get("x-vvf-project") or ""
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
 @router.post("/mcp", include_in_schema=False)
 async def mcp_post(request: Request) -> Response:
     if not _mcp_authorized(request):
@@ -331,10 +384,11 @@ async def mcp_post(request: Request) -> Response:
     except ValueError:
         return JSONResponse(_rpc_error(None, -32700, "Parse error"), status_code=400)
     store = _store()
+    project = mcp_project(request)
     if isinstance(message, list):  # пакет (старые версии протокола)
-        replies = [r for r in [await run_in_threadpool(mcp_handle, store, m) for m in message] if r is not None]
+        replies = [r for r in [await run_in_threadpool(mcp_handle, store, m, project) for m in message] if r is not None]
         return JSONResponse(replies) if replies else Response(status_code=202)
-    reply = await run_in_threadpool(mcp_handle, store, message)
+    reply = await run_in_threadpool(mcp_handle, store, message, project)
     if reply is None:
         return Response(status_code=202)
     return JSONResponse(reply)

@@ -723,6 +723,10 @@ class Database:
             self._ensure_column(conn, "subtitle_profiles", "shadow", "REAL NOT NULL DEFAULT 1")
             self._reset_legacy_gemini_subtitle_offset(conn)
             self._seed_default_prompt_presets(conn)
+            # Ничейные холсты — в выведенные проекты, один раз (app/canvas_projects.py: только добавляет приписки).
+            from app.canvas_projects import migrate_canvas_projects
+
+            migrate_canvas_projects(conn)
 
     def _ensure_column(
         self,

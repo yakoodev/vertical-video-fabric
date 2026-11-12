@@ -69,10 +69,19 @@ def h_save_channel_project(ctx: ToolContext, args: dict) -> dict:
             "sources": [s["id"] for s in project["sources"]]}
 
 
+BRIEF_COVERED_COMPACT = 20  # клипов «что уже нарезано» в кратком брифе; full=true — прежние 150
+
+
 def h_get_project_brief(ctx: ToolContext, args: dict) -> dict:
-    limit = int(args.get("covered_limit") or 150)
+    full = bool(args.get("full"))
+    try:
+        limit = int(args.get("covered_limit") or (150 if full else BRIEF_COVERED_COMPACT))
+        offset = max(0, int(args.get("covered_offset") or 0))
+    except (TypeError, ValueError) as exc:
+        raise ToolError("covered_limit и covered_offset — целые числа") from exc
     project_id = _pid(ctx, args)
-    brief = P.project_brief(ctx.store, project_id, covered_limit=max(1, min(limit, 500)))
+    brief = P.project_brief(ctx.store, project_id, covered_limit=max(1, min(limit, 500)), covered_offset=offset,
+                            compact=not full)
     # Ответы по стриму — только если этот стрим из этого проекта: чужой лор сюда не приходит.
     if args.get("source_id") not in (None, "") and P.project_of_source(ctx.store, int(args["source_id"])) == project_id:
         # Ответы владельца по этому стриму и выбранные мемы (app/stream_questions.py) — рядом с лором.
@@ -260,8 +269,14 @@ def project_tools() -> list[Tool]:
             "правила владельца (проекта и глобальные), facts — что владелец просил запомнить, memes — какие мемы он "
             "выбрал, с source_id ещё stream_answers — его ответы про этот стрим, covered — что уже нарезано (pieces — секунды источника, "
             "не повторяйся), гипотезы и короткая статистика. brief_rev — для update_project_brief(base_rev). "
-            "/ Project brief: lore, owner rules, already cut clips.",
-            _obj({**_PROJECT_ARGS, "covered_limit": {"type": "integer"}}), h_get_project_brief, scope="project",
+            "Кратко по умолчанию: из covered — 20 последних и covered_by_source (занятые отрезки по источникам); "
+            "дальше — covered_offset/covered_limit, всё как раньше — full=true. "
+            "/ Project brief: lore, owner rules, already cut clips (compact; full=true for everything).",
+            _obj({**_PROJECT_ARGS, "covered_limit": {"type": "integer", "description": "сколько клипов covered "
+                                                                                       "(кратко 20, full — 150, до 500)"},
+                  "covered_offset": {"type": "integer", "description": "с какого клипа covered (новые первыми)"},
+                  "full": {"type": "boolean", "description": "весь бриф как раньше (covered до 150 клипов)"}}),
+            h_get_project_brief, scope="project",
         ),
         Tool(
             "get_agent_settings", "Что разрешено в проекте",

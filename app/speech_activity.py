@@ -42,7 +42,11 @@ def plan_pcm(store: Any, clip_plan_id: int) -> Any:
         raise ValueError("у клипа нет кусков")
     out = settings.tmp_dir / f"speech-{uuid4().hex}.wav"
     try:
-        _run_ffmpeg(build_clip_audio_args(path, pieces, out, speech_mix(source)), timeout=600)
+        from app.canvas_audio import clip_audio_input
+
+        # Холст: речь — в слоях (озвучка), не в основе (app/canvas_audio.py).
+        with clip_audio_input(store, plan, source, "speech") as (speech_path, speech_tracks, _canvas):
+            _run_ffmpeg(build_clip_audio_args(speech_path, pieces, out, speech_tracks), timeout=600)
         return np.frombuffer(wav_pcm(out), dtype="<i2").astype(np.float32) / 32768.0
     finally:
         out.unlink(missing_ok=True)
@@ -57,6 +61,12 @@ def plan_speech_spans(store: Any, clip_plan_id: int) -> list[tuple[float, float]
     source = store.get_source(int(plan["source_id"]))
     key = (int(plan["source_id"]), str(source.get("local_path")), str(speech_mix(source)),
            tuple((float(s["start_sec"]), float(s["end_sec"])) for s in plan.get("segments") or []))
+    from app.canvas import is_canvas
+
+    if is_canvas(source):
+        from app.canvas_audio import signature
+
+        key = (*key, "canvas", int(plan["id"]), signature(store, plan))
     if key in _cache:
         return _cache[key]
     spans = vad_segments(plan_pcm(store, clip_plan_id), RATE)[0]

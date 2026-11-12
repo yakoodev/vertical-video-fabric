@@ -42,7 +42,8 @@ from typing import Any, Callable
 from app.projects_core import (  # noqa: F401
     PROJECT_KINDS, PROJECT_KIND_LABELS, DATE_RE, _now, _text, _long_text, _date, _json, _loads, _choice, _links,
     _project_from_row, _check_brand, create_project, list_projects, get_project, project_sources, update_project,
-    delete_project, set_source_project, project_of_source, project_of_plan, assign_plan_project, BRIEF_SCHEMA,
+    delete_project, set_source_project, project_of_source, project_of_plan, assign_plan_project, plan_projects_map,
+    project_plan_ids, BRIEF_SCHEMA,
     BRIEF_VERSION, BRIEF_SECTIONS, BRIEF_SECTION_LABELS, BriefConflict, empty_brief,
 )
 from app.projects_rules import (  # noqa: F401

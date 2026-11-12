@@ -134,7 +134,7 @@ class ClipPolicy(TurnPolicy):
             if held is not None:
                 result, ok = held, False  # ждёт кнопки владельца: шаг не ✗, а карточка
             else:
-                result, ok = agent_tools.run_tool(self.ctx, name, args)
+                result, ok = agent_tools.run_tool(self.ctx, name, args, validate=True)
                 _step_from_result(step, result, ok)
                 if self.hooks:
                     self.hooks.decorate(step, name, result, ok)

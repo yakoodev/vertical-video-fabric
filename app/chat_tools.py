@@ -39,9 +39,10 @@ LOAD_TOOLS = "load_tools"
 
 # Всегда в объявлениях (плюс все проектные инструменты и инструменты чата).
 # ``lint_clip`` (app/lint_tools.py) — проверка перед сдачей: ничего не меняет, нужна перед каждым
-# submit_for_approval, поэтому всегда под рукой, а не в группе.
+# submit_for_approval, поэтому всегда под рукой, а не в группе. ``render_clip``/``render_status`` — тоже: без них агент
+# чата писал «рендер соберётся автоматически» (эксперимент 12.11), инструмента рендера у него не было.
 BASE = ("list_projects", "list_clips", "get_clip", "get_transcript", "view_frame", "contact_sheet",
-        "get_performance", "get_playbook", "lint_clip")
+        "get_performance", "get_playbook", "lint_clip", "render_clip", "render_status")
 
 GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "montage": ("слои, камера, мемы-вставки, автомонтаж, переходы, бренд, обложка, привязка к долям", (
@@ -126,6 +127,8 @@ PROJECT_BOUND = {
     "get_project_brief", "update_project_brief", "remember_fact", "note_observation", "forget_fact", "list_rules", "add_rule", "revoke_rule",
     "get_project_stats", "list_hypotheses", "add_hypothesis", "evaluate_hypotheses", "add_manual_publication",
     "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices", "get_agent_settings",
+    # Холст ложится в проект чата; чужой project_id отсюда — отказ (эксперимент 12.11: холсты всех прогонов в одной куче).
+    "create_canvas_clip", "list_clips",
 }
 
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.
@@ -436,6 +439,21 @@ def _foreign_project(store: Any, args: dict, project_id: int) -> str | None:
     return None
 
 
+def _foreign_clip(store: Any, clip_id: int, project_id: int) -> str | None:
+    """Правка клипа другого проекта из чата проекта — текст отказа. Ничей клип (холст без проекта) не отказывается:
+    его можно забрать в работу, get_clip о нём предупредит."""
+    from app import projects as P
+
+    try:
+        owner = P.project_of_plan(store, int(clip_id))
+    except KeyError:
+        return None  # клипа нет — ответит сам инструмент
+    if owner is not None and int(owner) != int(project_id):
+        return (f"клип #{clip_id} из проекта #{owner}, а это чат проекта #{project_id}: здесь его не правь — свои "
+                "клипы list_clips(), чужой правят в общем чате или в чате его проекта")
+    return None
+
+
 def run(store: Any, name: str, args: dict, *, project_id: int | None,
         clip_ctx: Callable[[int], ToolContext] | None = None) -> tuple[Any, bool, int | None]:
     """Выполнить инструмент чата. Возвращает (результат, ok, clip_id)."""
@@ -448,11 +466,16 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
         return {"ok": False, "error": f"в чате нет инструмента {name}"}, False, None
     args = dict(args or {})
     clip_id = None
+    injected: set[str] = set()
     if tool.scope == "clip":
         try:
             clip_id = int(args.pop("clip_id"))
         except (KeyError, TypeError, ValueError):
             return {"ok": False, "error": "нужен clip_id (list_clips)"}, False, None
+        if project_id and tool.mutating:
+            refusal = _foreign_clip(store, clip_id, int(project_id))
+            if refusal:
+                return {"ok": False, "error": refusal}, False, clip_id
         ctx = clip_ctx(clip_id) if clip_ctx else ToolContext(store=store, clip_plan_id=clip_id)
     else:
         if name in PROJECT_BOUND and project_id:
@@ -465,6 +488,7 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
         if tool.scope == "project" and project_id and args.get("project_id") in (None, "") \
                 and args.get("source_id") in (None, ""):
             args["project_id"] = int(project_id)
+            injected.add("project_id")
         if name == "delete_clip":
             try:
                 clip_id = int(args.get("clip_id"))
@@ -472,6 +496,11 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
                 pass
         ctx = ToolContext(store=store, project_hint=int(project_id) if project_id else None)
     if tool.name in {t.name for t in _chat_tools()}:
+        from app.tool_args import check_args
+
+        bad = check_args(tool, args, injected)
+        if bad:
+            return bad, False, clip_id
         try:
             result = tool.handler(ctx, args)
         except ToolError as exc:
@@ -481,7 +510,7 @@ def run(store: Any, name: str, args: dict, *, project_id: int | None,
         except Exception as exc:  # noqa: BLE001 - инструмент не роняет чат
             return {"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:300]}"}, False, clip_id
         return result, not (isinstance(result, dict) and result.get("ok") is False), clip_id
-    result, ok = agent_tools.run_tool(ctx, name, args)
+    result, ok = agent_tools.run_tool(ctx, name, args, validate=True, injected=frozenset(injected))
     return result, ok, clip_id
 
 

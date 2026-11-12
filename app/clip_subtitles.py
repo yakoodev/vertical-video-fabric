@@ -649,8 +649,12 @@ def generate_for_plan(store: Any, clip_plan_id: int, provider: str | None = None
               for (a, b), (head, tail) in zip(plain_pieces, extents)] if any(any(e) for e in extents) else plain_pieces
     audio_path = settings.tmp_dir / f"{uuid4().hex}.wav"
     try:
-        # Распознаём по дорожке речи (микрофон без игры — меньше выдумок), не по смеси рендера.
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source)), timeout=60 * 10)
+        # Распознаём по дорожке речи (микрофон без игры — меньше выдумок), не по смеси рендера. Холст — по озвучке
+        # и звукам слоёв (app/canvas_audio.py): своего звука у него нет.
+        from app.canvas_audio import clip_audio_input
+
+        with clip_audio_input(store, plan, source, "speech") as (speech_path, speech_tracks, _canvas):
+            _run_ffmpeg(build_clip_audio_args(speech_path, pieces, audio_path, speech_tracks), timeout=60 * 10)
         try:
             result = engine.transcribe(audio_path, profile, used_model)
         except RuntimeError:
@@ -811,17 +815,25 @@ def listen_range(store: Any, clip_plan_id: int, from_sec: float | None, to_sec: 
     # Тишина/эффекты одной дорожки (track) и эффекты на отрезке — в самом звуке, как в рендере.
     from app.audio_edit import plan_source_ops
 
-    ops = plan_source_ops(plan, source)
+    from app.canvas import is_canvas
+
+    canvas = is_canvas(source)
+    ops = [] if canvas else plan_source_ops(plan, source)
     try:
-        _run_ffmpeg(build_clip_audio_args(source_path, pieces, audio_path, speech_mix(source), ops), timeout=60 * 5)
+        from app.canvas_audio import clip_audio_input
+
+        # Холст: звук — слои (озвучка), сведённые на шкалу основы (app/canvas_audio.py); основа — тишина.
+        with clip_audio_input(store, plan, source, "speech") as (speech_path, speech_tracks, _c):
+            _run_ffmpeg(build_clip_audio_args(speech_path, pieces, audio_path, speech_tracks, ops), timeout=60 * 5)
         silence_wav(audio_path, muted)
         from app.speech_onsets import snap_words, voiced_frames, wav_pcm
 
         pcm = wav_pcm(audio_path)
         level_pcm = pcm
-        if separate_speech(source):
-            # Громкость — того, что услышит зритель (смесь рендера), а не одного микрофона.
-            _run_ffmpeg(build_clip_audio_args(source_path, pieces, mix_path, source_mix(source), ops), timeout=60 * 5)
+        if canvas or separate_speech(source):
+            # Громкость — того, что услышит зритель (смесь рендера: у холста ещё и музыка), а не одного микрофона.
+            with clip_audio_input(store, plan, source, "mix") as (mix_input, mix_tracks, _c):
+                _run_ffmpeg(build_clip_audio_args(mix_input, pieces, mix_path, mix_tracks, ops), timeout=60 * 5)
             silence_wav(mix_path, muted)
             level_pcm = wav_pcm(mix_path)
         try:

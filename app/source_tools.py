@@ -243,22 +243,77 @@ def h_create_clip(ctx: ToolContext, args: dict) -> dict:
             "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2)}
 
 
+def _channel_project(ctx: ToolContext, value: object, key: str = "project_id") -> int | None:
+    """Проект-серия из аргумента (проверен: есть такой) или None."""
+    if value in (None, ""):
+        return None
+    try:
+        project = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise ToolError(f"{key} — число: id проекта-серии (см. list_channel_projects)") from exc
+    if not ctx.store.db.query_one("SELECT 1 FROM projects WHERE id = ?", (project,)):
+        raise ToolError(f"проекта-серии {project} нет — см. list_channel_projects")
+    return project
+
+
+def _project_name(ctx: ToolContext, project: int | None) -> str:
+    if project is None:
+        return ""
+    row = ctx.store.db.query_one("SELECT name FROM projects WHERE id = ?", (int(project),))
+    return str(row["name"]) if row else ""
+
+
 def h_create_canvas_clip(ctx: ToolContext, args: dict) -> dict:
-    """Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины."""
+    """Пустой холст (app/canvas.py): клип без исходника — анимированный фон нужной длины, в проекте-серии."""
     from app.canvas import create_canvas_clip
 
+    project = _channel_project(ctx, args.get("project_id"))
+    if project is None:
+        project = ctx.project_hint
     try:
         plan = create_canvas_clip(ctx.store, args.get("duration"), args.get("background"),
-                                  str(args.get("title") or ""), str(args.get("description") or ""))
+                                  str(args.get("title") or ""), str(args.get("description") or ""),
+                                  project_id=project)
     except (KeyError, ValueError) as exc:
         raise ToolError(f"холст не создан: {exc}") from exc
     segs = plan.get("segments") or []
-    return {"ok": True, "clip_id": plan["id"], "title": plan["title"], "source_id": plan["source_id"], "project_id": plan["source_id"],
-            "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
-            "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
-            "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
-                     "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera; "
-                     "квадрат, 4:5 или 16:9 из того же монтажа — set_format. Холсты лежат в скрытом видео-источнике source_id — list_clips(source_id)")}
+    out = {"ok": True, "clip_id": plan["id"], "title": plan["title"], "project_id": project,
+           "project_name": _project_name(ctx, project), "source_id": plan["source_id"],
+           "duration": round(sum(float(s["end_sec"]) - float(s["start_sec"]) for s in segs), 2),
+           "backdrop": (plan.get("render_settings") or {}).get("backdrop"),
+           "note": ("холст: видео исходника нет, весь кадр — фон (set_backdrop меняет его). Дальше обычные "
+                    "инструменты клипа: add_layers (картинки — image, звуки — audio), set_music, set_camera; "
+                    "квадрат, 4:5 или 16:9 из того же монтажа — set_format; готовый mp4 — render_clip. "
+                    "Холсты проекта — list_clips(project_id)")}
+    if project is None:
+        out["project_unassigned"] = True
+        out["warning"] = ("холст ни в каком проекте: дай project_id (list_channel_projects) — иначе его не найти в "
+                          "клипах проекта")
+    return out
+
+
+def h_describe_tool(ctx: ToolContext, args: dict) -> dict:
+    """Полное описание инструмента: в MCP tools/list длинные описания укорочены (app/agent_api.short_description)."""
+    import difflib
+
+    from app import modules
+    from app.tool_core import callable_tool_names, lookup_tool
+
+    name = str(args.get("name") or "").strip()
+    try:
+        tool = lookup_tool(name)
+    except KeyError:
+        near = difflib.get_close_matches(name, sorted(callable_tool_names()), n=3, cutoff=0.5)
+        raise ToolError(f"нет инструмента {name or '(пусто)'}" + (f" — может, {', '.join(near)}?" if near else "")) \
+            from None
+    out = {"ok": True, "name": tool.name, "title": tool.title, "description": tool.description,
+           "parameters": tool.parameters, "scope": tool.scope, "mutating": tool.mutating,
+           "module": modules.module_of_tool(tool.name)}
+    if tool.cost:
+        out["cost"] = list(tool.cost)
+    if tool.scope == "clip":
+        out["note"] = "клиповый инструмент: в MCP первым аргументом — clip_id"
+    return out
 
 
 def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
@@ -287,38 +342,122 @@ def h_list_modules(ctx: ToolContext, _args: dict) -> dict:
             + ". tools — инструменты, которые можно вызвать; chat_only_tools — только в чате сервиса (UI), не через MCP"}
 
 
-def h_list_clips(ctx: ToolContext, args: dict) -> dict:
+def _clip_row(ctx: ToolContext, plan: dict, project: int | None, hidden_source: bool) -> dict:
     from app import agent_settings as S
     from app.piece_speed import seg_length
 
-    project = _source_id(args)
+    segs = plan.get("segments") or []
+    settings = plan.get("render_settings") or {}
+    row = {
+        "clip_id": plan["id"],
+        "title": plan.get("title"),
+        "source_id": plan.get("source_id"),
+        # Проект-серия клипа (источник или приписка холста), не источник.
+        "project_id": project,
+        "favorite": bool(plan.get("favorite")),
+        "status": plan.get("status"),
+        # Черновик: файла ещё нет. waits_owner: по настройке проекта его монтирует только выбор владельца.
+        "draft": plan.get("status") != "rendered",
+        "waits_owner": S.clip_list_refusal(ctx.store, int(plan["id"])) is not None,
+        "pieces": len(segs),
+        "duration": round(sum(seg_length(s) for s in segs), 2),
+        "layers": len(settings.get("layers") or []) if isinstance(settings, dict) else 0,
+    }
+    if project is None and hidden_source:
+        row["project_unassigned"] = True
+    return row
+
+
+HIDDEN_SOURCE_TYPES = ("canvas", "clip_upload")
+
+
+def _list_args(ctx: ToolContext, args: dict) -> tuple[int | None, int | None, list[str]]:
+    """(источник, проект-серия, заметки). project_id у list_clips — проект-серия; channel_project_id — его имя из
+    list_projects. Раньше project_id здесь значил источник: id, которого нет среди проектов, но есть среди
+    источников, по-прежнему читается как источник — с заметкой."""
+    from app.tool_core import _source_arg
+
+    notes: list[str] = []
+    raw = {k: args.get(k) for k in ("project_id", "channel_project_id") if args.get(k) not in (None, "")}
+    for key, value in raw.items():
+        try:
+            raw[key] = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ToolError(f"{key} — число: id проекта-серии (см. list_channel_projects)") from exc
+    if len(set(raw.values())) > 1:
+        raise ToolError("project_id и channel_project_id расходятся: это одно и то же — проект-серия. Дай project_id")
+    project = next(iter(raw.values()), None)
+    source = _source_arg({"source_id": args.get("source_id")})
+    if project is not None and not ctx.store.db.query_one("SELECT 1 FROM projects WHERE id = ?", (project,)):
+        legacy = "project_id" in raw and source in (None, project) and \
+            ctx.store.db.query_one("SELECT 1 FROM sources WHERE id = ?", (project,))
+        if not legacy:
+            raise ToolError(f"проекта-серии {project} нет — см. list_channel_projects (видео-источник — source_id)")
+        notes.append(f"проекта-серии {project} нет, показан видео-источник {project}: у list_clips project_id — "
+                     "проект-серия, источник — source_id")
+        source, project = project, None
+    if source is None and project is None:
+        if ctx.clip_plan_id is not None:
+            from app.projects import project_of_plan
+
+            source = int(ctx.store.get_clip_plan(int(ctx.clip_plan_id), include_segments=False)["source_id"])
+            # Монтажёр внутри холста: соседи — холсты его проекта, а не всех проектов из общего скрытого источника.
+            project = project_of_plan(ctx.store, int(ctx.clip_plan_id)) if ctx.project_hint is None else None
+        elif ctx.project_hint is not None:
+            project = int(ctx.project_hint)
+        else:
+            raise ToolError("нужен source_id: id видео-источника (см. list_projects) — или project_id проекта-серии "
+                            "(list_channel_projects)")
+    return source, project, notes
+
+
+def h_list_clips(ctx: ToolContext, args: dict) -> dict:
+    from app import projects as P
+
+    source, project, notes = _list_args(ctx, args)
     favorites = bool(args.get("favorites_only"))
     offset, limit = _page_args(args)
+    hidden_ids = {int(r["id"]) for r in ctx.store.db.query_all(
+        f"SELECT id FROM sources WHERE source_type IN ({','.join('?' * len(HIDDEN_SOURCE_TYPES))})",
+        HIDDEN_SOURCE_TYPES)}
+    if source is not None:
+        plans = ctx.store.list_clip_plans(source_id=source, include_segments=True)
+        owners = P.plan_projects_map(ctx.store, [p["id"] for p in plans])
+        if source in hidden_ids and not args.get("all_projects"):
+            scope = project if project is not None else ctx.project_hint
+            if scope is not None:
+                # Скрытый источник общий на всех (холсты, загрузки): чужие и ничьи клипы — не этого проекта.
+                plans = [p for p in plans if owners.get(int(p["id"])) == int(scope)]
+                notes.append(f"скрытый источник общий на все проекты: показаны клипы только проекта {scope}; "
+                             "все — all_projects=true")
+            else:
+                notes.append("скрытый источник общий на все проекты: у каждого клипа project_id — его проект, "
+                             "project_unassigned — ничей. Не выдавай чужой клип за свой; свои — list_clips(project_id)")
+        elif project is not None:
+            plans = [p for p in plans if owners.get(int(p["id"])) == project]
+    else:
+        ids = P.project_plan_ids(ctx.store, int(project))
+        owners = {i: int(project) for i in ids}
+        rows = ctx.store.db.query_all(
+            f"SELECT DISTINCT source_id FROM clip_plans WHERE id IN ({','.join('?' * len(ids))})", ids) if ids else []
+        wanted = set(ids)
+        plans = [p for sid in sorted(int(r["source_id"]) for r in rows)
+                 for p in ctx.store.list_clip_plans(source_id=sid, include_segments=True) if int(p["id"]) in wanted]
+        plans.sort(key=lambda p: int(p["id"]))
     out = []
-    for plan in ctx.store.list_clip_plans(source_id=project, include_segments=True):
+    for plan in plans:
         if favorites and not plan.get("favorite"):
             continue
         if plan.get("hidden") and not favorites:
             continue
-        segs = plan.get("segments") or []
-        settings = plan.get("render_settings") or {}
-        out.append(
-            {
-                "clip_id": plan["id"],
-                "title": plan.get("title"),
-                "favorite": bool(plan.get("favorite")),
-                "status": plan.get("status"),
-                # Черновик: файла ещё нет. waits_owner: по настройке проекта его монтирует только выбор владельца.
-                "draft": plan.get("status") != "rendered",
-                "waits_owner": S.clip_list_refusal(ctx.store, int(plan["id"])) is not None,
-                "pieces": len(segs),
-                "duration": round(sum(seg_length(s) for s in segs), 2),
-                "layers": len(settings.get("layers") or []) if isinstance(settings, dict) else 0,
-            }
-        )
+        out.append(_clip_row(ctx, plan, owners.get(int(plan["id"])), int(plan.get("source_id") or 0) in hidden_ids))
     total = len(out)
     page = out[offset:offset + limit]
-    return {"source_id": project, "project_id": project, **_page_info(total, offset, limit, len(page)), "clips": page}
+    result = {"source_id": source, "project_id": project, "project_name": _project_name(ctx, project),
+              **_page_info(total, offset, limit, len(page)), "clips": page}
+    if notes:
+        result["notes"] = notes
+    return result
 
 
 # Только для внешних агентов (MCP): найти проект и клип.
@@ -335,10 +474,19 @@ DISCOVERY_TOOLS = [
     ),
     Tool(
         "list_clips", "Клипы проекта",
-        "Клипы видео-источника (source_id обязателен, id из list_projects): clip_id, название, ★, длина, число слоёв. Постранично (limit по умолчанию 100, до 500; "
-        "offset): сколько всего — total, не длина clips; truncated/next_offset — есть ещё. "
-        "/ Clips of a project, paginated: use total for counts.",
-        _obj({**SOURCE_ARGS, "favorites_only": {"type": "boolean"},
+        "Клипы проекта-серии (project_id из list_channel_projects: клипы его видео и холсты проекта) или одного "
+        "видео-источника (source_id из list_projects). Без обоих — проект чата. clip_id, название, source_id, "
+        "project_id (проект клипа; project_unassigned — ничей холст), ★, длина, число слоёв. Постранично (limit по "
+        "умолчанию 100, до 500; offset): сколько всего — total, не длина clips; truncated/next_offset — есть ещё. "
+        "/ Clips of a series project (project_id) or of a source video (source_id), paginated.",
+        _obj({"project_id": {"type": "integer", "description": "проект-серия из list_channel_projects (не источник): "
+                                                                "все клипы проекта, холсты тоже"},
+              "source_id": {"type": "integer", "description": "id видео-источника (поле id в list_projects)"},
+              "channel_project_id": {"type": "integer", "description": "то же, что project_id (так он назван в "
+                                                                        "list_projects)"},
+              "all_projects": {"type": "boolean", "description": "скрытый источник холстов: клипы всех проектов, "
+                                                               "не только своего"},
+              "favorites_only": {"type": "boolean"},
               "offset": {"type": "integer"}, "limit": {"type": "integer"}}),
         h_list_clips, scope="global",
     ),
@@ -381,12 +529,22 @@ DISCOVERY_TOOLS = [
         "Пустой холст: клип БЕЗ исходного видео длиной duration (5–180 с, по умолчанию 15) — весь кадр "
         "анимированный фон background (имя стиля aurora/grid/bokeh/waves/gradient/solid или объект "
         "{kind, colors, speed, intensity} как у set_backdrop; не задан — аврора). Для промо из картинок: "
-        "дальше add_layers, set_music, звуки (слой audio), рендер — как у обычного клипа. Холсты лежат в "
-        "скрытом видео-источнике (в list_projects его нет; source_id — в ответе). / Empty canvas clip, no source video.",
+        "дальше add_layers, set_music, звуки (слой audio), render_clip — как у обычного клипа. project_id — "
+        "проект-серия (list_channel_projects), холст ляжет в него (в чате проекта — он сам); холсты проекта — "
+        "list_clips(project_id). / Empty canvas clip in a series project, no source video.",
         _obj({"duration": {"type": "number"}, "title": {"type": "string"}, "description": {"type": "string"},
-              "background": {"type": ["string", "object"]}}, ["duration"]),
+              "background": {"type": ["string", "object"]},
+              "project_id": {"type": "integer", "description": "проект-серия из list_channel_projects (не источник): "
+                                                               "холст ляжет в этот проект"}}, ["duration"]),
         h_create_canvas_clip, scope="global",
         label=lambda a: f"Создаю холст на {(_num(a.get('duration'), 15.0) or 15.0):g} с",
+    ),
+    Tool(
+        "describe_tool", "Справка по инструменту",
+        "Полное описание инструмента name: что делает, все правила и примеры, схема аргументов, модуль, цена. В "
+        "tools/list длинные описания укорочены — там, где «полностью — describe_tool». / Full description of a tool.",
+        _obj({"name": {"type": "string", "description": "имя инструмента"}}, ["name"]), h_describe_tool,
+        scope="global",
     ),
     Tool(
         "list_modules", "Модули сервиса",

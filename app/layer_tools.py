@@ -190,7 +190,7 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
 def h_remove_layers(ctx: ToolContext, args: dict) -> dict:
     ids = {str(i) for i in args.get("ids") or []}
     if not ids:
-        raise ToolError("нужен список ids")
+        raise ToolError("нужен ids — список id слоёв (get_clip → layers[].id), например {\"ids\": [\"title\"]}")
     render = _current_render(ctx)
     layers = _layers_of(render)
     keep = [l for l in layers if str(l.get("id")) not in ids]
