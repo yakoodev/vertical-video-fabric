@@ -25,7 +25,7 @@ import { coinJar, drawingTablet, stylus } from "./voxelprops.ts";
 import { Overlays, type OverlaySpec } from "./overlay.ts";
 import { resolveToon, Toon, type ToonSpec } from "./toon.ts";
 import { createDeskbot, type DeskbotSpec } from "./deskbot.ts";
-import { deskLamp, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
+import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
 const D2R = Math.PI / 180;
@@ -417,7 +417,7 @@ class Engine {
         : kind === "button_panel" ? buttonPanel(p) : kind === "ui_screen" ? uiScreen(p)
         : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p)
         : kind === "monitor" ? monitor(p) : kind === "keyboard" ? keyboard(p) : kind === "plant" ? plant(p)
-        : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p)
+        : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p) : kind === "helper_bot" ? helperBot(p)
         : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);

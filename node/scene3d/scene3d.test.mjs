@@ -52,7 +52,8 @@ test("toon: пресет + поправки по полям, неизвестн�
 test("deskbot: позы рук из четырёх углов, нужные выражения лица есть", async () => {
   const { ARM_POSES, FACE_EXPR } = await import("./src/deskbot.ts");
   for (const [name, a] of Object.entries(ARM_POSES)) assert.equal(a.length, 4, name);
-  for (const name of ["grumpy", "side", "roll", "sigh", "fake", "offended", "hurt", "stare"]) assert.ok(FACE_EXPR[name], name);
+  for (const name of ["grumpy", "side", "roll", "sigh", "fake", "offended", "hurt", "stare", "mutter", "envy", "disgust", "rage", "deadpan", "doomed"]) assert.ok(FACE_EXPR[name], name);
+  for (const name of ["facepalm", "flail", "jab"]) assert.ok(ARM_POSES[name], name);
 });
 
 /* ---------- время ---------- */

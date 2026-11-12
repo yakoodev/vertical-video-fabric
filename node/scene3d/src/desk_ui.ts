@@ -29,6 +29,10 @@ export interface ChatMessage {
   /** Длинный ответ блоками, льётся за stream с. */
   blocks?: ChatBlock[];
   stream?: number;
+  /** Картинка-вложение: рисунок из PANEL_PAINTERS (``panelParams``), высота ``panelH`` (пиксели при scale 1). */
+  panel?: string;
+  panelParams?: Record<string, any>;
+  panelH?: number;
 }
 export interface ChatPage { kind?: "chat"; name: string; accent?: string; bg?: string; bubble?: string; botBubble?: string;
   letter?: string; messages: ChatMessage[]; placeholder?: string }
@@ -201,7 +205,7 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
   // Сообщения: сначала замер всей высоты, потом прокрутка к последнему.
   const areaTop = Y + headH + 20 * s, areaBot = inY - 18 * s;
   const maxW = W * 0.72;
-  type Item = { m: ChatMessage; h: number; kind: "bubble" | "thinking" | "answer"; lines?: string[]; blocks?: ChatBlock[] };
+  type Item = { m: ChatMessage; h: number; kind: "bubble" | "thinking" | "answer" | "image"; lines?: string[]; blocks?: ChatBlock[] };
   const items: Item[] = [];
   for (const m of page.messages) {
     const shownAt = m.t + (m.from === "user" ? m.type || 0 : m.think || 0);
@@ -210,7 +214,9 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
       continue;
     }
     if (t < shownAt) continue;
-    if (m.blocks) {
+    if (m.panel) {
+      items.push({ m, h: (m.panelH ?? 300) * s, kind: "image" });
+    } else if (m.blocks) {
       const k = m.stream ? clamp01((t - shownAt) / m.stream) : 1;
       const n = Math.max(1, Math.ceil(m.blocks.length * k));
       const bl = m.blocks.slice(0, n);
@@ -242,6 +248,7 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
       g.font = font(user ? 700 : 600, (user ? 44 : 38) * s);
       bw = Math.min(maxW, Math.max(...it.lines!.map((l) => g.measureText(l).width)) + 64 * s);
     } else if (it.kind === "thinking") bw = 170 * s;
+    else if (it.kind === "image") bw = Math.min(maxW, it.h * 1.6);
     const bx = user ? X + W - 34 * s - bw : X + 34 * s;
     g.save();
     const ox = user ? bx + bw : bx;
@@ -261,6 +268,16 @@ export function drawChat(g: CanvasRenderingContext2D, X: number, Y: number, W: n
         g.arc(bx + 50 * s + i * 36 * s, y + it.h / 2 - k * 6 * s, 12 * s, 0, Math.PI * 2);
         g.fill();
       }
+    } else if (it.kind === "image") {
+      // Вложение: рисунок в скруглённой рамке (у рисунка свои координаты 0..w, 0..h).
+      const pad = 10 * s;
+      g.save();
+      roundRect(g, bx + pad, y + pad, bw - pad * 2, it.h - pad * 2, 22 * s);
+      g.clip();
+      g.translate(bx + pad, y + pad);
+      const painter = PANEL_PAINTERS[m.panel || "text"] || PANEL_PAINTERS.text;
+      painter(g, bw - pad * 2, it.h - pad * 2, Math.max(0, t - appear), m.panelParams || {});
+      g.restore();
     } else if (it.kind === "bubble") {
       g.font = font(user ? 700 : 600, (user ? 44 : 38) * s);
       const lh = (user ? 58 : 50) * s;
@@ -449,6 +466,235 @@ export const PANEL_PAINTERS: Record<string, Painter> = {
     inkRect(g, W * 0.08, H * 0.08, tw + W * 0.08, H * 0.18, H * 0.06, "#3fbf6a", lw * 0.8);
     g.fillStyle = "#fff";
     g.fillText(txt, W * 0.12, H * 0.215);
+    if (p.label) {
+      // Подпись графика («ПРОДАЖИ»): тёмная плашка справа сверху.
+      g.font = font(900, H * 0.1);
+      const lw2 = g.measureText(String(p.label)).width;
+      inkRect(g, W * 0.92 - lw2 - W * 0.06, H * 0.09, lw2 + W * 0.06, H * 0.15, H * 0.05, INK, lw * 0.6);
+      g.fillStyle = "#fff6e8";
+      g.fillText(String(p.label), W * 0.92 - lw2 - W * 0.03, H * 0.2);
+    }
+  },
+  /** Сайт запущен: окно браузера, ракета взлетает с дымом, «ОНЛАЙН», конфетти. */
+  launch(g, W, H, t, p) {
+    const lw = W * 0.012;
+    g.fillStyle = p.bg || "#e9f1ff";
+    g.fillRect(0, 0, W, H);
+    // Полоска браузера: точки и адрес.
+    inkRect(g, -lw, -lw, W + lw * 2, H * 0.15 + lw, 0, "#fff6e8", lw);
+    ["#ff7a59", "#ffc857", "#7bc96f"].forEach((c, i) => {
+      g.fillStyle = c;
+      g.beginPath();
+      g.arc(W * (0.05 + i * 0.045), H * 0.075, H * 0.03, 0, Math.PI * 2);
+      g.fill();
+    });
+    inkRect(g, W * 0.2, H * 0.03, W * 0.44, H * 0.09, H * 0.045, "#ffffff", lw * 0.5);
+    g.fillStyle = "rgba(43,24,16,0.6)";
+    g.font = font(700, H * 0.06);
+    g.fillText(String(p.url ?? "мой-сайт.рф"), W * 0.23, H * 0.095);
+    // «ОНЛАЙН» с мигающей точкой.
+    const pop = ease("outBack", clamp01((t - 0.3) / 0.35));
+    if (pop > 0) {
+      g.save();
+      g.translate(W * 0.83, H * 0.075);
+      g.scale(pop, pop);
+      g.font = font(900, H * 0.065);
+      const tw = g.measureText("ОНЛАЙН").width;
+      inkRect(g, -tw / 2 - W * 0.05, -H * 0.05, tw + W * 0.08, H * 0.1, H * 0.05, "#3fbf6a", lw * 0.6);
+      g.fillStyle = Math.floor(t * 3) % 2 ? "#ffffff" : "#d8ffe2";
+      g.beginPath();
+      g.arc(-tw / 2 - W * 0.018, 0, H * 0.018, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "#fff";
+      g.fillText("ОНЛАЙН", -tw / 2 + W * 0.005, H * 0.024);
+      g.restore();
+    }
+    // Ракета: взлёт по ease, лёгкая тряска, пламя мерцает, дым клубами.
+    const k = ease("inQuad", clamp01(t / (p.dur ?? 2.4)));
+    const rx = W * 0.5 + Math.sin(t * 40) * W * 0.004, ry = H * (0.78 - 0.55 * k);
+    for (let i = 0; i < 7; i++) {
+      const u = (t * 1.6 + i / 7) % 1;
+      g.globalAlpha = 0.85 * (1 - u);
+      g.fillStyle = "#ffffff";
+      g.beginPath();
+      g.arc(rx + Math.sin(i * 2.3) * W * 0.12 * u, Math.min(H * 0.98, ry + H * 0.2 + u * H * 0.25), W * (0.03 + 0.05 * u), 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+    const rs = H * 0.2;
+    g.fillStyle = Math.floor(t * 14) % 2 ? "#ffc857" : "#ff7a59";
+    g.beginPath();
+    g.moveTo(rx - rs * 0.22, ry + rs * 0.55);
+    g.quadraticCurveTo(rx, ry + rs * (1.25 + 0.15 * Math.sin(t * 30)), rx + rs * 0.22, ry + rs * 0.55);
+    g.closePath();
+    g.fill();
+    g.lineWidth = lw;
+    g.strokeStyle = INK;
+    g.fillStyle = "#ff7a59";
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(rx + sx * rs * 0.25, ry + rs * 0.1);
+      g.lineTo(rx + sx * rs * 0.55, ry + rs * 0.6);
+      g.lineTo(rx + sx * rs * 0.22, ry + rs * 0.5);
+      g.closePath();
+      g.fill();
+      g.stroke();
+    }
+    g.fillStyle = "#fff6e8";
+    g.beginPath();
+    g.moveTo(rx, ry - rs * 0.8);
+    g.quadraticCurveTo(rx + rs * 0.36, ry - rs * 0.35, rx + rs * 0.28, ry + rs * 0.55);
+    g.lineTo(rx - rs * 0.28, ry + rs * 0.55);
+    g.quadraticCurveTo(rx - rs * 0.36, ry - rs * 0.35, rx, ry - rs * 0.8);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#4fb3bf";
+    g.beginPath();
+    g.arc(rx, ry - rs * 0.1, rs * 0.14, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    // Конфетти.
+    const cols = ["#ff4b3e", "#ffc857", "#4fb3bf", "#9b7bd4", "#7bc96f"];
+    for (let i = 0; i < 18; i++) {
+      const u = (t * 0.5 + (i * 0.618) % 1) % 1;
+      const x = W * ((i * 0.37) % 1), y = H * (0.15 + u * 0.85);
+      g.save();
+      g.translate(x, y);
+      g.rotate(t * 4 + i);
+      g.fillStyle = cols[i % cols.length];
+      g.fillRect(-W * 0.012, -H * 0.012, W * 0.024, H * 0.03);
+      g.restore();
+    }
+  },
+  /** Фури-пазл: лисья мордочка на пазле, одна деталь выпала, наклейка «1000 деталей». */
+  furpuzzle(g, W, H, t, p) {
+    const lw = Math.max(2, W * 0.01);
+    g.fillStyle = p.bg || "#d9c8ff";
+    g.fillRect(0, 0, W, H);
+    // Фон: сердечки в шахматку.
+    g.fillStyle = "rgba(255,255,255,0.45)";
+    for (let y = 0; y < 5; y++) for (let x = 0; x < 7; x++) {
+      if ((x + y) % 2) continue;
+      const cx = (x + 0.5) * W / 7, cy = (y + 0.5) * H / 5, r = H * 0.035;
+      g.beginPath();
+      g.arc(cx - r * 0.5, cy, r * 0.55, Math.PI, 0);
+      g.arc(cx + r * 0.5, cy, r * 0.55, Math.PI, 0);
+      g.lineTo(cx, cy + r * 1.1);
+      g.closePath();
+      g.fill();
+    }
+    // Мордочка лиса.
+    const cx = W * 0.5, cy = H * 0.56, r = H * 0.34;
+    g.lineWidth = lw;
+    g.strokeStyle = INK;
+    for (const s of [-1, 1]) {
+      g.fillStyle = "#ff8f3d";
+      g.beginPath();
+      g.moveTo(cx + s * r * 0.25, cy - r * 0.75);
+      g.lineTo(cx + s * r * 0.95, cy - r * 1.35);
+      g.lineTo(cx + s * r * 0.9, cy - r * 0.35);
+      g.closePath();
+      g.fill();
+      g.stroke();
+      g.fillStyle = "#ffb3c7";
+      g.beginPath();
+      g.moveTo(cx + s * r * 0.42, cy - r * 0.72);
+      g.lineTo(cx + s * r * 0.85, cy - r * 1.12);
+      g.lineTo(cx + s * r * 0.82, cy - r * 0.5);
+      g.closePath();
+      g.fill();
+    }
+    g.fillStyle = "#ff8f3d";
+    g.beginPath();
+    g.ellipse(cx, cy, r, r * 0.86, 0, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.fillStyle = "#fff6e8";
+    g.beginPath();
+    g.moveTo(cx - r * 0.95, cy + r * 0.05);
+    g.quadraticCurveTo(cx - r * 0.3, cy - r * 0.05, cx, cy + r * 0.25);
+    g.quadraticCurveTo(cx + r * 0.3, cy - r * 0.05, cx + r * 0.95, cy + r * 0.05);
+    g.quadraticCurveTo(cx + r * 0.6, cy + r * 0.85, cx, cy + r * 0.86);
+    g.quadraticCurveTo(cx - r * 0.6, cy + r * 0.85, cx - r * 0.95, cy + r * 0.05);
+    g.closePath();
+    g.fill();
+    // Глаза-блюдца с бликами, нос, румянец.
+    for (const s of [-1, 1]) {
+      g.fillStyle = INK;
+      g.beginPath();
+      g.ellipse(cx + s * r * 0.38, cy - r * 0.12, r * 0.15, r * 0.19, 0, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "#fff";
+      g.beginPath();
+      g.arc(cx + s * r * 0.38 + r * 0.05, cy - r * 0.19, r * 0.06, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = "rgba(255,90,120,0.45)";
+      g.beginPath();
+      g.ellipse(cx + s * r * 0.62, cy + r * 0.22, r * 0.13, r * 0.07, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = INK;
+    g.beginPath();
+    g.ellipse(cx, cy + r * 0.3, r * 0.1, r * 0.07, 0, 0, Math.PI * 2);
+    g.fill();
+    g.lineWidth = lw * 0.8;
+    g.beginPath();
+    g.moveTo(cx - r * 0.14, cy + r * 0.45);
+    g.quadraticCurveTo(cx - r * 0.07, cy + r * 0.53, cx, cy + r * 0.42);
+    g.quadraticCurveTo(cx + r * 0.07, cy + r * 0.53, cx + r * 0.14, cy + r * 0.45);
+    g.stroke();
+    // Линии пазла (3×2 с «ушками»), одна деталь выпала — видна дырка.
+    const cols = 3, rows = 2, pw = W / cols, ph = H / rows;
+    const hole = [2, 1];
+    g.fillStyle = "#6b4fa8";
+    g.fillRect(hole[0] * pw, hole[1] * ph, pw, ph);
+    g.strokeStyle = "rgba(255,255,255,0.95)";
+    g.lineWidth = lw * 0.9;
+    const knob = Math.min(pw, ph) * 0.13;
+    for (let c = 1; c < cols; c++) {
+      const x = c * pw;
+      g.beginPath();
+      g.moveTo(x, 0);
+      for (let rI = 0; rI < rows; rI++) {
+        const ym = (rI + 0.5) * ph, sgn = (c + rI) % 2 ? 1 : -1;
+        g.lineTo(x, ym - knob);
+        g.arc(x + sgn * knob * 0.6, ym, knob, -Math.PI / 2 * sgn - (sgn < 0 ? Math.PI : 0), Math.PI / 2 * sgn + (sgn < 0 ? Math.PI : 0), sgn < 0);
+        g.lineTo(x, (rI + 1) * ph);
+      }
+      g.stroke();
+    }
+    for (let rI = 1; rI < rows; rI++) {
+      const y = rI * ph;
+      g.beginPath();
+      g.moveTo(0, y);
+      for (let c = 0; c < cols; c++) {
+        const xm = (c + 0.5) * pw, sgn = c % 2 ? 1 : -1;
+        g.lineTo(xm - knob, y);
+        g.arc(xm, y + sgn * knob * 0.6, knob, Math.PI, 0, sgn > 0);
+        g.lineTo((c + 1) * pw, y);
+      }
+      g.stroke();
+    }
+    // Выпавшая деталь лежит наискосок.
+    g.save();
+    g.translate(W * 0.86, H * 0.72);
+    g.rotate(0.35 + 0.05 * Math.sin(t * 3));
+    inkRect(g, -pw * 0.32, -ph * 0.32, pw * 0.64, ph * 0.64, pw * 0.06, "#ff8f3d", lw * 0.8);
+    g.restore();
+    // Наклейка.
+    g.save();
+    g.translate(W * 0.17, H * 0.14);
+    g.rotate(-0.12);
+    g.font = font(900, H * 0.075);
+    const lab = String(p.label ?? "1000 деталей");
+    const tw = g.measureText(lab).width;
+    inkRect(g, -tw / 2 - W * 0.03, -H * 0.06, tw + W * 0.06, H * 0.12, H * 0.04, "#ffc857", lw * 0.7);
+    g.fillStyle = INK;
+    g.textAlign = "center";
+    g.fillText(lab, 0, H * 0.027);
+    g.textAlign = "left";
+    g.restore();
   },
   /** Крупная надпись (заглушка, вопрос, «?!»). */
   text(g, W, H, _t, p) {

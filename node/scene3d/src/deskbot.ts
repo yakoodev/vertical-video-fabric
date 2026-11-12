@@ -29,6 +29,10 @@ export interface DeskbotLook {
   glow?: string;
   accent?: string;
   cheeks?: string;
+  /** Гарнитура «оператора поддержки» (дужка, амбушюры, микрофон у щеки): цвет амбушюр/дужки; нет — ушки-регуляторы. */
+  headset?: string;
+  /** Бейдж с именем на поясе (текст, например «КЛОД»). */
+  badge?: string;
 }
 
 export interface DeskbotSpec {
@@ -59,6 +63,12 @@ export const ARM_POSES: Record<string, number[]> = {
   wave: [128, 12, 64, -60],
   fist: [40, 40, 120, 30],
   back: [8, -22, 12, 0],
+  /** Ладонь к экрану-лицу (рукалицо). */
+  facepalm: [28, 62, 128, 70],
+  /** Руки вверх-в стороны: «да вы издеваетесь». */
+  flail: [118, 30, 40, -30],
+  /** Тычет в монитор (ладонь вперёд-вбок). */
+  jab: [40, 70, 18, 30],
 };
 
 /** Параметры лица: глаза (размер, веки, угол века), зрачки, брови, рот, дуги, «эмоджи-значки». */
@@ -67,6 +77,12 @@ export interface FaceParams {
   brow: number; browAngle: number; browAsym: number; browCurve: number;
   mouthW: number; mouthCurve: number; mouthOpen: number; mouthWave: number;
   happy: number; closed: number; blush: number; sweat: number; vein: number; tear: number; dots: number; spin: number;
+  /** Сжатые зубы (рот-«решётка»: бурчит сквозь зубы), 0..1. */
+  teeth: number;
+  /** Экран краснеет от злости, 0..1 (пульсирует). */
+  tint: number;
+  /** Глаза-«чёрточки» (ровный каменный взгляд), 0..1. */
+  flat: number;
 }
 
 const BASE: FaceParams = {
@@ -74,6 +90,7 @@ const BASE: FaceParams = {
   brow: 0, browAngle: 0, browAsym: 0, browCurve: 0.15,
   mouthW: 1, mouthCurve: 0.2, mouthOpen: 0, mouthWave: 0,
   happy: 0, closed: 0, blush: 0, sweat: 0, vein: 0, tear: 0, dots: 0, spin: 0,
+  teeth: 0, tint: 0, flat: 0,
 };
 
 /** Выражения (поправки к BASE). */
@@ -94,6 +111,18 @@ export const FACE_EXPR: Record<string, Partial<FaceParams>> = {
   angry: { lidTop: 0.4, lidAngle: 22, brow: -0.55, browAngle: 26, mouthCurve: -0.5, mouthW: 0.75, vein: 1 },
   focused: { lidTop: 0.3, lidAngle: 6, brow: -0.25, browAngle: 10, mouthCurve: 0, mouthW: 0.5, pupil: 0.85 },
   working: { lidTop: 0.36, lidAngle: 4, brow: -0.2, browAngle: 8, mouthCurve: -0.1, mouthW: 0.5, dots: 1, pupil: 0.8 },
+  /** Бурчит под нос: косится, сквозь зубы. */
+  mutter: { lidTop: 0.46, lidAngle: 8, lidBot: 0.1, brow: -0.25, browAngle: 10, browAsym: 0.5, mouthCurve: -0.3, mouthW: 0.8, teeth: 1 },
+  /** Зависть: прищур, губы поджаты, бровь вверх. */
+  envy: { lidTop: 0.5, lidAngle: -2, lidBot: 0.2, brow: 0.05, browAsym: 0.9, mouthCurve: -0.2, mouthW: 0.55, mouthWave: 0.7 },
+  /** Брезгливое «это что?»: один глаз прищурен, волнистый рот. */
+  disgust: { eyeW: 1.05, lidTop: 0.3, lidAngle: -8, lidBot: 0.28, brow: 0.3, browAngle: -12, browAsym: -0.9, mouthCurve: -0.55, mouthW: 0.7, mouthWave: 1 },
+  /** Ярость: экран краснеет, венка, зубы. */
+  rage: { eyeW: 1.08, lidTop: 0.36, lidAngle: 28, pupil: 0.5, brow: -0.6, browAngle: 30, mouthCurve: -0.55, mouthW: 1.1, vein: 1, teeth: 1, tint: 1 },
+  /** Каменное лицо: глаза-чёрточки, рот ровный. */
+  deadpan: { flat: 1, brow: -0.05, browAngle: 0, browCurve: 0, mouthCurve: 0, mouthW: 0.55 },
+  /** Обречённо: каменное лицо со слезой и опущенными бровями. */
+  doomed: { flat: 1, brow: 0.25, browAngle: -18, mouthCurve: -0.35, mouthW: 0.6, mouthWave: 0.5, tear: 0.8 },
 };
 
 function faceAt(name: string | undefined): FaceParams {
@@ -185,13 +214,77 @@ export function createDeskbot(spec: DeskbotSpec): Character {
   screen.userData.toon = false;
   screen.userData.outline = false;
   squash.add(screen);
-  // Боковые «ушки»-регуляторы.
-  const knobGeo = new THREE.CylinderGeometry(0.075 * S, 0.075 * S, 0.05 * S, 20);
-  for (const sx of [-1, 1]) {
-    const k = new THREE.Mesh(knobGeo, plateMat);
-    k.rotation.z = Math.PI / 2;
-    k.position.set(sx * (U.bodyW / 2 + 0.015) * S, U.bodyH * 0.58 * S, 0);
-    squash.add(k);
+  const earY = U.bodyH * 0.58;
+  if (look.headset) {
+    // Гарнитура: дужка поверх головы (полуэллипс, лежит на скруглённой макушке), амбушюры, микрофон у нижнего угла
+    // экрана — не закрывает лицо.
+    const setMat = mat(col(look.headset, "#3a2a2e"), "deskbot:headset");
+    const z = 0.045 * S;
+    const band = new THREE.Mesh(new THREE.TorusGeometry(0.44 * S, 0.026 * S, 10, 40, Math.PI), setMat);
+    band.scale.set(1, 0.75, 1);
+    band.position.set(0, earY * S, z);
+    squash.add(band);
+    const cupGeo = new THREE.CylinderGeometry(0.105 * S, 0.105 * S, 0.075 * S, 24);
+    const padGeo = new THREE.CylinderGeometry(0.075 * S, 0.075 * S, 0.02 * S, 20);
+    for (const sx of [-1, 1]) {
+      const c = new THREE.Mesh(cupGeo, setMat);
+      c.rotation.z = Math.PI / 2;
+      c.position.set(sx * (U.bodyW / 2 + 0.035) * S, earY * S, z);
+      squash.add(c);
+      const pad = new THREE.Mesh(padGeo, accentMat);
+      pad.rotation.z = Math.PI / 2;
+      pad.position.set(sx * (U.bodyW / 2 + 0.078) * S, earY * S, z);
+      squash.add(pad);
+    }
+    const sx = 1;
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(sx * 0.47 * S, (earY - 0.05) * S, z + 0.04 * S),
+      new THREE.Vector3(sx * 0.46 * S, (earY - 0.17) * S, 0.2 * S),
+      new THREE.Vector3(sx * 0.38 * S, 0.17 * S, 0.33 * S),
+      new THREE.Vector3(sx * 0.3 * S, 0.14 * S, 0.37 * S),
+    ]);
+    const boom = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.014 * S, 8, false), setMat);
+    squash.add(boom);
+    const mic = new THREE.Mesh(new THREE.CapsuleGeometry(0.03 * S, 0.04 * S, 4, 12), setMat);
+    mic.rotation.z = Math.PI / 2;
+    mic.position.set(sx * 0.28 * S, 0.14 * S, 0.375 * S);
+    squash.add(mic);
+  } else {
+    // Боковые «ушки»-регуляторы.
+    const knobGeo = new THREE.CylinderGeometry(0.075 * S, 0.075 * S, 0.05 * S, 20);
+    for (const sx of [-1, 1]) {
+      const k = new THREE.Mesh(knobGeo, plateMat);
+      k.rotation.z = Math.PI / 2;
+      k.position.set(sx * (U.bodyW / 2 + 0.015) * S, earY * S, 0);
+      squash.add(k);
+    }
+  }
+  if (look.badge) {
+    // Бейдж с именем на поясе: кремовая плашка + надпись канвасом (без toon и обводки — текст чистый).
+    const bw = 0.3, bh = 0.085;
+    const back = new THREE.Mesh(new RoundedBoxGeometry(bw * S, bh * S, 0.02 * S, 3, 0.012 * S), plateMat);
+    back.position.set(0, 0.025 * S, (U.bodyD * 0.45 + 0.012) * S);
+    squash.add(back);
+    const cv = document.createElement("canvas");
+    cv.width = 512;
+    cv.height = Math.round(512 * bh / bw);
+    const bg = cv.getContext("2d")!;
+    bg.fillStyle = look.plate || "#f4e4cc";
+    bg.fillRect(0, 0, cv.width, cv.height);
+    bg.fillStyle = look.trim || "#a9512f";
+    bg.font = `900 ${Math.round(cv.height * 0.72)}px Montserrat, Arial, sans-serif`;
+    bg.textAlign = "center";
+    bg.textBaseline = "middle";
+    bg.fillText(look.badge, cv.width / 2, cv.height * 0.54);
+    const btex = new THREE.CanvasTexture(cv);
+    btex.colorSpace = THREE.SRGBColorSpace;
+    btex.anisotropy = 4;
+    const label = new THREE.Mesh(new THREE.PlaneGeometry((bw - 0.02) * S, (bh - 0.015) * S),
+      new THREE.MeshBasicMaterial({ map: btex, toneMapped: false }));
+    label.position.set(0, back.position.y, back.position.z + 0.0105 * S);
+    label.userData.toon = false;
+    label.userData.outline = false;
+    squash.add(label);
   }
   // Антенна: стержень и шарик, пружинит от корпуса.
   const antenna = new THREE.Group();
@@ -410,6 +503,15 @@ export function paintFace(g: CanvasRenderingContext2D, W: number, H: number, f: 
   sheen.addColorStop(0.45, "rgba(255,255,255,0.0)");
   g.fillStyle = sheen;
   g.fillRect(0, 0, W, H);
+  if (f.tint > 0.02) {
+    // Экран наливается красным (злость), с пульсом.
+    const k = f.tint * (0.82 + 0.18 * Math.sin(t * 13));
+    const red = g.createRadialGradient(W / 2, H * 0.55, W * 0.1, W / 2, H * 0.55, W * 0.7);
+    red.addColorStop(0, `rgba(214,52,38,${0.55 * k})`);
+    red.addColorStop(1, `rgba(150,24,30,${0.75 * k})`);
+    g.fillStyle = red;
+    g.fillRect(0, 0, W, H);
+  }
   g.fillStyle = "rgba(0,0,0,0.12)";
   for (let y = 0; y < H; y += 6) g.fillRect(0, y, W, 2);
 
@@ -424,6 +526,18 @@ export function paintFace(g: CanvasRenderingContext2D, W: number, H: number, f: 
   for (const s of [-1, 1]) {
     const x = cx + s * ex;
     const open = Math.max(0, 1 - Math.max(blink, 0));
+    if (f.flat > 0.5 && f.happy <= 0.5 && f.closed <= 0.5) {
+      // Глаза-чёрточки: толстые скруглённые полоски, чуть смещённые взглядом.
+      g.strokeStyle = glow;
+      g.lineWidth = W * 0.05 * Math.max(0.35, open);
+      const yy = eyeY + eh * 0.08 - lk[1] * eh * 0.08;
+      const xx = x + lk[0] * ew * 0.25;
+      g.beginPath();
+      g.moveTo(xx - ew * 0.8, yy);
+      g.lineTo(xx + ew * 0.8, yy);
+      g.stroke();
+      continue;
+    }
     if (f.happy > 0.5) {
       // ^ ^ — дуги «счастья» (фальшивая улыбка).
       g.strokeStyle = glow;
@@ -518,7 +632,51 @@ export function paintFace(g: CanvasRenderingContext2D, W: number, H: number, f: 
   const open = Math.min(1, f.mouthOpen + mouth * 0.85);
   const curve = f.mouthCurve * H * 0.06;
   g.lineWidth = W * 0.028;
-  if (open < 0.06) {
+  if (f.teeth > 0.5) {
+    // Сквозь зубы: рот-«решётка», уголки опущены по mouthCurve, голос раскрывает щель между рядами.
+    const w2 = mw * 1.15, th = H * 0.075, gap = H * 0.1 * Math.min(1, mouth * 1.1);
+    const dip = Math.max(0, -curve) * 0.9;
+    g.save();
+    g.beginPath();
+    g.moveTo(cx - w2, my - th / 2 + dip);
+    g.quadraticCurveTo(cx, my - th / 2 - dip * 0.6, cx + w2, my - th / 2 + dip);
+    g.lineTo(cx + w2, my + th / 2 + gap + dip);
+    g.quadraticCurveTo(cx, my + th / 2 + gap - dip * 0.6, cx - w2, my + th / 2 + gap + dip);
+    g.closePath();
+    g.fillStyle = gap > 2 ? "#5b2a33" : glow;
+    g.fill();
+    g.clip();
+    g.shadowBlur = 0;
+    g.fillStyle = glow;
+    // Верхний и нижний ряд зубов, между ними — щель под голос.
+    g.fillRect(cx - w2 - 4, my - th / 2 - dip - 4, w2 * 2 + 8, th / 2 + dip + 4);
+    g.fillRect(cx - w2 - 4, my + gap, w2 * 2 + 8, th / 2 + dip * 2 + 8);
+    g.strokeStyle = bg;
+    g.lineWidth = W * 0.011;
+    for (let i = 1; i < 6; i++) {
+      const xx = cx - w2 + (2 * w2 * i) / 6;
+      g.beginPath();
+      g.moveTo(xx, my - th);
+      g.lineTo(xx, my + th + gap + dip * 2);
+      g.stroke();
+    }
+    if (gap <= 2) {
+      g.beginPath();
+      g.moveTo(cx - w2, my);
+      g.lineTo(cx + w2, my);
+      g.stroke();
+    }
+    g.restore();
+    g.strokeStyle = glow;
+    g.lineWidth = W * 0.026;
+    g.beginPath();
+    g.moveTo(cx - w2, my - th / 2 + dip);
+    g.quadraticCurveTo(cx, my - th / 2 - dip * 0.6, cx + w2, my - th / 2 + dip);
+    g.lineTo(cx + w2, my + th / 2 + gap + dip);
+    g.quadraticCurveTo(cx, my + th / 2 + gap - dip * 0.6, cx - w2, my + th / 2 + gap + dip);
+    g.closePath();
+    g.stroke();
+  } else if (open < 0.06) {
     g.beginPath();
     if (f.mouthWave > 0.3) {
       // Волнистый рот (неловкость, обида).

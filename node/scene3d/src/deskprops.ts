@@ -82,6 +82,8 @@ export function monitor(p: Record<string, any>): Prop {
     grp.add(n);
   });
   const browser: BrowserSpec = p.browser || { tabs: [] };
+  // Вместо браузера — картинка из PANEL_PAINTERS (``panel``, ``panelParams``; время рисунка — от ``panelStart``).
+  const painter = p.panel ? PANEL_PAINTERS[p.panel] || PANEL_PAINTERS.text : null;
   let sig = "";
   const mat = scr.material as THREE.MeshBasicMaterial;
   return {
@@ -92,7 +94,11 @@ export function monitor(p: Record<string, any>): Prop {
       const s = `${Math.round(t * 30)}|${tab}`;
       if (s !== sig) {
         sig = s;
-        drawBrowser(g, c.width, c.height, browser, t, tab, badge);
+        if (painter) {
+          g.save();
+          painter(g, c.width, c.height, Math.max(0, t - Number(p.panelStart ?? 0)), p.panelParams || {});
+          g.restore();
+        } else drawBrowser(g, c.width, c.height, browser, t, tab, badge);
         tex.needsUpdate = true;
       }
       mat.color.setScalar(Math.min(1, (p.glow ?? 0.96) * (state.glow !== undefined ? Number(state.glow) : 1)));
@@ -248,6 +254,184 @@ export function windowFrame(p: Record<string, any>): Prop {
   bar(t, H, W / 2 + t / 2, H / 2);
   bar(t * 0.7, H, 0, H / 2);
   return { object: shadows(grp, false) };
+}
+
+/**
+ * Малыш-помощник (``helper_bot``): круглый «моти» с пузиком посветлее, глазки-бусинки с бликами, румянец, улыбка,
+ * ручки-шарики, на макушке ``top``: sprout (росток), propeller (пропеллер) или ears (ушки-кругляши). Над головой —
+ * ярлык-чип ``label`` (всегда к камере). Движение от t: ``mood`` hop — радостно прыгает (сжатие при приземлении,
+ * ручки вверх), work — покачивается и стучит ручками, wave — машет. ``size`` — высота тела (м), ``phase`` — сдвиг.
+ */
+export function helperBot(p: Record<string, any>): Prop {
+  const R = (p.size ?? 0.12) / 2;
+  const grp = new THREE.Group();
+  const body = new THREE.Group();
+  grp.add(body);
+  const col = p.color || "#6fd3c1";
+  const bodyMat = std(col, { roughness: 0.5 });
+  const bellyMat = std(p.belly || "#fff6e8", { roughness: 0.6 });
+  const ink = std("#22161a", { roughness: 0.3 });
+  const white = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+  const blushMat = new THREE.MeshBasicMaterial({ color: "#ff8fa3", transparent: true, opacity: 0.7 });
+  const sphere = new THREE.SphereGeometry(1, 32, 22);
+  const torso = new THREE.Mesh(sphere, bodyMat);
+  torso.scale.set(R * 1.08, R, R * 0.95);
+  torso.position.y = R;
+  body.add(torso);
+  const belly = new THREE.Mesh(sphere, bellyMat);
+  belly.scale.set(R * 0.62, R * 0.5, R * 0.3);
+  belly.position.set(0, R * 0.72, R * 0.72);
+  body.add(belly);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(sphere, ink);
+    eye.scale.set(R * 0.13, R * 0.19, R * 0.08);
+    eye.position.set(s * R * 0.36, R * 1.22, R * 0.88);
+    body.add(eye);
+    const hl = new THREE.Mesh(sphere, white);
+    hl.scale.setScalar(R * 0.05);
+    hl.position.set(s * R * 0.36 + R * 0.04, R * 1.29, R * 0.95);
+    hl.userData.outline = false;
+    body.add(hl);
+    const bl = new THREE.Mesh(new THREE.CircleGeometry(R * 0.12, 18), blushMat);
+    bl.position.set(s * R * 0.62, R * 1.02, R * 0.8);
+    bl.rotation.y = s * 0.6;
+    bl.userData.outline = false;
+    bl.userData.toon = false;
+    body.add(bl);
+  }
+  const smile = new THREE.Mesh(new THREE.TorusGeometry(R * 0.11, R * 0.025, 6, 16, Math.PI), ink);
+  smile.rotation.z = Math.PI;
+  smile.position.set(0, R * 1.03, R * 0.97);
+  smile.userData.outline = false;
+  body.add(smile);
+  const hands: THREE.Mesh[] = [];
+  for (const s of [-1, 1]) {
+    const h = new THREE.Mesh(sphere, bodyMat);
+    h.scale.setScalar(R * 0.24);
+    body.add(h);
+    hands.push(h);
+  }
+  const topKind = p.top || "sprout";
+  const topGrp = new THREE.Group();
+  topGrp.position.y = R * 1.95;
+  body.add(topGrp);
+  const accent = std(p.accent || "#7bc96f", { roughness: 0.55 });
+  if (topKind === "propeller") {
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.04, R * 0.04, R * 0.25, 8), ink);
+    stem.position.y = R * 0.1;
+    topGrp.add(stem);
+    const blades = new THREE.Group();
+    blades.position.y = R * 0.24;
+    for (const a of [0, Math.PI]) {
+      const b = new THREE.Mesh(sphere, accent);
+      b.scale.set(R * 0.34, R * 0.04, R * 0.12);
+      b.position.set(Math.cos(a) * R * 0.3, 0, Math.sin(a) * R * 0.3);
+      blades.add(b);
+    }
+    topGrp.add(blades);
+    topGrp.userData.spin = blades;
+  } else if (topKind === "ears") {
+    for (const s of [-1, 1]) {
+      const e = new THREE.Mesh(sphere, bodyMat);
+      e.scale.set(R * 0.26, R * 0.3, R * 0.2);
+      e.position.set(s * R * 0.55, -R * 0.18, 0);
+      topGrp.add(e);
+      const ei = new THREE.Mesh(sphere, accent);
+      ei.scale.set(R * 0.14, R * 0.17, R * 0.1);
+      ei.position.set(s * R * 0.55, -R * 0.16, R * 0.12);
+      topGrp.add(ei);
+    }
+  } else {
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(R * 0.035, R * 0.05, R * 0.25, 8), accent);
+    stem.position.y = R * 0.06;
+    topGrp.add(stem);
+    for (const s of [-1, 1]) {
+      const leaf = new THREE.Mesh(sphere, accent);
+      leaf.scale.set(R * 0.24, R * 0.07, R * 0.13);
+      leaf.position.set(s * R * 0.2, R * 0.2, 0);
+      leaf.rotation.z = s * 0.45;
+      topGrp.add(leaf);
+    }
+  }
+  // Ярлык-чип над головой: белая пилюля, цветная точка, текст (спрайт — всегда к камере, без toon/обводки).
+  let chip: THREE.Sprite | null = null;
+  if (p.label) {
+    const cv = document.createElement("canvas");
+    const fpx = 64;
+    const g = cv.getContext("2d")!;
+    g.font = `800 ${fpx}px Montserrat, Arial, sans-serif`;
+    const tw = g.measureText(String(p.label)).width;
+    cv.width = Math.ceil(tw + fpx * 2.2);
+    cv.height = Math.round(fpx * 1.7);
+    const g2 = cv.getContext("2d")!;
+    g2.fillStyle = "#fffaf2";
+    g2.strokeStyle = "#2b1810";
+    g2.lineWidth = 7;
+    g2.beginPath();
+    g2.roundRect(4, 4, cv.width - 8, cv.height - 8, cv.height / 2 - 4);
+    g2.fill();
+    g2.stroke();
+    g2.fillStyle = col;
+    g2.beginPath();
+    g2.arc(fpx * 0.85, cv.height / 2, fpx * 0.3, 0, Math.PI * 2);
+    g2.fill();
+    g2.fillStyle = "#2b1810";
+    g2.font = `800 ${fpx}px Montserrat, Arial, sans-serif`;
+    g2.textBaseline = "middle";
+    g2.fillText(String(p.label), fpx * 1.45, cv.height / 2 + fpx * 0.05);
+    const tex = new THREE.CanvasTexture(cv);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    chip = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, toneMapped: false, transparent: true, depthWrite: false }));
+    const ch = R * (p.chipScale ?? 0.75);
+    chip.scale.set((ch * cv.width) / cv.height, ch, 1);
+    chip.position.y = R * 3.0;
+    chip.userData.toon = false;
+    chip.userData.outline = false;
+    chip.renderOrder = 5;
+    grp.add(chip);
+  }
+  shadows(grp);
+  if (chip) chip.castShadow = false;
+  const mood = p.mood || "hop";
+  const ph = Number(p.phase ?? 0);
+  return {
+    object: grp,
+    update: (t0) => {
+      const t = t0 + ph;
+      let y = 0, sq = 1, tilt = 0;
+      let handUp = 0.2, handFw = 0.3;
+      if (mood === "hop") {
+        const w = (t * 2.1) % 1;
+        y = Math.sin(w * Math.PI) * R * 0.7;
+        sq = w < 0.12 ? 0.82 + w * 1.5 : 1.06 - 0.06 * Math.sin(w * Math.PI);
+        handUp = 0.9 + 0.3 * Math.sin(w * Math.PI);
+        tilt = 0.08 * Math.sin(t * 4.2);
+      } else if (mood === "wave") {
+        y = Math.abs(Math.sin(t * 3)) * R * 0.12;
+        handUp = 0.4;
+        tilt = 0.06 * Math.sin(t * 3);
+      } else {
+        y = Math.abs(Math.sin(t * 6)) * R * 0.05;
+        sq = 1 + 0.03 * Math.sin(t * 12);
+        handFw = 0.75;
+      }
+      body.position.y = y;
+      body.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
+      body.rotation.z = tilt;
+      hands.forEach((h, i) => {
+        const s = i ? 1 : -1;
+        let up = handUp, fw = handFw;
+        if (mood === "work") up = 0.1 + 0.12 * Math.max(0, Math.sin(t * 14 + i * 2.2));
+        if (mood === "wave" && i === 1) up = 1.4 + 0.25 * Math.sin(t * 10);
+        h.position.set(s * R * (1.02 + 0.1 * up), R * (0.75 + 0.55 * up), R * fw);
+      });
+      const spin = topGrp.userData.spin as THREE.Object3D | undefined;
+      if (spin) spin.rotation.y = t * 14;
+      else topGrp.rotation.z = 0.12 * Math.sin(t * 5);
+      if (chip) chip.position.y = R * 3.0 + y * 0.4;
+    },
+  };
 }
 
 export function thoughtBubble(p: Record<string, any>): Prop {
