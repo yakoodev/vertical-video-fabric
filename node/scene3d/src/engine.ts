@@ -29,6 +29,7 @@ import { resolveToon, Toon, type ToonSpec } from "./toon.ts";
 import { createDeskbot, type DeskbotSpec } from "./deskbot.ts";
 import { createCritter, critterHelper, type CritterSpec } from "./critter.ts";
 import { createKodex, type KodexSpec } from "./kodex.ts";
+import { createKodex2, type Kodex2Spec } from "./kodex2.ts";
 import { MEME_PROPS } from "./meme_props.ts";
 import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
@@ -259,6 +260,7 @@ class Engine {
         : c.style === "deskbot" ? createDeskbot(c as DeskbotSpec)
         : c.style === "critter" ? createCritter(c as CritterSpec)
         : c.style === "kodex" ? createKodex(c as unknown as KodexSpec)
+        : c.style === "kodex2" ? createKodex2(c as unknown as Kodex2Spec)
         : await createCharacter(c as CharacterSpec, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
       const ck = c as any;

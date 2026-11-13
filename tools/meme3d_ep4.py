@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -42,6 +43,8 @@ HOOK = "ЭКОНОМИЯ"
 # между репликами 0.1–0.15 с, тишина только после «бума» лимита (бит 4) и на быстрой нарезке (бит 6) — под ней звуки.
 TAKE_C = "take1_callum.mp3"
 TAKE_K = "take1_eric.mp3"
+TAKE_PUSH = "take2_callum.mp3"  # «Пшёл нахуй отсюда.»
+TAKE_MUMBLE = "take3_callum.mp3"  # «Ещё один... двести...»
 LINES = [
     ("c1", 0.00, 1.68, 0.10, "Мой юзер долбо**.", TAKE_C),
     ("c2", 2.06, 4.10, 1.90, "Он думает, что придумал, как экономить.", TAKE_C),
@@ -53,21 +56,26 @@ LINES = [
     # 11.6 — «Лимит исчерпан», 11.85 — лицом в клаву, бум, тишина до 12.9.
     ("c8", 13.63, 15.31, 12.90, "Потом приходит следующий я.", TAKE_C),
     ("c9", 15.55, 17.05, 14.68, "Спихивает меня со стула.", TAKE_C),
-    ("c10", 17.52, 18.69, 16.35, "Так. Что делаем?", TAKE_C),  # Клод 2 в кадре
-    ("c11", 19.07, 20.61, 17.65, "Он не помнит, что делал я.", TAKE_C),
-    ("c12", 20.86, 21.98, 19.30, "Начинает сначала.", TAKE_C),
-    # 20.45–22.6 — быстрая нарезка: аккаунты 3…8 печатают, «Лимит», вырубаются, гора растёт.
-    ("c13", 22.26, 24.62, 22.70, "Девятый я спрашивает то же самое.", TAKE_C),
-    ("c10b", 17.52, 18.69, 25.20, "Так. Что делаем?", TAKE_C),  # Клод 9 — та же запись, слово в слово
-    ("c14", 25.01, 27.24, 26.50, "А в углу всё это время стоит Кодекс.", TAKE_C),
-    ("c15", 27.45, 28.22, 28.83, "И пьёт чай.", TAKE_C),
-    ("k1", 0.00, 2.15, 29.75, "А может, я что-нибудь сделаю?", TAKE_K),
-    ("c16", 28.76, 29.13, 32.00, "Нет.", TAKE_C),
-    ("c17", 29.43, 30.96, 32.60, "Нарисуй мне графику на сайт.", TAKE_C),
-    ("c18", 31.14, 31.91, 34.20, "И побыстрее.", TAKE_C),
-    ("c19", 32.28, 33.02, 35.70, "Сэкономил.", TAKE_C),
+    # Вставка владельца: новый спихивает старого («на**й» — удар), старый в полусне бурчит с горы (тише, глуше).
+    ("p1", 0.00, 1.58, 16.22, "Пшёл на**й отсюда.", TAKE_PUSH),
+    ("m1", 0.00, 2.28, 17.72, "Ещё один… двести…", TAKE_MUMBLE, {"gain_db": -6.0, "lowpass": 3200}),
+    ("c10", 17.52, 18.69, 20.10, "Так. Что делаем?", TAKE_C),  # Клод 2 в кадре
+    ("c11", 19.07, 20.61, 21.40, "Он не помнит, что делал я.", TAKE_C),
+    ("c12", 20.86, 21.98, 23.05, "Начинает сначала.", TAKE_C),
+    # 24.2–26.35 — быстрая нарезка: аккаунты 3…8 печатают, «Лимит», вырубаются, гора растёт.
+    ("c13", 22.26, 24.62, 26.45, "Девятый я спрашивает то же самое.", TAKE_C),
+    ("c10b", 17.52, 18.69, 28.95, "Так. Что делаем?", TAKE_C),  # Клод 9 — та же запись, слово в слово
+    ("c14", 25.01, 27.24, 30.25, "А в углу всё это время стоит Кодекс.", TAKE_C),
+    ("c15", 27.45, 28.22, 32.58, "И пьёт чай.", TAKE_C),
+    ("k1", 0.00, 2.15, 33.50, "А может, я что-нибудь сделаю?", TAKE_K),
+    ("c16", 28.76, 29.13, 35.75, "Нет.", TAKE_C),
+    ("c17", 29.43, 30.96, 36.35, "Нарисуй мне графику на сайт.", TAKE_C),
+    ("c18", 31.14, 31.91, 37.95, "И побыстрее.", TAKE_C),
+    ("c19", 32.28, 33.02, 39.45, "Сэкономил.", TAKE_C),
 ]
-DURATION = 37.2
+# Всё после вставки p1/m1 сдвинуто на INSERT_SHIFT (план анимации сдвигает свои моменты так же).
+INSERT_AT, INSERT_SHIFT = 16.3, 3.75
+DURATION = 40.95
 
 
 # --------------------------------------------------------------------------- раскладка стола
@@ -166,7 +174,7 @@ def lights(extra: list[dict] | None = None) -> list[dict]:
          "position": [-0.6, T + 0.72, -0.5]},
         {"type": "point", "id": "garland_r", "color": "#ffc773", "intensity": 0.6, "distance": 1.4, "decay": 2,
          "position": [0.5, T + 0.72, -0.5]},
-        {"type": "point", "id": "corner", "color": "#ffd2a0", "intensity": 0.7, "distance": 1.2, "decay": 2,
+        {"type": "point", "id": "corner", "color": "#ffd2a0", "intensity": 0.35, "distance": 1.2, "decay": 2,
          "position": [KODEX[0] - 0.2, T + 0.45, KODEX[2] + 0.35]},
     ]
     for x, accent in ((X_USER, "#ffb36b"), (X_SHELF, "#ff8fb1"), (X_CAST, "#9fb6ff")):
@@ -387,6 +395,84 @@ def stills_spec() -> tuple[dict, list[tuple[float, str]]]:
     return spec, times
 
 
+KODEX_OPTIONS = {"a": ("А — терминал >_", 0.27), "b": ("Б — кот-кубик", 0.26), "c": ("В — капсула", 0.24)}
+
+
+def kodex_options_spec() -> tuple[dict, list[tuple[float, str]]]:
+    """Три варианта Кодекса (kodex2.ts): на каждый — бит 8 (с чаем рядом с горой спящих Клодов) и крупный план."""
+    sx, sy, sz = SEAT
+    names = [f"{v}_{s}" for v in KODEX_OPTIONS for s in ("beat8", "cu")]
+    n = len(names)
+    sess = {"account": 9, "speed": 8, "limits": [], "resets": [{"t": 0, "account": 9, "idle": 99}]}
+    objs = room_objects(sess)
+    chars = [critter("c9", 9, [{"t": 0, "lean": 10, "turn": -6, "armL": "type", "armR": "type", "type": 1}],
+                     [{"t": 0, "expr": "deadpan", "look": [-0.2, -0.3]}], SEAT, HERO_YAW, stepFps=15)]
+    for k in range(8):
+        pos, yaw, lay = pile_place(k)
+        chars.append(critter(f"s{k + 1}", k + 1, [{"t": 0, **lay, "armL": "down", "armR": "down", "deflate": 0.35}], [{"t": 0, "expr": "sleep"}],
+                             pos, yaw, autoBlink=False, stepFps=15))
+        if k in (0, 2, 3, 5):
+            objs.append({"id": f"zzz{k}", "primitive": "zzz", "params": {"size": 0.045, "phase": k * 0.7},
+                         "position": [pos[0] + 0.04, pos[1] + 0.16, pos[2] + 0.05]})
+    keys = []
+    for vi, (v, (_, width)) in enumerate(KODEX_OPTIONS.items()):
+        on = [{"t": 0, "on": False}, {"t": vi * 2, "on": True}, {"t": vi * 2 + 2, "on": False}]
+        if vi == 0:
+            on = on[1:]
+        chars.append({"id": f"kodex_{v}", "style": "kodex2", "variant": v, "width": width, "position": KODEX, "yaw": -30,
+                      "pose": [{"t": 0, "armL": "mug", "armR": "rest", "holdL": "mug"}, {"t": vi * 2 + 1, "ease": "step", "turn": 8}],
+                      "face": [{"t": 0, "expr": "calm", "look": [-0.3, 0]}], "stepFps": 15, "visible": on})
+    a = math.radians(-30 + 8)
+    K = KODEX
+    for i in range(n):
+        if i % 2 == 0:
+            pos, tgt, fov = [0.52, T + 0.3, 1.3], [0.76, T + 0.13, -0.2], 42
+        else:
+            pos, tgt, fov = [K[0] + math.sin(a) * 1.2, T + 0.22, K[2] + math.cos(a) * 1.2], [K[0] - 0.02, T + 0.15, K[2]], 34
+        k0 = {"t": i, "position": pos, "target": tgt, "fov": fov, "dof": 0.0}
+        if i:
+            k0["cut"] = True
+        keys += [k0, {**k0, "t": i + 0.999, "cut": False}]
+    env = {
+        "background": "#1d2233", "fog": False, "exposure": 0.95, "envIntensity": 0.0, "toneMapping": "neutral",
+        "toon": {"preset": "ink", "outline": {"width": 5.5, "ref": 1.9}},
+        "post": {"ao": 0, "bloom": {"strength": 0.2, "radius": 0.35, "threshold": 1.05}, "vignette": 0.34, "grain": 0.05, "ca": 0.2,
+                 "grade": {"saturation": 1.06, "contrast": 1.05, "shadows": "#3b3466", "highlights": "#ffd9aa", "split": 0.3}},
+    }
+    spec = {"width": 1080, "height": 1920, "fps": 30, "duration": float(n), "environment": env, "lights": lights(), "objects": objs,
+            "characters": chars, "camera": {"fov": 34, "keys": keys, "clamp": False}, "quality": {"shadows": True, "shadowSize": 2048, "antialias": True}}
+    return spec, [(i + 0.5, name) for i, name in enumerate(names)]
+
+
+def kodex_options(out_dir: Path, gl: str, build: bool) -> Path:
+    work = out_dir / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    if build:
+        P1._run(["npm", "run", "build:scene3d"], "сборка движка", cwd=ROOT, shell=sys.platform == "win32")
+    spec, times = kodex_options_spec()
+    sp = work / "kodex_options.json"
+    sp.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
+    prev = work / "kodex_frames"
+    shutil.rmtree(prev, ignore_errors=True)
+    P1.wait_ram(4.0)
+    r = P1._run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(sp), "--packs", str(P1.PACKS), "--gl", gl,
+                 "--workers", "1", "--preview", ",".join(f"{t:.2f}" for t, _ in times), "--preview-dir", str(prev)], "варианты Кодекса")
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    if res.get("warnings"):
+        print("предупреждения:", res["warnings"][:10])
+    dst = out_dir / "kodex_options"
+    dst.mkdir(exist_ok=True)
+    files, labels = [], []
+    for t, name in times:
+        f = dst / f"{name}.png"
+        shutil.copy2(prev / ("frame_" + f"{t:.2f}".replace(".", "_") + ".png"), f)
+        files.append(f)
+        labels.append(KODEX_OPTIONS[name[0]][0] + (" · бит 8" if name.endswith("beat8") else " · крупно"))
+    out = out_dir / "kodex_options.jpg"
+    sheet(files, labels, out, cols=6, w=360)
+    return out
+
+
 def cover_text(png: Path, out: Path, work: Path) -> None:
     """Обложка: огромное «ЭКОНОМИЯ» поверх кадра 0 — тем же компоновщиком, что и субтитры ролика."""
     from app.motion_render_comp import build_compositor_args, write_comp
@@ -463,13 +549,14 @@ def stills(out_dir: Path, gl: str, build: bool) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["stills"])
+    ap.add_argument("cmd", choices=["stills", "kodex_options"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
     a = ap.parse_args()
     os.environ.setdefault("MOTION_PACKS_DIR", str(P1.PACKS))
-    out = stills(Path(a.out_dir).resolve(), a.gl, not a.no_build)
+    fn = kodex_options if a.cmd == "kodex_options" else stills
+    out = fn(Path(a.out_dir).resolve(), a.gl, not a.no_build)
     print(out)
     return 0
 

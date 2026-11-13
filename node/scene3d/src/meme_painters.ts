@@ -4,7 +4,7 @@
  * - ``session`` — рабочая сессия «аккаунта»: тёмный редактор, строки кода сыплются, пока аккаунт работает; на
  *   ``limits`` экран краснеет — «ЛИМИТ исчерпан, через 5 ч»; на ``resets`` — новая сессия: пустой редактор и строка
  *   «> Так. Что делаем?», номер аккаунта во вкладке меняется. ``panelParams``: ``{account, limits: [t], resets:
- *   [{t, account}], speed}`` (t — от panelStart монитора).
+ *   [{t, account, idle}], speed}`` (t — от panelStart монитора; ``idle`` — пауза с вопросом до первых строк).
  * - ``sketch`` — лист с рисунком карандашом: макет сайта (шапка, «солнце»-картинка, кнопка, строки текста)
  *   проявляется штрихами от ``start`` за ``dur`` с.
  *
@@ -33,9 +33,11 @@ function sessionState(t: number, p: Record<string, any>) {
   let account = Number(p.account ?? 1);
   let since = 0;
   let limited = -1;
-  const ev: { t: number; kind: string; account?: number }[] = [];
+  let idle = 0;
+  let speed = Number(p.speed ?? 7);
+  const ev: { t: number; kind: string; account?: number; idle?: number; speed?: number }[] = [];
   for (const l of p.limits || []) ev.push({ t: Number(l), kind: "limit" });
-  for (const r of p.resets || []) ev.push({ t: Number(r.t ?? r), kind: "reset", account: r.account });
+  for (const r of p.resets || []) ev.push({ t: Number(r.t ?? r), kind: "reset", account: r.account, idle: r.idle, speed: r.speed });
   ev.sort((a, b) => a.t - b.t);
   for (const e of ev) {
     if (e.t > t) break;
@@ -43,16 +45,19 @@ function sessionState(t: number, p: Record<string, any>) {
     else {
       limited = -1;
       since = e.t;
+      idle = Number(e.idle ?? 0);
+      speed = Number(e.speed ?? p.speed ?? 7);
       if (e.account !== undefined) account = Number(e.account);
     }
   }
-  return { account, since, limited };
+  // idle — сколько секунд после новой сессии висит «> Так. Что делаем?», прежде чем пойдёт код.
+  return { account, since: since + idle, limited, speed };
 }
 
 export const MEME_PAINTERS: Record<string, (g: G, W: number, H: number, t: number, p: Record<string, any>) => void> = {
   session(g, W, H, t, p) {
     const s = W / 1280;
-    const { account, since, limited } = sessionState(t, p);
+    const { account, since, limited, speed } = sessionState(t, p);
     // Окно редактора.
     g.fillStyle = "#1b1a27";
     g.fillRect(0, 0, W, H);
@@ -76,7 +81,6 @@ export const MEME_PAINTERS: Record<string, (g: G, W: number, H: number, t: numbe
     g.fillText(`Claude · аккаунт ${account}`, 214 * s, 52 * s);
     // Код: строки появляются со скоростью speed строк/с, редактор прокручивается к последней.
     const e = Math.max(0, (limited >= 0 ? limited : t) - since);
-    const speed = Number(p.speed ?? 7);
     const n = Math.floor(e * speed);
     const lh = 46 * s;
     const top = 120 * s;

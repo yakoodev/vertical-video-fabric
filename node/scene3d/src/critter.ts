@@ -186,7 +186,7 @@ export const CP = {
   eyeX: 0.21, eyeY: 0.55, eyeW: 0.058, eyeH: 0.23,
 };
 
-function blockMat(c: string, name: string, glow = 0) {
+export function blockMat(c: string, name: string, glow = 0) {
   const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.62, metalness: 0, name });
   if (glow > 0) {
     // Чуть «светится» своим цветом: в тени остаётся тёплой терракотой, а не бурой.
@@ -381,7 +381,7 @@ export function paintCritterFace(g: CanvasRenderingContext2D, W: number, H: numb
   g.restore();
 }
 
-interface Parts {
+export interface Parts {
   root: THREE.Group;
   lean: THREE.Group;
   turn: THREE.Group;
@@ -397,7 +397,7 @@ interface Parts {
 }
 
 /** Корпус зверька (общий для героя и малышей): масштаб S = ширина корпуса, м; dims — поправки пропорций. */
-function buildCritter(S: number, body: string, shade: string, dims: Partial<typeof CP> = {}, glow = 0.12): Parts {
+export function buildCritter(S: number, body: string, shade: string, dims: Partial<typeof CP> = {}, glow = 0.12): Parts {
   const P = { ...CP, ...dims };
   const bodyMat = blockMat(body, "critter:body", glow);
   const shadeMat = blockMat(shade, "critter:shade", glow * 0.66);
@@ -463,7 +463,7 @@ function buildCritter(S: number, body: string, shade: string, dims: Partial<type
 }
 
 /** Поставить ручку по позе [поднять°, вперёд°, выдвинуть, покачивание]. */
-function setNub(a: Parts["arms"][number], n: Nub, S: number, t: number, extraRaise = 0) {
+export function setNub(a: Parts["arms"][number], n: Nub, S: number, t: number, extraRaise = 0) {
   const wig = n[3] > 0 ? Math.sin(t * 2 * Math.PI * 3.2 + (a.side > 0 ? 0 : 1.7)) * 14 * n[3] : 0;
   // Подъём — вокруг оси z (наружу-вверх), мах вперёд — вокруг вертикали (обрубок смотрит вбок).
   a.pivot.rotation.set(0, -a.side * (n[1]) * D2R, a.side * (n[0] + wig + extraRaise) * D2R);
