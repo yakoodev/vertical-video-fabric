@@ -347,10 +347,15 @@ def line_layers(lines: list[dict]) -> list[dict]:
     from app.motion_normalize import normalize_layers
 
     out = []
+    starts = sorted(float(ln["t"]) for ln in lines if ln.get("caption"))
     for n, ln in enumerate(lines):
         if not ln.get("caption"):
             continue
-        out.append({"id": f"line{n}", "type": "text", "start": round(ln["t"], 3), "end": round(ln["t"] + ln["dur"] + 0.35, 3),
+        # Подпись держится 0.35 с после реплики, но не дольше начала следующей: иначе две подписи стоят друг на друге
+        # (серия 8: «Кэт: Кампай за коллаб!» гасла под «— Кампай!» Миры).
+        nxt = next((s for s in starts if s > float(ln["t"]) + 1e-3), None)
+        end = ln["t"] + ln["dur"] + 0.35 if nxt is None else min(ln["t"] + ln["dur"] + 0.35, nxt - 0.02)
+        out.append({"id": f"line{n}", "type": "text", "start": round(ln["t"], 3), "end": round(end, 3),
                     "x": 0.5, "y": 0.8, "track": 9,
                     "props": {"text": ln["caption"], "size": 78, "weight": 900, "color": ln.get("color", "#ff9ad6"),
                               "stroke": {"color": "#0b0812", "width": 10}, "maxWidth": 980},
@@ -369,21 +374,26 @@ def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> lis
     items = plan.get("voices_extra") or []
     if not items:
         return []
+    from app import vtubika_say as SAY
+
     times = P.token_times(plan, words)
+    mapping = SAY.pronounce_map(plan)
     out, spent = [], 0.0
     for it in items:
         voice = dict(it["voice"])
         if voice.get("provider") == "polza" and not voice.get("paid_ok"):
             raise RuntimeError(f"реплика {it.get('id')}: голос Polza платный — нужен paid_ok")
-        key = hashlib.sha1(json.dumps([it["text"], voice], ensure_ascii=False).encode()).hexdigest()[:12]
+        # Как читать — по тому же словарю произношения, что у рассказчика («витУбике», «фри десять»).
+        say = SAY.apply(str(it.get("say") or it["text"]), mapping)
+        key = hashlib.sha1(json.dumps([say, voice], ensure_ascii=False).encode()).hexdigest()[:12]
         path = work / f"line_{key}.mp3"
         meta = path.with_suffix(".json")
         if not (path.is_file() and meta.is_file()):
             tts = get_tts_provider(voice["provider"], model=voice.get("model"), voice=voice["voice"], style=voice.get("style"))
-            if tts.price_rub_per_char() * len(it["text"]) > POLZA_CAP_RUB:
+            if tts.price_rub_per_char() * len(say) > POLZA_CAP_RUB:
                 raise RuntimeError("реплика: оценка выше потолка")
-            speech = tts.synthesize(it["text"], path)
-            meta.write_text(json.dumps({"text": it["text"], "voice": voice, "cost_rub": float(speech.cost_rub or 0.0)},
+            speech = tts.synthesize(say, path)
+            meta.write_text(json.dumps({"text": say, "voice": voice, "cost_rub": float(speech.cost_rub or 0.0)},
                                        ensure_ascii=False), "utf-8")
         info = json.loads(meta.read_text("utf-8"))
         spent += float(info.get("cost_rub") or 0.0)
@@ -394,7 +404,9 @@ def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> lis
         if dur > room + 0.05:
             report.setdefault("voices_extra_warn", []).append(f"{it.get('id')}: реплика {dur:.2f} с, пауза {room:.2f} с")
         out.append({"id": it.get("id"), "t": t, "dur": dur, "path": str(path), "caption": it.get("caption"),
-                    "color": it.get("color"), "gain_db": float(it.get("gain_db", -1.5))})
+                    "color": it.get("color"), "gain_db": float(it.get("gain_db", -1.5)),
+                    # Кто говорит (рот по своему голосу — app/vtubika_voices.py): hero или id модели на мониторе.
+                    **({"who": str(it["who"]), "text": str(it["text"])} if it.get("who") else {})})
     report["voices_extra"] = {"lines": [{k: v for k, v in o.items() if k != "path"} for o in out], "cost_rub": round(spent, 2)}
     return out
 
@@ -651,12 +663,13 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
 
     spec = to_vrm_spec(plan, built, words, total)
     # Рот по гласным (голос + слова), брови на ударениях (и выделенных словах) и слой жизни; голос — с lead.
-    from app import lipsync
-
     # Модель с perfect sync (52 формы ARKit, ``vrm.arkit`` плана): рот в окнах речи героя — ещё по Wav2ARKit.
-    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead,
-                            highlight=list((plan.get("highlight") or {}).keys()),
-                            arkit=bool((plan.get("vrm") or {}).get("arkit")))
+    # Реплики со своим голосом (voices_extra.who): героиня и модели на мониторе говорят своими голосами
+    # (app/vtubika_voices.py); без них — как раньше, по рассказчику в окнах «говорит в эфир».
+    from app import vtubika_voices as VOICES
+
+    lines = extra_voices(plan, words, work, report)
+    report["lipsync"] = VOICES.attach(plan, spec, lines, narration, words, total, lead, work, transcribe_words)
     if (plan.get("vrm") or {}).get("arkit"):
         report["arkit"] = bool(spec["timeline"].get("arkit"))
     # Комната 3D-пресета (presets3d.room): отрисована отдельно той же камерой — подложкой под героиню.
@@ -715,7 +728,6 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
-    lines = extra_voices(plan, words, work, report)
     burn_captions(plan, script, raw_video, capped, work, total, y=0.8, shots=built["shots"], lines=lines)
     report["flow"] = [{"t": round(float(sh["t0"]), 3), **sh["flow"]} for sh in built["shots"] if sh.get("flow")]
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)

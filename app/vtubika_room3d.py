@@ -81,7 +81,7 @@ def _shot_at(shots: list[dict], t: float) -> tuple[int, dict]:
 def frame_cameras(spec: dict) -> list[tuple[int, dict] | None]:
     """Кадр ролика → (номер плана, камера в пространстве VRM) для планов с комнатой; вставки — None."""
     fps = int(spec.get("fps") or 30)
-    n = round(float(spec["duration"]) * fps)
+    n = math.floor(float(spec["duration"]) * fps + 0.5)  # как render.mjs (Math.round), не к чётному
     out: list[tuple[int, dict] | None] = []
     for f in range(n):
         t = round(f / fps, 6)
@@ -184,7 +184,7 @@ def render_plates(plan: dict, spec: dict, work: Path, *, gl: str = "gpu", log=pr
     S3.ensure_bundle()
     key = hashlib.sha1(json.dumps(rspec, sort_keys=True).encode() + S3.BUNDLE.read_bytes()).hexdigest()
     key_file = out_dir / "key.txt"
-    n = round(float(spec["duration"]) * int(spec.get("fps") or 30))
+    n = math.floor(float(spec["duration"]) * int(spec.get("fps") or 30) + 0.5)
     if key_file.is_file() and key_file.read_text("utf-8").strip() == key and len(list(out_dir.glob("f_*.jpg"))) >= n:
         return out_dir
     shutil.rmtree(out_dir, ignore_errors=True)

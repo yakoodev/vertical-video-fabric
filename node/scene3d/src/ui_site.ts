@@ -301,7 +301,9 @@ export function drawSite(g: CanvasRenderingContext2D, W: number, H: number, s: S
     }
   } else {
     // Страница товара: прокрутка к цене и кнопкам, касание кнопки.
-    const sc = s.product.scroll * inOut((t - (tProduct + 0.45)) / Math.max(0.3, tTap - 0.5 - (tProduct + 0.45)));
+    // from — страница сразу на этом месте (несколько товаров подряд: заголовок и цена видны с первого кадра).
+    const pf = s.product.from ?? 0;
+    const sc = pf + (s.product.scroll - pf) * inOut((t - (tProduct + 0.45)) / Math.max(0.3, tTap - 0.5 - (tProduct + 0.45)));
     page(g, W, H, s.product, sc);
     const b = s.product.button;
     if (b && t >= tTap - 0.1 && t < tTap + 0.25) {

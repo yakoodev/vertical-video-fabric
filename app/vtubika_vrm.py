@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 MODEL = "VRM1_Constraint_Twist_Sample.vrm"
@@ -150,7 +151,10 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
 
     # Кадры: из плана, последний — общий план в хвосте (начало и конец ролика — общие).
     shots_in = [dict(s) for s in built["shots"]]
-    if shots_in and shots_in[-1]["cam"] != "wide" and total - speech_end > 1.0:
+    # "vrm": {"tail_wide": false} — без общего плана в хвосте (после последней фразы ещё звучат реплики других
+    # голосов, и их план идёт до конца ролика).
+    tail_wide = (plan.get("vrm") or {}).get("tail_wide", True)
+    if tail_wide and shots_in and shots_in[-1]["cam"] != "wide" and total - speech_end > 1.0:
         tail = round(speech_end + 0.35, 3)
         shots_in[-1]["t1"] = tail
         shots_in.append({"cam": "wide", "t0": tail, "t1": round(total, 3), "push": 0.1, "roll": 0})
@@ -293,7 +297,34 @@ def to_vrm_spec(plan: dict, built: dict, words: list[dict], total: float, *, fps
                 f["seq"] = seq
         out["siteShots"] = list(dict.fromkeys([*(out.get("siteShots") or []),
                                                *(u for f in product.values() for u in [f["url"], *(f.get("seq") or [])])]))
+    for sc in stream.get("scenes") or []:
+        for layer in [sc.get("bg"), *(sc.get("front") or [])]:
+            if layer and layer.get("seq"):
+                layer["seq"] = expand_seq(layer["seq"])
+    media = media_urls(out)
+    if media:
+        # Кадры записи приложения на телефоне (экран «app») и слои сцены эфира (фон, лайтстики, бокалы) — из той же
+        # папки снимков (site_shots.dir), что и страницы магазина.
+        site_dir = out.get("siteDir") or (plan.get("site_shots") or {}).get("dir")
+        if not site_dir:
+            raise ValueError("кадры приложения / сцены эфира берутся из папки site_shots.dir — её нет")
+        out["siteDir"] = str(site_dir)
+        out["siteShots"] = list(dict.fromkeys([*(out.get("siteShots") or []), *media]))
     return out
+
+
+def media_urls(spec: dict) -> list[str]:
+    """URL картинок экранов «app» телефонов и слоёв сцен эфира (``stream.scenes``): bg, front — url и кадры seq."""
+    urls: list[str] = []
+    for o in spec.get("overlays") or []:
+        for f in ((o.get("app") or {}).get("frames") or []) if o.get("kind") == "phone" else []:
+            urls.append(f["url"])
+    for sc in (spec.get("stream") or {}).get("scenes") or []:
+        layers = [sc.get("bg"), *(sc.get("front") or [])]
+        for layer in layers:
+            if layer:
+                urls += [u for u in [layer.get("url"), *(layer.get("seq") or [])] if u]
+    return list(dict.fromkeys(urls))
 
 
 def expand_seq(seq: Any) -> list[str] | None:
@@ -320,7 +351,9 @@ class VrmRenderError(RuntimeError):
 def hero_frames(spec: dict, fps: int | None = None) -> int:
     """Сколько кадров ролика героиня должна быть в кадре (планы без вставки и не «её глазами» — ``hideHero``)."""
     fps = int(fps or spec.get("fps") or 30)
-    n = round(float(spec.get("duration") or 0) * fps)
+    # Как render.mjs (Math.round): половина — вверх. round() Питона — к чётному: 56.35 с × 30 = 1690.5 давало на кадр
+    # меньше, чем отрисовано, и проверка присутствия браковала годный рендер.
+    n = math.floor(float(spec.get("duration") or 0) * fps + 0.5)
     shots = spec.get("shots") or []
     if not shots or not n:
         return 0

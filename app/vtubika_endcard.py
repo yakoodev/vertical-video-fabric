@@ -157,6 +157,36 @@ def promo_block(cfg: dict) -> str:
             f'fill:{INK}">{_esc(promo)}</text></g>')
 
 
+def partner_block(cfg: dict) -> str:
+    """Строка о партнёре под слоганом (``cfg["partner"]``: {"text": «Напарника нашла в Коллабике», "logo":
+    "assets/brand/collabika/collabika-full.png", "y": 1470, "logo_h": 150}) — текст и под ним небольшой логотип
+    партнёра (PNG от корня репозитория, встраивается в SVG). Нет поля — карточка прежняя."""
+    p = cfg.get("partner")
+    if not isinstance(p, dict) or not str(p.get("text") or "").strip():
+        return ""
+    import base64
+
+    cy = float(p.get("y", 1470))
+    delay = float(p.get("delay", 1.45))
+    style = f"font-family:{FONT_FAMILY};font-weight:{FONT_WEIGHT};font-kerning:none"
+    out = [f'<g class="in" style="animation-delay:{delay:.2f}s">',
+           f'<text x="{W / 2}" y="{cy:.0f}" text-anchor="middle" data-fit="960" style="{style};font-size:52px;'
+           f'fill:{INK}">{_esc(str(p["text"]))}</text>']
+    logo = ROOT / str(p.get("logo") or "")
+    if p.get("logo") and logo.is_file():
+        from PIL import Image
+
+        with Image.open(logo) as im:
+            lw, lh = im.size
+        h = float(p.get("logo_h", 150))
+        w = h * lw / lh
+        data = base64.b64encode(logo.read_bytes()).decode("ascii")
+        out.append(f'<image x="{W / 2 - w / 2:.1f}" y="{cy + 34:.0f}" width="{w:.1f}" height="{h:.0f}" '
+                   f'href="data:image/png;base64,{data}"/>')
+    out.append("</g>")
+    return "".join(out)
+
+
 def card_svg(cfg: dict) -> str:
     """SVG 1080×1920 с CSS-анимацией на ``cfg["duration"]`` секунд."""
     dur = float(cfg["duration"])
@@ -227,6 +257,7 @@ def card_svg(cfg: dict) -> str:
         f'<rect x="{W / 2 - 60}" y="1160" width="120" height="6" rx="3" fill="{ORANGE}" class="in" '
         f'style="animation-delay:1.15s;opacity:.85"/>',
         slogan_svg,
+        *([partner_block(cfg)] if partner_block(cfg) else []),
         *([promo_svg] if promo_svg else []),
         # Без наплыва (crossfade 0) карточка проявляется из чёрного; с наплывом истории — сразу своим фоном.
         "" if float(cfg.get("crossfade") or 0) > 0 else f'<rect width="{W}" height="{H}" fill="#000" class="veil"/>',

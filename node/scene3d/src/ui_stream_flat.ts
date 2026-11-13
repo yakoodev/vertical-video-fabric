@@ -10,7 +10,9 @@
  * Размеры — в долях высоты холста (u = H / 1000): холст ширины экрана модели (ультраширокий 2.26:1 у
  * monitor/flat_black) и обычный 16:9 раскладываются одинаково — превью ~2/3 ширины, чат — остальное.
  */
-import { drawAlert, drawLive, drawProduct, drawStream, liveImages, streamSignature, stepValue, type StreamScreen } from "./ui.ts";
+import { drawAlert, drawLive, drawProduct, drawStream, liveImages, pingPong, streamSignature, stepValue, type SceneLayer,
+  type StreamScene, type StreamScreen } from "./ui.ts";
+import { siteImages } from "./ui_site.ts";
 import { decorAt } from "./ui_deco.ts";
 import { drawGuy, guyPose } from "./ui_guy.ts";
 import { drawFox, drawWolf, wolfPose } from "./ui_pages.ts";
@@ -87,6 +89,149 @@ function noCam(g: G, pal: FlatPalette, x: number, y: number, w: number, h: numbe
   g.textAlign = "left";
 }
 
+const smooth01 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 1 : v * v * (3 - 2 * v));
+
+/** Кадр слоя на время t (кадры — туда-обратно или по кругу, fps; одна картинка — она). */
+function layerImage(l: SceneLayer, t: number): HTMLImageElement | undefined {
+  if (l.seq?.length) {
+    const i = Math.floor(Math.max(0, t) * (l.fps ?? 12));
+    const k = l.loop ? i % l.seq.length : pingPong(i, l.seq.length);
+    return siteImages[l.seq[k]] ?? (l.url ? siteImages[l.url] : undefined);
+  }
+  return l.url ? siteImages[l.url] : undefined;
+}
+
+/** Ключи движения слоя (абсолютное время): сглаженно между соседними. */
+function layerMotion(l: SceneLayer, t: number) {
+  const ks = l.keys || [];
+  const pick = (f: "dx" | "dy" | "rot" | "s" | "a", def: number) => {
+    const has = ks.filter((k) => k[f] !== undefined);
+    if (!has.length) return def;
+    if (t <= has[0].t) return has[0][f] as number;
+    for (let i = 0; i + 1 < has.length; i++) {
+      const a = has[i], b = has[i + 1];
+      if (t < b.t) return (a[f] as number) + ((b[f] as number) - (a[f] as number)) * smooth01((t - a.t) / Math.max(1e-3, b.t - a.t));
+    }
+    return has[has.length - 1][f] as number;
+  };
+  return { dx: pick("dx", 0), dy: pick("dy", 0), rot: pick("rot", 0), s: pick("s", 1), a: pick("a", 1) };
+}
+
+/** Фон окна по заполнению (cover) или целиком (contain). */
+function drawBgLayer(g: G, l: SceneLayer, t: number, x: number, y: number, w: number, h: number) {
+  const img = layerImage(l, t);
+  if (!img) return;
+  const k = l.fit === "contain" ? Math.min(w / img.width, h / img.height) : Math.max(w / img.width, h / img.height);
+  const iw = img.width * k, ih = img.height * k;
+  g.drawImage(img, x + w / 2 - iw / 2 + (l.x !== undefined ? (l.x - 0.5) * w : 0), y + h / 2 - ih / 2 + (l.y !== undefined ? (l.y - 0.5) * h : 0), iw, ih);
+}
+
+/** Слой поверх аватара: центр (x, y) и ширина w в долях окна, появление снизу, движение по ключам. */
+function drawFrontLayer(g: G, l: SceneLayer, t: number, x: number, y: number, w: number, h: number) {
+  if (l.t0 !== undefined && t < l.t0) return;
+  const img = layerImage(l, t - (l.t0 ?? 0));
+  if (!img) return;
+  const appear = l.t0 === undefined ? 1 : smooth01((t - l.t0) / 0.3);
+  const m = layerMotion(l, t);
+  const lw = (l.w ?? 0.4) * w * m.s, lh = lw * img.height / img.width;
+  const cx = x + (l.x ?? 0.5) * w + m.dx * w, cy = y + (l.y ?? 0.5) * h + m.dy * h + (1 - appear) * 0.18 * h;
+  g.save();
+  g.globalAlpha = appear * m.a;
+  if (l.blend) g.globalCompositeOperation = l.blend;
+  g.translate(cx, cy);
+  g.rotate((m.rot * Math.PI) / 180);
+  if (l.flip) g.scale(-1, 1);
+  if (l.shadow) {
+    g.shadowColor = "rgba(0,0,0,0.35)";
+    g.shadowBlur = lw * 0.04;
+  }
+  g.drawImage(img, -lw / 2, -lh / 2, lw, lh);
+  g.restore();
+}
+
+function sceneAt(s: StreamScreen, t: number): { cur: StreamScene | null; prev: StreamScene | null } {
+  let cur: StreamScene | null = null, prev: StreamScene | null = null;
+  for (const k of s.scenes || []) {
+    if (k.t <= t + 1e-9) {
+      prev = cur;
+      cur = k;
+    }
+  }
+  return { cur, prev };
+}
+
+/** Фон сцены; смена фона — шторка слева направо со светящейся кромкой (старые обои уезжают под новый фон). */
+function drawSceneBg(g: G, s: StreamScreen, t: number, x: number, y: number, w: number, h: number, u: number) {
+  const { cur, prev } = sceneAt(s, t);
+  if (!cur?.bg) return;
+  const wipe = cur.wipe ?? 0;
+  const k = wipe > 0 ? smooth01((t - cur.t) / wipe) : 1;
+  if (k < 1 && prev?.bg) drawBgLayer(g, prev.bg, t, x, y, w, h);
+  g.save();
+  if (k < 1) {
+    g.beginPath();
+    g.rect(x, y, w * k, h);
+    g.clip();
+  }
+  drawBgLayer(g, cur.bg, t, x, y, w, h);
+  g.restore();
+  if (k > 0 && k < 1) {
+    const ex = x + w * k;
+    const gr = g.createLinearGradient(ex - 60 * u, 0, ex + 12 * u, 0);
+    gr.addColorStop(0, "rgba(255,255,255,0)");
+    gr.addColorStop(0.8, "rgba(255,240,220,0.75)");
+    gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr;
+    g.fillRect(ex - 60 * u, y, 72 * u, h);
+  }
+}
+
+function drawSceneFront(g: G, s: StreamScreen, t: number, x: number, y: number, w: number, h: number, u: number) {
+  const { cur } = sceneAt(s, t);
+  if (!cur) return;
+  for (const l of cur.front || []) drawFrontLayer(g, l, t, x, y, w, h);
+  const p = cur.plate;
+  if (!p || !p.names?.length) return;
+  // Общая плашка коллаба: тёмное стекло, имена своим цветом, разделитель, подпись — над нижней подписью эфира.
+  const k = p.t0 === undefined ? 1 : smooth01((t - p.t0) / 0.35);
+  if (k <= 0) return;
+  const size = 64 * u, sub = 34 * u, sep = ` ${p.sep ?? "×"} `;
+  g.save();
+  g.font = flatFont("display", 900, size);
+  const parts = p.names.flatMap((n, i) => (i ? [{ text: sep, color: "#ffffff" }, n] : [n]));
+  const widths = parts.map((q) => g.measureText(q.text).width);
+  const tw = widths.reduce((a, b) => a + b, 0);
+  g.font = flatFont("body", 700, sub);
+  const sw = p.sub ? g.measureText(p.sub).width : 0;
+  const bw = Math.max(tw, sw) + 90 * u, bh = (p.sub ? 150 : 104) * u;
+  // top — сверху по центру (между головами двоих), иначе — над нижней подписью эфира.
+  const cx = x + w / 2, top = p.top ? y + 34 * u - (1 - k) * 30 * u : y + h - 150 * u - bh - (1 - k) * 30 * u;
+  g.globalAlpha = k;
+  g.beginPath();
+  rrect(g, cx - bw / 2, top, bw, bh, 30 * u);
+  g.fillStyle = "rgba(10,12,22,0.78)";
+  g.fill();
+  g.lineWidth = 4 * u;
+  g.strokeStyle = "rgba(255,255,255,0.18)";
+  g.stroke();
+  g.font = flatFont("display", 900, size);
+  g.textBaseline = "middle";
+  g.textAlign = "left";
+  let xx = cx - tw / 2;
+  parts.forEach((q, i) => {
+    g.fillStyle = q.color || "#ffffff";
+    g.fillText(q.text, xx, top + 58 * u);
+    xx += widths[i];
+  });
+  if (p.sub) {
+    g.font = flatFont("body", 700, sub);
+    g.fillStyle = "rgba(235,238,250,0.82)";
+    g.textAlign = "center";
+    g.fillText(p.sub, cx, top + 118 * u);
+  }
+  g.restore();
+}
+
 /** Окно превью эфира: аватар по ключам (как у прежнего экрана), снизу — подпись эфира на затемнении. */
 function preview(g: G, pal: FlatPalette, s: StreamScreen, t: number, x: number, y: number, w: number, h: number, u: number) {
   const avatar = stepValue<string>(s.avatars, t, "kind", "silhouette");
@@ -100,6 +245,7 @@ function preview(g: G, pal: FlatPalette, s: StreamScreen, t: number, x: number, 
   bg.addColorStop(1, s.camBg?.[1] || "#0d0e15");
   g.fillStyle = bg;
   g.fillRect(x, y, w, h);
+  drawSceneBg(g, s, t, x, y, w, h, u);
   const ax = x + w / 2, ay = y + h * 0.5, as = h * 0.5;
   if (avatar === "nocam") noCam(g, pal, x, y, w, h, u);
   else if (avatar === "product") drawProduct(g, s.product, t, x, y, w, h);
@@ -107,6 +253,7 @@ function preview(g: G, pal: FlatPalette, s: StreamScreen, t: number, x: number, 
   else if (avatar === "fox") drawFox(g, ax, ay, as, { mouthOpen: false });
   else if (avatar === "wolf") drawWolf(g, ax, ay, as, wolfPose(t, s.wolf || {}));
   else if (avatar === "hoodie" || avatar === "vtuber") drawGuy(g, ax, ay - as * 0.12, as * 1.05, guyPose(t, avatar === "hoodie" ? s.guy : s.vtuber, avatar));
+  drawSceneFront(g, s, t, x, y, w, h, u);
   const title = stepValue<string | undefined>(s.titles, t, "title", s.title);
   if (title) {
     const bh = 112 * u;

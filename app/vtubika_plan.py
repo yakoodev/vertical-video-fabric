@@ -220,10 +220,12 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         st = times[n]
         t_end = st[-1]["end"]
         for shot in s.get("shots") or []:
-            shots.append({**shot, "t0": round(anchor(st, shot.get("at"), n), 3), "n": n})
+            # dt — сдвиг склейки от слова (как у событий); раньше не учитывался: два плана на «end» с разным dt
+            # сливались в один (серия 8: план на монитор пропадал, реплика Кэт шла на лице Миры).
+            shots.append({**shot, "t0": round(anchor(st, shot.get("at"), n) + float(shot.get("dt") or 0), 3), "n": n})
         for ev in s.get("do") or []:
             t = round(anchor(st, ev.get("at"), n) + float(ev.get("dt") or 0), 3)
-            until = (anchor(st, ev["until"], n) if ev.get("until") else
+            until = (anchor(st, ev["until"], n) + float(ev.get("dt_end") or 0) if ev.get("until") else
                      t + float(ev["dur"]) if ev.get("dur") else None)
             if "span" in ev:  # до конца фразы через span фраз (+ пауза-«бит» после неё)
                 k = min(len(times) - 1, n + int(ev["span"]))
@@ -302,6 +304,29 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
                 phones.append({"t0": t, "t1": round(until or t + 3.0, 3), **ph})
             if ev.get("paid") and phones:
                 phones[-1].setdefault("store", {})["paidAt"] = t
+            if "app_frame" in ev and phones:
+                # Экран «app» (настоящая запись приложения): с t — этот кадр; tap — касание прошлого кадра перед сменой
+                # (точка в долях картинки), звук касания.
+                app = phones[-1].setdefault("app", {"frames": []})
+                if ev.get("tap") and app["frames"]:
+                    app["frames"][-1].update({"tap": [float(v) for v in ev["tap"]], "tapT": round(t - 0.12, 3)})
+                    add_sfx("click", t - 0.12)
+                app["frames"].append({"t": t, "url": str(ev["app_frame"])})
+            if "dm" in ev and phones:
+                # Экран «dm» (личка): сообщение появляется в t; входящее — со звуком.
+                phones[-1].setdefault("dm", {"title": "", "msgs": []})["msgs"].append({"t": t, **ev["dm"]})
+                add_sfx("pop", t)
+            if "scene" in ev:
+                # Сцена окна эфира (фон, слои поверх аватара, плашка): времена слоёв t0 и ключей — от события.
+                sc = copy.deepcopy(ev["scene"])
+                for layer in sc.get("front") or []:
+                    if "t0" in layer:
+                        layer["t0"] = round(t + float(layer["t0"]), 3)
+                    for k in layer.get("keys") or []:
+                        k["t"] = round(t + float(k["t"]), 3)
+                if isinstance(sc.get("plate"), dict) and "t0" in sc["plate"]:
+                    sc["plate"]["t0"] = round(t + float(sc["plate"]["t0"]), 3)
+                screen.setdefault("scenes", []).append({"t": t, **sc})
             if ev.get("site_step") and phones:
                 # Шаг вставки «сайт на телефоне» (app/vtubika_site.py): product — открыть товар, tap — кнопка,
                 # delivered — «Модель пришла».
