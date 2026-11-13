@@ -288,7 +288,12 @@ props по типу:
   audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
          effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
          track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};
-         итог всё равно выравнивает общая нормализация клипа)
+         итог всё равно выравнивает общая нормализация клипа);
+         role — роль в сведении (auto_mix, audio_mix_report, check_voiceover): voice — голос/озвучка (над ним музыка
+         на 12–18 дБ тише, ducking по фразам), music — музыка, sfx — звуковой эффект (под голосом), ambience — фон;
+         нет поля — по имени слоя (озвучка/голос/voice → voice, музыка → music) и длине (длинная дорожка → music, иначе sfx).
+         Голос: mode track + role voice, end = длина файла (без end у audio с файлом — так и ставится) — или сразу
+         add_voiceover; эффект: mode effect, volume 0.3–0.6
 Все допустимые поля props (остальное отбрасывается): {fields}
 Камера: [{{t (время клипа), zoom 1..4, x, y, ease?, shake? 0..1}}] — двигает только видео (в раскладках pip_cam/split — только игру, окошко вебки на месте)
   и слои с followCamera: true (путь камеры в их ключи не копируй).
