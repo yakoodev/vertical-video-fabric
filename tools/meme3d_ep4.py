@@ -396,12 +396,14 @@ def stills_spec() -> tuple[dict, list[tuple[float, str]]]:
 
 
 KODEX_OPTIONS = {"a": ("А — терминал >_", 0.27), "b": ("Б — кот-кубик", 0.26), "c": ("В — капсула", 0.24)}
+# Второй заход (владелец: «из их логотипа сделай персонажа, похожего на клода»): узел-цветок телом и головой.
+KODEX_OPTIONS2 = {"d": ("1 — узел-тело", 0.25), "e": ("2 — узел-голова", 0.25)}
 
 
-def kodex_options_spec() -> tuple[dict, list[tuple[float, str]]]:
+def kodex_options_spec(options: dict) -> tuple[dict, list[tuple[float, str]]]:
     """Три варианта Кодекса (kodex2.ts): на каждый — бит 8 (с чаем рядом с горой спящих Клодов) и крупный план."""
     sx, sy, sz = SEAT
-    names = [f"{v}_{s}" for v in KODEX_OPTIONS for s in ("beat8", "cu")]
+    names = [f"{v}_{s}" for v in options for s in ("beat8", "cu")]
     n = len(names)
     sess = {"account": 9, "speed": 8, "limits": [], "resets": [{"t": 0, "account": 9, "idle": 99}]}
     objs = room_objects(sess)
@@ -415,7 +417,7 @@ def kodex_options_spec() -> tuple[dict, list[tuple[float, str]]]:
             objs.append({"id": f"zzz{k}", "primitive": "zzz", "params": {"size": 0.045, "phase": k * 0.7},
                          "position": [pos[0] + 0.04, pos[1] + 0.16, pos[2] + 0.05]})
     keys = []
-    for vi, (v, (_, width)) in enumerate(KODEX_OPTIONS.items()):
+    for vi, (v, (_, width)) in enumerate(options.items()):
         on = [{"t": 0, "on": False}, {"t": vi * 2, "on": True}, {"t": vi * 2 + 2, "on": False}]
         if vi == 0:
             on = on[1:]
@@ -444,15 +446,15 @@ def kodex_options_spec() -> tuple[dict, list[tuple[float, str]]]:
     return spec, [(i + 0.5, name) for i, name in enumerate(names)]
 
 
-def kodex_options(out_dir: Path, gl: str, build: bool) -> Path:
+def kodex_options(out_dir: Path, gl: str, build: bool, options: dict = KODEX_OPTIONS, name: str = "kodex_options") -> Path:
     work = out_dir / "work"
     work.mkdir(parents=True, exist_ok=True)
     if build:
         P1._run(["npm", "run", "build:scene3d"], "сборка движка", cwd=ROOT, shell=sys.platform == "win32")
-    spec, times = kodex_options_spec()
-    sp = work / "kodex_options.json"
+    spec, times = kodex_options_spec(options)
+    sp = work / f"{name}.json"
     sp.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
-    prev = work / "kodex_frames"
+    prev = work / f"{name}_frames"
     shutil.rmtree(prev, ignore_errors=True)
     P1.wait_ram(4.0)
     r = P1._run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(sp), "--packs", str(P1.PACKS), "--gl", gl,
@@ -460,16 +462,16 @@ def kodex_options(out_dir: Path, gl: str, build: bool) -> Path:
     res = json.loads(r.stdout.strip().splitlines()[-1])
     if res.get("warnings"):
         print("предупреждения:", res["warnings"][:10])
-    dst = out_dir / "kodex_options"
+    dst = out_dir / name
     dst.mkdir(exist_ok=True)
     files, labels = [], []
-    for t, name in times:
-        f = dst / f"{name}.png"
+    for t, nm in times:
+        f = dst / f"{nm}.png"
         shutil.copy2(prev / ("frame_" + f"{t:.2f}".replace(".", "_") + ".png"), f)
         files.append(f)
-        labels.append(KODEX_OPTIONS[name[0]][0] + (" · бит 8" if name.endswith("beat8") else " · крупно"))
-    out = out_dir / "kodex_options.jpg"
-    sheet(files, labels, out, cols=6, w=360)
+        labels.append(options[nm[0]][0] + (" · бит 8" if nm.endswith("beat8") else " · крупно"))
+    out = out_dir / f"{name}.jpg"
+    sheet(files, labels, out, cols=min(6, len(files)), w=360)
     return out
 
 
@@ -549,14 +551,19 @@ def stills(out_dir: Path, gl: str, build: bool) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["stills", "kodex_options"])
+    ap.add_argument("cmd", choices=["stills", "kodex_options", "kodex_options2"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
     a = ap.parse_args()
     os.environ.setdefault("MOTION_PACKS_DIR", str(P1.PACKS))
-    fn = kodex_options if a.cmd == "kodex_options" else stills
-    out = fn(Path(a.out_dir).resolve(), a.gl, not a.no_build)
+    od = Path(a.out_dir).resolve()
+    if a.cmd == "kodex_options2":
+        out = kodex_options(od, a.gl, not a.no_build, KODEX_OPTIONS2, "kodex_options2")
+    elif a.cmd == "kodex_options":
+        out = kodex_options(od, a.gl, not a.no_build)
+    else:
+        out = stills(od, a.gl, not a.no_build)
     print(out)
     return 0
 

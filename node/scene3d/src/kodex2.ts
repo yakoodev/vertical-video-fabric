@@ -7,7 +7,10 @@
  *   пульсирует);
  * - ``b`` — самодовольный чёрный кот-кубик: ушки, на макушке хохолок-облачко, жёлтые полуприкрытые глаза, «ω»,
  *   усы, хвост-кубики;
- * - ``c`` — аккуратная белая капсула: тёмный визор с одной светящейся щелью-глазом, крошечные ножки.
+ * - ``c`` — аккуратная белая капсула: тёмный визор с одной светящейся щелью-глазом, крошечные ножки;
+ * - ``d`` — «узел-цветок» из шести сцепленных скруглённых звеньев и есть тело (тёмный, глаза-бусинки на светлой
+ *   шестигранной пластине в центре), на коротких ножках;
+ * - ``e`` — маленькое светлое тело-блок, голова — тёмный «узел» со светлыми глазами.
  *
  * Движение — как у critter: ``pose: [{t, ease, lean, tilt, turn, hop, squash, armL, armR, sip, holdL, holdR}]`` (руки — имя
  * из NUB_POSES критера или [поднять°, вперёд°, выдвинуть, покачивание]; ``mug`` / ``sip`` — свои позы с кружкой; кружка —
@@ -24,7 +27,7 @@ import type { Character } from "./character.ts";
 export interface Kodex2Spec {
   id: string;
   style: "kodex2";
-  variant?: "a" | "b" | "c";
+  variant?: "a" | "b" | "c" | "d" | "e";
   width?: number;
   position?: number[];
   yaw?: number;
@@ -392,11 +395,187 @@ function capsuleRig(S: number, badge: string): Rig {
   return { root, hopG, lean, squash, arms, canvas: cv, tex, paint: paintSlit, height: legH + H };
 }
 
+/* ---------------------------------------------------------------- «узел»: шесть сцепленных скруглённых звеньев */
+
+/**
+ * Игрушечный «узел-цветок»: шесть толстых скруглённых звеньев-«стадионов» (выдавленные, с мягкой фаской) по кругу
+ * через 60°, сцеплены внахлёст (каждое чуть повёрнуто вокруг своей радиальной оси — «плетёнка»), в центре —
+ * шестигранная пластина-лицо. ``D`` — диаметр (м), лицевая сторона — +z. Без надписей.
+ */
+function knot(D: number, color: string, plateColor: string) {
+  const k = D / 0.86;
+  const grp = new THREE.Group();
+  const m = blockMat(color, "kodex2:knot", 0);
+  const L = 0.32 * k, ro = 0.12 * k, w = 0.058 * k, d = 0.3 * k, depth = 0.09 * k;
+  const stadium = (r: number) => {
+    const s = new THREE.Shape();
+    s.moveTo(-L / 2, -r);
+    s.lineTo(L / 2, -r);
+    s.absarc(L / 2, 0, r, -Math.PI / 2, Math.PI / 2, false);
+    s.lineTo(-L / 2, r);
+    s.absarc(-L / 2, 0, r, Math.PI / 2, (3 * Math.PI) / 2, false);
+    return s;
+  };
+  const outer = stadium(ro);
+  const hole = stadium(ro - w);
+  outer.holes.push(new THREE.Path(hole.getPoints(24)));
+  const geo = new THREE.ExtrudeGeometry(outer, { depth, bevelEnabled: true, bevelThickness: 0.018 * k, bevelSize: 0.012 * k, bevelSegments: 4,
+    curveSegments: 20 });
+  geo.translate(0, 0, -depth / 2);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    const g = new THREE.Group();
+    g.position.set(Math.cos(a) * d, Math.sin(a) * d, 0);
+    // Звено вдоль касательной (вертушка с поворотом ~25° проверена — читается как куча цепей, хуже).
+    g.rotation.z = a + Math.PI / 2;
+    const link = mesh(geo, m);
+    link.rotation.y = 0.2; // плетёнка: один конец звена над соседом, другой — под
+    g.add(link);
+    grp.add(g);
+  }
+  const plate = mesh(new THREE.CylinderGeometry(0.215 * k, 0.215 * k, 0.07 * k, 6, 1), blockMat(plateColor, "kodex2:plate", 0));
+  plate.rotation.x = Math.PI / 2;
+  plate.rotation.y = Math.PI / 6;
+  plate.position.z = 0.01 * k;
+  grp.add(plate);
+  // Лицо — канвас на пластине.
+  const cv = document.createElement("canvas");
+  cv.width = 320;
+  cv.height = 320;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const face = new THREE.Mesh(new THREE.PlaneGeometry(0.36 * k, 0.36 * k), new THREE.MeshBasicMaterial({ map: tex, transparent: true, toneMapped: false,
+    polygonOffset: true, polygonOffsetFactor: -2 }));
+  face.position.z = 0.046 * k;
+  face.userData.toon = false;
+  face.userData.outline = false;
+  grp.add(face);
+  return { grp, canvas: cv, tex, extent: 0.43 * k, front: 0.07 * k };
+}
+
+/** Лицо на пластине узла: два «бусинки»-глаза (тёмные на светлом или светлые на тёмном). */
+function paintDots(eye: string, shine: string): FacePaint {
+  return (g, W, H, expr, blink, talk, look, t) => {
+    g.clearRect(0, 0, W, H);
+    g.fillStyle = eye;
+    g.strokeStyle = eye;
+    g.lineCap = "round";
+    const cx = W / 2 + look[0] * W * 0.06, cy = H * 0.47 - look[1] * H * 0.05;
+    const ex = W * 0.2, r = W * 0.11 * (expr === "hopeful" ? 1.2 : 1) * (1 + talk * 0.15);
+    for (const s of [-1, 1]) {
+      const x = cx + s * ex;
+      if (expr === "smile") {
+        g.lineWidth = W * 0.05;
+        g.beginPath();
+        g.arc(x, cy + r * 0.4, r, Math.PI * 1.15, Math.PI * 1.85);
+        g.stroke();
+      } else if (expr === "closed" || blink > 0.6) {
+        g.lineWidth = W * 0.045;
+        g.beginPath();
+        g.moveTo(x - r, cy);
+        g.lineTo(x + r, cy);
+        g.stroke();
+      } else {
+        // calm — чуть прикрытые сверху, focused — щёлочки.
+        const h = expr === "focused" ? r * 0.7 : expr === "calm" ? r * 1.55 : r * 2;
+        g.beginPath();
+        g.roundRect(x - r, cy - h / 2, r * 2, h, r);
+        g.fill();
+        if (expr === "calm") {
+          g.save();
+          g.globalCompositeOperation = "destination-out";
+          g.fillRect(x - r * 1.2, cy - h / 2 - r, r * 2.4, r * 1.25);
+          g.restore();
+        }
+        if (expr === "hopeful") {
+          g.fillStyle = shine;
+          g.beginPath();
+          g.arc(x + r * 0.35, cy - r * 0.45, r * 0.32, 0, Math.PI * 2);
+          g.fill();
+          g.fillStyle = eye;
+        }
+      }
+    }
+    // Речь — маленький рот-овал (только когда говорит).
+    if (talk > 0.05) {
+      g.beginPath();
+      g.ellipse(cx, cy + H * 0.17, W * 0.04, H * 0.025 + talk * H * 0.04, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    void t;
+  };
+}
+
+function nubArm(side: number, x: number, y: number, S: number, m: THREE.Material) {
+  const pivot = new THREE.Group();
+  pivot.position.set(side * x, y, 0);
+  pivot.rotation.order = "YZX";
+  const nub = mesh(new RoundedBoxGeometry(CP.armW * S, CP.armH * S, CP.armD * S, 3, 0.03 * S), m);
+  nub.position.x = side * (CP.armW / 2) * S;
+  pivot.add(nub);
+  return { pivot, nub, side };
+}
+
+/** D — узел и есть тело: тёмный «цветок» стоит на коротких ножках, ручки-обрубки по бокам. */
+function knotBodyRig(S: number, badge: string): Rig {
+  const dark = "#4b4e57", light = "#ecebe6";
+  const root = new THREE.Group();
+  const hopG = new THREE.Group();
+  root.add(hopG);
+  const legH = 0.05;
+  const legM = blockMat(dark, "kodex2:leg", 0);
+  for (const s of [-1, 1]) {
+    const leg = mesh(new RoundedBoxGeometry(0.06, legH + 0.03, 0.07, 3, 0.014), legM);
+    leg.position.set(s * 0.055, (legH + 0.03) / 2 - 0.015, 0);
+    hopG.add(leg);
+  }
+  const lean = new THREE.Group();
+  lean.position.y = legH;
+  hopG.add(lean);
+  const squash = new THREE.Group();
+  lean.add(squash);
+  const D = S * 1.12;
+  const kn = knot(D, dark, light);
+  kn.grp.position.y = D * 0.47;
+  squash.add(kn.grp);
+  const arms = [1, -1].map((s) => nubArm(s, kn.extent * 0.92, D * 0.4, S, blockMat(dark, "kodex2:arm", 0)));
+  for (const a of arms) squash.add(a.pivot);
+  const plate = labelPlate(badge, 0.3 * S, 0.1 * S, "#f6ead8");
+  plate.position.set(0, D * 0.1, kn.front + 0.004);
+  squash.add(plate);
+  return { root, hopG, lean, squash, arms, canvas: kn.canvas, tex: kn.tex, paint: paintDots("#1b1c20", "#ffffff"), height: legH + D };
+}
+
+/** E — маленькое тёмное тело-блок, голова — светлый узел, на тёмной пластине светлые глаза. */
+function knotHeadRig(S: number, badge: string): Rig {
+  const dark = "#4b4e57", light = "#e4e3dd";
+  const dims = { bodyH: 0.5, bodyD: 0.6, radius: 0.13, legH: 0.13, legW: 0.15, legD: 0.26, legX: [-0.24, 0.24], armW: 0.17, armH: 0.18, armD: 0.24,
+    armY: 0.45 };
+  const parts = buildCritter(S, dark, "#33353c", dims, 0);
+  const P = { ...CP, ...dims };
+  const root = new THREE.Group();
+  const hopG = new THREE.Group();
+  root.add(hopG);
+  parts.root.remove(parts.lean);
+  hopG.add(parts.lean);
+  parts.face.visible = false;
+  const D = S * 0.92;
+  const kn = knot(D, light, "#2f3137");
+  kn.grp.position.y = P.bodyH * S + D * 0.44;
+  parts.squash.add(kn.grp);
+  const plate = labelPlate(badge, 0.36 * S, 0.12 * S, "#f6ead8");
+  plate.position.set(0, P.bodyH * S * 0.45, (P.bodyD / 2 + 0.012) * S);
+  parts.squash.add(plate);
+  return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: kn.canvas, tex: kn.tex, paint: paintDots("#f1efe8", "#9fe9ff"),
+    height: (P.legH + P.bodyH) * S + D };
+}
+
 export function createKodex2(spec: Kodex2Spec): Character {
   const variant = spec.variant || "a";
   const S = spec.width ?? 0.27;
   const badge = spec.badge ?? "Кодекс";
-  const rig = variant === "c" ? capsuleRig(S, badge) : blockRig(variant, S, badge);
+  const rig = variant === "c" ? capsuleRig(S, badge) : variant === "d" ? knotBodyRig(S, badge) : variant === "e" ? knotHeadRig(S, badge)
+    : blockRig(variant, S, badge);
   const { root, hopG, lean, squash, arms } = rig;
   root.name = `kodex2:${spec.id}`;
   const p = spec.position || [0, 0, 0];
