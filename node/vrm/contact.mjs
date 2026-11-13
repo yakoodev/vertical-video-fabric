@@ -67,7 +67,7 @@ const ok = (!full || c.frames === n) && c.min >= MIN_GAP && !(c.chair.min < 0) &
   !!tw && tw.bad === 0;
 process.stdout.write(JSON.stringify({ ok, frames: c.frames, fingers: { min_gap_mm: mm(c.min), at: c.at, point: c.point, surface: c.surface },
   chair: { min_gap_mm: mm(c.chair.min), at: c.chair.at, point: c.chair.point },
-  hair: { min_gap_mm: mm(c.hair.min), at: c.hair.at, point: c.hair.point },
+  hair: { min_gap_mm: mm(c.hair.min), at: c.hair.at, point: c.hair.point, joints: c.hair.joints },
   hands: Object.fromEntries(Object.entries(H.gaps || {}).map(([k, g]) => [k, { min_gap_mm: mm(g.min), at: g.at, point: g.point, against: g.against }])),
   hand_spans: hs.length, hero_frames: heroFrames,
   twist: tw ? { frames: tw.frames, wrist_max: tw.wrist, forearm_max: tw.forearm, palm_y_max: tw.palm, jump_max: tw.jump,

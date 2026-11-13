@@ -372,7 +372,9 @@ def check_problems(checks: dict | None, spec: dict) -> list[str]:
         out.append("пальцы: нет замеров")
     if tl.get("chair") and blank(checks.get("chair")):
         out.append("кресло: нет замеров")
-    if tl.get("chair") and blank(checks.get("hair")):
+    # Модель без пружинных прядей (ёжик): contact.mjs отдаёт joints: 0 — мерить нечего, это не пустая проверка.
+    hair = checks.get("hair")
+    if tl.get("chair") and blank(hair) and not (isinstance(hair, dict) and hair.get("joints") == 0):
         out.append("волосы: нет замеров")
     if spec.get("handCheck") is not False and not checks.get("hands"):
         out.append("руки: нет замеров")

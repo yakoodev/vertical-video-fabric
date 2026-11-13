@@ -55,3 +55,22 @@ def test_room_plate_focus_follows_shot_focus():
          "camKeys": [{"t": 0, "pos": [0, 1.4, 0], "target": [0, 1.3, 0.74], "fov": 50}]}]}
     cams = ROOM.frame_cameras(spec)
     assert "focus" not in cams[0][1] and cams[20][1]["focus"] == [0, 1.33, 0.74]
+
+
+def test_cast_heroes_are_distinct_models_and_reach_the_spec():
+    """Каст (13.11): у каждого героя своя модель из cast/ (а не перекраска одной и той же), масштаб под кресло и
+    постановка кистей на клавиатуре доходят до спеки рендера."""
+    from app.vtubika_vrm_stage import CAST, HEROINES
+
+    assert len(CAST) >= 6 and set(CAST) <= set(HEROINES)
+    models = [h["model"] for h in CAST.values()]
+    assert len(set(models)) == len(models) and all(m.startswith("cast/") and m.endswith(".vrm") for m in models)
+    assert not {h["model"] for k, h in HEROINES.items() if k not in CAST} & set(models)
+    plan, built, words, total = _built()
+    for name in ("taya", "shura", "lilya"):
+        her = CAST[name]
+        spec = to_vrm_spec({**plan, "vrm": {**(plan.get("vrm") or {}), "heroine": name}}, built, words, total)
+        assert spec["model"] == her["model"] and spec["modelScale"] == her["scale"]
+        assert spec["headphones"] == her["headphones"] and spec["look"]["rim"] == her["look"]["rim"]
+        assert spec["timeline"].get("keysSpread") == her.get("keys_spread")
+        assert spec["timeline"].get("keysPull") == her.get("keys_pull")

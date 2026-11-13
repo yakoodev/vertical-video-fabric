@@ -87,6 +87,14 @@ def test_empty_checks_fail(story, broken, what):
         VRM.require_checks({**GOOD_CHECKS, **broken}, spec)
 
 
+def test_hairless_model_is_not_an_empty_check(story):
+    """Ёжик без пружинных прядей (каст: Гоша): contact.mjs отдаёт joints 0 — мерить нечего, это не ошибка."""
+    spec = story[4]
+    assert VRM.check_problems({**GOOD_CHECKS, "hair": {"min_gap_mm": None, "at": -1, "point": "", "joints": 0}}, spec) == []
+    with pytest.raises(VRM.VrmRenderError, match="волосы"):
+        VRM.require_checks({**GOOD_CHECKS, "hair": {"min_gap_mm": None, "at": -1, "point": "", "joints": 7}}, spec)
+
+
 def test_crashed_checks_fail(story):
     with pytest.raises(VRM.VrmRenderError, match="упали"):
         VRM.require_checks({"error": "Error: браузер завершился"}, story[4])

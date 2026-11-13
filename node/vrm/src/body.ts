@@ -116,17 +116,20 @@ export function chairGap(vrm: VRM, chair: ChairSpec): { gap: number; point: stri
   return best;
 }
 
-/** Суставы волос против коллайдеров тела и спинки: наименьший зазор, м (отрицательный — внутри). */
-export function hairGap(vrm: VRM, chair: ChairSpec | undefined): { gap: number; point: string } {
+/** Суставы волос против коллайдеров тела и спинки: наименьший зазор, м (отрицательный — внутри); joints — сколько
+ * свободных суставов прядей проверено (0 — у модели нет пружинных прядей, например ёжик: мерить нечего). */
+export function hairGap(vrm: VRM, chair: ChairSpec | undefined): { gap: number; point: string; joints: number } {
   const mgr = vrm.springBoneManager;
   let best = { gap: Infinity, point: "" };
-  if (!mgr) return best;
+  let joints = 0;
+  if (!mgr) return { ...best, joints };
   const shapes: { c: VRMSpringBoneCollider; name: string }[] = [];
   for (const j of mgr.joints) for (const g of j.colliderGroups) if ((g as any).name === "vvf-body") for (const c of g.colliders) shapes.push({ c, name: c.parent?.name || "кресло" });
   const uniq = [...new Map(shapes.map((s) => [s.c.uuid, s])).values()];
   for (const j of mgr.joints) {
     // Корни прядей сидят на голове (внутри её коллайдера по определению) — проверяем свободные суставы.
     if (!/hair/i.test(j.bone.name || "") || !/hair/i.test(j.bone.parent?.name || "")) continue;
+    joints++;
     const p = j.bone.getWorldPosition(new THREE.Vector3());
     for (const { c, name } of uniq) {
       c.updateWorldMatrix(true, false);
@@ -135,5 +138,5 @@ export function hairGap(vrm: VRM, chair: ChairSpec | undefined): { gap: number; 
     }
   }
   void chair;
-  return best;
+  return { ...best, joints };
 }
