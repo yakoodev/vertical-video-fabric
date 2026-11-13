@@ -806,8 +806,8 @@
 {
 "name": "separate_voices",
 "title": "Разбираю голоса",
-"description": "72c2a4d5fc66b7ea",
-"parameters": "47055dafa1144126",
+"description": "04ba51055c031baf",
+"parameters": "8183aa1ba24521b7",
 "mutating": true,
 "scope": "clip",
 "module": "voices",
@@ -894,7 +894,7 @@
 {
 "name": "generate_subtitles",
 "title": "Распознаю речь заново",
-"description": "4b268a28753d36b3",
+"description": "fe290bab9ecf31d2",
 "parameters": "47055dafa1144126",
 "mutating": true,
 "scope": "clip",
@@ -1326,8 +1326,8 @@
 {
 "name": "render_status",
 "title": "Смотрю рендер",
-"description": "feba7b74bb171723",
-"parameters": "9ce00faba8df6b7c",
+"description": "055cd4556923d743",
+"parameters": "3e4e1191ff76aae5",
 "mutating": false,
 "scope": "global",
 "module": null,

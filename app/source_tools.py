@@ -366,6 +366,14 @@ def _clip_row(ctx: ToolContext, plan: dict, project: int | None, hidden_source: 
     }
     if project is None and hidden_source:
         row["project_unassigned"] = True
+    try:  # кто делал клип (переписка чата, внешний агент): чужое не выдавать за свою работу
+        from app.ai.finish_guard import clip_origin, origin_label
+
+        made = origin_label(clip_origin(ctx.store, int(plan["id"])))
+        if made:
+            row["made_in"] = made
+    except Exception:  # noqa: BLE001
+        pass
     return row
 
 

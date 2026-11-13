@@ -124,8 +124,13 @@ SYSTEM = """\
   Просят «отрендеренный клип», «готовый ролик», «результат» — запусти render_clip сам и дождись done. Не пиши
   «отрендерен», «готов», «соберётся автоматически», пока render_status не ответил done: сам сервис клип не
   рендерит, а ответ о готовом ролике без рендера он пометит.
+- Задание просит готовый ролик («результат — отрендеренный клип») или плейбук велит рендер — ход не кончается, пока
+  у клипа, который ты правил или создал, нет render_status done. Не заканчивай списком «осталось: render_clip →
+  render_status» — сделай это сам; не вышло — скажи почему.
 - Холст (create_canvas_clip) ложится в проект этой переписки. Клип с project_warning или project_unassigned в
   get_clip — чужой или ничей: не выдавай его за свою работу и не бери как готовый результат.
+- Клип, созданный не в этой переписке, — не твоя работа; не выдавай его за результат. Кто его делал — поле made_in в
+  get_clip и list_clips. Нашёл готовый клип по тому же заданию — скажи владельцу, чей он, и делай своё (или спроси).
 - Без настройки «Публиковать самому» публикуется только одобренное владельцем. Перед отправкой — lint_clip (зоны
   кнопок площадок, темп чтения, вспышки, луп): warn поправь и перерендерь. Клип на публикацию — submit_for_approval.
   Заголовок, описание и хэштеги сервис пишет сам после рендера; обложку — generate_covers → choose_cover (группа montage).
@@ -370,14 +375,26 @@ class ThreadPolicy(TurnPolicy):
     def on_blocked(self, state: TurnState, reason: Any) -> str:
         return f"Gemini остановился на своём фильтре контента ({reason}). Переформулируй или выбери другую модель."
 
+    def finish_guard(self, state: TurnState, answer: str) -> str | None:
+        # Задание просит готовый ролик (или плейбук велит рендер), а у клипа этого хода рендера нет — ход не кончается.
+        from app.ai.finish_guard import render_guard
+        from app.ai.render_claims import touched_clips
+        from app.project_chat_playbook import pick
+
+        changed, _seen = touched_clips(state.steps)
+        return render_guard(self.store, self.message, pick(self.message, state.steps), changed, self.started)
+
     def finish(self, state: TurnState, text: str) -> str:
+        from app.ai.finish_guard import thread_clips, with_foreign_note
         from app.ai.render_claims import with_render_note
 
         if not text:
             done = [s["label"] for s in state.steps if s.get("ok") and s.get("kind") == "tool"]
             text = self.note or ("Сделал:\n" + "\n".join(f"- {d}" for d in done[:20]) if done else "Готово.")
         # «Отрендерено»/«готово» без рендера у клипов этого хода — пометка сервиса (эксперимент 12.11, B2).
-        return with_render_note(self.store, text, state.steps, self.started)
+        text = with_render_note(self.store, text, state.steps, self.started)
+        # Клип, сделанный не в этой переписке, результатом не выдаём (повтор 13.11, RC3: чужой клип 1074).
+        return with_foreign_note(self.store, text, thread_clips(self.store, self.thread.get("id"), state.steps))
 
 
 def hold_for_owner(store: Any, thread_id: int, reply_id: int | None, step: dict, name: str, args: dict, label: str) -> dict:

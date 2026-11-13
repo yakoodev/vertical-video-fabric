@@ -102,6 +102,22 @@ class ClipPolicy(TurnPolicy):
         self.silent_nudges = 0
         self.gap_warnings: list[str] = []  # «пустой кадр»/«нет финала» из последнего ответа линта
         self.last_change_body: dict | None = None
+        # Чат клипа: начало хода по часам базы — правленому клипу нужен рендер не раньше (finish_guard).
+        self.started: str | None = None
+        if hooks is not None:
+            from app.ai.render_claims import db_now
+
+            self.started = db_now(store)
+
+    def finish_guard(self, state: TurnState, answer: str) -> str | None:
+        # Только в чате клипа (ИИ-монтаж автопилота рендерит сам): задание просит готовый ролик — без рендера не сдаём.
+        if self.hooks is None or not self.ctx.changed:
+            return None
+        from app.ai.finish_guard import render_guard
+        from app.project_chat_playbook import pick
+
+        return render_guard(self.store, self.message, pick(self.message, state.steps), [int(self.clip_plan_id)],
+                            self.started)
 
     def prompt(self, state: TurnState) -> str:
         # Формат читаем на каждый вызов: агент мог сменить его set_format (по просьбе владельца).

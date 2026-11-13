@@ -187,7 +187,26 @@ def h_get_clip(ctx: ToolContext, _args: dict) -> dict:
         "subtitles": _subtitles_view(ctx.store, ctx.plan_id, timeline["pieces"]),
         "warnings": _clip_warnings(ctx, plan, timeline, layers),
         "owner": _owner_marks(ctx),
+        "renders": _renders_view(ctx),
     }
+
+
+def _renders_view(ctx: ToolContext) -> dict:
+    """Рендеры клипа с подписанными номерами: render_clip_id — готовый файл в базе, render_job_id — задание
+    render_clip (повтор 13.11, RC3: два разных «render_id» путали). render_status принимает оба."""
+    from app.render_jobs import render_ids
+
+    try:
+        rows = ctx.store.list_clips_for_plan(int(ctx.plan_id))[:3]
+    except Exception:  # noqa: BLE001
+        rows = []
+    latest = rows[0] if rows else None
+    out: dict = render_ids(int(ctx.plan_id), int(latest["id"]) if latest else None)
+    out["recent"] = [{"render_clip_id": int(r["id"]), "status": r.get("status"), "created_at": r.get("created_at"),
+                      "duration_sec": r.get("duration_sec")} for r in rows]
+    if not rows and "render_job_id" not in out:
+        out["note"] = "рендера нет: render_clip(clip_id) → render_status(render_id, wait_sec=30)"
+    return out
 
 
 def _project_view(ctx: ToolContext, source: dict) -> dict:
@@ -202,6 +221,14 @@ def _project_view(ctx: ToolContext, source: dict) -> dict:
         out["project_name"] = str(row["name"]) if row else ""
     elif str(source.get("source_type") or "") in ("canvas", "clip_upload"):
         out["project_unassigned"] = True
+    try:  # кто делал клип: переписка чата, внешний агент, редактор (RC3: чужой клип выдан за свой)
+        from app.ai.finish_guard import clip_origin, origin_label
+
+        origin = clip_origin(ctx.store, int(ctx.plan_id))
+        if origin:
+            out["made_in"] = {**origin, "label": origin_label(origin)}
+    except Exception:  # noqa: BLE001 - справка, не повод ронять get_clip
+        pass
     hint = getattr(ctx, "project_hint", None)
     if hint is not None and project != int(hint):
         out["project_warning"] = (f"клип не из этого проекта (#{hint}): " + ("ничей холст" if project is None else

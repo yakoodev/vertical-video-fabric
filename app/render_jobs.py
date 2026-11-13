@@ -69,6 +69,28 @@ def _trim() -> None:
         _jobs.pop(job["render_id"], None)
 
 
+def last_for(clip_id: int) -> dict | None:
+    """Последнее задание рендера клипа (идущее или законченное), пока сервис его помнит."""
+    with _lock:
+        jobs = [j for j in _jobs.values() if j["clip_id"] == int(clip_id)]
+        return _public(max(jobs, key=lambda j: j["created_at"])) if jobs else None
+
+
+def render_ids(clip_id: int, render_clip_id: int | None) -> dict:
+    """Оба номера рендера с подписями (повтор 13.11, RC3: lint_clip давал число 1047, render_status ждал r…)."""
+    job = last_for(clip_id)
+    out: dict = {}
+    if render_clip_id is not None:
+        out["render_clip_id"] = int(render_clip_id)
+    if job is not None:
+        out["render_job_id"] = job["render_id"]
+        out["render_job_status"] = job["status"]
+    if out:
+        out["render_ids_note"] = ("render_clip_id — номер готового рендера в базе (файл /media/clips/N); render_job_id — "
+                                  "задание render_clip. render_status принимает любой из них")
+    return out
+
+
 def active_for(clip_id: int) -> dict | None:
     with _lock:
         job = next((j for j in _jobs.values() if j["clip_id"] == int(clip_id) and j["status"] in ACTIVE), None)
