@@ -56,6 +56,9 @@ export interface OnryoSpec {
   faceTint?: string;
   /** Контровой ободок: цвет и сила по времени [t, сила] (линейно); нет — без ободка. */
   rim?: { color?: string; keys: [number, number][] };
+  /** Серия 3: когда переходит с места на место (ключи pos разные) — медленно шаркает: шаг (м), размах бедра и
+   * колена (градусы). Фаза шага — от пройденного пути, размах — от скорости: стоит — ноги не двигаются. */
+  walk?: { stride?: number; hip?: number; knee?: number };
 }
 
 export interface Onryo {
@@ -143,8 +146,36 @@ export function keyAt(keys: OnryoKey[], t: number): OnryoKey {
   if (ya - yb > Math.PI) yb += 2 * Math.PI;
   const pos = a.pos.map((v, j) => L(v, b.pos[j])) as V3;
   const y = L(ya, yb);
+  // Свои углы костей (серия 3: наклон к ней) — тоже плавно; нет у ключа — нули.
+  let bones: Record<string, V3> | undefined;
+  if (a.bones || b.bones) {
+    bones = {};
+    for (const n of new Set([...Object.keys(a.bones || {}), ...Object.keys(b.bones || {})])) {
+      const va = a.bones?.[n] ?? [0, 0, 0], vb = b.bones?.[n] ?? [0, 0, 0];
+      bones[n] = [L(va[0], vb[0]), L(va[1], vb[1]), L(va[2], vb[2])];
+    }
+  }
   return { t, pos, face: [pos[0] + Math.sin(y), pos[2] + Math.cos(y)], tilt: L(a.tilt ?? 28, b.tilt ?? 28), nod: L(a.nod ?? 0, b.nod ?? 0),
-    turn: L(a.turn ?? 0, b.turn ?? 0), part: L(a.part ?? 0, b.part ?? 0), bones: a.bones };
+    turn: L(a.turn ?? 0, b.turn ?? 0), part: L(a.part ?? 0, b.part ?? 0), bones };
+}
+
+/** Пройденный путь (м) к моменту t по тем же ключам и той же плавности, что keyAt. */
+export function travelled(keys: OnryoKey[], t: number): number {
+  let s = 0;
+  for (let i = 0; i + 1 < keys.length; i++) {
+    const a = keys[i], b = keys[i + 1];
+    const len = Math.hypot(b.pos[0] - a.pos[0], b.pos[2] - a.pos[2]);
+    if (t >= b.t) {
+      s += len;
+      continue;
+    }
+    if (t > a.t) {
+      const u = (t - a.t) / Math.max(1e-6, b.t - a.t);
+      s += len * u * u * (3 - 2 * u);
+    }
+    break;
+  }
+  return s;
 }
 
 /** Контровой свет (ободок) для материалов онрё: прибавка к цвету после альбедо, сильнее на краях силуэта —
@@ -366,6 +397,24 @@ export async function loadOnryo(u: PsxUniforms, s: OnryoSpec, packs: string, max
     add("head", [key.nod ?? 0, key.turn ?? 0, -(key.tilt ?? 28)]);
     add("neck", [0, (key.turn ?? 0) * 0.3, -(key.tilt ?? 28) * 0.35]);
     for (const [n, v] of Object.entries(key.bones || {})) add(n, v);
+    if (s.walk) {
+      // Шаг: бёдра навстречу друг другу, колено сгибается у ноги, которая идёт вперёд; размах — от скорости.
+      const dt = 1 / 30;
+      const v = Math.abs(travelled(s.keys, key.t) - travelled(s.keys, key.t - dt)) / dt;
+      const amp = Math.min(1, v / 0.55);
+      if (amp > 0.002) {
+        const ph = (travelled(s.keys, key.t) / (s.walk.stride ?? 0.55)) * Math.PI;
+        const hip = (s.walk.hip ?? 13) * amp, knee = (s.walk.knee ?? 16) * amp;
+        const sw = Math.sin(ph);
+        add("leftUpperLeg", [-hip * sw, 0, 0]);
+        add("rightUpperLeg", [hip * sw, 0, 0]);
+        add("leftLowerLeg", [knee * Math.max(0, sw), 0, 0]);
+        add("rightLowerLeg", [knee * Math.max(0, -sw), 0, 0]);
+        add("spine", [0, 2.5 * amp * sw, 1.5 * amp * Math.cos(ph)]);
+        add("leftUpperArm", [3 * amp * sw, 0, 0]);
+        add("rightUpperArm", [-3 * amp * sw, 0, 0]);
+      }
+    }
     vrm.scene.position.set(0, 0, 0);
     vrm.scene.updateMatrixWorld(true);
     rig.apply({ bones, expr: { blink: 0.0, sad: 0.0 } });

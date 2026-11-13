@@ -71,6 +71,8 @@ export interface PsxShot {
   pov?: boolean;
   /** Смотреть на голову Сборщика (доля 0..1 между точкой плана и его головой) — наезд на лицо. */
   aimHead?: number | [number, number][];
+  /** Огонёк не попадает в кадр (серия 3: селфи — это запись её камеры, а огонёк на плёнку не попадает). */
+  noWisp?: boolean;
 }
 
 /** Старая запись на камере (серия 1): другое место (вокзал), своё время записи p = t − t0, показывается сначала на
@@ -131,7 +133,11 @@ export interface PsxWorldSpec {
   wisp?: WispSpec;
   fx?: FxSpec;
   /** Фонарь в руке/от камеры: позиция, направление, цвет, сила, конус (градусы), дальность. */
-  flashlight?: { pos: V3; dir: V3; color?: string; power?: number; powerKeys?: [number, number][]; cone?: number; range?: number };
+  flashlight?: { pos: V3; dir: V3; color?: string; power?: number; powerKeys?: [number, number][]; cone?: number; range?: number;
+    /** Серия 3: лампа переставлена с момента t (положение, направление) — героиня перешла в другое место зала. */
+    moves?: [number, V3, V3][] };
+  /** Лицо героини по времени (серия 3: страх): ключи выражений VRM, между ключами — линейно, поверх heroine.expr. */
+  exprKeys?: { t: number; expr: Record<string, number> }[];
   creation?: CreationSpec;
   cards?: CardSpec[];
   roll?: RollSpec;
@@ -256,7 +262,7 @@ function pose(time: number, rec = false, springs = true) {
     if (v >= 0 && v < 0.18) blink = Math.max(blink, v < 0.07 ? v / 0.07 : 1 - (v - 0.07) / 0.11);
   }
   if (!rec && spec.eyesClosed?.some(([a, b]) => time >= a && time < b)) blink = 1;
-  const expr: Record<string, number> = { ...(spec.heroine?.expr || {}), blink };
+  const expr: Record<string, number> = { ...(spec.heroine?.expr || {}), ...(rec ? {} : exprAt(spec.exprKeys, time)), blink };
   for (const m of L.mouth || []) {
     if (time < m.t0 || time >= m.t1) continue;
     // Гласные по голосу и словам (app/lipsync.py) — иначе рот по громкости.
@@ -284,6 +290,28 @@ function pose(time: number, rec = false, springs = true) {
   vrm.update(dt / 2);
   vrm.update(dt / 2);
   if (!springs) (vrm as any).springBoneManager = sbm;
+}
+
+/** Выражение лица по ключам (линейно между соседними, за краями — крайний ключ). */
+function exprAt(ks: PsxWorldSpec["exprKeys"], t: number): Record<string, number> {
+  if (!ks?.length) return {};
+  if (t <= ks[0].t) return { ...ks[0].expr };
+  for (let i = 0; i + 1 < ks.length; i++) {
+    const a = ks[i], b = ks[i + 1];
+    if (t < b.t) {
+      const u = (t - a.t) / Math.max(1e-6, b.t - a.t), out: Record<string, number> = {};
+      for (const k of new Set([...Object.keys(a.expr), ...Object.keys(b.expr)])) out[k] = (a.expr[k] ?? 0) + ((b.expr[k] ?? 0) - (a.expr[k] ?? 0)) * u;
+      return out;
+    }
+  }
+  return { ...ks[ks.length - 1].expr };
+}
+
+/** Серия 3: где в зале стоит героиня (точка зала, которая сейчас в начале координат) — последний ключ до t. */
+function hallShift(t: number): [number, number] {
+  let at: [number, number] = [0, 0];
+  for (const [kt, p] of spec.hall?.moves || []) if (t >= kt) at = p;
+  return at;
 }
 
 /** Пружины волос и одежды: прогрев с покоя (стопкадр, первый кадр) или один шаг (кадр подряд). */
@@ -416,6 +444,11 @@ function view3d(t: number, rec: boolean, nested: boolean) {
   camera.updateProjectionMatrix();
   camera.updateMatrixWorld(true);
   if (!rec) {
+    if (spec.hall?.moves) {
+      const [hx, hz] = hallShift(time);
+      world.group.position.set(-hx, 0, -hz);
+      world.group.updateMatrixWorld(true);
+    }
     world.update(time, camera);
     things.update(time, camera);
     onryo?.billboard(camera);
@@ -442,8 +475,10 @@ function view3d(t: number, rec: boolean, nested: boolean) {
     u.psxSpCone.value.set(Math.cos(cc), Math.cos(cc * 0.55));
     u.psxSpRange.value = fl.range ?? 4;
   } else if (fl) {
-    u.psxSpPos.value.set(...fl.pos);
-    u.psxSpDir.value.set(...fl.dir).normalize();
+    let fp = fl.pos, fd = fl.dir;
+    for (const [mt, mp, md] of fl.moves || []) if (time >= mt) [fp, fd] = [mp, md];
+    u.psxSpPos.value.set(...fp);
+    u.psxSpDir.value.set(...fd).normalize();
     u.psxSpCol.value.set(fl.color || "#fff2d8").multiplyScalar(powerAt(fl, time));
     const cc = ((fl.cone ?? 22) * Math.PI) / 180;
     u.psxSpCone.value.set(Math.cos(cc), Math.cos(cc * 0.55));
@@ -466,6 +501,7 @@ function view3d(t: number, rec: boolean, nested: boolean) {
   }
   // Видоискатель: её глазами — без неё, камеры в руках и огонька (огонёк на плёнку не попадает).
   vrm.scene.visible = !shot.pov;
+  if (shot.noWisp && wisp) wisp.group.visible = false;
   if (shot.pov) {
     if (camcorder) camcorder.group.visible = false;
     if (wisp) wisp.group.visible = false;

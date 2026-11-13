@@ -25,6 +25,9 @@ export interface StationSpec {
   booth?: { pos: [number, number]; rot?: number };
   /** Яркость ламп (1 — как на записи серии 1); меньше — зал темнее, больше мёртвых трубок. */
   lamps?: number;
+  /** Серия 3: героиня переходит по залу — с момента t точка зала (x, z) оказывается в начале координат (world.ts
+   * сдвигает зал целиком; героиня, камера и огонёк остаются в своих осях). */
+  moves?: [number, [number, number]][];
 }
 
 const faceted = (g: THREE.BufferGeometry) => {
