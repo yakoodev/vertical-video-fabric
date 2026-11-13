@@ -211,15 +211,15 @@ class Settings:
         # ✨ ИИ выбирает лучшие judges a few hundred moments in one call — worth the
         # smarter model (a few cents), so it defaults to the montage/analysis one.
         self.gemini_pick_model = os.getenv("GEMINI_PICK_MODEL", self.gemini_montage_model).strip()
-        # 💬 ИИ-монтажёр в редакторе (app/ai/editor_agent.py): десятки шагов с
-        # инструментами и картинками кадра — нужна самая сильная Pro-модель.
-        # Лимиты у владельца большие, экономить на ней незачем.
-        self.gemini_agent_model = os.getenv("GEMINI_AGENT_MODEL", "gemini-3.1-pro-preview").strip()
+        # 💬 ИИ-монтажёр в редакторе и чат агента (app/ai/editor_agent.py, project_chat). 13.11 владелец по итогам
+        # слепого сравнения: gemini-3.1-pro «немощная» — ни в сервисе, ни в тестах её не используем; 3.8-flash
+        # сделала на уровне Opus и дешевле.
+        self.gemini_agent_model = os.getenv("GEMINI_AGENT_MODEL", "gemini-3.8-flash").strip()
         # Модели на выбор в шапке чата с агентом (GET /api/chat/models): «модель» или «модель=подпись» через запятую.
         # Модель агента и модели анализа/текста/монтажа добавляются к списку сами.
         self.gemini_chat_models = _csv(os.getenv(
             "GEMINI_CHAT_MODELS",
-            "gemini-3.1-pro-preview=умнее (как ИИ-монтажёр),gemini-3.8-flash=быстрее и дешевле",
+            "gemini-3.8-flash=основная",
         ))
         self.agent_max_steps = int(os.getenv("AGENT_MAX_STEPS", "25"))
         # Рисует недостающие стикеры для «Файлов для монтажа» (только оригинальные).

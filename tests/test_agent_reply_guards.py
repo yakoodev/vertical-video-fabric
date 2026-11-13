@@ -92,7 +92,8 @@ def test_chat_models_come_from_settings(monkeypatch):
     from app.settings import settings
 
     ids = [m["id"] for m in models()["models"]]
-    assert "gemini-3.8-flash" in ids and "gemini-3.1-pro-preview" in ids
+    # 13.11: 3.1-pro убрана владельцем («немощная») — в списке только 3.8-flash и модели ролей.
+    assert "gemini-3.8-flash" in ids and "gemini-3.1-pro-preview" not in ids
     monkeypatch.setattr(settings, "gemini_chat_models", ["gemini-9-ultra=самая новая", "gemini-3.8-flash"])
     got = models()["models"]
     assert got[0] == {"id": "gemini-9-ultra", "label": "gemini-9-ultra", "note": "самая новая", "provider": "gemini"}
