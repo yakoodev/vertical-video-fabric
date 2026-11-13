@@ -271,6 +271,13 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
     for k, w in enumerate(sc.get("words", [])):
         items.append(word_item(w, clk, style, fps, f0, f1, seed * 7 + k))
     from resolve import clear_hero_overlaps
+    # большое слово без явного ухода живёт до следующего перелёта камеры (не дольше 2.5 с)
+    for w_ in (it for it in items if it["type"] == "word" and it["letters"] and it["out"] is None):
+        last = max(L["land"] for L in w_["letters"])
+        nxt = [s_["f"] for s_ in shots if s_["f"] - s_["dur"] > last + 2]
+        cand = min([last + int(2.5 * fps)] + nxt[:1])
+        if cand < f1 - 4:
+            w_["out"] = cand
     clear_hero_overlaps(items)
     # надписи, нарисованные в самой странице (штампы, «продолжение следует»), — тоже препятствия
     marks = []
