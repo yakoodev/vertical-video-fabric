@@ -37,6 +37,9 @@ export interface CritterLook {
   headsetAccent?: string;
   /** Маленькая бирка с именем в нижнем углу морды (например «Claude»). */
   label?: string;
+  /** Бейдж на груди (низ морды по центру): подпись слева, номер крупно в тёмном квадрате справа —
+   * «аккаунт» + «3». Одинаковые герои отличаются только номером. */
+  badge?: { text?: string; number?: string | number; accent?: string };
   /** Собственное свечение корпуса (тень остаётся тёплой), 0..0.3; по умолчанию 0.12. */
   glow?: number;
 }
@@ -94,6 +97,8 @@ export interface CritterFace {
   /** Брови-блоки: видимость, подъём, наклон (° — плюс: злые), разница по высоте. */
   brow: number; browY: number; browAngle: number; browAsym: number;
   blush: number; sweat: number; vein: number; tear: number; dots: number;
+  /** Глаза-крестики «x x» (вырубился). */
+  dead: number;
   /** Корпус краснеет (ярость), 0..1. */
   tint: number;
 }
@@ -103,7 +108,7 @@ const BASE: CritterFace = {
   lidTop: 0, lidAngle: 0, lidBot: 0,
   flat: 0, happy: 0, squint: 0, closed: 0, asym: 0, shine: 0,
   brow: 0, browY: 0, browAngle: 0, browAsym: 0,
-  blush: 0, sweat: 0, vein: 0, tear: 0, dots: 0, tint: 0,
+  blush: 0, sweat: 0, vein: 0, tear: 0, dots: 0, dead: 0, tint: 0,
 };
 
 /**
@@ -148,6 +153,10 @@ export const CRITTER_EXPR: Record<string, Partial<CritterFace>> = {
   dreamy: { lidTop: 0.12, lidBot: 0.32, eyeY: 0.05, blush: 1, brow: 1, browY: 0.4, browAngle: -10 },
   /** Умиление/«ну ладно»: дуги и румянец. */
   cute: { happy: 1, blush: 1, eyeY: 0.05, brow: 1, browY: 0.35, browAngle: -6 },
+  /** Спит: закрытые глаза-ковшики без бровей. */
+  sleep: { closed: 1, eyeY: -0.05 },
+  /** Вырубился (лимит): глаза-крестики. */
+  ko: { dead: 1, sweat: 0.6 },
 };
 
 function faceAt(name: string | undefined): CritterFace {
@@ -174,10 +183,12 @@ export const CP = {
   bodyW: 1, bodyH: 0.56, bodyD: 0.5, radius: 0.075,
   legH: 0.15, legW: 0.115, legD: 0.26, legX: [-0.375, -0.2, 0.2, 0.375],
   armW: 0.17, armH: 0.18, armD: 0.26, armY: 0.38,
+  /** Скругление ножек и ручек (доли ширины корпуса). */
+  legRad: 0.022, armRad: 0.03,
   eyeX: 0.21, eyeY: 0.55, eyeW: 0.058, eyeH: 0.23,
 };
 
-function blockMat(c: string, name: string, glow = 0) {
+export function blockMat(c: string, name: string, glow = 0) {
   const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.62, metalness: 0, name });
   if (glow > 0) {
     // Чуть «светится» своим цветом: в тени остаётся тёплой терракотой, а не бурой.
@@ -233,6 +244,18 @@ export function paintCritterFace(g: CanvasRenderingContext2D, W: number, H: numb
       g.moveTo(x - d * k * 0.3, y - k * 0.32);
       g.lineTo(x + d * k * 0.3, y);
       g.lineTo(x - d * k * 0.3, y + k * 0.32);
+      g.stroke();
+      continue;
+    }
+    if (f.dead > 0.5) {
+      // x — две толстые диагонали.
+      g.lineWidth = k * 0.2;
+      const r = k * 0.32;
+      g.beginPath();
+      g.moveTo(x - r, y - r);
+      g.lineTo(x + r, y + r);
+      g.moveTo(x + r, y - r);
+      g.lineTo(x - r, y + r);
       g.stroke();
       continue;
     }
@@ -360,7 +383,7 @@ export function paintCritterFace(g: CanvasRenderingContext2D, W: number, H: numb
   g.restore();
 }
 
-interface Parts {
+export interface Parts {
   root: THREE.Group;
   lean: THREE.Group;
   turn: THREE.Group;
@@ -376,7 +399,7 @@ interface Parts {
 }
 
 /** Корпус зверька (общий для героя и малышей): масштаб S = ширина корпуса, м; dims — поправки пропорций. */
-function buildCritter(S: number, body: string, shade: string, dims: Partial<typeof CP> = {}, glow = 0.12): Parts {
+export function buildCritter(S: number, body: string, shade: string, dims: Partial<typeof CP> = {}, glow = 0.12): Parts {
   const P = { ...CP, ...dims };
   const bodyMat = blockMat(body, "critter:body", glow);
   const shadeMat = blockMat(shade, "critter:shade", glow * 0.66);
@@ -385,7 +408,7 @@ function buildCritter(S: number, body: string, shade: string, dims: Partial<type
   lean.position.y = P.legH * S;
   root.add(lean);
   // Ножки — кубики в ряд (как у пиксельного маскота), под корпусом; наклоняются вместе с ним.
-  const legGeo = new RoundedBoxGeometry(P.legW * S, (P.legH + 0.04) * S, P.legD * S, 3, 0.022 * S);
+  const legGeo = new RoundedBoxGeometry(P.legW * S, (P.legH + 0.04) * S, P.legD * S, P.legRad > 0.03 ? 5 : 3, P.legRad * S);
   const legs: THREE.Mesh[] = [];
   for (const x of P.legX) {
     const l = new THREE.Mesh(legGeo, shadeMat);
@@ -397,11 +420,11 @@ function buildCritter(S: number, body: string, shade: string, dims: Partial<type
   lean.add(turn);
   const squash = new THREE.Group();
   turn.add(squash);
-  const bodyMesh = new THREE.Mesh(new RoundedBoxGeometry(P.bodyW * S, P.bodyH * S, P.bodyD * S, 5, P.radius * S), bodyMat);
+  const bodyMesh = new THREE.Mesh(new RoundedBoxGeometry(P.bodyW * S, P.bodyH * S, P.bodyD * S, P.radius > 0.1 ? 8 : 5, P.radius * S), bodyMat);
   bodyMesh.position.y = (P.bodyH / 2) * S;
   squash.add(bodyMesh);
   // Ручки-обрубки: пивот у боковой грани, блок торчит наружу.
-  const armGeo = new RoundedBoxGeometry(P.armW * S, P.armH * S, P.armD * S, 3, 0.03 * S);
+  const armGeo = new RoundedBoxGeometry(P.armW * S, P.armH * S, P.armD * S, P.armRad > 0.04 ? 5 : 3, P.armRad * S);
   const arms: Parts["arms"] = [];
   for (const side of [1, -1]) {
     const pivot = new THREE.Group();
@@ -442,7 +465,7 @@ function buildCritter(S: number, body: string, shade: string, dims: Partial<type
 }
 
 /** Поставить ручку по позе [поднять°, вперёд°, выдвинуть, покачивание]. */
-function setNub(a: Parts["arms"][number], n: Nub, S: number, t: number, extraRaise = 0) {
+export function setNub(a: Parts["arms"][number], n: Nub, S: number, t: number, extraRaise = 0) {
   const wig = n[3] > 0 ? Math.sin(t * 2 * Math.PI * 3.2 + (a.side > 0 ? 0 : 1.7)) * 14 * n[3] : 0;
   // Подъём — вокруг оси z (наружу-вверх), мах вперёд — вокруг вертикали (обрубок смотрит вбок).
   a.pivot.rotation.set(0, -a.side * (n[1]) * D2R, a.side * (n[0] + wig + extraRaise) * D2R);
@@ -536,6 +559,8 @@ export function createCritter(spec: CritterSpec): Character {
     lab.userData.outline = false;
     back.add(lab);
   }
+
+  if (look.badge) addBadge(squash, S, look.badge);
 
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
@@ -667,6 +692,55 @@ export function createCritter(spec: CritterSpec): Character {
   return ch;
 }
 
+/**
+ * Бейдж на груди: кремовая карточка на клипсе по центру низа морды (между биркой и микрофоном): слева подпись
+ * («аккаунт»), справа номер в тёмном квадрате — читается и на общем плане.
+ */
+function addBadge(squash: THREE.Group, S: number, b: NonNullable<CritterLook["badge"]>) {
+  const bw = 0.27, bh = 0.11;
+  const card = new THREE.Mesh(new RoundedBoxGeometry(bw * S, bh * S, 0.018 * S, 2, 0.012 * S), blockMat("#fbf3e6", "critter:badge", 0.1));
+  card.position.set(-0.005 * S, 0.1 * S, (CP.bodyD / 2 + 0.01) * S);
+  card.rotation.z = -0.03;
+  card.castShadow = true;
+  squash.add(card);
+  const clip = new THREE.Mesh(new RoundedBoxGeometry(0.07 * S, 0.035 * S, 0.026 * S, 2, 0.008 * S), blockMat("#8a8f99", "critter:clip"));
+  clip.position.set(0, (bh / 2 + 0.005) * S, 0.004 * S);
+  card.add(clip);
+  const cv = document.createElement("canvas");
+  cv.width = 640;
+  cv.height = Math.round(640 * bh / bw);
+  const g = cv.getContext("2d")!;
+  const H = cv.height, W = cv.width;
+  g.fillStyle = "#fbf3e6";
+  g.fillRect(0, 0, W, H);
+  // Цветная полоса сверху, как у бейджа конференции.
+  g.fillStyle = b.accent || "#d97757";
+  g.fillRect(0, 0, W, H * 0.16);
+  const sq = H * 0.7;
+  g.fillStyle = "#2b1c20";
+  g.beginPath();
+  g.roundRect(W - sq - H * 0.12, H * 0.22, sq, sq, H * 0.08);
+  g.fill();
+  g.fillStyle = "#fff6ea";
+  g.textAlign = "center";
+  g.textBaseline = "middle";
+  const num = String(b.number ?? "1");
+  g.font = `900 ${Math.round(sq * (num.length > 1 ? 0.62 : 0.8))}px Montserrat, Arial, sans-serif`;
+  g.fillText(num, W - sq / 2 - H * 0.12, H * 0.22 + sq * 0.54);
+  g.fillStyle = "#2b1c20";
+  g.textAlign = "left";
+  g.font = `800 ${Math.round(H * 0.33)}px Montserrat, Arial, sans-serif`;
+  g.fillText(b.text ?? "аккаунт", H * 0.14, H * 0.6);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const face = new THREE.Mesh(new THREE.PlaneGeometry((bw - 0.02) * S, (bh - 0.016) * S), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+  face.position.z = 0.0095 * S;
+  face.userData.toon = false;
+  face.userData.outline = false;
+  card.add(face);
+}
+
 /* ---------------------------------------------------------------- малыши для вставок */
 
 function chip(label: string, dot: string, R: number, scale: number): THREE.Sprite {
@@ -721,7 +795,7 @@ function darker(c: string, k = 0.78): string {
 export function critterHelper(p: Record<string, any>): Prop {
   const size = p.size ?? 0.13;
   const dims: typeof CP = { bodyW: 1, bodyH: 0.74, bodyD: 0.7, radius: 0.09, legH: 0.16, legW: 0.16, legD: 0.32, legX: [-0.24, 0.24],
-    armW: 0.17, armH: 0.2, armD: 0.3, armY: 0.36, eyeX: 0.2, eyeY: 0.58, eyeW: 0.06, eyeH: 0.22 };
+    armW: 0.17, armH: 0.2, armD: 0.3, armY: 0.36, eyeX: 0.2, eyeY: 0.58, eyeW: 0.06, eyeH: 0.22, legRad: 0.022, armRad: 0.03 };
   const S = size / (dims.bodyH + dims.legH);
   const col = p.color || "#6fd3c1";
   const parts = buildCritter(S, col, darker(col), dims);

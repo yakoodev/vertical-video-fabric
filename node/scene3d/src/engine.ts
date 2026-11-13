@@ -28,6 +28,9 @@ import { Overlays, type OverlaySpec } from "./overlay.ts";
 import { resolveToon, Toon, type ToonSpec } from "./toon.ts";
 import { createDeskbot, type DeskbotSpec } from "./deskbot.ts";
 import { createCritter, critterHelper, type CritterSpec } from "./critter.ts";
+import { createKodex, type KodexSpec } from "./kodex.ts";
+import { createKodex2, type Kodex2Spec } from "./kodex2.ts";
+import { MEME_PROPS } from "./meme_props.ts";
 import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
@@ -168,6 +171,8 @@ class Engine {
   spec!: SceneSpec;
   room: RoomBuild | null = null;
   characters: Record<string, Character> = {};
+  /** Ключи героев-«игрушек» (critter/kodex/deskbot): ``move`` [{t, position, ease}] — где стоит, ``visible`` [{t, on}]. */
+  charKeys: Record<string, { move?: Key[]; visible?: Key[] }> = {};
   objects: { spec: ObjectSpec; node: THREE.Group; inner: THREE.Object3D; prop?: Prop; light?: THREE.Light }[] = [];
   lights: { spec: LightSpec; light: THREE.Light }[] = [];
   gltfCache = new Map<string, Promise<Loaded>>();
@@ -254,8 +259,12 @@ class Engine {
       const ch = c.style === "voxel" ? createVoxelCharacter(c as VoxelCharacterSpec)
         : c.style === "deskbot" ? createDeskbot(c as DeskbotSpec)
         : c.style === "critter" ? createCritter(c as CritterSpec)
+        : c.style === "kodex" ? createKodex(c as unknown as KodexSpec)
+        : c.style === "kodex2" ? createKodex2(c as unknown as Kodex2Spec)
         : await createCharacter(c as CharacterSpec, (r) => this.load(r), (r) => this.loadTexture(r));
       this.characters[c.id] = ch;
+      const ck = c as any;
+      if (ck.move || ck.visible) this.charKeys[c.id] = { move: ck.move, visible: ck.visible };
       this.scene.add(ch.root);
     }
     // Библиотека вещей — только если сцена на неё ссылается (без неё сцены грузятся как раньше).
@@ -492,6 +501,7 @@ class Engine {
         : kind === "coin_jar" ? coinJar(p) : kind === "tablet" ? drawingTablet(p) : kind === "stylus" ? stylus(p)
         : kind === "monitor" ? monitor(p) : kind === "keyboard" ? keyboard(p) : kind === "plant" ? plant(p)
         : kind === "desk_lamp" ? deskLamp(p) : kind === "window_frame" ? windowFrame(p) : kind === "thought_bubble" ? thoughtBubble(p) : kind === "helper_bot" ? (p.style === "voxel" ? critterHelper(p) : helperBot(p))
+        : MEME_PROPS[kind] ? MEME_PROPS[kind](p)
         : primitive(kind, p);
       inner = new THREE.Group();
       inner.add(prop.object);
@@ -575,6 +585,12 @@ class Engine {
     this.applyPhase(t);
     if (this.toon) this.toon.update(t);
     for (const ch of Object.values(this.characters)) ch.update(t);
+    for (const [id, k] of Object.entries(this.charKeys)) {
+      const ch = this.characters[id];
+      const pos = k.move ? sampleVec(k.move, t, "position") : undefined;
+      if (pos) ch.root.position.set(pos[0], pos[1], pos[2]);
+      if (k.visible) ch.root.visible = sampleKeys<boolean>(k.visible, t, "on", (a, b, kk) => (kk < 1 ? a : b)) !== false;
+    }
     for (const l of this.lights) {
       let k = 1;
       for (const f of l.spec.flicker || []) {
