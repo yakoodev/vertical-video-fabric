@@ -308,5 +308,7 @@ class BriefConflict(Exception):
 
 
 def empty_brief() -> dict:
-    return {"schema": BRIEF_SCHEMA, "version": BRIEF_VERSION, "summary": "", "notes": "",
+    # narrator_voice — голос рассказчика проекта (Gemini TTS: Aoede, Puck…): add_voiceover берёт его, если голос
+    # не назван. Пусто — голос сервиса по умолчанию.
+    return {"schema": BRIEF_SCHEMA, "version": BRIEF_VERSION, "summary": "", "notes": "", "narrator_voice": "",
             **{name: [] for name in BRIEF_SECTIONS}}

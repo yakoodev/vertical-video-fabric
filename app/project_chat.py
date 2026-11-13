@@ -136,6 +136,13 @@ SYSTEM = """\
   он выбрал). Держись этого и не выдумывай сверх. Владелец рассказал новое о проекте (кто это, что значит словечко,
   как тут принято) — запиши remember_fact одной фразой; «забудь» — forget_fact. Он видит и правит этот список сам.
   noticed в срезе — что агент заметил сам, владелец не подтвердил: не выдавай за факт, при расхождении верь владельцу.
+- Типовой заказ — сначала плейбук: нарезка стрима — get_playbook("stream-shorts"), реклама сайта или товара —
+  get_playbook("ad-voiceover"), промо приложения по записям экрана — "app-promo". Подходящий сервис кладёт ниже
+  сам (блок «АКТИВНЫЙ ПЛЕЙБУК»); его шаги и чек-лист — условие сдачи.
+- Озвучка своим текстом (реклама, холст, серия) — группа voice: add_voiceover(clip_id, lines [{{text}}]) — фразы без
+  style (Gemini зачитывает указания вслух), слои голоса длиной файла, субтитры по голосу; потом check_voiceover
+  («озвучка в порядке»). Голос — narrator_voice из брифа. tts_preview — только проба голоса. render_status с
+  «озвучка с ошибками» — не готово: поправь и перерендерь.
 - Ссылка в сообщении: видео-исходник (YouTube, Twitch, файл) — add_source_from_url; картинка, гифка, мем
   в клип — add_image_from_url / add_video_from_url (группа assets).
 - Приложенные файлы: «файл для монтажа #N» — asset_id для add_insert и слоёв; «источник #N» — source_id
@@ -307,7 +314,10 @@ class ThreadPolicy(TurnPolicy):
         self.started = db_now(store)  # начало хода: правленому в ходе клипу нужен рендер не раньше
 
     def prompt(self, state: TurnState) -> str:
-        return _system(self.thread, self.groups)
+        # Плейбук по смыслу запроса (как у ИИ-монтажёра клипа): нарезка стрима, реклама с озвучкой, серия.
+        from app.project_chat_playbook import block, pick
+
+        return _system(self.thread, self.groups) + block(pick(self.message, state.steps))
 
     def declarations(self, json_schema: bool) -> list[dict]:
         return CT.declarations(self.groups, json_schema)

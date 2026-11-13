@@ -265,7 +265,8 @@ def project_tools() -> list[Tool]:
         ),
         Tool(
             "get_project_brief", "Бриф проекта",
-            "ЧИТАЙ ПЕРЕД НАРЕЗКОЙ И НАЗВАНИЯМИ: лор проекта (summary, people, arcs, jokes, taboo, notes), активные "
+            "ЧИТАЙ ПЕРЕД НАРЕЗКОЙ И НАЗВАНИЯМИ: лор проекта (summary, people, arcs, jokes, taboo, notes; "
+            "narrator_voice — голос рассказчика для add_voiceover), активные "
             "правила владельца (проекта и глобальные), facts — что владелец просил запомнить, memes — какие мемы он "
             "выбрал, с source_id ещё stream_answers — его ответы про этот стрим, covered — что уже нарезано (pieces — секунды источника, "
             "не повторяйся), гипотезы и короткая статистика. brief_rev — для update_project_brief(base_rev). "
@@ -287,7 +288,8 @@ def project_tools() -> list[Tool]:
         ),
         Tool(
             "update_project_brief", "Обновляю бриф",
-            "Частично обновить лор: patch {summary?, notes?, people? [{name, who, traits, aliases}], arcs? [{title, "
+            "Частично обновить лор: patch {summary?, notes?, narrator_voice? (голос рассказчика — голос Gemini, "
+            "только по слову владельца), people? [{name, who, traits, aliases}], arcs? [{title, "
             "about, status ongoing|closed}], jokes? [{text, about, example}], taboo? [{topic, why}], "
             "replace_sections?}. Элемент списка дополняется по ключу (name/title/text/topic), {name, _delete:true} "
             "— убрать. Пиши только то, что видел/слышал. base_rev — ревизия из get_project_brief (защита от "

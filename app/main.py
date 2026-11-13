@@ -42,6 +42,12 @@ proxy_config.register(lambda: store)
 seed_default_pack(store)
 seed_music(store)
 seed_default_brand(store)
+try:  # голос рассказчика Витубики (Aoede) — в бриф проекта 9, если поле пусто
+    from app.projects_brief import seed_narrator_voices
+
+    seed_narrator_voices(store)
+except Exception:  # noqa: BLE001 - старт сервиса важнее
+    pass
 worker = JobWorker(store)
 stats_collector = StatsCollector(store)
 from app.session_keepalive import SessionKeeper  # noqa: E402 - браузер аккаунтов: держит вход живым

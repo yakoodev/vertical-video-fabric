@@ -65,6 +65,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "set_end_hold", "set_focus", "auto_focus",
         "auto_crop_layer",
         "set_piece_fit", "set_layout", "set_chroma_key", "set_format", "set_aspect")),
+    "voice": ("голос: озвучить клип или холст текстом (add_voiceover), проверить озвучку, пробы голосов, банк голосов", (
+        "add_voiceover", "check_voiceover", "tts_preview", "list_voices")),
     "screens": ("плашка с именем, концовка, промо приложения, холст", (
         "set_nameplate", "set_end_screen", "build_app_promo", "create_canvas_clip")),
     "assets": ("библиотека: картинки и видео по ссылке, поиск мемов, шрифты, паки, генерация", (
@@ -98,7 +100,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк",
                 "в такт", "долям", "доли", "в бит", "битам", "3d", "3д", "сцен", "анимац"),
-    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "озвуч", "ключев", "эмфаз", "голос"),
+    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "ключев", "эмфаз"),
+    "voice": ("озвуч", "голос", "диктор", "закадр", "tts", "начитк", "реклам"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
              "слоу", "замедл", "ускор", "реверс", "задом", "цвет", "баланс", "экспоз", "светлее", "темнее"),
@@ -119,7 +122,8 @@ DANGEROUS = {
 }
 # Платное: озвучка через Polza — карточка, только когда реально синтезируем (оценка бесплатна).
 PAID_LABELS = {"dub_clip": "Озвучить по-русски (платно, Polza TTS)",
-               "tts_preview": "Проба голоса (платно, Polza TTS)"}
+               "tts_preview": "Проба голоса (платно, Polza TTS)",
+               "add_voiceover": "Озвучить клип (платно, Polza TTS)"}
 
 # В чате проекта и его видео эти инструменты работают только с этим проектом: лор одного проекта не должен попасть
 # в разговор о другом. В общем чате проекта нет, там можно назвать любой.
@@ -399,7 +403,7 @@ def declarations(groups: list[str], json_schema: bool = True) -> list[dict]:
 def is_dangerous(store: Any, name: str, args: dict, project_id: int | None) -> bool:
     if name in DANGEROUS:
         return True
-    if name in ("dub_clip", "tts_preview"):
+    if name in ("dub_clip", "tts_preview", "add_voiceover"):
         from app.dubbing import provider_paid
 
         # Платно — только синтез платным провайдером; gemini и сухой прогон бесплатны (оценка — тоже).
