@@ -41,7 +41,8 @@ def test_progress_note_moves_with_frames():
 
 def _child(tmp_path: Path, body: str) -> list[str]:
     script = tmp_path / "child.py"
-    script.write_text("import sys, time\n" + body, "utf-8")
+    # Рендер (node) пишет stderr в UTF-8; Python-заглушка на Windows иначе пишет в cp1251.
+    script.write_text("import sys, time\nsys.stderr.reconfigure(encoding='utf-8')\n" + body, "utf-8")
     return [sys.executable, str(script)]
 
 

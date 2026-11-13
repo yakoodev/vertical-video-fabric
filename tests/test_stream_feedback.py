@@ -189,7 +189,9 @@ def test_set_source_audio_gains_speech_track_and_auto(tmp_path, monkeypatch):
                        {"project_id": source_id, "tracks": [0, {"track": 1, "gain_db": 14}]})
     assert ok, out
     assert out["audio"]["mix"] == [{"track": 0, "gain_db": 0.0}, {"track": 1, "gain_db": 14.0}]
-    assert store.get_source_transcript(source_id) == []  # смесь для распознавания сменилась
+    # Распознавание идёт по дорожке «Микрофон» (найдена по названию), смена громкостей смеси её не меняет —
+    # расшифровка остаётся (13.11: субтитры только по голосу стримера).
+    assert store.get_source_transcript(source_id) == [{"start": 0, "end": 1, "text": "старое"}]
     source = store.get_source(source_id)
     assert source["audio_tracks"] == [0, 1]  # прежнее поле — номера
     assert "volume=14dB" in _audio_filter(_preset_with_source_audio({}, source))
@@ -199,7 +201,8 @@ def test_set_source_audio_gains_speech_track_and_auto(tmp_path, monkeypatch):
     out, ok = run_tool(_ctx(store, plan["id"]), "set_source_audio", {"speech_tracks": [1]})
     assert ok, out
     assert out["audio"]["speech_tracks"] == [1] and out["audio"]["speech_separate"]
-    assert store.get_source_transcript(source_id) == []
+    # Микрофон (дорожка 1) уже был дорожкой распознавания (найден по названию) — расшифровка не сбрасывается.
+    assert store.get_source_transcript(source_id)
     source = store.get_source(source_id)
     assert source_audio.speech_mix(source) == [{"track": 1, "gain_db": 0.0}]
     assert source_audio.source_tracks(source) == [0, 1] and source_audio.separate_speech(source)
@@ -230,7 +233,8 @@ def test_set_source_audio_gains_speech_track_and_auto(tmp_path, monkeypatch):
     monkeypatch.setattr("app.settings.settings.auth_enabled", False)
     resp = TestClient(app_main.app).patch(f"/api/sources/{source_id}/audio", json={"speech_tracks": []})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["audio"]["speech_separate"] is False
+    # Явные дорожки речи сняты, но микрофон найден по названию «Микрофон» — распознавание всё равно по нему.
+    assert resp.json()["audio"]["speech_separate"] is True
 
 
 def test_recognition_uses_the_speech_track(tmp_path, monkeypatch):
