@@ -625,9 +625,11 @@ def registry() -> dict[str, Tool]:
         from app.render_tools import tools as render_tools
         # Поиск в интернете и страницы сайтов как материал (app/webpage_tools.py).
         from app.webpage_tools import tools as webpage_tools
+        # Озвучка своим текстом и её проверка (add_voiceover / check_voiceover) — app/voice_tools.py.
+        from app.voice_tools import tools as voice_tools
 
         _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools(), *lint_tools(),
-                                                  *render_tools(), *webpage_tools()]}
+                                                  *render_tools(), *webpage_tools(), *voice_tools()]}
     return _REGISTRY
 
 

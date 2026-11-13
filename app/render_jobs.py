@@ -51,6 +51,11 @@ def _brief_clip(clip: dict) -> dict:
         out["video_url"] = f"/media/clips/{clip['id']}"
     if qc is not None:
         out["qc"] = qc
+        voice = qc.get("voice") if isinstance(qc.get("voice"), dict) else None
+        if voice is not None:
+            # Вердикт озвучки — наверх ответа: «озвучка с ошибками: …» не должен потеряться в отчёте QC.
+            out["voice"] = voice.get("summary")
+            out["voice_ok"] = bool(voice.get("ok"))
     return out
 
 

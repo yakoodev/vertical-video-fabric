@@ -5,12 +5,13 @@ from __future__ import annotations
 import math
 from typing import Any
 
-CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage", "fragments", "sub_sync")
+CHECKS = ("ui_zones", "reading", "flashes", "loop", "audio_mix", "montage", "fragments", "sub_sync", "voice")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
     "read": "reading", "reading_speed": "reading", "speed": "reading", "subtitles": "reading",
     "flash": "flashes", "strobe": "flashes", "photosensitive": "flashes", "loops": "loop",
     "mix": "audio_mix", "audio": "audio_mix", "sound": "audio_mix", "loudness": "audio_mix", "music": "audio_mix",
+    "voiceover": "voice", "vo": "voice", "tts": "voice", "narration": "voice", "озвучка": "voice",
     "sync": "sub_sync", "subsync": "sub_sync", "fragment": "fragments", "islands": "fragments", "island": "fragments", "cuts": "fragments",
 }
 

@@ -168,7 +168,7 @@
 {
 "name": "add_layers",
 "title": "Добавляю слои",
-"description": "e29ac6101baabacb",
+"description": "de3ee860d35d6e2b",
 "parameters": "f5712e7fc1e636d9",
 "mutating": true,
 "scope": "clip",
@@ -839,7 +839,7 @@
 {
 "name": "list_voices",
 "title": "Смотрю банк голосов",
-"description": "49d5557580a92d4d",
+"description": "ae1b19a4084c8d07",
 "parameters": "47055dafa1144126",
 "mutating": false,
 "scope": "clip",
@@ -883,8 +883,8 @@
 {
 "name": "dub_clip",
 "title": "Озвучка RU",
-"description": "cfa61cf41a13cefd",
-"parameters": "a0e414561fff4e87",
+"description": "51b30417a3fda354",
+"parameters": "68e44388a9b71b29",
 "mutating": true,
 "scope": "clip",
 "module": "dubbing",
@@ -1301,8 +1301,8 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "b60ce4ec8b8e8806",
-"parameters": "ef824d7d877a5ee2",
+"description": "ce7dd00b8ea11479",
+"parameters": "93fbee834d6991b1",
 "mutating": false,
 "scope": "clip",
 "module": null,
@@ -1326,7 +1326,7 @@
 {
 "name": "render_status",
 "title": "Смотрю рендер",
-"description": "574adf7aff0d1707",
+"description": "feba7b74bb171723",
 "parameters": "9ce00faba8df6b7c",
 "mutating": false,
 "scope": "global",
@@ -1399,6 +1399,35 @@
 "module": "web_pages",
 "handler": "h_view_page",
 "label": true
+},
+{
+"name": "add_voiceover",
+"title": "Озвучиваю клип",
+"description": "0ecb26cec815ecbc",
+"parameters": "89eab9071099b375",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_add_voiceover",
+"label": true,
+"cost": [
+"network",
+"cpu"
+]
+},
+{
+"name": "check_voiceover",
+"title": "Проверяю озвучку",
+"description": "eff673454bd331aa",
+"parameters": "e14b051be1d59fc8",
+"mutating": false,
+"scope": "clip",
+"module": null,
+"handler": "h_check_voiceover",
+"label": true,
+"cost": [
+"cpu"
+]
 }
 ],
 "discovery": [
@@ -1493,8 +1522,8 @@
 {
 "name": "tts_preview",
 "title": "Проба голоса",
-"description": "49953896ad90de3e",
-"parameters": "ee453697e9bb6871",
+"description": "812ec04c5869393b",
+"parameters": "cb3153eb3ab79e41",
 "mutating": true,
 "scope": "global",
 "module": null,
@@ -1528,7 +1557,7 @@
 {
 "name": "get_project_brief",
 "title": "Бриф проекта",
-"description": "6b01c9f5ffe176d9",
+"description": "60a98b18fce15063",
 "parameters": "af93a1ba76072d0e",
 "mutating": false,
 "scope": "project",
@@ -1550,7 +1579,7 @@
 {
 "name": "update_project_brief",
 "title": "Обновляю бриф",
-"description": "5f8b2c99ad7d9068",
+"description": "965c20679a806537",
 "parameters": "dcb2659920727b0b",
 "mutating": true,
 "scope": "project",
@@ -1770,7 +1799,7 @@
 {
 "name": "aiv_define_character",
 "title": "Персонаж ИИ-видео",
-"description": "06183afcbb709bec",
+"description": "bee310cd5671396b",
 "parameters": "d7c1c9c044527f73",
 "mutating": true,
 "scope": "project",
@@ -1991,7 +2020,7 @@
 "name": "explainer_save_mascot",
 "title": "Маскот объяснялок",
 "description": "cd8bf321daf05f71",
-"parameters": "f2dfd0b4708db5d1",
+"parameters": "132ceb76795e9537",
 "mutating": true,
 "scope": "project",
 "module": "explainer",
@@ -2210,7 +2239,7 @@
 {
 "name": "story_save_world",
 "title": "Мир историй",
-"description": "e5f22f99ca619130",
+"description": "4ef31b7573fe7c68",
 "parameters": "3e475167cbad3f84",
 "mutating": true,
 "scope": "project",
