@@ -17,6 +17,7 @@ export interface CommentSpec {
   t0: number;
   t1: number;
   nick: string;
+  /** Лайков у коммента; < 0 — неизвестно (в карточке TikTok — сердце без числа). */
   likes: number;
   /** Текст комментария (уже очищенный фильтром и укороченный). */
   text: string;
@@ -193,8 +194,11 @@ function drawTikTok(g: CanvasRenderingContext2D, c: CommentSpec, t: number) {
   const by = yy + 16 + lines.length * 12;
   plain(g, `${c.age ?? "1 д."}  Ответить`, tx, by, "#80808a");
   heart(g, x + w - 18, yy + 14, "#a0a0aa");
-  const n = String(c.likes);
-  plain(g, n, Math.round(x + w - 14 - g.measureText(n).width / 2), yy + 25, "#a0a0aa");
+  // Число лайков неизвестно (likes < 0) — только сердце: счётчики в кадре — только настоящие.
+  if (c.likes >= 0) {
+    const n = String(c.likes);
+    plain(g, n, Math.round(x + w - 14 - g.measureText(n).width / 2), yy + 25, "#a0a0aa");
+  }
 }
 
 export function drawComment(g: CanvasRenderingContext2D, c: CommentSpec, t: number) {
