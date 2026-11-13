@@ -1,0 +1,112 @@
+{
+ "image_style": {
+  "common": "Style: flat retro comic-book cartoon illustration, thick bold black ink outlines, cel shading with halftone dot shadows, limited palette of deep purple, cream, warm orange, mustard yellow and brown, printed comic paper feel, funny exaggerated cartoon proportions. No text, no letters, no speech bubbles, no watermark, no border, no panel frame.",
+  "plate": "Vertical 9:16 composition, full-bleed background scene.",
+  "cutout": "Single character sticker, full body from head to feet, centred with generous empty margin."
+ },
+ "images": {
+  "forest": {
+   "kind": "plate",
+   "prompt": "A cartoon forest at dusk seen along a winding cream-coloured forest path: tall stylised dark pine trees on both sides, a big pale moon, deep purple sky with a few stars. The upper third of the image is open empty sky. The bottom quarter is a flat empty grassy clearing. No characters, no animals."
+  },
+  "toilet": {
+   "kind": "plate",
+   "prompt": "Interior of a shabby public restroom drawn as a cartoon, front view: a row of three white urinals on the left wall, a row of three toilet cubicles with closed wooden doors on the right, cracked tiles, a dangling lamp, a black-and-white checkerboard floor filling the bottom third. Empty, no people."
+  },
+  "glade": {
+   "kind": "plate",
+   "prompt": "A sunny happy cartoon forest glade: round friendly trees, flowers, mushrooms, a blue sky with puffy cream clouds, warm golden light. Empty, no characters, no animals. The bottom third is flat grassy ground."
+  },
+  "darkforest": {
+   "kind": "plate",
+   "prompt": "A spooky dark cartoon forest at night: twisted bare trees, pairs of glowing yellow eyes peeking from the dark bushes, low fog, a pale moon, dark purple tones. Empty, no characters. The bottom third is a dark forest path."
+  },
+  "garden": {
+   "kind": "plate",
+   "prompt": "A cozy cartoon vegetable garden at a Russian countryside dacha on a sunny day: neat beds of cabbages and carrots, a wooden picket fence, a small wooden house with a red roof, tall sunflowers, a scarecrow, blue sky. Empty, no people. The bottom third is the garden ground."
+  },
+  "handshake": {
+   "kind": "plate",
+   "ar": "1:1",
+   "prompt": "Close-up comic panel: the paw of the bear from the first reference image (same flat cartoon style, same brown fur colour, simple clean cartoon shapes, not realistic fur) firmly shaking the hand of the guy from the second reference image (purple hoodie sleeve). Exactly one bear paw and exactly one human hand with five fingers, a friendly handshake in the centre, bright radiating speed-lines burst behind in cream and orange, sparkles.",
+   "chars": [
+    "bear",
+    "narr"
+   ],
+   "refs": [
+    "bear",
+    "narr"
+   ]
+  },
+  "narr": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A skinny cheerful young vegan guy, cartoon: messy hair, big round glasses, purple hoodie with a carrot logo, skinny blue jeans, sneakers, holding a big orange carrot raised like a microphone, mouth open singing, standing, body turned slightly to the right.",
+   "chars": [
+    "narr"
+   ]
+  },
+  "fatguy": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A grumpy big-bellied middle-aged man, cartoon: a huge round hairy belly sticking out of a too-short white tank top, red furious face, bushy eyebrows, puffs of steam from his ears, shaking his fist, a roll of toilet paper in the other hand, grey sweatpants, slippers, standing.",
+   "chars": [
+    "fatguy"
+   ]
+  },
+  "bear": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A huge friendly brown cartoon bear standing upright on two legs, big warm smile, one paw stretched forward offering a handshake, round belly, facing the viewer slightly to the left.",
+   "chars": [
+    "bear"
+   ]
+  },
+  "bear_run": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "The same big brown cartoon bear from the reference image, now running fast to the right in a classic cartoon chase pose, side view: exactly two arms raised up and exactly two legs (one leg forward, one leg back), four limbs total, clear anatomy, tongue out, mischievous grin, dust puffs behind its feet.",
+   "chars": [
+    "bear"
+   ],
+   "refs": [
+    "bear"
+   ]
+  },
+  "hunter": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A panicked cartoon hunter dad running away to the right: thick black mustache, bulging eyes, sweat drops, orange hunting jacket, brown trousers, boots, legs in a wild running pose. His big orange ear-flap hunting hat is flying off high above his head, clearly separated from the head with empty space between the head and the hat. No gun, no weapon.",
+   "chars": [
+    "hunter"
+   ]
+  },
+  "dad_garden": {
+   "kind": "cutout",
+   "key": "green",
+   "refs": [
+    "hunter"
+   ],
+   "prompt": "The same mustached man from the reference image, now a peaceful happy gardener: straw hat, denim overalls over an orange shirt, holding a small tin watering can, gently smiling with closed eyes, a tiny cartoon fly sitting on his raised fingertip, a carrot sticking out of his pocket, standing.",
+   "chars": [
+    "hunter"
+   ]
+  },
+  "cow": {
+   "kind": "cutout",
+   "key": "magenta",
+   "prompt": "A goofy cartoon cow, white with dark purple spots, standing on four legs and happily munching a huge green lettuce leaf, a tipped-over salad bowl with vegetables under her front hooves, side view facing left."
+  },
+  "veggies": {
+   "kind": "cutout",
+   "key": "magenta",
+   "prompt": "Three dancing cartoon vegetables with happy faces, arms and legs, standing in a row with wide empty space between them so they do not touch: a carrot, a broccoli and a red tomato, each jumping happily."
+  }
+ },
+ "characters": {
+  "bear": "big chubby brown cartoon bear, tan-cream belly patch with an orange rim, cream muzzle, dark brown nose, small round ears with orange inside, friendly smile, thick black outline and a thin cream sticker outline",
+  "hunter": "middle-aged man, thick black handlebar mustache, balding with dark hair on the sides, orange hunting jacket, orange ushanka ear-flap hat, brown trousers, mustard lace-up boots",
+  "fatguy": "bald red-faced grumpy man, huge hairy belly, too-short white tank top, grey sweatpants, brown slippers",
+  "narr": "skinny young guy, messy brown hair, big round glasses, purple hoodie with an orange carrot logo, skinny blue jeans, cream-and-mustard sneakers"
+ }
+}
