@@ -272,6 +272,28 @@ def word_item(w: dict, clk: Clock, style, fps: int, f0: int, f1: int, seed: int)
             "lock": w.get("lock", True), "exit": w.get("exit", "pop")}
 
 
+def clear_hero_overlaps(items: list[dict]) -> None:
+    """Большие слова никогда не наезжают друг на друга: если следующее слово попадает в ту же полосу экрана,
+    предыдущее успевает улететь до первого кадра появления следующего."""
+    ws = [it for it in items if it["type"] == "word" and it["letters"]]
+    ws.sort(key=lambda it: min(L["land"] for L in it["letters"]))
+
+    def band(it):
+        return (min(L["y"] - L["h"] / 2 for L in it["letters"]), max(L["y"] + L["h"] / 2 for L in it["letters"]))
+    for i, a in enumerate(ws):
+        a0, a1 = band(a)
+        for b in ws[i + 1:]:
+            b0, b1 = band(b)
+            if b0 > a1 or b1 < a0:
+                continue
+            appear = min(L["land"] for L in b["letters"]) - 3
+            n = len(a["letters"])
+            gone = (a["out"] + n // 2 + 6) if a["out"] is not None else 10 ** 9
+            if gone >= appear:
+                a["out"] = max(max(L["land"] for L in a["letters"]) + 2, appear - (n // 2 + 6) - 1)
+            break
+
+
 def captions(spec, clk: Clock, style, fps: int, f0: int, f1: int, censor: list[str], seed: int) -> list[dict]:
     """Мелкие слова текста на плашках, каждое появляется на своей атаке; строки по ширине, не больше max_rows."""
     if isinstance(spec, dict) and "from" in spec:
@@ -374,6 +396,7 @@ def resolve(plan: dict, an: dict, out: Path) -> dict:
                           "w": bspec.get("w", 0.6), "depth": bspec.get("depth", 3.2)})
         for k, w in enumerate(sc.get("words", [])):
             items.append(word_item(w, clk, style, fps, f0, f1, seed * 7 + k))
+        clear_hero_overlaps(items)
         cap = sc.get("captions")
         if cap:
             for cs in (cap if isinstance(cap, list) else [cap]):

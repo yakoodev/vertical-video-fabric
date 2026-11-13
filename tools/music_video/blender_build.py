@@ -798,8 +798,9 @@ def act(name, it, c, f0, f1, pg):
 def page_card(name, it, f0, f1, pg, kind):
     pos, k = pg.project(it["ref"], it["px"][0], it["px"][1], it["z"])
     hm = it["h_px"] * pg.s * k
-    ob, op = card(name, it["tex"], hm)
+    ob, op = card(name, it["tex"], hm, blended=(kind == "btext"))
     on, off = max(f0, it["on"]), min(f1, it["off"])
+    hit = it.get("hit", on)
     rnd = random.Random(hash(name) & 0xffff)
     rot0 = it.get("rot", 0.0)
     for f in range(max(f0, on - 1), min(f1, off + 4) + 1):
@@ -808,9 +809,14 @@ def page_card(name, it, f0, f1, pg, kind):
             s = back_out(u, 2.0) if u < 1 else 1.0 + 0.012 * math.sin(f * 0.25)
             rz = wobble(f, rnd.randint(0, 99), 0.6, 0.06)
         elif kind == "btext":
-            u = (f - on) / 3
-            s = lerp(1.6, 1.0, ease_out(u, 2)) if u >= 0 else 0.001
+            # вся строка уже в пузыре бледной; слово «загорается» на своей атаке и чуть вздрагивает
+            u = (f - on) / 5
+            s = back_out(u, 2.0) if u < 1 else 1.0
+            if f >= hit:
+                s *= 1 + 0.12 * math.exp(-(f - hit) / 2.5)
             rz = 0.0
+            if f in (on - 1, on, hit - 1, hit):
+                key_val(op, f, 1.0 if f >= hit else 0.3)
         else:                                         # звук в панели
             u = (f - on) / 5
             s = (back_out(u, 2.6) if u < 1 else 1.0 + 0.03 * math.sin(f * 2.1))

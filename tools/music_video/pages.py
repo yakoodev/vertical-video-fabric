@@ -247,7 +247,7 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
             for nm, tw, th, fon in ln:
                 px = tl_x + (x + tw / 2) * k_scale
                 py = tl_y + (y + th / 2) * k_scale
-                items.append({"type": "btext", "tex": nm, "px": [px, py], "h_px": th * k_scale, "on": max(on, fon - 1),
+                items.append({"type": "btext", "tex": nm, "px": [px, py], "h_px": th * k_scale, "on": on, "hit": max(on, fon - 1),
                               "off": max(on + 6, off), "z": 0.452 + 0.004 * n, "ref": rr})
                 x += tw + space
             y += cap * 1.3
@@ -263,6 +263,8 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
                       "z": s.get("z", 0.4), "ref": ref_rect(s["panel"], on)})
     for k, w in enumerate(sc.get("words", [])):
         items.append(word_item(w, clk, style, fps, f0, f1, seed * 7 + k))
+    from resolve import clear_hero_overlaps
+    clear_hero_overlaps(items)
     cam = dict(sc.get("camera", {}))
     cam.setdefault("seed", seed)
     cam["punch"] = sorted({it["letters"][0]["land"] for it in items if it["type"] == "word" and it["letters"]} |
