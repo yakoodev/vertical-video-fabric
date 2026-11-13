@@ -98,10 +98,15 @@ def test_wav_answer_is_converted_too(monkeypatch, tmp_path):
     assert dubbing.probe_duration(speech.path) == pytest.approx(0.8, abs=0.1)
 
 
-def test_style_is_prepended_and_voice_checked():
+def test_style_is_never_sent_and_voice_checked():
+    """Gemini зачитывает указание к речи вслух в любой форме (проверено Whisper-ом 13.11) — в запрос оно не идёт."""
     tts = _tts(style="  говори весело,   быстро: ")
-    assert tts.prompt("Привет") == "говори весело, быстро:\nПривет"
-    assert tts.payload("Привет")["contents"][0]["parts"][0]["text"].endswith("\nПривет")
+    assert tts.prompt("Привет") == "Привет"
+    assert tts.payload("Привет")["contents"][0]["parts"][0]["text"] == "Привет"
+    assert tts.style == "" and tts.style_ignored == "говори весело, быстро:"
+    dialog = tts.dialog_payload([{"speaker": "narrator", "text": "Шла"}, {"speaker": "hero", "text": "Стой!"}],
+                                {"hero": "Puck"})
+    assert dialog["contents"][0]["parts"][0]["text"] == "Рассказчик: Шла\nГерой: Стой!"  # без вступления-указания
     assert _tts().prompt("Привет") == "Привет"
     assert dubbing.gemini_voice("zubenelgenubi") == "Zubenelgenubi"
     assert len(dubbing.GEMINI_TTS_VOICES) == 30
@@ -183,10 +188,13 @@ def test_gemini_is_free_and_known():
     assert dubbing.provider_paid("polza") and not dubbing.provider_paid("none")
     tts = dubbing.get_tts_provider("gemini", voice="Puck", style="шёпотом")
     assert isinstance(tts, dubbing.GeminiTTS) and not tts.paid and tts.price_rub_per_char() == 0
-    assert tts.voice == "Puck" and tts.style == "шёпотом" and tts.model == settings.gemini_tts_model
+    assert tts.voice == "Puck" and tts.style == "" and tts.style_ignored == "шёпотом"
+    assert tts.model == settings.gemini_tts_model
     cat = dubbing.voice_catalog()
     gem = next(p for p in cat["providers"] if p["id"] == "gemini")
-    assert gem["paid"] is False and gem["voices"] == list(dubbing.GEMINI_TTS_VOICES)
+    assert gem["paid"] is False and gem["voices"] == list(dubbing.GEMINI_TTS_VOICES) and gem["style"] is False
+    assert set(gem["voice_notes"]) == set(dubbing.GEMINI_TTS_VOICES)  # у каждого голоса — пол и тембр
+    assert "Aoede — жен." in dubbing.voice_notes_text()
     assert cat["default_provider"] == "polza"  # по умолчанию ничего не поменяли
 
 
@@ -203,9 +211,10 @@ def test_dub_clip_gemini_synthesizes_without_confirm_or_enable_flag(monkeypatch,
     assert out["status"] == "done", out
     assert out["estimate"]["rub"] == 0.0 and not out["estimate"]["paid"] and "бесплатно" in out["estimate"]["note"]
     assert len(calls) == 2  # по фразе
-    assert calls[0]["contents"][0]["parts"][0]["text"].startswith("говори весело:\n")
+    assert "говори" not in calls[0]["contents"][0]["parts"][0]["text"]  # style не уходит в модель
     dub = store.subs["translation"]["dub"]
-    assert dub["provider"] == "gemini" and dub["voice"] == "Charon" and dub["style"] == "говори весело"
+    assert dub["provider"] == "gemini" and dub["voice"] == "Charon" and dub["style_ignored"] == "говори весело"
+    assert "style не передан" in out["note"]
     assert dub["cost_rub"] == 0.0 and dub["paid"] is False
     assert any(l["id"].startswith("dub_ru") for l in store.render["layers"])
 
@@ -319,10 +328,13 @@ def test_ai_video_character_gemini_voice_is_free_and_runs_without_card(tmp_path,
     calls = _fake_generate(monkeypatch, 0.6)
     out = G.request_stage(store, pid, "voice", sid)
     assert out["status"] == "done" and len(out["run"]["done"]) == 2, out
-    assert calls[0]["contents"][0]["parts"][0]["text"].startswith("устало, медленно:\n")
+    assert "устало" not in calls[0]["contents"][0]["parts"][0]["text"]  # style Gemini не получает
     assert G.ledger(store, pid) == []  # ни рубля
-    # Реплика свежая: повторная оценка ничего не находит; смена стиля — переозвучить.
+    # Реплика свежая: повторная оценка ничего не находит; смена стиля (Gemini его не получает) — тоже; смена
+    # голоса — переозвучить.
     assert G.estimate(store, pid, "voice", sid)["count"] == 0
     V.save_character(store, pid, character_id=mira["id"], voice={"provider": "gemini", "voice": "Fenrir",
                                                                  "style": "весело"})
+    assert G.estimate(store, pid, "voice", sid)["count"] == 0
+    V.save_character(store, pid, character_id=mira["id"], voice={"provider": "gemini", "voice": "Puck"})
     assert G.estimate(store, pid, "voice", sid)["count"] == 1

@@ -64,8 +64,11 @@ class TtsPreviewRequest(BaseModel):
     provider: Literal["gemini", "polza", "none"] = Field(default="gemini", description="gemini — бесплатно")
     voice: str | None = Field(default=None, max_length=60)
     model: str | None = Field(default=None, max_length=80)
-    style: str | None = Field(default=None, max_length=300, description="как говорить («говори весело, быстро»)")
-    text: str | None = Field(default=None, max_length=300, description="фраза пробы (по умолчанию приветствие)")
+    style: str | None = Field(default=None, max_length=300,
+                              description="не используется: Gemini TTS зачитывает указание вслух")
+    # Без max_length схемы: длиннее 1000 знаков отвечает сам tts_preview — понятным отказом, а не 422.
+    text: str | None = Field(default=None, max_length=5000, description="фраза пробы до 1000 знаков (по умолчанию "
+                                                                        "приветствие)")
     confirm: bool = Field(default=False, description="платный провайдер: без него — только оценка")
 
 

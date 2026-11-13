@@ -28,9 +28,15 @@
 Бесплатно: ``gemini`` — Gemini TTS (``GEMINI_TTS_MODEL``, по умолчанию gemini-3.8-flash-tts) по
 ключу Gemini, который у сервиса уже есть (GEMINI_API_KEY; базовый адрес и прокси — как у анализа).
 На бесплатном тарифе ключа — 0 ₽, только лимиты запросов (429 → ждём и повторяем). Голоса —
-``GEMINI_TTS_VOICES``; ``style`` («говори весело, быстро») — указание к речи строкой перед текстом.
-Бесплатным провайдерам (``gemini``, ``none``) confirm, бюджет и DUBBING_ENABLED не нужны: синтез
-сразу. ``tts_preview`` — проба голоса короткой фразой (прослушать перед выбором).
+``GEMINI_TTS_VOICES`` (пол и тембр — ``GEMINI_VOICE_NOTES``). Бесплатным провайдерам (``gemini``, ``none``)
+confirm, бюджет и DUBBING_ENABLED не нужны: синтез сразу. ``tts_preview`` — проба голоса (до
+``PREVIEW_MAX_CHARS`` знаков, длиннее — отказ, не молчаливая обрезка).
+
+``style`` у Gemini TTS НЕ передаётся. Модель зачитывает указание вслух в любой форме, что проверяли Whisper-ом 13.11:
+строкой перед текстом («Говори бодро…: текст»), по-английски («Say cheerfully: …»), тегом «[cheerfully]» и
+«режиссёрскими заметками» с TRANSCRIPT (один раз из четырёх прочитала заметки). systemInstruction модель не принимает
+(400). Характер голоса — выбором ``voice``. Защита после синтеза (``TTS_GUARD``, app/voice_asr.py): первые 2.5 с
+слушает Whisper; первое слово не из текста — синтез ещё раз.
 """
 
 from __future__ import annotations
@@ -70,13 +76,32 @@ GEMINI_TTS_VOICES = (
     "Laomedeia", "Achernar", "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
     "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
 )
+# Пол и характер голосов — по описаниям Google (ai.google.dev, speech-generation: Bright, Upbeat…); на русском
+# тембр слышен так же. Точно выбрать — tts_preview фразой из ролика.
+GEMINI_VOICE_NOTES = {
+    "Zephyr": "жен., яркий", "Puck": "муж., бодрый, молодой", "Charon": "муж., ровный, дикторский",
+    "Kore": "жен., твёрдый, уверенный", "Fenrir": "муж., взволнованный, живой", "Leda": "жен., юный",
+    "Orus": "муж., твёрдый", "Aoede": "жен., лёгкий, воздушный (рассказчица Витубики)",
+    "Callirrhoe": "жен., спокойный", "Autonoe": "жен., яркий", "Enceladus": "муж., с придыханием",
+    "Iapetus": "муж., чистый", "Umbriel": "муж., спокойный", "Algieba": "муж., мягкий", "Despina": "жен., мягкий",
+    "Erinome": "жен., чистый", "Algenib": "муж., хрипловатый", "Rasalgethi": "муж., дикторский",
+    "Laomedeia": "жен., бодрый", "Achernar": "жен., тихий, мягкий", "Alnilam": "муж., твёрдый",
+    "Schedar": "муж., ровный", "Gacrux": "жен., зрелый", "Pulcherrima": "жен., напористый",
+    "Achird": "муж., дружелюбный", "Zubenelgenubi": "муж., разговорный", "Vindemiatrix": "жен., нежный",
+    "Sadachbia": "муж., живой", "Sadaltager": "муж., знающий, лекторский", "Sulafat": "жен., тёплый",
+}
+
+
+def voice_notes_text() -> str:
+    """«Aoede — жен., лёгкий; Puck — муж., бодрый…» — для описаний инструментов."""
+    return "; ".join(f"{name} — {GEMINI_VOICE_NOTES.get(name, '')}" for name in GEMINI_TTS_VOICES)
 GEMINI_TTS_RATE = 24000  # сырой PCM: s16le, моно, 24 кГц (если пришёл не WAV)
 GEMINI_TTS_TRIES = 6  # 429 (лимит бесплатного тарифа) и 5xx — повторяем с паузой
 GEMINI_TTS_BACKOFF_SEC = (4.0, 10.0, 20.0, 40.0, 60.0)
 GEMINI_TTS_MAX_WAIT_SEC = 65.0  # дольше одной паузы не ждём (минутный лимит)
 MAX_STYLE_CHARS = 300
 PREVIEW_TEXT = "Привет! Так звучит мой голос — послушай и скажи, подходит ли он."
-PREVIEW_MAX_CHARS = 300
+PREVIEW_MAX_CHARS = 1000  # длиннее — отказ с подсказкой (раньше молча резали до 300)
 PREVIEW_BUDGET_RUB = 5.0  # потолок одной платной пробы голоса
 DEFAULT_BUDGET_RUB = 200.0
 # Цена TTS Polza, ₽ за символ. ПРОВЕРЕНО 2026-11-01 — цены меняются: перед крупной озвучкой
@@ -229,10 +254,14 @@ class GeminiTTS:
 
     def __init__(self, model: str | None = None, voice: str | None = None, style: str | None = None,
                  api_key: str | None = None, base_url: str | None = None, timeout: float = 120,
-                 sleep: Any = None) -> None:
+                 sleep: Any = None, guard: bool | None = None) -> None:
         self.model = (model or settings.gemini_tts_model).strip()
         self.voice = gemini_voice(voice or settings.gemini_tts_voice)
-        self.style = " ".join(str(style or "").split())[:MAX_STYLE_CHARS]
+        # Указание к речи модель зачитывает вслух (шапка модуля) — не передаём; что просили — для отчёта.
+        self.style = ""
+        self.style_ignored = " ".join(str(style or "").split())[:MAX_STYLE_CHARS]
+        self.guard = bool(settings.tts_guard) if guard is None else bool(guard)
+        self.last_guard: dict | None = None
         self.api_key = (api_key if api_key is not None else settings.gemini_api_key).strip()
         self.base_url = (base_url or settings.gemini_base_url).rstrip("/")
         self.timeout = timeout
@@ -242,11 +271,8 @@ class GeminiTTS:
         return 0.0
 
     def prompt(self, text: str) -> str:
-        """Текст для модели: указание к речи («говори весело, быстро») — строкой перед репликой."""
-        text = str(text or "").strip()[:MAX_PHRASE_CHARS]
-        if not self.style:
-            return text
-        return f"{self.style.rstrip(' :.')}:\n{text}"
+        """Текст для модели — только реплика: любое указание к речи модель читает вслух (шапка модуля)."""
+        return str(text or "").strip()[:MAX_PHRASE_CHARS]
 
     def payload(self, text: str) -> dict:
         return {
@@ -263,9 +289,9 @@ class GeminiTTS:
         used = [k for k in ("narrator", "hero") if any(ln.get("speaker") == k for ln in lines)]
         body = "\n".join(f"{names.get(ln.get('speaker'), 'Рассказчик')}: {str(ln.get('text') or '').strip()}"
                          for ln in lines if str(ln.get("text") or "").strip())
-        head = (self.style.rstrip(" :.") + ". " if self.style else "") + "Озвучь по ролям, реплики героя — его голосом:"
+        # Без вступления («Озвучь по ролям…»): его, как и style, модель могла зачитать; роли — имена в строках.
         return {
-            "contents": [{"role": "user", "parts": [{"text": f"{head}\n{body}"[:MAX_PHRASE_CHARS * 2]}]}],
+            "contents": [{"role": "user", "parts": [{"text": body[:MAX_PHRASE_CHARS * 2]}]}],
             "generationConfig": {
                 "responseModalities": ["AUDIO"],
                 "speechConfig": {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
@@ -279,8 +305,10 @@ class GeminiTTS:
         multiSpeaker; модель не приняла (400) — по кускам своими голосами и склейка с короткими паузами."""
         if len({ln.get("speaker") for ln in lines}) < 2:
             return self.synthesize(" ".join(str(ln.get("text") or "") for ln in lines), out_path)
+        first = next((str(ln.get("text") or "").strip() for ln in lines if str(ln.get("text") or "").strip()), "")
         try:
-            return self._speak(self.dialog_payload(lines, voices), out_path)
+            payload = self.dialog_payload(lines, voices)
+            return self._guarded(first, self._speak(payload, out_path), lambda: self._speak(payload, out_path))
         except (DubError, RuntimeError) as exc:
             if "400" not in str(exc) and "speaker" not in str(exc).lower():
                 raise
@@ -290,8 +318,9 @@ class GeminiTTS:
             if not text:
                 continue
             seg = out_path.with_name(f"{out_path.stem}.part{i}.wav")
-            tts = GeminiTTS(model=self.model, voice=voices.get(ln.get("speaker")) or self.voice, style=self.style,
-                            api_key=self.api_key, base_url=self.base_url, timeout=self.timeout, sleep=self._sleep)
+            tts = GeminiTTS(model=self.model, voice=voices.get(ln.get("speaker")) or self.voice,
+                            api_key=self.api_key, base_url=self.base_url, timeout=self.timeout, sleep=self._sleep,
+                            guard=self.guard)
             tts.synthesize(text, seg)
             parts.append(seg)
         try:
@@ -310,7 +339,39 @@ class GeminiTTS:
         return Speech(out_path, 0.0, {"segments": len(parts)})
 
     def synthesize(self, text: str, out_path: Path) -> Speech:
-        return self._speak(self.payload(text), out_path)
+        payload = self.payload(text)
+        return self._guarded(text, self._speak(payload, out_path), lambda: self._speak(payload, out_path))
+
+    def _guarded(self, text: str, speech: Speech, again: Any) -> Speech:
+        """Защита после синтеза (``TTS_GUARD``): Whisper слушает первые 2.5 с. Первое слово не из текста (модель
+        зачитала указание или начала с чужого) — синтез ещё раз; снова не то — второй остаётся, в отчёте
+        ``raw_usage.guard``. Whisper недоступен — без проверки: озвучка важнее."""
+        self.last_guard = None
+        if not self.guard or not str(text or "").strip():
+            return speech
+        from app import voice_asr
+
+        try:
+            heard = voice_asr.head_transcribe(speech.path)
+        except Exception as exc:  # noqa: BLE001 - нет Whisper — озвучка без проверки
+            _log.info("tts guard: начало не распознано (%s)", exc)
+            return speech
+        if voice_asr.head_matches(text, heard):
+            self.last_guard = {"ok": True}
+            return speech
+        first = " ".join(str(w.get("word") or "").strip() for w in heard[:6])
+        _log.warning("tts guard: начало «%s» не из текста «%s» — синтезирую заново", first, str(text)[:60])
+        speech = again()
+        try:
+            heard = voice_asr.head_transcribe(speech.path)
+        except Exception:  # noqa: BLE001
+            heard = []
+        ok = voice_asr.head_matches(text, heard)
+        self.last_guard = {"ok": ok, "retried": True, "heard_first": first}
+        if not ok:
+            self.last_guard["heard_again"] = " ".join(str(w.get("word") or "").strip() for w in heard[:6])
+        speech.raw_usage = {**(speech.raw_usage or {}), "guard": self.last_guard}
+        return speech
 
     def _speak(self, payload: dict, out_path: Path) -> Speech:
         if not self.api_key:
@@ -480,8 +541,10 @@ def voice_catalog() -> dict:
         "providers": [
             {"id": "gemini", "label": "Gemini TTS (бесплатно)", "paid": False,
              "model": settings.gemini_tts_model, "models": list(GEMINI_TTS_MODELS),
-             "voice": settings.gemini_tts_voice, "voices": list(GEMINI_TTS_VOICES), "style": True,
-             "configured": bool(settings.gemini_api_key)},
+             "voice": settings.gemini_tts_voice, "voices": list(GEMINI_TTS_VOICES),
+             "voice_notes": dict(GEMINI_VOICE_NOTES),
+             # style модель зачитывает вслух — не передаётся (характер — выбором голоса).
+             "style": False, "configured": bool(settings.gemini_api_key)},
             {"id": "polza", "label": "Polza TTS (платно)", "paid": True, "model": settings.polza_tts_model,
              "models": list(PRICES_RUB_PER_CHAR), "voice": settings.polza_tts_voice, "voices": [],
              "style": False, "configured": bool(settings.polza_api_key)},
@@ -706,8 +769,8 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     """Оценить или сделать озвучку RU клипа. Платный провайдер без ``confirm`` — ТОЛЬКО оценка
     (ничего не платим); бесплатный (``gemini``, ``none``) — синтез сразу, confirm не нужен.
 
-    ``tts`` — готовый провайдер (тесты подменяют). ``remove`` — снять слои озвучки. ``style`` —
-    указание к речи для Gemini («говори весело, быстро»)."""
+    ``tts`` — готовый провайдер (тесты подменяют). ``remove`` — снять слои озвучки. ``style`` — НЕ передаётся
+    (Gemini читает его вслух): в отчёте ``style_ignored``."""
     from app import modules
     from app.timebase import ClipClock
 
@@ -773,7 +836,7 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     overflows = [r for r in report if r["action"] == "trim"]
     dub = {
         "provider": tts.name, "model": tts.model, "voice": tts.voice, "asset_id": int(asset["id"]),
-        **({"style": tts.style} if getattr(tts, "style", "") else {}), "paid": bool(tts.paid),
+        **({"style_ignored": tts.style_ignored} if getattr(tts, "style_ignored", "") else {}), "paid": bool(tts.paid),
         "layers": [l["id"] for l in layers], "chars": estimate["chars"],
         "estimate_rub": estimate["rub"], "cost_rub": spent if spent is not None else estimate["rub"],
         "cost_source": "provider" if spent is not None else "estimate",
@@ -786,6 +849,8 @@ def dub_clip(store: Any, clip_plan_id: int, provider: str | None = None, voice: 
     if overflows:
         note += (f"; {len(overflows)} фраз не влезли даже при ×{TEMPO_MAX} и обрезаны — сократи их перевод "
                  "(edit_subtitle_lines) и озвучь снова")
+    if style:
+        note += "; " + STYLE_IGNORED_NOTE
     return {"ok": True, "status": "done", "estimate": estimate, "dub": {k: v for k, v in dub.items()
                                                                           if k != "phrases"},
             "overflow_phrases": [{"i": r["i"], "text": r["text"], "overflow_sec": r["overflow_sec"]} for r in overflows],
@@ -798,14 +863,24 @@ def tts_preview(store: Any, provider: str | None = None, voice: str | None = Non
     """Проба голоса: короткая фраза → mp3 в библиотеке (audio, тег «проба голоса») → ``url``,
     чтобы владелец прослушал голос до выбора. Бесплатный провайдер (``gemini``, ``none``) — сразу;
     платный — без ``confirm`` только оценка, с confirm — при DUBBING_ENABLED=1 и не дороже
-    ``PREVIEW_BUDGET_RUB``. Та же фраза тем же голосом — тот же файл (повторно не синтезируем)."""
-    phrase = " ".join(str(text or PREVIEW_TEXT).split())[:PREVIEW_MAX_CHARS] or PREVIEW_TEXT
+    ``PREVIEW_BUDGET_RUB``. Та же фраза тем же голосом — тот же файл (повторно не синтезируем).
+
+    Текст длиннее ``PREVIEW_MAX_CHARS`` — отказ (раньше молча резали до 300: в ролике не прозвучали сайт и
+    промокод, а субтитры показывали слова, которых нет в звуке). ``style`` — не передаётся (Gemini читает его)."""
+    phrase = " ".join(str(text or PREVIEW_TEXT).split()) or PREVIEW_TEXT
+    if len(phrase) > PREVIEW_MAX_CHARS:
+        raise DubError(f"текст {len(phrase)} знаков — больше {PREVIEW_MAX_CHARS}: не режу молча. Раздели на фразы "
+                       "(до ~200 знаков): add_voiceover(lines) озвучит по фразам и разложит их по клипу, или "
+                       "tts_preview на каждую фразу")
     tts = tts or get_tts_provider(provider, model=model, voice=voice, style=style)
+    ignored = " ".join(str(style or getattr(tts, "style_ignored", "") or "").split())
     style_text = str(getattr(tts, "style", "") or "")
     rub = round(len(phrase) * tts.price_rub_per_char(), 2)
     cap = min(PREVIEW_BUDGET_RUB, budget_cap(None))
     info = {"provider": tts.name, "model": tts.model, "voice": tts.voice, "text": phrase, "chars": len(phrase),
-            "paid": bool(tts.paid), "estimate_rub": rub, **({"style": style_text} if style_text else {})}
+            "truncated": False, "paid": bool(tts.paid), "estimate_rub": rub,
+            **({"style": style_text} if style_text else {}),
+            **({"style_ignored": ignored, "style_note": STYLE_IGNORED_NOTE} if ignored else {})}
     if tts.paid:
         if not confirm:
             return {"ok": True, "status": "estimate", **info,
@@ -838,7 +913,7 @@ def tts_preview(store: Any, provider: str | None = None, voice: str | None = Non
     meta = probe_asset(dest)
     label = f"Проба голоса: {tts.name} · {tts.voice}" + (f" · {style_text}" if style_text else "")
     asset = store.create_montage_asset(
-        kind="audio", label=label[:120], description=f"TTS {tts.name}/{tts.model}, голос {tts.voice}: {phrase}"[:500],
+        kind="audio", label=label[:120], description=voice_description(phrase, tts),
         tags="проба голоса", file_path=str(dest), original_filename=filename, mime_type="audio/mpeg",
         size_bytes=dest.stat().st_size, **{**meta, "width": 0, "height": 0},
     )
@@ -846,7 +921,23 @@ def tts_preview(store: Any, provider: str | None = None, voice: str | None = Non
     return {"ok": True, "status": "done", "cached": False, **info, "cost_rub": round(float(cost), 4),
             "asset_id": int(asset["id"]), "url": asset["url"],
             "duration": round(float(meta.get("duration_sec") or 0), 2),
-            "note": "прослушай по url; понравился голос — dub_clip / голос персонажа с тем же provider и voice"}
+            "note": "прослушай по url; понравился голос — add_voiceover (голос на клип/холст по фразам, слои нужной "
+                    "длины и субтитры) / dub_clip (перевод) / голос персонажа с тем же provider и voice"}
+
+
+STYLE_IGNORED_NOTE = ("style не передан: Gemini TTS зачитывает указание вслух. Характер голоса — выбором voice "
+                      "(пол и тембр — в описании tts_preview)")
+VOICE_TEXT_MARK = "Текст озвучки: «"
+
+
+def voice_description(text: str, tts: Any, extra: str = "") -> str:
+    """Описание файла голоса: текст первым (по нему check_voiceover сверяет «услышано = написано»), потом TTS.
+    Не влез в 500 знаков — без закрывающей «»», анализатор поймёт, что текст неполный."""
+    tail = f" · TTS {tts.name}/{tts.model}, голос {tts.voice}" + (f" · {extra}" if extra else "")
+    body = f"{VOICE_TEXT_MARK}{text}»"
+    if len(body) + len(tail) <= 500:
+        return body + tail
+    return (body[: 500 - len(tail)] + tail) if len(tail) < 200 else body[:500]
 
 
 def _run(args: list[str]) -> None:

@@ -21,7 +21,8 @@ _VOICE = _obj({"provider": {"type": "string", "enum": ["gemini", "polza"],
                             "description": "gemini — бесплатно, polza — платно (ElevenLabs), по карточке на каждый "
                                            "ролик. Голос один на все ролики маскота: меняй только по просьбе владельца"},
                "voice": {"type": "string", "description": "gemini: Puck, Kore, Charon…; polza: liam, brian…"},
-               "model": {"type": "string"}, "style": {"type": "string", "description": "как говорить (gemini)"}})
+               "model": {"type": "string"},
+               "style": {"type": "string", "description": "не используется: Gemini зачитывает указание вслух"}})
 _NEW_POSE = _obj({"description": {"type": "string", "description": "по-английски: эмоция, жест, 0–2 предмета"},
                   "title": {"type": "string"}, "tags": {"type": "array", "items": {"type": "string"}},
                   "emotion": {"type": "string"}, "number_shown": {"type": "integer"}}, ["description"])
