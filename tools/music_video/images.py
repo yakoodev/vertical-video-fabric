@@ -38,6 +38,8 @@ def style_prompt(plan: dict, spec: dict) -> str:
     st = plan.get("image_style", {})
     kind = spec.get("kind", "plate")
     tail = st.get("cutout" if kind == "cutout" else "plate", "")
+    if kind == "plate" and spec.get("ar", "9:16") != "9:16":
+        tail = f"Full-bleed {spec['ar']} comic panel artwork filling the whole image edge to edge."
     if kind == "cutout":
         key = spec.get("key", "green")
         bg = {"green": "perfectly flat solid chroma-key green background (#00FF00)",

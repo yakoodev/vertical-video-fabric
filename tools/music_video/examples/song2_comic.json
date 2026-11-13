@@ -1,0 +1,2569 @@
+{
+ "title": "song2",
+ "style": "comic",
+ "fps": 30,
+ "size": [
+  1080,
+  1920
+ ],
+ "censor": [],
+ "lyrics_fix": {
+  "22": {
+   "text": "я стою"
+  },
+  "29": {
+   "text": "в писсуарчик"
+  },
+  "79": {
+   "text": "пузатый"
+  },
+  "89": {
+   "text": "уходит"
+  },
+  "191": {
+   "at": 80.19
+  },
+  "150": {
+   "at": 64.19
+  },
+  "233": {
+   "text": "еб..."
+  }
+ },
+ "image_style": {
+  "common": "Style: flat retro comic-book cartoon illustration, thick bold black ink outlines, cel shading with halftone dot shadows, limited palette of deep purple, cream, warm orange, mustard yellow and brown, printed comic paper feel, funny exaggerated cartoon proportions. No text, no letters, no speech bubbles, no watermark, no border, no panel frame.",
+  "plate": "Vertical 9:16 composition, full-bleed background scene.",
+  "cutout": "Single character sticker, full body from head to feet, centred with generous empty margin."
+ },
+ "images": {
+  "forest": {
+   "kind": "plate",
+   "prompt": "A cartoon forest at dusk seen along a winding cream-coloured forest path: tall stylised dark pine trees on both sides, a big pale moon, deep purple sky with a few stars. The upper third of the image is open empty sky. The bottom quarter is a flat empty grassy clearing. No characters, no animals."
+  },
+  "toilet": {
+   "kind": "plate",
+   "prompt": "Interior of a shabby public restroom drawn as a cartoon, front view: a row of three white urinals on the left wall, a row of three toilet cubicles with closed wooden doors on the right, cracked tiles, a dangling lamp, a black-and-white checkerboard floor filling the bottom third. Empty, no people."
+  },
+  "glade": {
+   "kind": "plate",
+   "prompt": "A sunny happy cartoon forest glade: round friendly trees, flowers, mushrooms, a blue sky with puffy cream clouds, warm golden light. Empty, no characters, no animals. The bottom third is flat grassy ground."
+  },
+  "darkforest": {
+   "kind": "plate",
+   "prompt": "A spooky dark cartoon forest at night: twisted bare trees, pairs of glowing yellow eyes peeking from the dark bushes, low fog, a pale moon, dark purple tones. Empty, no characters. The bottom third is a dark forest path."
+  },
+  "garden": {
+   "kind": "plate",
+   "prompt": "A cozy cartoon vegetable garden at a Russian countryside dacha on a sunny day: neat beds of cabbages and carrots, a wooden picket fence, a small wooden house with a red roof, tall sunflowers, a scarecrow, blue sky. Empty, no people. The bottom third is the garden ground."
+  },
+  "handshake": {
+   "kind": "plate",
+   "ar": "1:1",
+   "prompt": "Close-up comic panel: the paw of the bear from the first reference image (same flat cartoon style, same brown fur colour, simple clean cartoon shapes, not realistic fur) firmly shaking the hand of the guy from the second reference image (purple hoodie sleeve). Exactly one bear paw and exactly one human hand with five fingers, a friendly handshake in the centre, bright radiating speed-lines burst behind in cream and orange, sparkles.",
+   "chars": [
+    "bear",
+    "narr"
+   ],
+   "refs": [
+    "bear",
+    "narr"
+   ]
+  },
+  "narr": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A skinny cheerful young vegan guy, cartoon: messy hair, big round glasses, purple hoodie with a carrot logo, skinny blue jeans, sneakers, holding a big orange carrot raised like a microphone, mouth open singing, standing, body turned slightly to the right.",
+   "chars": [
+    "narr"
+   ]
+  },
+  "fatguy": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A grumpy big-bellied middle-aged man, cartoon: a huge round hairy belly sticking out of a too-short white tank top, red furious face, bushy eyebrows, puffs of steam from his ears, shaking his fist, a roll of toilet paper in the other hand, grey sweatpants, slippers, standing.",
+   "chars": [
+    "fatguy"
+   ]
+  },
+  "bear": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A huge friendly brown cartoon bear standing upright on two legs, big warm smile, one paw stretched forward offering a handshake, round belly, facing the viewer slightly to the left.",
+   "chars": [
+    "bear"
+   ]
+  },
+  "bear_run": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "The same big brown cartoon bear from the reference image, now running fast to the right in a classic cartoon chase pose, side view: exactly two arms raised up and exactly two legs (one leg forward, one leg back), four limbs total, clear anatomy, tongue out, mischievous grin, dust puffs behind its feet.",
+   "chars": [
+    "bear"
+   ],
+   "refs": [
+    "bear"
+   ]
+  },
+  "hunter": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A panicked cartoon hunter dad running away to the right: thick black mustache, bulging eyes, sweat drops, orange hunting jacket, brown trousers, boots, legs in a wild running pose. His big orange ear-flap hunting hat is flying off high above his head, clearly separated from the head with empty space between the head and the hat. No gun, no weapon.",
+   "chars": [
+    "hunter"
+   ],
+   "split": "area"
+  },
+  "dad_garden": {
+   "kind": "cutout",
+   "key": "green",
+   "refs": [
+    "hunter"
+   ],
+   "prompt": "The same mustached man from the reference image, now a peaceful happy gardener: straw hat, denim overalls over an orange shirt, holding a small tin watering can, gently smiling with closed eyes, a tiny cartoon fly sitting on his raised fingertip, a carrot sticking out of his pocket, standing.",
+   "chars": [
+    "hunter"
+   ]
+  },
+  "cow": {
+   "kind": "cutout",
+   "key": "magenta",
+   "prompt": "A goofy cartoon cow, white with dark purple spots, standing on four legs and happily munching a huge green lettuce leaf, a tipped-over salad bowl with vegetables under her front hooves, side view facing left."
+  },
+  "veggies": {
+   "kind": "cutout",
+   "key": "magenta",
+   "prompt": "Three dancing cartoon vegetables with happy faces, arms and legs, standing in a row with wide empty space between them so they do not touch: a carrot, a broccoli and a red tomato, each jumping happily.",
+   "split": "x"
+  },
+  "p_march": {
+   "kind": "plate",
+   "ar": "16:9",
+   "chars": [],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. A cheerful crowd of skinny vegans marching through a forest clearing, raising big carrots and broccoli above their heads like torches, joyful open mouths chanting, autumn trees behind."
+  },
+  "p_beardance": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "bear"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The bear from the reference image dancing happily in the forest wearing big headphones, one leg up, eyes closed, music notes floating around.",
+   "refs": [
+    "bear"
+   ]
+  },
+  "p_urinal": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The guy from the reference image standing at a wall urinal in a shabby public restroom, seen from the side and slightly behind, whistling with pursed lips, music notes floating, checkerboard floor. Decent and non-explicit: nothing below the waist is visible, his hoodie covers him.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_approach": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. In a shabby public restroom with a checkerboard floor: a second skinny guy who looks almost exactly like the guy from the reference image (same messy hair, same round glasses, same purple hoodie, plus a tiny goatee) walks in from the right and waves hello with a big friendly grin; the first guy on the left turns his head in surprise.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_fistbump": {
+   "kind": "plate",
+   "ar": "1:1",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. Close-up of the two almost identical skinny guys from the reference image (one with a tiny goatee) doing an enthusiastic fist bump, sparkles at the point of impact, both grinning widely, restroom tiles behind.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_pointing": {
+   "kind": "plate",
+   "ar": "16:9",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. Parody of the famous meme of two identical heroes pointing at each other: the two almost identical skinny guys from the reference image (one with a tiny goatee) point at each other in surprise in a shabby restroom, mirror poses.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_blush": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The two almost identical skinny guys from the reference image (one with a tiny goatee) glance at each other awkwardly in a restroom, both blushing bright red, big sweat drops, nervous smiles, hands behind their heads, standing a step apart, fully clothed.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_bearpeek": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "bear"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The bear from the reference image hiding in forest bushes and covering his eyes with both paws, peeking through his claws, embarrassed blushing, a small sweat drop.",
+   "refs": [
+    "bear"
+   ]
+  },
+  "p_door": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. A wooden toilet cubicle door in a shabby public restroom violently slammed open from inside, the door flying off one hinge, wooden splinters and dust bursting outward, speed lines, dramatic low angle, nobody visible yet, only darkness inside the cubicle."
+  },
+  "p_yell": {
+   "kind": "plate",
+   "ar": "1:1",
+   "chars": [
+    "fatguy"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. Extreme close-up of the grumpy man from the reference image yelling furiously at the viewer, wide open mouth, bulging veins on his bald head, steam from his ears, spit drops flying.",
+   "refs": [
+    "fatguy"
+   ]
+  },
+  "p_sausage": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [
+    "fatguy"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The grumpy man from the reference image stomping away angrily to the left, aggressively biting a huge sausage held in his fist, a roll of toilet paper trailing behind him, steam puffs from his ears.",
+   "refs": [
+    "fatguy"
+   ]
+  },
+  "p_shout": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The guy from the reference image shouting after someone, both hands cupped around his mouth, leaning forward, motion lines from his mouth, restroom doorway behind him.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_disco": {
+   "kind": "plate",
+   "ar": "16:9",
+   "chars": [],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. A funny forest disco party of herbivores under a sparkling disco ball: a cow, a rabbit, a deer and a giraffe dancing together in groovy poses with flared glowing dance floor tiles, a carrot-shaped DJ booth."
+  },
+  "p_cowpoop": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. A goofy cartoon cow seen from behind in a vegetable garden, a small brown cartoon poop pile with stink lines landing on a cabbage bed, the cabbages have shocked little faces."
+  },
+  "p_cry": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The guy from the reference image crying comically with two fountains of tears spraying from his eyes, wobbly mouth, clutching a sad carrot to his chest.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_whisper": {
+   "kind": "plate",
+   "ar": "1:1",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. Close-up of the guy from the reference image leaning toward the viewer and whispering a secret, one hand shielding the side of his mouth, eyebrows raised, conspiratorial look, dark forest edge behind him.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_skip": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The guy from the reference image skipping happily into a sunny forest with a wicker basket full of vegetables, one leg up mid-skip, birds and butterflies around.",
+   "refs": [
+    "narr"
+   ]
+  },
+  "p_hunterwalk": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "hunter"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The mustached hunter dad from the reference image, now wearing his orange ushanka hat on his head, marching proudly into a dark forest with his chest puffed out and chin up, binoculars around his neck, no gun, no weapon.",
+   "refs": [
+    "hunter"
+   ]
+  },
+  "p_tree": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "hunter",
+    "bear"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The mustached hunter dad from the first reference image clinging in panic to the top of a tall thin pine tree, his orange ushanka hat on his head, while the bear from the second reference image sits at the bottom of the tree grinning up at him and waving. No gun, no weapon.",
+   "refs": [
+    "hunter",
+    "bear_run"
+   ]
+  },
+  "p_flyclose": {
+   "kind": "plate",
+   "ar": "1:1",
+   "chars": [
+    "hunter"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. Close-up of the mustached gardener from the reference image tenderly smiling at a tiny cute cartoon fly sitting on his fingertip, little pink hearts floating between them, straw hat.",
+   "refs": [
+    "dad_garden"
+   ]
+  },
+  "p_picnic": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [
+    "bear",
+    "narr"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The bear from the first reference image and the guy from the second reference image having a cozy tea picnic on a checkered blanket in a sunny forest clearing, clinking tea cups, a plate of carrots and a cabbage cake.",
+   "refs": [
+    "bear",
+    "narr"
+   ]
+  },
+  "p_tiptoe": {
+   "kind": "plate",
+   "ar": "3:4",
+   "chars": [
+    "hunter"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The mustached hunter dad from the reference image tiptoeing nervously into a dark night forest holding a flashlight, his orange ushanka hat on his head, glowing yellow eyes watching from the bushes. No gun, no weapon.",
+   "refs": [
+    "hunter"
+   ]
+  },
+  "p_boo": {
+   "kind": "plate",
+   "ar": "1:1",
+   "chars": [
+    "bear"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The bear from the reference image bursting out of the bushes toward the viewer with both arms wide open and a huge playful grin, leaves flying, speed lines, night forest.",
+   "refs": [
+    "bear"
+   ]
+  },
+  "p_cabbage": {
+   "kind": "plate",
+   "ar": "4:3",
+   "chars": [
+    "hunter"
+   ],
+   "prompt": "Comic book panel illustration, dynamic composition, characters fill the frame. The mustached gardener from the reference image lovingly hugging a giant cabbage in a sunny vegetable garden, eyes closed with happiness, a tiny cartoon fly sipping tea from a thimble on top of the cabbage.",
+   "refs": [
+    "dad_garden"
+   ]
+  }
+ },
+ "characters": {
+  "bear": "big chubby brown cartoon bear, tan-cream belly patch with an orange rim, cream muzzle, dark brown nose, small round ears with orange inside, friendly smile, thick black outline",
+  "hunter": "middle-aged man, thick black handlebar mustache, balding with dark hair on the sides, orange hunting jacket, orange ushanka ear-flap hat, brown trousers, mustard lace-up boots",
+  "fatguy": "bald red-faced grumpy man, huge hairy belly, too-short white tank top, grey sweatpants, brown slippers",
+  "narr": "skinny young guy, messy brown hair, big round glasses, purple hoodie with an orange carrot logo, skinny blue jeans, cream-and-mustard sneakers"
+ },
+ "scenes": [
+  {
+   "id": "intro",
+   "from": 0,
+   "transition": "pageturn",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "title"
+     ],
+     [
+      "march"
+     ],
+     [
+      "narrsing",
+      "beardance"
+     ],
+     [
+      "veggiesp",
+      "letsgo"
+     ]
+    ]
+   },
+   "panels": {
+    "title": {
+     "img": "forest",
+     "focus": [
+      0.5,
+      0.3
+     ]
+    },
+    "march": {
+     "img": "p_march"
+    },
+    "narrsing": {
+     "burst": {
+      "bg": "cream",
+      "line": "purple"
+     },
+     "aspect": 0.72
+    },
+    "beardance": {
+     "img": "p_beardance"
+    },
+    "veggiesp": {
+     "burst": {
+      "bg": "yellow",
+      "line": "purple"
+     },
+     "aspect": 0.95
+    },
+    "letsgo": {
+     "burst": {
+      "bg": "orange",
+      "line": "dpurple"
+     },
+     "aspect": 0.95
+    }
+   },
+   "shots": [
+    {
+     "at": 0,
+     "frame": [
+      "title"
+     ]
+    },
+    {
+     "at": 2.02,
+     "frame": [
+      "march"
+     ]
+    },
+    {
+     "at": 4.02,
+     "frame": [
+      "narrsing"
+     ]
+    },
+    {
+     "at": 6.02,
+     "frame": [
+      "beardance"
+     ]
+    },
+    {
+     "at": 8.02,
+     "frame": [
+      "narrsing",
+      "beardance"
+     ]
+    },
+    {
+     "at": 9.02,
+     "frame": [
+      "veggiesp"
+     ]
+    },
+    {
+     "at": 10.52,
+     "frame": "page"
+    },
+    {
+     "at": 12.02,
+     "frame": [
+      "letsgo"
+     ],
+     "move": "smash"
+    }
+   ],
+   "acts": [
+    {
+     "img": "narr",
+     "panel": "narrsing",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 0.95,
+     "in": 4.1,
+     "anim": "pop",
+     "rig": [
+      {
+       "src": [
+        540,
+        400
+       ],
+       "r": 220,
+       "pivot": [
+        440,
+        400
+       ],
+       "rot": 9,
+       "mode": "beat"
+      },
+      {
+       "src": [
+        330,
+        230
+       ],
+       "r": 170,
+       "pivot": [
+        330,
+        390
+       ],
+       "rot": -5,
+       "mode": "beat"
+      }
+     ],
+     "shadow": false
+    },
+    {
+     "img": "veggies#0",
+     "panel": "veggiesp",
+     "x": 0.2,
+     "y": 0.95,
+     "h": 0.5,
+     "in": 9.1,
+     "anim": "pop",
+     "args": {
+      "hop_beat": 0.06
+     }
+    },
+    {
+     "img": "veggies#1",
+     "panel": "veggiesp",
+     "x": 0.5,
+     "y": 0.95,
+     "h": 0.5,
+     "in": 9.3,
+     "anim": "pop",
+     "args": {
+      "hop_beat": 0.06
+     }
+    },
+    {
+     "img": "veggies#2",
+     "panel": "veggiesp",
+     "x": 0.8,
+     "y": 0.95,
+     "h": 0.42,
+     "in": 9.5,
+     "anim": "pop",
+     "args": {
+      "hop_beat": 0.06
+     }
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "letsgo",
+     "text": "ГОУ!",
+     "at": "w:15",
+     "x": 0.25,
+     "y": 0.2,
+     "h": 0.22,
+     "dur": 0.8
+    },
+    {
+     "panel": "letsgo",
+     "text": "ГОУ!",
+     "at": "w:16",
+     "x": 0.75,
+     "y": 0.35,
+     "h": 0.22,
+     "dur": 0.42,
+     "kind": "cool"
+    },
+    {
+     "panel": "letsgo",
+     "text": "ГОУ!",
+     "at": "w:17",
+     "x": 0.3,
+     "y": 0.55,
+     "h": 0.22,
+     "dur": 0.25
+    },
+    {
+     "panel": "letsgo",
+     "text": "ЛЕЦ\nГОУ!",
+     "at": "w:18",
+     "x": 0.5,
+     "y": 0.45,
+     "h": 0.5,
+     "dur": 0.75,
+     "kind": "cool"
+    },
+    {
+     "panel": "letsgo",
+     "text": "Е-Е!",
+     "at": "w:20",
+     "x": 0.5,
+     "y": 0.75,
+     "h": 0.25,
+     "dur": 0.9
+    },
+    {
+     "panel": "beardance",
+     "text": "БУМ!",
+     "at": 6.29,
+     "x": 0.8,
+     "y": 0.2,
+     "h": 0.18,
+     "dur": 1.2,
+     "kind": "cool"
+    }
+   ],
+   "words": [
+    {
+     "text": "ПЕСНЯ\nПРО ЛЕС",
+     "at": [
+      "b:0",
+      "b:1",
+      "b:2"
+     ],
+     "y": 0.62,
+     "w": 0.84,
+     "max_h": 0.13,
+     "out": 2.0
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      2.31
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": 3.28,
+     "tilt": 5
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      2.85
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 3.28,
+     "tilt": -4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      3.35
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": 4.29,
+     "tilt": -6
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      3.87
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 4.29,
+     "tilt": 4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      4.36
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": 5.26,
+     "tilt": 5
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      4.77
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 5.26,
+     "tilt": -4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      5.33
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": 6.22,
+     "tilt": -6
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      5.78
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 6.22,
+     "tilt": 4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      6.29
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": 7.23,
+     "tilt": 5
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      6.8
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 7.23,
+     "tilt": -4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      7.3
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": 8.25,
+     "tilt": -6
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      7.78
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 8.25,
+     "tilt": 4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      8.32
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": 9.21,
+     "tilt": 5
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      8.82
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 9.21,
+     "tilt": -4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      9.28
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": 10.26,
+     "tilt": -6
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      9.8
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 10.26,
+     "tilt": 4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      10.33
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": 11.25,
+     "tilt": 5
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      10.82
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 11.25,
+     "tilt": -4
+    },
+    {
+     "text": "ГОУ!",
+     "at": [
+      11.32
+     ],
+     "y": 0.58,
+     "w": 0.5,
+     "max_h": 0.11,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": 12.33,
+     "tilt": -6
+    },
+    {
+     "text": "ВЕГАН!",
+     "at": [
+      11.81
+     ],
+     "y": 0.7,
+     "w": 0.8,
+     "max_h": 0.12,
+     "fill": "white",
+     "fill2": "lime",
+     "out": 12.33,
+     "tilt": 4
+    }
+   ]
+  },
+  {
+   "id": "toilet",
+   "from": 14.52,
+   "transition": "ink",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "toilet",
+      "urinal"
+     ],
+     [
+      "approach"
+     ],
+     [
+      "fistbump"
+     ],
+     [
+      "pointing"
+     ],
+     [
+      "blush",
+      "bearpeek"
+     ]
+    ]
+   },
+   "panels": {
+    "toilet": {
+     "img": "toilet"
+    },
+    "urinal": {
+     "img": "p_urinal"
+    },
+    "approach": {
+     "img": "p_approach"
+    },
+    "fistbump": {
+     "img": "p_fistbump"
+    },
+    "pointing": {
+     "img": "p_pointing"
+    },
+    "blush": {
+     "img": "p_blush"
+    },
+    "bearpeek": {
+     "img": "p_bearpeek"
+    }
+   },
+   "shots": [
+    {
+     "at": 14.52,
+     "frame": [
+      "toilet"
+     ]
+    },
+    {
+     "at": 16.02,
+     "frame": [
+      "urinal"
+     ]
+    },
+    {
+     "at": 18.52,
+     "frame": [
+      "toilet",
+      "urinal"
+     ]
+    },
+    {
+     "at": 20.52,
+     "frame": [
+      "approach"
+     ]
+    },
+    {
+     "at": 22.52,
+     "frame": {
+      "panel": "approach",
+      "sub": [
+       0.45,
+       0.0,
+       1.0,
+       1.0
+      ]
+     }
+    },
+    {
+     "at": 24.52,
+     "frame": {
+      "panel": "approach",
+      "sub": [
+       0.0,
+       0.0,
+       0.55,
+       1.0
+      ]
+     }
+    },
+    {
+     "at": 26.52,
+     "frame": [
+      "fistbump"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 28.52,
+     "frame": [
+      "pointing"
+     ]
+    },
+    {
+     "at": 30.02,
+     "frame": [
+      "blush"
+     ]
+    },
+    {
+     "at": 32.02,
+     "frame": [
+      "bearpeek"
+     ]
+    },
+    {
+     "at": 34.02,
+     "frame": [
+      "blush",
+      "bearpeek"
+     ]
+    },
+    {
+     "at": 35.52,
+     "frame": "page"
+    }
+   ],
+   "texts": [
+    {
+     "panel": "toilet",
+     "text": "ТЕМ ВРЕМЕНЕМ...",
+     "at": [
+      14.62
+     ],
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.85,
+     "until": 16.0,
+     "upper": true
+    },
+    {
+     "panel": "urinal",
+     "from": "w:22",
+     "to": "w:29",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86,
+     "skip": [
+      27,
+      28
+     ]
+    },
+    {
+     "panel": "approach",
+     "from": "w:30",
+     "to": "w:36",
+     "kind": "caption",
+     "x": 0.32,
+     "y": 0.08,
+     "w": 0.55
+    },
+    {
+     "panel": "approach",
+     "from": "w:37",
+     "to": "w:39",
+     "kind": "speech",
+     "x": 0.74,
+     "y": 0.2,
+     "w": 0.42,
+     "tail": [
+      0.6,
+      1.5
+     ]
+    },
+    {
+     "panel": "approach",
+     "from": "w:40",
+     "to": "w:46",
+     "kind": "caption",
+     "x": 0.3,
+     "y": 0.1,
+     "w": 0.5
+    },
+    {
+     "panel": "fistbump",
+     "from": "w:47",
+     "to": "w:48",
+     "kind": "shout",
+     "x": 0.3,
+     "y": 0.1,
+     "w": 0.5,
+     "tail": [
+      0.35,
+      1.5
+     ]
+    },
+    {
+     "panel": "fistbump",
+     "from": "w:49",
+     "to": "w:50",
+     "kind": "speech",
+     "x": 0.75,
+     "y": 0.12,
+     "w": 0.4,
+     "tail": [
+      0.6,
+      1.5
+     ]
+    },
+    {
+     "panel": "pointing",
+     "from": "w:51",
+     "to": "w:53",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.6
+    },
+    {
+     "panel": "blush",
+     "from": "w:54",
+     "to": "w:60",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "bearpeek",
+     "from": "w:61",
+     "to": "w:64",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "blush",
+     "from": "w:65",
+     "to": "w:71",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.86,
+     "w": 0.9
+    }
+   ],
+   "acts": [
+    {
+     "img": "p_fistbump",
+     "panel": "fistbump",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 1.0,
+     "z": 0.02,
+     "anim": "still",
+     "beat": false,
+     "shadow": false,
+     "rig": [
+      {
+       "src": [
+        530,
+        540
+       ],
+       "r": 170,
+       "pivot": [
+        530,
+        700
+       ],
+       "d": [
+        0,
+        -0.02
+       ],
+       "mode": "shake",
+       "hz": 4,
+       "from": "w:47",
+       "to": "w:48+0.5"
+      }
+     ]
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "urinal",
+     "text": "ФЬЮ-\nФЬЮ!",
+     "at": "w:26",
+     "x": 0.25,
+     "y": 0.4,
+     "h": 0.2,
+     "dur": 1.4,
+     "kind": "cool"
+    },
+    {
+     "panel": "fistbump",
+     "text": "ТЫЦ!",
+     "at": "w:47",
+     "x": 0.5,
+     "y": 0.75,
+     "h": 0.22,
+     "dur": 0.9
+    },
+    {
+     "panel": "blush",
+     "text": "ОГО!",
+     "at": "w:57",
+     "x": 0.5,
+     "y": 0.45,
+     "h": 0.25,
+     "dur": 1.0
+    },
+    {
+     "panel": "bearpeek",
+     "text": "ОЙ!",
+     "at": "w:64",
+     "x": 0.72,
+     "y": 0.6,
+     "h": 0.18,
+     "dur": 1.0,
+     "kind": "cool"
+    }
+   ],
+   "words": [
+    {
+     "text": "ПРИВЕТ,\nЯ ВЕГАН!",
+     "at": [
+      "w:37",
+      "w:38",
+      "w:39"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": "w:40-0.1"
+    },
+    {
+     "text": "ЗДОРОВО,\nБРАТАН!",
+     "at": [
+      "w:47",
+      "w:48"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": "w:51-0.1"
+    },
+    {
+     "text": "МЫ ТАК\nПОХОЖИ!",
+     "at": [
+      "w:51",
+      "w:52",
+      "w:53"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "pink",
+     "out": "w:54"
+    }
+   ]
+  },
+  {
+   "id": "fatguy",
+   "from": 36.52,
+   "transition": "pageturn",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "door",
+      "fatp"
+     ],
+     [
+      "yell"
+     ],
+     [
+      "sausage",
+      "shout"
+     ]
+    ]
+   },
+   "panels": {
+    "door": {
+     "img": "p_door"
+    },
+    "fatp": {
+     "burst": {
+      "bg": "orange",
+      "line": "red"
+     },
+     "aspect": 0.72
+    },
+    "yell": {
+     "img": "p_yell"
+    },
+    "sausage": {
+     "img": "p_sausage"
+    },
+    "shout": {
+     "img": "p_shout"
+    }
+   },
+   "shots": [
+    {
+     "at": 36.52,
+     "frame": [
+      "door"
+     ]
+    },
+    {
+     "at": 38.02,
+     "frame": [
+      "fatp"
+     ]
+    },
+    {
+     "at": 39.52,
+     "frame": [
+      "door",
+      "fatp"
+     ]
+    },
+    {
+     "at": 40.02,
+     "frame": [
+      "yell"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 42.52,
+     "frame": [
+      "sausage"
+     ]
+    },
+    {
+     "at": 44.52,
+     "frame": [
+      "sausage",
+      "shout"
+     ]
+    },
+    {
+     "at": 46.02,
+     "frame": [
+      "shout"
+     ]
+    },
+    {
+     "at": 47.02,
+     "frame": "page"
+    }
+   ],
+   "texts": [
+    {
+     "panel": "door",
+     "from": "w:72",
+     "to": "w:76",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "fatp",
+     "from": "w:77",
+     "to": "w:80",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "yell",
+     "from": "w:81",
+     "to": "w:85",
+     "kind": "shout",
+     "x": 0.5,
+     "y": 0.16,
+     "w": 0.8,
+     "tail": [
+      0.5,
+      1.6
+     ]
+    },
+    {
+     "panel": "sausage",
+     "from": "w:86",
+     "to": "w:95",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "shout",
+     "from": "w:96",
+     "to": "w:99",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    }
+   ],
+   "acts": [
+    {
+     "img": "fatguy",
+     "panel": "fatp",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 0.78,
+     "in": "w:77",
+     "anim": "pop",
+     "shadow": false,
+     "rig": [
+      {
+       "src": [
+        160,
+        380
+       ],
+       "r": 170,
+       "pivot": [
+        290,
+        420
+       ],
+       "rot": 10,
+       "mode": "shake",
+       "hz": 5,
+       "from": "w:77",
+       "to": 40.0
+      }
+     ]
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "door",
+     "text": "ХРЯСЬ!",
+     "at": "w:75",
+     "x": 0.5,
+     "y": 0.45,
+     "h": 0.3,
+     "dur": 1.0
+    },
+    {
+     "panel": "sausage",
+     "text": "ЧАВК!",
+     "at": "w:91",
+     "x": 0.75,
+     "y": 0.6,
+     "h": 0.25,
+     "dur": 1.0
+    }
+   ],
+   "words": [
+    {
+     "text": "ПУЗАТЫЙ,\nЗЛОЙ",
+     "at": [
+      "w:79",
+      "w:80"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "red",
+     "fill2": "orange",
+     "out": "w:81"
+    },
+    {
+     "text": "РАЗДРА-\nЖИТЕЛЬНЫЙ",
+     "at": [
+      "w:92",
+      "w:92.2"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "red",
+     "out": "w:96-0.2"
+    }
+   ]
+  },
+  {
+   "id": "truth",
+   "from": 48.02,
+   "transition": "halftone",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "stamp",
+      "cowglade"
+     ],
+     [
+      "disco"
+     ],
+     [
+      "cowpoop",
+      "cry"
+     ],
+     [
+      "whisper",
+      "darkforest"
+     ]
+    ]
+   },
+   "panels": {
+    "stamp": {
+     "stamp": "ЧИСТАЯ\nПРАВДА!",
+     "aspect": 1.0
+    },
+    "cowglade": {
+     "img": "glade"
+    },
+    "disco": {
+     "img": "p_disco"
+    },
+    "cowpoop": {
+     "img": "p_cowpoop"
+    },
+    "cry": {
+     "img": "p_cry"
+    },
+    "whisper": {
+     "img": "p_whisper"
+    },
+    "darkforest": {
+     "img": "darkforest"
+    }
+   },
+   "shots": [
+    {
+     "at": 48.02,
+     "frame": [
+      "stamp"
+     ]
+    },
+    {
+     "at": 50.02,
+     "frame": [
+      "stamp",
+      "cowglade"
+     ]
+    },
+    {
+     "at": 51.52,
+     "frame": [
+      "cowglade"
+     ]
+    },
+    {
+     "at": 53.02,
+     "frame": [
+      "disco"
+     ]
+    },
+    {
+     "at": 55.52,
+     "frame": [
+      "cowpoop"
+     ]
+    },
+    {
+     "at": 57.52,
+     "frame": [
+      "cry"
+     ]
+    },
+    {
+     "at": 59.52,
+     "frame": [
+      "whisper"
+     ]
+    },
+    {
+     "at": 61.52,
+     "frame": [
+      "darkforest"
+     ],
+     "move": "smash"
+    }
+   ],
+   "texts": [
+    {
+     "panel": "stamp",
+     "from": "w:100",
+     "to": "w:104",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "stamp",
+     "from": "w:105",
+     "to": "w:111",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.88,
+     "w": 0.86
+    },
+    {
+     "panel": "cowglade",
+     "from": "w:112",
+     "to": "w:113",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "disco",
+     "from": "w:114",
+     "to": "w:122",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "cowpoop",
+     "from": "w:123",
+     "to": "w:128",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "cry",
+     "from": "w:130",
+     "to": "w:135",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "whisper",
+     "from": "w:136",
+     "to": "w:142",
+     "kind": "whisper",
+     "x": 0.5,
+     "y": 0.2,
+     "w": 0.8,
+     "tail": [
+      0.4,
+      1.5
+     ]
+    },
+    {
+     "panel": "darkforest",
+     "from": "w:147",
+     "to": "w:149",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.88,
+     "w": 0.86
+    }
+   ],
+   "acts": [
+    {
+     "img": "cow",
+     "panel": "cowglade",
+     "x": 0.5,
+     "y": 0.97,
+     "h": 0.42,
+     "in": "w:113",
+     "anim": "pop",
+     "rig": [
+      {
+       "src": [
+        200,
+        500
+       ],
+       "r": 200,
+       "pivot": [
+        330,
+        560
+       ],
+       "rot": 5,
+       "mode": "beat"
+      }
+     ]
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "cowpoop",
+     "text": "ПЛЮХ!",
+     "at": "w:126",
+     "x": 0.62,
+     "y": 0.62,
+     "h": 0.28,
+     "dur": 1.0
+    },
+    {
+     "panel": "cry",
+     "text": "ХНЫК!",
+     "at": "w:135",
+     "x": 0.75,
+     "y": 0.45,
+     "h": 0.18,
+     "dur": 1.0,
+     "kind": "cool"
+    }
+   ],
+   "words": [
+    {
+     "text": "ТРАВОЯДНЫЕ",
+     "at": [
+      "w:113"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": "w:114+0.6"
+    },
+    {
+     "text": "ОБИДНО!",
+     "at": [
+      "w:135"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "blue",
+     "fill2": "purple"
+    },
+    {
+     "text": "НЕ ХОДИТЕ\nВ ЛЕС!",
+     "at": [
+      "w:143",
+      "w:144",
+      "w:145",
+      "w:146"
+     ],
+     "y": 0.5,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "red",
+     "max_h": 0.12
+    }
+   ]
+  },
+  {
+   "id": "chorus1",
+   "from": 64.02,
+   "transition": "pageturn",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "skip",
+      "bearp"
+     ],
+     [
+      "handshake"
+     ],
+     [
+      "hunterwalk",
+      "chase"
+     ],
+     [
+      "tree",
+      "gardenp"
+     ],
+     [
+      "flyclose"
+     ]
+    ]
+   },
+   "panels": {
+    "skip": {
+     "img": "p_skip"
+    },
+    "bearp": {
+     "burst": {
+      "bg": "yellow",
+      "line": "orange"
+     },
+     "aspect": 0.72
+    },
+    "handshake": {
+     "img": "handshake"
+    },
+    "hunterwalk": {
+     "img": "p_hunterwalk"
+    },
+    "chase": {
+     "burst": {
+      "bg": "orange",
+      "line": "dpurple"
+     },
+     "aspect": 1.0
+    },
+    "tree": {
+     "img": "p_tree",
+     "trim": 0.045
+    },
+    "gardenp": {
+     "img": "garden"
+    },
+    "flyclose": {
+     "img": "p_flyclose"
+    }
+   },
+   "shots": [
+    {
+     "at": 64.02,
+     "frame": [
+      "skip"
+     ]
+    },
+    {
+     "at": 65.52,
+     "frame": [
+      "bearp"
+     ]
+    },
+    {
+     "at": 67.02,
+     "frame": [
+      "handshake"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 68.02,
+     "frame": [
+      "hunterwalk"
+     ]
+    },
+    {
+     "at": 69.52,
+     "frame": [
+      "chase"
+     ]
+    },
+    {
+     "at": 71.52,
+     "frame": [
+      "hunterwalk",
+      "chase"
+     ]
+    },
+    {
+     "at": 73.02,
+     "frame": [
+      "tree"
+     ]
+    },
+    {
+     "at": 76.02,
+     "frame": [
+      "gardenp"
+     ]
+    },
+    {
+     "at": 78.02,
+     "frame": [
+      "flyclose"
+     ]
+    }
+   ],
+   "texts": [
+    {
+     "panel": "skip",
+     "from": "w:150",
+     "to": "w:154",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "bearp",
+     "from": "w:155",
+     "to": "w:156",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.07,
+     "w": 0.86
+    },
+    {
+     "panel": "handshake",
+     "from": "w:157",
+     "to": "w:159",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "hunterwalk",
+     "from": "w:160",
+     "to": "w:164",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "chase",
+     "from": "w:165",
+     "to": "w:169",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "chase",
+     "from": "w:170",
+     "to": "w:171",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "tree",
+     "from": "w:172",
+     "to": "w:180",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "gardenp",
+     "from": "w:181",
+     "to": "w:184",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "flyclose",
+     "from": "w:185",
+     "to": "w:190",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    }
+   ],
+   "acts": [
+    {
+     "img": "bear",
+     "panel": "bearp",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 0.95,
+     "in": "w:155",
+     "anim": "pop",
+     "shadow": false,
+     "rig": [
+      {
+       "src": [
+        290,
+        700
+       ],
+       "r": 150,
+       "pivot": [
+        170,
+        560
+       ],
+       "rot": 9,
+       "mode": "shake",
+       "hz": 2.5,
+       "from": "w:155+0.3",
+       "to": "w:157"
+      }
+     ]
+    },
+    {
+     "img": "handshake",
+     "panel": "handshake",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 1.0,
+     "z": 0.02,
+     "anim": "still",
+     "beat": false,
+     "shadow": false,
+     "rig": [
+      {
+       "src": [
+        560,
+        560
+       ],
+       "r": 300,
+       "pivot": [
+        560,
+        560
+       ],
+       "d": [
+        0,
+        0.045
+       ],
+       "mode": "shake",
+       "hz": 3,
+       "from": "w:157",
+       "to": "w:159+0.4"
+      }
+     ]
+    },
+    {
+     "img": "bear_run",
+     "panel": "chase",
+     "x": 0.32,
+     "y": 0.98,
+     "h": 0.8,
+     "in": "w:165",
+     "anim": "run",
+     "args": {
+      "from_x": -0.7,
+      "to_x": 0.0,
+      "end_at": "w:166",
+      "step": 0.6,
+      "lean": 4
+     }
+    },
+    {
+     "img": "hunter#0",
+     "panel": "chase",
+     "x": 0.7,
+     "y": 0.98,
+     "h": 0.7,
+     "in": "w:165",
+     "out": "w:166",
+     "anim": "run",
+     "args": {
+      "from_x": 0.0,
+      "to_x": 0.0,
+      "step": 0.7,
+      "hop": 0.02
+     }
+    },
+    {
+     "img": "hunter#0",
+     "panel": "chase",
+     "x": 0.7,
+     "y": 0.98,
+     "h": 0.7,
+     "in": "w:166",
+     "anim": "run",
+     "args": {
+      "from_x": 0.0,
+      "to_x": 0.9,
+      "end_at": "w:170",
+      "step": 0.9,
+      "hop": 0.04,
+      "lean": 12
+     }
+    },
+    {
+     "img": "hunter#1",
+     "panel": "chase",
+     "x": 0.72,
+     "y": 0.36,
+     "h": 0.2,
+     "in": "w:166",
+     "anim": "fly",
+     "shadow": false,
+     "args": {
+      "vx": -0.3,
+      "vy": 0.9,
+      "g": 1.6,
+      "spin": -480
+     }
+    },
+    {
+     "img": "dad_garden",
+     "panel": "gardenp",
+     "x": 0.5,
+     "y": 0.98,
+     "h": 0.66,
+     "in": "w:182",
+     "anim": "pop",
+     "rig": [
+      {
+       "src": [
+        650,
+        480
+       ],
+       "r": 150,
+       "pivot": [
+        610,
+        640
+       ],
+       "rot": 7,
+       "mode": "wave",
+       "hz": 0.9
+      }
+     ]
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "chase",
+     "text": "ХРЯСЬ!",
+     "at": "w:166",
+     "x": 0.5,
+     "y": 0.42,
+     "h": 0.32,
+     "dur": 1.0
+    },
+    {
+     "panel": "tree",
+     "text": "ОГО!",
+     "at": "w:175",
+     "x": 0.7,
+     "y": 0.4,
+     "h": 0.18,
+     "dur": 1.0
+    },
+    {
+     "panel": "flyclose",
+     "text": "ВЖЖ!",
+     "at": "w:189",
+     "x": 0.8,
+     "y": 0.35,
+     "h": 0.15,
+     "dur": 0.9,
+     "kind": "cool"
+    }
+   ],
+   "words": [
+    {
+     "text": "МЕДВЕДЬ",
+     "at": [
+      "w:155"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": "w:157-0.12"
+    },
+    {
+     "text": "ПОЖМЁТ\nЛАПУ!",
+     "at": [
+      "w:157",
+      "w:159"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": "w:160-0.1"
+    },
+    {
+     "text": "МЕДВЕДЬ",
+     "at": [
+      "w:165"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "red",
+     "out": "w:170-0.1"
+    },
+    {
+     "text": "ПАПУ-\nОХОТНИКА!",
+     "at": [
+      "w:170",
+      "w:171"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "orange",
+     "max_h": 0.1,
+     "out": "w:172"
+    },
+    {
+     "text": "ОГОРОДНИКОМ",
+     "at": [
+      "w:184"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "orange",
+     "out": "w:186-0.12"
+    },
+    {
+     "text": "ДАЖЕ\nМУХЕ",
+     "at": [
+      "w:186",
+      "w:187"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "yellow"
+    }
+   ]
+  },
+  {
+   "id": "chorus2",
+   "from": 80.02,
+   "transition": "cut",
+   "page": {
+    "width": 2000,
+    "rows": [
+     [
+      "picnic"
+     ],
+     [
+      "fivep",
+      "tiptoe"
+     ],
+     [
+      "boo",
+      "hatp"
+     ],
+     [
+      "yearsp"
+     ],
+     [
+      "cabbage",
+      "tbc"
+     ]
+    ]
+   },
+   "panels": {
+    "picnic": {
+     "img": "p_picnic"
+    },
+    "fivep": {
+     "stamp": "ДАЙ\nЛАПУ!",
+     "aspect": 0.9,
+     "colors": {
+      "bg": "lime",
+      "line": "purple",
+      "fill": "yellow",
+      "fill2": "orange"
+     }
+    },
+    "tiptoe": {
+     "img": "p_tiptoe"
+    },
+    "boo": {
+     "img": "p_boo"
+    },
+    "hatp": {
+     "burst": {
+      "bg": "yellow",
+      "line": "red"
+     },
+     "aspect": 1.0
+    },
+    "yearsp": {
+     "stamp": "МНОГО-МНОГО\nЛЕТ...",
+     "aspect": 1.7,
+     "colors": {
+      "bg": "cream",
+      "line": "purple",
+      "fill": "cream",
+      "fill2": "orange"
+     }
+    },
+    "cabbage": {
+     "img": "p_cabbage"
+    },
+    "tbc": {
+     "tbc": true,
+     "aspect": 0.8
+    }
+   },
+   "shots": [
+    {
+     "at": 80.02,
+     "frame": [
+      "picnic"
+     ]
+    },
+    {
+     "at": 82.52,
+     "frame": [
+      "fivep"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 84.02,
+     "frame": [
+      "tiptoe"
+     ]
+    },
+    {
+     "at": 85.52,
+     "frame": [
+      "boo"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 87.52,
+     "frame": [
+      "hatp"
+     ]
+    },
+    {
+     "at": 89.02,
+     "frame": [
+      "yearsp"
+     ]
+    },
+    {
+     "at": 91.02,
+     "frame": [
+      "boo",
+      "hatp"
+     ]
+    },
+    {
+     "at": 92.02,
+     "frame": [
+      "cabbage"
+     ]
+    },
+    {
+     "at": 95.52,
+     "frame": [
+      "tbc"
+     ],
+     "move": "smash"
+    },
+    {
+     "at": 97.52,
+     "frame": "page"
+    }
+   ],
+   "texts": [
+    {
+     "panel": "picnic",
+     "from": "w:191",
+     "to": "w:196",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "fivep",
+     "from": "w:197",
+     "to": "w:200",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "tiptoe",
+     "from": "w:201",
+     "to": "w:205",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "boo",
+     "from": "w:206",
+     "to": "w:210",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.08,
+     "w": 0.86
+    },
+    {
+     "panel": "hatp",
+     "from": "w:211",
+     "to": "w:212",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "yearsp",
+     "from": "w:213",
+     "to": "w:222",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.12,
+     "w": 0.86
+    },
+    {
+     "panel": "cabbage",
+     "from": "w:223",
+     "to": "w:232",
+     "kind": "caption",
+     "x": 0.5,
+     "y": 0.1,
+     "w": 0.86
+    },
+    {
+     "panel": "tbc",
+     "from": "w:233",
+     "to": "w:233",
+     "kind": "shout",
+     "x": 0.3,
+     "y": 0.16,
+     "w": 0.4,
+     "tail": [
+      0.5,
+      1.5
+     ]
+    }
+   ],
+   "acts": [
+    {
+     "img": "p_picnic",
+     "panel": "picnic",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 1.0,
+     "z": 0.02,
+     "anim": "still",
+     "beat": false,
+     "shadow": false,
+     "rig": []
+    },
+    {
+     "img": "p_boo",
+     "panel": "boo",
+     "x": 0.5,
+     "y": 1.0,
+     "h": 1.0,
+     "z": 0.02,
+     "anim": "still",
+     "beat": false,
+     "shadow": false,
+     "rig": []
+    }
+   ],
+   "sfx": [
+    {
+     "panel": "boo",
+     "text": "ХРЯСЬ!",
+     "at": "w:207",
+     "x": 0.5,
+     "y": 0.75,
+     "h": 0.25,
+     "dur": 1.0
+    },
+    {
+     "panel": "hatp",
+     "text": "БАЦ!",
+     "at": "w:211",
+     "x": 0.5,
+     "y": 0.5,
+     "h": 0.4,
+     "dur": 1.2
+    },
+    {
+     "panel": "cabbage",
+     "text": "ВЖЖ!",
+     "at": "w:230",
+     "x": 0.82,
+     "y": 0.3,
+     "h": 0.15,
+     "dur": 0.9,
+     "kind": "cool"
+    }
+   ],
+   "words": [
+    {
+     "text": "МЕДВЕДЬ",
+     "at": [
+      "w:196"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "orange",
+     "out": "w:198-0.12"
+    },
+    {
+     "text": "ПОЖМЁТ\nЛАПУ!",
+     "at": [
+      "w:198",
+      "w:200"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "yellow",
+     "out": "w:201-0.1"
+    },
+    {
+     "text": "МЕДВЕДЬ",
+     "at": [
+      "w:206"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "yellow",
+     "fill2": "red",
+     "out": "w:211-0.1"
+    },
+    {
+     "text": "ПАПКУ-\nОХОТНИКА!",
+     "at": [
+      "w:211",
+      "w:212"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "orange",
+     "max_h": 0.1,
+     "out": "w:213"
+    },
+    {
+     "text": "ОГОРОДНИКОМ",
+     "at": [
+      "w:225"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "lime",
+     "fill2": "orange",
+     "out": "w:227-0.12"
+    },
+    {
+     "text": "ДАЖЕ\nМУХЕ",
+     "at": [
+      "w:227",
+      "w:228"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "yellow",
+     "out": "w:233-0.1"
+    }
+   ]
+  }
+ ]
+}

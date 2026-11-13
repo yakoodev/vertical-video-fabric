@@ -23,10 +23,13 @@ def load_wav(path: str) -> tuple[np.ndarray, int]:
     return x.reshape(-1, ch).mean(1), sr
 
 
-def _stft_mag(x: np.ndarray, sr: int, hop: int, nfft: int = 2048) -> tuple[np.ndarray, np.ndarray]:
+def _stft_mag(x: np.ndarray, sr: int, hop: int, nfft: int = 2048, with_rms: bool = False):
     pad = np.pad(x, (nfft // 2, nfft // 2))
     fr = np.lib.stride_tricks.sliding_window_view(pad, nfft)[::hop] * np.hanning(nfft)
-    return np.abs(np.fft.rfft(fr, axis=1)).astype(np.float32), np.fft.rfftfreq(nfft, 1 / sr)
+    S, f = np.abs(np.fft.rfft(fr, axis=1)).astype(np.float32), np.fft.rfftfreq(nfft, 1 / sr)
+    if with_rms:
+        return S, f, np.sqrt((fr ** 2).mean(1))
+    return S, f
 
 
 def vocal_onsets(stem: np.ndarray, sr: int, t0: float = 0.0, min_db: float = -38.0, gap: float = 0.07) -> dict:
@@ -35,12 +38,11 @@ def vocal_onsets(stem: np.ndarray, sr: int, t0: float = 0.0, min_db: float = -38
     Возвращает {"onsets": [[t, сила 0..1, dB], ...], "fps": кадров огибающей в секунду, "flux": [...], "db": [...]}.
     t — секунды песни (t0 — время начала стема)."""
     hop = max(1, int(round(sr * 0.005)))
-    S, f = _stft_mag(stem, sr, hop)
+    S, f, rms = _stft_mag(stem, sr, hop, with_rms=True)
     band = (f > 120) & (f < 6000)
     L = np.log1p(200 * S[:, band])
     flux = np.concatenate([[0], np.maximum(0, np.diff(L, axis=0)).sum(1)])
-    # dB по энергии кадра в окне (как в song15: rms по сэмплам ~ норма спектра)
-    db = 20 * np.log10(np.sqrt((S ** 2).sum(1) * 2) / 2048 / 0.5 + 1e-6)
+    db = 20 * np.log10(rms + 1e-6)          # громкость кадра (окно Ханна), как в утверждённом song15
     fps = sr / hop
     k = np.hanning(9); k /= k.sum()
     fl = np.convolve(flux, k, mode="same")
@@ -122,7 +124,7 @@ def syllables(word: str) -> int:
     return max(1, sum(ch in VOWELS for ch in word.lower()))
 
 
-def snap_words(words: list[dict], onsets: list, look_back: float = 0.30, loud_db: float = -22.0) -> list[dict]:
+def snap_words(words: list[dict], onsets: list, look_back: float = 0.30, loud_db: float = -28.0) -> list[dict]:
     """Каждому слову Whisper — ближайшая атака на вокале (тайминг), плюс атаки следующих слогов внутри слова.
 
     Атака не может принадлежать двум словам; ищем в [s - look_back, конец слова]."""

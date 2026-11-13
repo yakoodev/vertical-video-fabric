@@ -378,15 +378,17 @@ SHADOW = S.get("shadow")
 def sprite(name, it, c, f0, f1):
     """Персонаж/предмет: ноги в точке (x, y) экрана на глубине depth, высота h доли экрана; анимация появления."""
     d = it["depth"]
-    hm = it["h"] * VH * d
-    ob, op = card(name, it["tex"], hm)
+    sprite_core(name, it, f0, f1, c.to_world(f0, it["x"], it["y"], d), it["h"] * VH * d, c.rot(f0),
+                c.matrix(f0).to_3x3(), VW * d, VH * d)
+
+
+def sprite_core(name, it, f0, f1, feet, hm, br, M, sxs, sys_):
+    """Общее движение персонажа: feet — точка ног в мире, hm — высота, sxs/sys_ — метров на единицу x/y анимации."""
+    ob, op = rig_card(name, it["tex"], hm, it.get("rig")) if it.get("rig") else card(name, it["tex"], hm)
     wm = hm * META[it["tex"]]["w"] / META[it["tex"]]["h"]
     fin = max(f0, it["in"])
     fout = it["out"] if it["out"] is not None else f1
     anim, A = it["anim"], it.get("args", {})
-    br = c.rot(f0)
-    M = c.matrix(f0).to_3x3()
-    feet = c.to_world(f0, it["x"], it["y"], d)
     up = M @ Vector((0, 1, 0)); right = M @ Vector((1, 0, 0))
     sh = None
     if it.get("shadow") and SHADOW and anim not in ("fly",):
@@ -394,8 +396,6 @@ def sprite(name, it, c, f0, f1):
         sh.scale = (1, 1, 1)
     rnd = random.Random(hash(name) & 0xffff)
     flip = -1 if it.get("flip") else 1
-    sxs = VW * d                       # метров на экранную долю по X
-    sys_ = VH * d
     for f in range(f0, f1 + 1):
         k = 1.0; dx = 0.0; dy = 0.0; rz = 0.0; sqx, sqy = 1.0, 1.0; opa = 1.0
         if f < fin:
@@ -450,6 +450,8 @@ def sprite(name, it, c, f0, f1):
             key_tr(sh, f, loc=spos, rot=br, scale=(ss * sqx, ss, 1))
             if f in (f0, fin - 1, fin, fout, fout + 4, f1):
                 key_val(shop, f, opa * (1 - 0.5 * lift))
+    if it.get("rig"):
+        drive_rig(ob, it["rig"], f0, f1)
     visible(ob, f0, f1)
     if sh is not None:
         visible(sh, f0, f1)
@@ -602,10 +604,299 @@ def flash(name, it, c, f0, f1, out=True):
     visible(ob, a, b if out else b)
 
 
+# ---------------- риг вырезки: деформация сетки (без дырок) ----------------
+def rig_card(name, tex, h_m, rig):
+    """Плоскость-сетка 24×24 с ключами формы: каждая запись рига поворачивает/сдвигает область вокруг точки c
+    (доли текстуры: u слева, v сверху) с плавным спадом радиуса r — рука машет, кулак трясётся, лапа жмёт."""
+    im = img(tex)
+    asp = META[tex]["w"] / META[tex]["h"]
+    w_m = h_m * asp
+    ob = make_plane(name, w_m, h_m, 24, 24)
+    m, op = mat_emit("m_" + name, im) if FLAT else mat_paper("m_" + name, im)
+    ob.data.materials.append(m)
+    ob.shape_key_add(name="Basis", from_mix=False)
+    for k, r in enumerate(rig):
+        sk = ob.shape_key_add(name=f"r{k}", from_mix=False)
+        sk.slider_min, sk.slider_max = -1.0, 1.0
+        cu, cv = r.get("c", [0.5, 0.5])
+        rad = r.get("r", 0.2)
+        pu, pv = r.get("pivot", r.get("c", [0.5, 0.5]))
+        ang = math.radians(r.get("rot", 0.0))
+        du, dv = r.get("d", [0.0, 0.0])
+        px, pz = (pu - 0.5) * w_m, (0.5 - pv) * h_m
+        for i, v in enumerate(ob.data.vertices):
+            x, y = v.co.x, v.co.y
+            u_, v_ = x / w_m + 0.5, 0.5 - y / h_m
+            dist = math.hypot((u_ - cu) * asp, v_ - cv)
+            wgt = smooth(1 - dist / max(rad, 1e-3))
+            if wgt <= 0:
+                continue
+            a = ang * wgt
+            rx, ry = x - px, y - pz
+            nx = px + rx * math.cos(a) - ry * math.sin(a) + du * w_m * wgt
+            ny = pz + rx * math.sin(a) + ry * math.cos(a) - dv * h_m * wgt
+            sk.data[i].co.x, sk.data[i].co.y = nx, ny
+    return ob, op
+
+
+def drive_rig(ob, rig, f0, f1):
+    keys = ob.data.shape_keys.key_blocks
+    for k, r in enumerate(rig):
+        sk = keys[f"r{k}"]
+        a, b = r.get("from", f0), r.get("to", f1)
+        mode, hz = r.get("mode", "beat"), r.get("hz", 3.0)
+        for f in range(f0, f1 + 1):
+            env = smooth((f - a) / 3) * (1 - smooth((f - b) / 3))
+            t = (f - a) / FPS
+            if mode == "shake":
+                v = math.sin(2 * math.pi * hz * t) * env
+            elif mode == "wave":
+                v = math.sin(2 * math.pi * hz * f / FPS + k)
+            elif mode == "once":
+                v = smooth((f - a) / r.get("dur", 6))
+            else:                                    # beat: удар на каждой доле
+                v = pulse(f, BEATS, 1.0, 3.0) * env * 2 - 1 if r.get("both") else pulse(f, BEATS, 1.0, 3.0) * env
+            sk.value = v
+            sk.keyframe_insert("value", frame=f)
+
+
+def mat_dots(name, image):
+    """Растровое растворение: точка видна там, где поле растра < порога (порог ключуется 0 → 1.05)."""
+    m = bpy.data.materials.new(name); m.use_nodes = True
+    try:
+        m.surface_render_method = "DITHERED"
+    except Exception:
+        m.blend_method = "HASHED"
+    nt = m.node_tree
+    for n in list(nt.nodes):
+        nt.nodes.remove(n)
+    N, L = nt.nodes, nt.links
+    out = N.new("ShaderNodeOutputMaterial")
+    tex = N.new("ShaderNodeTexImage"); tex.image = image; tex.interpolation = "Linear"
+    try:
+        image.colorspace_settings.name = "Non-Color"
+    except Exception:
+        pass
+    thr = N.new("ShaderNodeValue"); thr.outputs[0].default_value = 0.0
+    cmp_ = N.new("ShaderNodeMath"); cmp_.operation = "LESS_THAN"
+    L.new(tex.outputs[0], cmp_.inputs[0]); L.new(thr.outputs[0], cmp_.inputs[1])
+    em = N.new("ShaderNodeEmission"); em.inputs[0].default_value = (0.035, 0.022, 0.06, 1)
+    tr = N.new("ShaderNodeBsdfTransparent"); mix = N.new("ShaderNodeMixShader")
+    L.new(cmp_.outputs[0], mix.inputs[0]); L.new(tr.outputs[0], mix.inputs[1]); L.new(em.outputs[0], mix.inputs[2])
+    L.new(mix.outputs[0], out.inputs[0])
+    return m, thr
+
+
+# ---------------- страница комикса ----------------
+PY = 20.0                      # глубина страницы от начала павильона
+
+
+class Page:
+    def __init__(self, s, X):
+        p = s["page"]
+        self.w, self.h, self.s, self.X = p["w"], p["h"], p["m_per_px"], X
+
+    def world(self, x, y):
+        return Vector((self.X + (x - self.w / 2) * self.s, PY, (self.h / 2 - y) * self.s))
+
+    def dist(self, rect):
+        x0, y0, x1, y1 = rect
+        return max((y1 - y0) * self.s / VH, (x1 - x0) * self.s / VW) * 1.04
+
+    def cam_for(self, rect):
+        x0, y0, x1, y1 = rect
+        cxy = self.world((x0 + x1) / 2, (y0 + y1) / 2)
+        d = self.dist(rect)
+        return Vector((cxy.x, PY - d, cxy.z)), d
+
+    def clamp(self, C, d):
+        """Кадр не выходит за край страницы, пока страница больше кадра (иначе — по центру страницы)."""
+        hw, hh = VW * d / 2 * 1.02, VH * d / 2 * 1.02
+        W2, H2 = self.w * self.s / 2, self.h * self.s / 2
+        x = C.x - self.X
+        x = max(-W2 + hw, min(W2 - hw, x)) if W2 > hw else 0.0
+        z = max(-H2 + hh, min(H2 - hh, C.z)) if H2 > hh else 0.0
+        return Vector((self.X + x, C.y, z))
+
+    def project(self, rect, x, y, z):
+        """Точка страницы (px) + выступ z м к камере → мир; совпадает со страницей в кадре rect, при движении — параллакс."""
+        C, d = self.cam_for(rect)
+        C = self.clamp(C, d)
+        P = self.world(x, y)
+        k = (d - z) / d
+        return C + (P - C) * k, k
+
+
+def drive_page_camera(c, s, pg):
+    shots = s["shots"]
+    f0, f1 = s["f0"], s["f1"]
+    seed = s["cam"].get("seed", 1)
+    punch = s["cam"].get("punch", [])
+    for f in range(f0 - 1, f1 + 2):
+        k = 0
+        for j, sh in enumerate(shots):
+            if f >= sh["f"] - sh["dur"]:
+                k = j
+        sh = shots[k]
+        C1, d1 = pg.cam_for(sh["rect"])
+        if f < sh["f"] and k > 0 and sh["dur"] > 0:
+            C0, d0 = pg.cam_for(shots[k - 1]["rect"])
+            nxt_start = sh["f"] - sh["dur"]
+            hold0 = smooth((nxt_start - shots[k - 1]["f"]) / max(1, nxt_start - shots[k - 1]["f"]))
+            d0 *= 1 - 0.045 * hold0
+            u = (f - (sh["f"] - sh["dur"])) / sh["dur"]
+            if sh["move"] == "smash":
+                e = clamp(u) ** 2
+                C = C0.lerp(C1, e); d = lerp(d0, d1 * 0.86, e)
+            else:
+                e = ease_in_out(u)
+                C = C0.lerp(C1, e)
+                d = lerp(d0, d1, e) + 0.35 * (C1 - C0).length * math.sin(math.pi * clamp(u))
+        else:
+            nxt = shots[k + 1]["f"] - shots[k + 1]["dur"] if k + 1 < len(shots) else f1
+            uh = (f - sh["f"]) / max(1, nxt - sh["f"])
+            C, d = C1.copy(), d1 * (1 - 0.045 * smooth(uh))
+            if sh["move"] == "smash" and f >= sh["f"]:
+                d *= 1 - 0.14 * math.exp(-(f - sh["f"]) / 3.0)
+            C.x += wobble(f, seed, 0.05 * d / 10, 0.04); C.z += wobble(f, seed + 1, 0.04 * d / 10, 0.05)
+        d *= 1 - 0.05 * pulse(f, punch, 1.0, 4.0)
+        C = pg.clamp(C, d)
+        roll = wobble(f, seed + 2, 0.7, 0.05) + bump(f, punch, 1.2, 4, 1.1, 12)
+        shake = (bump(f, KICKS, 0.3) + bump(f, punch, 0.4, 4, 1.3, 10), wobble(f, seed + 3, 0.2, 0.07))
+        pos = (C.x - c.X, PY - d, C.z)
+        c.look(f, pos, (C.x - c.X, PY, C.z), roll=roll, shake=shake)
+
+
+def page_plane(name, s, pg, f0, f1):
+    p = s["page"]
+    ob, _ = card(name, p["tex"], p["h"] * pg.s, flat=True)
+    ob.location = (pg.X, PY, 0); ob.rotation_euler = BASE_ROT
+    visible(ob, f0, f1)
+    if p.get("desk"):                                   # фон за страницей (виден на общих планах и пролётах)
+        size = max(p["w"], p["h"]) * pg.s * 2.2
+        dk, _ = card(name + "_desk", p["desk"], size, flat=True)
+        dk.location = (pg.X, PY + 1.5, 0); dk.rotation_euler = Euler((math.radians(90), 0, math.radians(0)))
+        for f in range(f0, f1 + 1, 3):
+            dk.rotation_euler = Euler((math.radians(90), math.radians(3 * (f - f0) / FPS), 0)); dk.keyframe_insert("rotation_euler", frame=f)
+        visible(dk, f0, f1)
+
+
+def act(name, it, c, f0, f1, pg):
+    r = it["ref"]
+    feet, k = pg.project(r, it["px"][0], it["px"][1], it["z"])
+    hm = it["h_px"] * pg.s * k
+    M = BASE_ROT.to_matrix()
+    # единица x/y анимации = ширина/высота панели, на которую сделан кадр
+    sxs = (r[2] - r[0]) * pg.s * k
+    sys_ = (r[3] - r[1]) * pg.s * k
+    it = dict(it); it["x"] = 0.0; it["h"] = it["h_px"] / max(1.0, r[3] - r[1])
+    if "from_x" in it.get("args", {}):
+        it["x"] = 0.0
+    sprite_core(name, it, f0, f1, feet, hm, BASE_ROT, M, sxs, sys_)
+
+
+def page_card(name, it, f0, f1, pg, kind):
+    pos, k = pg.project(it["ref"], it["px"][0], it["px"][1], it["z"])
+    hm = it["h_px"] * pg.s * k
+    ob, op = card(name, it["tex"], hm)
+    on, off = max(f0, it["on"]), min(f1, it["off"])
+    rnd = random.Random(hash(name) & 0xffff)
+    rot0 = it.get("rot", 0.0)
+    for f in range(max(f0, on - 1), min(f1, off + 4) + 1):
+        if kind == "bubble":
+            u = (f - on) / 5
+            s = back_out(u, 2.0) if u < 1 else 1.0 + 0.012 * math.sin(f * 0.25)
+            rz = wobble(f, rnd.randint(0, 99), 0.6, 0.06)
+        elif kind == "btext":
+            u = (f - on) / 3
+            s = lerp(1.6, 1.0, ease_out(u, 2)) if u >= 0 else 0.001
+            rz = 0.0
+        else:                                         # звук в панели
+            u = (f - on) / 5
+            s = (back_out(u, 2.6) if u < 1 else 1.0 + 0.03 * math.sin(f * 2.1))
+            rz = rot0 + (1 - ease_out(u, 2)) * -25 + 2.2 * math.sin(f * 1.7)
+        if f < on:
+            s = 0.001
+        if f >= off:
+            s *= max(0.001, 1 - smooth((f - off) / 3))
+        key_tr(ob, f, loc=pos, rot=obj_rot(BASE_ROT, 0, 0, rz), scale=max(s, 0.001))
+    visible(ob, max(f0, on - 1), min(f1, off + 4))
+
+
+def pageturn_in(name, it, c, f0, f1):
+    """Прошлая страница (снимок последнего кадра) переворачивается вокруг левого края и открывает новую."""
+    d = 1.0
+    w, h = VW * d * 1.01, VH * d * 1.01
+    ob, op = card(name, it["tex"], h)
+    me = ob.data
+    for v in me.vertices:
+        v.co.x += w / 2                                # ось поворота — левый край
+    ob.shape_key_add(name="Basis", from_mix=False)
+    curl = ob.shape_key_add(name="curl", from_mix=False)
+    for i, v in enumerate(me.vertices):
+        curl.data[i].co.z = v.co.z + 0.45 * w * (v.co.x / w) ** 2
+    ob.parent = c.ob
+    a, b = it["start"], it["end"]
+    for f in range(a, b + 1):
+        u = clamp((f - a) / max(1, b - a))
+        e = u * u * (3 - 2 * u)
+        key_tr(ob, f, loc=Vector((-VW * d / 2, 0, -d)), rot=Euler((0, math.radians(-178 * e), 0)))
+        curl.value = math.sin(math.pi * u) * 0.9; curl.keyframe_insert("value", frame=f)
+    visible(ob, a, b)
+
+
+def ink(name, it, c, f0, f1, out=True):
+    d = 0.95
+    ob, op, hm = locked(name, it["tex"], c, 1.0, d)
+    a, b = (it["start"], it["cut"]) if out else (it["cut"], it["end"])
+    for f in range(a, b + 1):
+        u = clamp((f - a) / max(1, b - a))
+        s = lerp(0.05, 3.3, u ** 1.5) if out else lerp(3.3, 0.01, ease_out(u, 2))
+        key_tr(ob, f, loc=Vector((0, 0, -d)), rot=Euler((0, 0, math.radians(20 * u))), scale=s)
+    visible(ob, a, b)
+
+
+def dots(name, it, c, f0, f1, out=True):
+    d = 0.92
+    im = img(it["tex"])
+    hm = VH * d * 1.02
+    ob = make_plane(name, hm * META[it["tex"]]["w"] / META[it["tex"]]["h"] * 1.02, hm)
+    m, thr = mat_dots("m_" + name, im)
+    ob.data.materials.append(m)
+    ob.parent = c.ob
+    ob.location = (0, 0, -d)
+    a, b = (it["start"], it["cut"]) if out else (it["cut"], it["end"])
+    for f in range(a, b + 1):
+        u = clamp((f - a) / max(1, b - a))
+        key_val(thr, f, lerp(0.0, 1.06, u) if out else lerp(1.06, 0.0, u))
+    visible(ob, a, b)
+
+
+def build_page_scene(s, c, X):
+    pg = Page(s, X)
+    drive_page_camera(c, s, pg)
+    f0, f1 = s["f0"], s["f1"]
+    page_plane(f"{s['id']}_page", s, pg, f0, f1)
+    for k, it in enumerate(s["items"]):
+        nm = f"{s['id']}_{k}_{it['type']}"
+        t = it["type"]
+        if t == "act":
+            act(nm, it, c, f0, f1, pg)
+        elif t in ("bubble", "btext", "pburst"):
+            page_card(nm, it, f0, f1, pg, t)
+        else:
+            BUILD[t](nm, it, c, f0, f1)
+
+
 BUILD = {"plate": plate, "ground": ground, "bush": bush, "sprite": sprite, "word": word, "chip": chip,
          "burst": burst, "inset": inset, "panel_in": panel_in,
          "flash_out": lambda n, it, c, f0, f1: flash(n, it, c, f0, f1, True),
-         "flash_in": lambda n, it, c, f0, f1: flash(n, it, c, f0, f1, False)}
+         "flash_in": lambda n, it, c, f0, f1: flash(n, it, c, f0, f1, False),
+         "pageturn_in": pageturn_in,
+         "ink_out": lambda n, it, c, f0, f1: ink(n, it, c, f0, f1, True),
+         "ink_in": lambda n, it, c, f0, f1: ink(n, it, c, f0, f1, False),
+         "dots_out": lambda n, it, c, f0, f1: dots(n, it, c, f0, f1, True),
+         "dots_in": lambda n, it, c, f0, f1: dots(n, it, c, f0, f1, False)}
 
 
 def build():
@@ -623,6 +914,9 @@ def build():
         # сцены вне заказанного диапазона кадров не строим (быстрые пробы)
         if s["f1"] < a0 or s["f0"] > b0:
             c.look(s["f0"], (0, 0, 0), (0, WD, 0))
+            continue
+        if s.get("kind") == "page":
+            build_page_scene(s, c, i * 1000.0)
             continue
         drive_camera(c, s)
         for k, it in enumerate(s["items"]):

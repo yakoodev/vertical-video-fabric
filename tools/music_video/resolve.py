@@ -38,11 +38,13 @@ class Clock:
         m = re.fullmatch(r"w:(\d+)(?:\.(\d+))?([+-]\d*\.?\d+)?", s)
         if m:
             w = self.words[int(m.group(1))]
-            if "at" in self.fix.get(int(m.group(1)), {}):
-                base = self.fix[int(m.group(1))]["at"]
-            elif m.group(2):
+            fx = self.fix.get(int(m.group(1)), {})
+            syl = self.syl_times(int(m.group(1)))
+            if m.group(2):
                 k = int(m.group(2))
-                base = w["syl"][k] if k < len(w["syl"]) else w["syl"][-1] + 0.12 * (k - len(w["syl"]) + 1)
+                base = syl[k] if k < len(syl) else syl[-1] + 0.12 * (k - len(syl) + 1)
+            elif "at" in fx:
+                base = fx["at"]
             else:
                 base = w["on"]
             return base + float(m.group(3) or 0)
@@ -69,6 +71,12 @@ class Clock:
         return fx.get("text", self.words[i]["w"]) if isinstance(fx, dict) else fx
 
     def syl_times(self, i: int) -> list[float]:
+        """Атаки слогов слова; в lyrics_fix можно задать {"at": t, "syl": [t1, t2, …]} — сверено по спектрограмме."""
+        fx = self.fix.get(i, {})
+        if "syl" in fx:
+            return list(fx["syl"])
+        if "at" in fx:
+            return [fx["at"]] + [t for t in self.words[i]["syl"][1:] if t > fx["at"] + 0.06]
         return list(self.words[i]["syl"])
 
 
@@ -148,7 +156,8 @@ def prep_images(plan: dict, work: Path, store: TexStore) -> dict:
                 cl = cv2.resize(ca[y0:y1, x0:x1], (c.shape[1], c.shape[0]), interpolation=cv2.INTER_LINEAR)
                 bl = cv2.GaussianBlur(c, (0, 0), 1.2)
                 c = np.clip(c + (c - bl) * 0.35, 0, 1)
-                store.put(nm, (np.dstack([c[..., ::-1], cl]) * 255 + 0.5).astype(np.uint8))
+                store.put(nm, (np.dstack([c[..., ::-1], cl]) * 255 + 0.5).astype(np.uint8),
+                          box=[int(x0), int(y0), int(x1), int(y1)])
             out[iid + (f"#{k}" if spec.get("split") else "")] = nm
     return out
 
@@ -330,6 +339,10 @@ def resolve(plan: dict, an: dict, out: Path) -> dict:
         f0 = int(round((bounds[i] - an["start"]) * fps))
         f1 = int(round((bounds[i + 1] - an["start"]) * fps)) if i + 1 < len(scenes) else nf
         seed = 101 + i * 17
+        if "page" in sc:                                  # страница комикса: полёт камеры по панелям
+            from pages import resolve_page
+            res["scenes"].append(resolve_page(sc, i, f0, f1, clk, style, imgs, store, fps, censor, seed))
+            continue
         items = []
         bg = sc.get("bg")
         if isinstance(bg, str):
@@ -373,6 +386,12 @@ def resolve(plan: dict, an: dict, out: Path) -> dict:
                           "on": max(f0, on), "off": min(f1, on + int(round(s.get("dur", 0.8) * fps))),
                           "rot": s.get("rot", float(np.random.default_rng(seed + k).uniform(-12, 12))),
                           "depth": s.get("depth", 4.0), "shake": s.get("shake", 1.0)})
+        # вспышки не наслаиваются: новая, задевающая старую, гасит её на своём первом кадре
+        bs = sorted((it for it in items if it["type"] == "burst"), key=lambda it: it["on"])
+        for a_i, a in enumerate(bs):
+            for b in bs[a_i + 1:]:
+                if b["on"] < a["off"] and abs(a["x"] - b["x"]) < 0.42 and abs(a["y"] - b["y"]) < (a["h"] + b["h"]) * 0.6:
+                    a["off"] = b["on"]
         for k, pn in enumerate(sc.get("panels", [])):
             src = tex_ref(pn["img"], imgs)
             on = clk.f(pn["at"])
@@ -391,6 +410,9 @@ def resolve(plan: dict, an: dict, out: Path) -> dict:
         tr = sc.get("transition", "cut")
         res["scenes"].append({"id": sc.get("id", f"s{i}"), "f0": f0, "f1": f1, "cam": cam, "items": items,
                               "transition": tr})
+    # переходы между страницами: перелистывание, клякса туши, растровое растворение
+    from pages import page_transitions
+    page_transitions(res["scenes"], store, style)
     # переход «panel»: следующая сцена в рамке комикса влетает к склейке
     for i, sc in enumerate(res["scenes"][:-1]):
         if sc["transition"] in ("panel", "burst"):
