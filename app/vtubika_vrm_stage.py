@@ -77,6 +77,53 @@ HEROINES["lyosha"] = {"model": MALE, "scale": 0.885, "keys_spread": 1.25, "keys_
                                "repaint": {"Hair": ["#1e120c", "#9a6a46"], "Tops": ["#2a3018", "#9aa86a"],
                                            "Bottoms": ["#101218", "#3a4050"], "EyeIris": ["#1a0c06", "#a0683a"]}}}
 
+# Каст разных моделей (13.11, «персонажи только цветом волос различаются»): образцы VRoid Studio ранних версий —
+# pixiv Inc. отказалась от прав (CC0: vroid.pixiv.help, статьи β Ver AvatarSample_1–4, Sendagaya Shino, Sakurada
+# Fumiriya, «Do VRoid Studio's sample models come with conditions of use?» — HairSample_*, базовые модели), мета VRM:
+# коммерция и корпорации — да, указывать автора не нужно. Файлы — <паки>/cast/ (D:\vvf-data\runtime\vrm\cast,
+# локально D:\vvf-offload\vtubika\vrm\vendor\cast), лицензии — LICENSES-meta.txt там же, D:\vvf-offload\vtubika\cast.
+# Свои причёски, лица (глаза), одежда и рост; scale — голова к росту героинь (1.374 м: кресло, стол, камеры);
+# keys_spread/keys_pull — постановка кистей на клавиатуре, при которой проходит проверка скрутки рук (contact.mjs).
+CAST_LOOK = {"outline": 0.0034, "shade": "#a49ab8", "toony": 0.97, "shift": -0.05, "rimPower": 4,
+             "skin": "^(face|body)|_SKIN", "skinShade": "#e0a898"}
+
+
+def _cast(model: str, scale: float, rim: str, headset: tuple[str, str], keys: tuple[float, float] | None = (1.25, 0.03),
+          **look: Any) -> dict[str, Any]:
+    her: dict[str, Any] = {"model": f"cast/{model}", "scale": scale, "chair_y": 0.775,
+                           "headphones": {"kind": "headphones", "color": headset[0], "accent": headset[1], "ring": 0.02,
+                                          "scale": 1.06, "lift": 0.035},
+                           "look": {**CAST_LOOK, "rim": rim, **look}}
+    if keys:
+        her["keys_spread"], her["keys_pull"] = keys
+    return her
+
+
+CAST: dict[str, dict[str, Any]] = {
+    # Шура: чёрное каре, заколка-«P», карие с оранжевым глаза, жилет и бант (образец β1 «Сэндагая Сибу»).
+    "shura": _cast("vroid_avatarsample_d.vrm", 0.99, "#ffb08a", ("#1c1d22", "#ff8a3d"), keys=None),
+    # Лиля: тёмная эльфийка — белые волосы, острые уши, бледная кожа, красные глаза, чёрное пальто (AvatarSample_D Darkness).
+    "lilya": _cast("vroid_avatarsample_d_darkness.vrm", 0.91, "#ff8ab0", ("#17151c", "#ff3b6e"), keys=(1.3, 0.045),
+                   skinShade="#d8b0c8"),
+    # Варя: каштановое каре, круглое лицо, бирюзовые глаза, платье-фартук; самая миниатюрная (β2 «Биби»).
+    "varya": _cast("vroid_avatarsample_e.vrm", 1.153, "#ffd08a", ("#f4efe6", "#8ac46a")),
+    # Ася: киберкошка — серебристые волосы с синей прядью, светящиеся кибер-ушки, разные глаза, узор на щеке (β3 «Вита»).
+    "asya": _cast("vroid_avatarsample_f.vrm", 0.937, "#8ff0ff", ("#14182a", "#35d0f0")),
+    # Мила: пушистые светлые волосы с розовым низом, бирюзовая лента, «опущенные» голубые глаза, пышное платье (β4).
+    "mila": _cast("vroid_avatarsample_g.vrm", 0.918, "#ffb0e0", ("#fff4fa", "#ff9ad6")),
+    # Тая: чёрные хвостики, белые звериные ушки, белое платье-свитер (HairSample_Female).
+    "taya": _cast("vroid_hairsample_female.vrm", 0.966, "#c0b0ff", ("#f4f1ff", "#a08aff")),
+    # Оля: длинные прямые чёрные волосы, ровная чёлка, синий бант, самая высокая из девушек (Сэндагая Сино).
+    "olya": _cast("vroid_sendagaya_shino.vrm", 0.97, "#9ac0ff", ("#1c1d22", "#4a8cff")),
+    # Дима: растрёпанные чёрные волосы до глаз, синие глаза, белое худи (HairSample_Male).
+    "dima": _cast("vroid_hairsample_male.vrm", 0.889, "#9af0d0", ("#1c1d22", "#5fe0b8")),
+    # Стас: светло-рыжие полудлинные волосы, самый высокий (голова 1.67 м), жилет и галстук (Сакурада Фумирия).
+    "stas": _cast("vroid_sakurada_fumiriya.vrm", 0.822, "#ffc08a", ("#2a2c34", "#ffb070")),
+    # Гоша: бирюзовый ёжик без пружинных прядей, густые брови, жилет и галстук (базовая мужская модель).
+    "gosha": _cast("vroid_base_male.vrm", 0.889, "#8ff0e0", ("#1c1d22", "#35d0c0")),
+}
+HEROINES.update(CAST)
+
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
 # свой персонаж Веры (сиреневые волосы, белый верх, звезда-заколка, фиолетовые глаза).
 AVATARS: dict[str, dict[str, Any]] = {

@@ -199,7 +199,7 @@ let clips: Record<string, Clip> = {};
 const CMU_CLIPS = ["wave", "laugh", "stretch_yawn", "waiting", "chin", "typing", "comb", "sit"];
 /** Самый малый зазор пальцев над поверхностями за все отрисованные кадры. */
 const contact = { min: Infinity, at: -1, point: "", surface: "", frames: 0,
-  chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "" } };
+  chair: { min: Infinity, at: -1, point: "" }, hair: { min: Infinity, at: -1, point: "", joints: 0 } };
 
 function poseAtTime(time: number, shot: Shot, local: number): PoseSpec {
   if (spec.timeline) return sequencePose(spec.timeline, clips, time, { cam: camPos(shot, local), leg: rig.legLength, face: faceCaps });
@@ -264,7 +264,8 @@ function render(t: number, pixels = true) {
   if (chair) {
     const b = chairGap(vrm, chair), h = hairGap(vrm, chair);
     if (b.gap < contact.chair.min) contact.chair = { min: b.gap, at: t, point: b.point };
-    if (h.gap < contact.hair.min) contact.hair = { min: h.gap, at: t, point: h.point };
+    const joints = Math.max(contact.hair.joints, h.joints);
+    contact.hair = h.gap < contact.hair.min ? { min: h.gap, at: t, point: h.point, joints } : { ...contact.hair, joints };
     if (spec.strictContact && b.gap < 0) throw new Error(`тело в кресле: t=${t.toFixed(3)} ${b.point} на ${(-b.gap * 1000).toFixed(1)} мм`);
   }
   // Руки против лица, головы, корпуса, ног и другой руки — без допуска (handcheck.ts).

@@ -154,6 +154,11 @@ test("пустые проверки касаний — причина, а не �
   assert.match(emptyChecks({ ...good, hands: { frames: 100, gaps: {} } }, spec, 80).join(), /руки: нет ни одного/);
   assert.match(emptyChecks({ ...good, hands: null }, spec, 80).join(), /не запускалась/);
   assert.match(emptyChecks(good, spec, 80, ["кадр 5: модели нет в сцене"]).join(), /модели нет на 1 кадрах/);
+  // Модель без пружинных прядей (ёжик): ни одного сустава волос — мерить нечего, не пустая проверка;
+  // суставы были, а замеров нет (или число неизвестно) — по-прежнему пусто.
+  assert.deepEqual(emptyChecks({ ...good, hair: { min: Infinity, joints: 0 } }, spec, 80), []);
+  assert.match(emptyChecks({ ...good, hair: { min: Infinity, joints: 12 } }, spec, 80).join(), /волосы/);
+  assert.match(emptyChecks({ ...good, hair: { min: Infinity } }, spec, 80).join(), /волосы/);
 });
 
 /** Рука из трёх костей (оси модели, как у нормализованных костей VRM: в покое кость вдоль ±X, ладонь −Y). */

@@ -16,7 +16,8 @@ export function emptyChecks(c, spec, heroFrames, presenceBad = []) {
   if (!(c.frames > 0)) out.push("пальцы: не измерено ни одного кадра");
   if (tl.surfaces?.length && !Number.isFinite(c.min)) out.push("пальцы: нет замеров над поверхностями");
   if (tl.chair && !Number.isFinite(c.chair?.min)) out.push("кресло: нет замеров тела против спинки");
-  if (tl.chair && !Number.isFinite(c.hair?.min)) out.push("волосы: нет замеров прядей против тела и кресла");
+  // Модель без пружинных прядей (ёжик, joints: 0 — body.ts hairGap) мерить нечего; неизвестно сколько — пусто.
+  if (tl.chair && !Number.isFinite(c.hair?.min) && c.hair?.joints !== 0) out.push("волосы: нет замеров прядей против тела и кресла");
   // Скрутка запястий и предплечий (twist.ts) меряется на каждом кадре с героиней.
   if (!c.twist || !(c.twist.frames > 0)) out.push("скрутка рук: не измерено ни одного кадра");
   if (spec.handCheck !== false) {
