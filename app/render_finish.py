@@ -79,8 +79,30 @@ class FinishRender:
         if qc is None:
             return clip
         qc = self._qc_subtitle_sync(clip, path, qc)
+        qc = self._qc_voiceover(clip, qc)
         self.store.set_clip_qc(clip["id"], qc)
         return self.store.get_clip(clip["id"])
+
+    def _qc_voiceover(self, clip: dict, qc: dict) -> dict:
+        """Озвучка клипа (app/voice_check.py): слышно ли написанное, не обрезаны ли слои, нет ли дыр, голос над
+        музыкой, субтитры по голосу. Ошибки — issue ``voice`` «озвучка с ошибками: …»: файл остаётся (рендер не
+        падает), но render_status и отчёт говорят об этом прямо. Сбой проверки QC не ломает."""
+        try:
+            plan_id = clip.get("clip_plan_id")
+            if not plan_id:
+                return qc
+            from app.voice_check import qc_report
+
+            voice = qc_report(self.store, int(plan_id))
+        except Exception:  # noqa: BLE001 - QC никогда не ломает рендер
+            return qc
+        if voice is None:
+            return qc
+        qc = {**qc, "voice": voice}
+        if not voice["ok"]:
+            qc["issues"] = [*qc.get("issues", []), {"level": "warn", "code": "voice", "text": voice["summary"]}]
+            qc["ok"] = False
+        return qc
 
     def _apply_inserts(self, clip: dict, plan: dict, cut_plan=None) -> dict:
         """Overlay the clip's «Файлы для монтажа» inserts on the finished render.

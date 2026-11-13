@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from app import motion
+from app.voice_layers import clipped_warnings, fill_audio_end, layer_role
 from app.layer_lint import _cover_problems, _lint_scene, _ref, _secondary_captions, lint_layers, separate_voice_captions
 from app.tool_core import (
     _camera_of, _clip_duration, _current_render, _foreign_asset_problem, _layers_of, _num, _obj, _save_render,
@@ -59,6 +60,7 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     skipped: list[str] = []
     prepared: list[tuple[int, dict]] = []
     on_words: list[str] = []
+    audio_notes: list[str] = []
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             skipped.append(f"layers[{index}]: ожидается объект слоя")
@@ -74,6 +76,9 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))
+        filled = fill_audio_end(ctx.store, item)  # audio без end — по длине файла, а не 3 с
+        if filled:
+            audio_notes.append(filled)
         prepared.append((index, item))
     kept = [(index, _strip_emoji(l)) for index, l in prepared if l.get("type") != "emoji"]
     dropped_emoji = len(prepared) - len(kept)
@@ -109,8 +114,13 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         + _image_card_warnings(ctx, fresh, layers, new_ids, duration)
         + ([f"эмодзи-слоёв отброшено: {dropped_emoji} — владелец запретил эмодзи"] if dropped_emoji else [])
         + _layers_room_warning(len(layers))
-        + _scene_engine_problems(added)[1],
+        + _scene_engine_problems(added)[1]
+        + clipped_warnings(ctx.store, layers, duration, new_ids),
     }
+    if audio_notes:
+        out["audio_end"] = audio_notes
+    if any(l.get("type") == "audio" and layer_role(l, duration) == "voice" for l in added):
+        out["voice_check"] = "голос в клипе: check_voiceover — слышно ли написанное, не обрезано ли, громче ли музыки"
     if on_words:
         out["on_words"] = on_words
     if any(l.get("type") == "scene" for l in added):
@@ -152,6 +162,11 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(f"слоя {layer_id} нет", [f"есть: {', '.join(str(l.get('id')) for l in layers) or 'ничего'}"])
     patch = {k: v for k, v in patch.items() if k != "id"}
     merged = _resolve_caption_marks(ctx, _strip_emoji(_deep_merge(layers[index], patch)))
+    if merged.get("type") == "audio" and "end" not in patch and (
+            "asset_id" in (patch.get("props") or {}) or "offset" in (patch.get("props") or {})):
+        merged.pop("end", None)  # другой файл или offset без end — конец по длине нового файла
+        fill_audio_end(ctx.store, merged)
+        merged.setdefault("end", layers[index].get("end"))
     problems = _cover_problems(ctx, [merged]) + _validate_new_layers(ctx, [merged], duration)
     if problems:
         raise ToolError("правка не принята — слой остался прежним", problems)
@@ -178,7 +193,8 @@ def h_update_layer(ctx: ToolContext, args: dict) -> dict:
     out = {"ok": True, "layer": saved,
            "warnings": lint_layers(_layers_of(fresh), duration, only_ids={layer_id}, **_lint_scene(ctx, fresh))
            + _scene_warnings(ctx, fresh, duration) + _scene_engine_problems([saved])[1]
-           + _image_card_warnings(ctx, fresh, _layers_of(fresh), {layer_id}, duration)}
+           + _image_card_warnings(ctx, fresh, _layers_of(fresh), {layer_id}, duration)
+           + clipped_warnings(ctx.store, _layers_of(fresh), duration, {layer_id})}
     if voice_notes:
         out["notes"] = voice_notes
     if saved.get("type") == "pngtuber":
@@ -339,8 +355,12 @@ def tools() -> list[Tool]:
             "until_word — держать до начала другого слова. Не больше 30 слоёв за вызов. "
             "Слой image с анимированным файлом (GIF/APNG/webm-alpha) играет его по кругу с прозрачностью; "
             "аватар, который говорит голосом дорожки, — add_pngtuber. "
-            "Звук (audio) сервис выравнивает сам: при речи — на 10 дБ тише голоса, в клипе без речи (игра) — "
-            "на 4 дБ ниже его громких мест, не громче; volume 0.3–0.6, выше 1 срезается. "
+            "Звуковой ЭФФЕКТ (audio, вжух/удар/«поп», mode effect по умолчанию) сервис выравнивает сам: при речи — на "
+            "10 дБ тише голоса, в клипе без речи (игра) — на 4 дБ ниже его громких мест, не громче; volume 0.3–0.6, "
+            "выше 1 срезается. ГОЛОС (озвучка, реплика) — это не эффект: лучше add_voiceover (фразы, длина, "
+            "субтитры, проверка); вручную — props {asset_id, mode: \"track\", role: \"voice\", volume 1}, end = start "
+            "+ длина файла (без end у audio с файлом сервис так и ставит; короче файла — предупреждение «голос … "
+            "обрезан»), потом check_voiceover. role: voice | music | sfx | ambience — роль в сведении. "
             "Слой до самого конца клипа держится на финальном стоп-кадре — out у него не играет; "
             "out null или {duration: 0} — без анимации. "
             "Проверяется как правка человека. Битые слои пачки (неизвестный sfx, нет файла, неверный тип) "

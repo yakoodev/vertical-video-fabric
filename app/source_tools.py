@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from app.dubbing import voice_notes_text
 from app.subtitle_tools import h_tts_preview
 from app.tool_core import (
     _num, _obj, _source_id, _source_or_clip_source, ImageResult, SOURCE_ARGS, Tool, ToolContext, ToolError,
@@ -557,17 +558,18 @@ DISCOVERY_TOOLS = [
     ),
     Tool(
         "tts_preview", "Проба голоса",
-        "Проба голоса TTS: короткая фраза (text; по умолчанию приветствие) → mp3 в библиотеке, в ответе url и "
-        "asset_id — дай владельцу послушать, прежде чем выбрать голос для dub_clip или персонажа ИИ-видео. "
-        "provider gemini (по умолчанию) — БЕСПЛАТНО, voice — голос Gemini (Zephyr, Puck, Charon, Kore, Fenrir, "
-        "Leda, Orus, Aoede, Callirrhoe, Autonoe, Enceladus, Iapetus, Umbriel, Algieba, Despina, Erinome, "
-        "Algenib, Rasalgethi, Laomedeia, Achernar, Alnilam, Schedar, Gacrux, Pulcherrima, Achird, "
-        "Zubenelgenubi, Vindemiatrix, Sadachbia, Sadaltager, Sulafat), style — как говорить («говори весело, "
-        "быстро»). provider polza — ПЛАТНО: без confirm только оценка, confirm — только по «да» владельца. "
-        "Та же фраза тем же голосом — тот же файл. / Audition a TTS voice (gemini free).",
+        "Проба голоса TTS: фраза (text до 1000 знаков; длиннее — ошибка, текст не режется; по умолчанию "
+        "приветствие) → mp3 в библиотеке, в ответе url, asset_id и duration — дай владельцу послушать, прежде чем "
+        "выбрать голос. Озвучить клип или холст — НЕ этим: add_voiceover(lines) — по фразам, слои нужной длины, "
+        "субтитры по голосу и проверка. provider gemini (по умолчанию) — БЕСПЛАТНО. voice — голос Gemini: "
+        + voice_notes_text() + ". Голос рассказчика проекта — get_project_brief.narrator_voice. Как говорить "
+        "(бодро, шёпотом) указанием не задаётся — Gemini зачитывает его вслух; выбирай голос. provider polza — "
+        "ПЛАТНО: без confirm только оценка, confirm — только по «да» владельца. Та же фраза тем же голосом — тот же "
+        "файл. / Audition a TTS voice (gemini free, ≤1000 chars).",
         _obj({"provider": {"type": "string", "enum": ["gemini", "polza", "none"]}, "voice": {"type": "string"},
-              "model": {"type": "string"}, "style": {"type": "string"}, "text": {"type": "string"},
-              "confirm": {"type": "boolean"}}),
+              "model": {"type": "string"},
+              "style": {"type": "string", "description": "не используется: Gemini зачитывает указание вслух"},
+              "text": {"type": "string", "maxLength": 1000}, "confirm": {"type": "boolean"}}),
         h_tts_preview, scope="global", mutating=True,
         label=lambda a: f"Пробую голос {a.get('voice') or ''}".strip(),
     ),

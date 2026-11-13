@@ -27,6 +27,11 @@ def _status_view(job: dict) -> dict:
         out.update(job.get("result") or {})
         out["next"] = ("готово: lint_clip (вспышки и луп — по этому файлу), contact_sheet для взгляда, потом "
                        "submit_for_approval(clip_id, title, …)")
+        if out.get("voice_ok") is False:
+            # Файл есть, но озвучка битая: не сдавать как готовое.
+            out["note"] = f"файл готов, но {out['voice']}"
+            out["next"] = ("сначала озвучка: check_voiceover(clip_id) — там fix у каждой находки; поправь, render_clip "
+                           "снова. Такой ролик не выдавай за готовый")
     else:
         out["error"] = job.get("error") or "рендер не удался"
         if job.get("result"):
@@ -75,7 +80,8 @@ def tools() -> list[Tool]:
         Tool(
             "render_status", "Смотрю рендер",
             "Статус задания render_clip: status queued|rendering|done|failed; done — render_clip_id (id готового "
-            "рендера), video_url, длительность, размер и qc (отчёт проверки файла); failed — error. wait_sec (до 50) — "
+            "рендера), video_url, длительность, размер и qc (отчёт проверки файла); voice — вердикт озвучки («озвучка "
+            "с ошибками: …» — файл есть, но сдавать нельзя: check_voiceover и поправить); failed — error. wait_sec (до 50) — "
             "подождать окончания в этом вызове, чтобы не опрашивать часто. / Status of a render_clip job.",
             _obj({"render_id": {"type": "string", "description": "id задания из render_clip"},
                   "wait_sec": {"type": "number", "minimum": 0, "maximum": MAX_WAIT_SEC,

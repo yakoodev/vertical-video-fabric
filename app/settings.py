@@ -171,6 +171,9 @@ class Settings:
         # по умолчанию. Список голосов — app/dubbing.py GEMINI_TTS_VOICES.
         self.gemini_tts_model = os.getenv("GEMINI_TTS_MODEL", "gemini-3.8-flash-tts").strip() or "gemini-3.8-flash-tts"
         self.gemini_tts_voice = os.getenv("GEMINI_TTS_VOICE", "Kore").strip() or "Kore"
+        # Защита синтеза Gemini TTS (app/dubbing.GeminiTTS._guarded): Whisper слушает первые 2.5 с, не тот текст —
+        # синтез ещё раз. 0 — без проверки (тесты; машина без Whisper).
+        self.tts_guard = os.getenv("TTS_GUARD", "1").strip().lower() not in ("0", "false", "no", "off", "")
         self.polza_base_url = os.getenv("POLZA_BASE_URL", "https://polza.ai/api/v1").strip()
         self.polza_video_model = os.getenv(
             "POLZA_VIDEO_MODEL", "google/gemini-2.5-pro-preview"

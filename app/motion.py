@@ -604,7 +604,8 @@ def schema_summary() -> dict:
             "id": {"type": "string", "pattern": LAYER_ID_RE.pattern, "description": "без id сервер выдаст свой"},
             "type": {"type": "enum", "options": list(LAYER_TYPES)},
             "start": {"type": "number", "min": 0, "description": "секунды готового клипа"},
-            "end": {"type": "number", "description": f"> start, длина ≥ {MIN_LAYER_SEC}; нет — start + {DEFAULT_LAYER_SEC}"},
+            "end": {"type": "number", "description": f"> start, длина ≥ {MIN_LAYER_SEC}; нет — start + {DEFAULT_LAYER_SEC} "
+                                                      "(у audio с файлом через add_layers — длина файла)"},
             **{name: spec.describe() for name, spec in LAYER_FIELDS.items()},
             "keys": {"type": "object", "description": "{свойство: [{t (время слоя), v, ease?}]}; "
                      "cropX/cropY/cropW/cropH — окно props.crop картинки/видео (только image, video)",

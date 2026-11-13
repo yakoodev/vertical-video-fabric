@@ -465,6 +465,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "render_clip", "render_status",
     # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
     "tts_preview",
+    # озвучка клипа/холста своим текстом и анализатор озвучки (app/voice_tools.py); платное — только с confirm
+    "add_voiceover", "check_voiceover",
     # слои, камера, библиотека
     "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera",
     "camera_preset", "flow_transition", "add_glitch", "list_motion_templates", "add_motion_template", "list_3d_presets",

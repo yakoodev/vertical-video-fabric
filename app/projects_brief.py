@@ -41,6 +41,7 @@ def normalize_brief(raw: Any) -> dict:
     brief = empty_brief()
     brief["summary"] = _long_text(raw.get("summary"), 3000)
     brief["notes"] = _long_text(raw.get("notes"), MAX_NOTES)
+    brief["narrator_voice"] = _voice_name(raw.get("narrator_voice"), strict=False)
     for section in BRIEF_SECTIONS:
         seen: set[str] = set()
         key = BRIEF_SECTIONS[section][0]
@@ -63,11 +64,14 @@ def merge_brief(current: dict, patch: Any) -> dict:
     """
     if not isinstance(patch, dict):
         raise ValueError("patch — объект")
-    unknown = set(patch) - {"summary", "notes", "replace_sections", "schema", "version", *BRIEF_SECTIONS}
+    unknown = set(patch) - {"summary", "notes", "narrator_voice", "replace_sections", "schema", "version",
+                            *BRIEF_SECTIONS}
     if unknown:
         raise ValueError(f"неизвестные поля брифа: {', '.join(sorted(unknown))} "
-                         f"(есть summary, notes, {', '.join(BRIEF_SECTIONS)})")
+                         f"(есть summary, notes, narrator_voice, {', '.join(BRIEF_SECTIONS)})")
     brief = normalize_brief(current)
+    if "narrator_voice" in patch:
+        brief["narrator_voice"] = _voice_name(patch["narrator_voice"], strict=True)
     for name in ("summary", "notes"):
         if name in patch:
             brief[name] = _long_text(patch[name], MAX_NOTES if name == "notes" else 3000)
@@ -100,6 +104,53 @@ def merge_brief(current: dict, patch: Any) -> dict:
                 if name in given:  # дополняем только присланные поля
                     found[name] = value
     return brief
+
+
+def _voice_name(value: Any, strict: bool) -> str:
+    """Голос рассказчика — имя голоса Gemini TTS (без учёта регистра). Незнакомый: в правке — ошибка со списком,
+    в сохранённом брифе — пусто."""
+    name = _text(value, 40)
+    if not name:
+        return ""
+    from app.dubbing import DubError, gemini_voice
+
+    try:
+        return gemini_voice(name)
+    except DubError:
+        if strict:
+            raise ValueError(f"narrator_voice: голос Gemini «{name}» не знаю — список и тембры в описании "
+                             "tts_preview") from None
+        return ""
+
+
+def narrator_voice(store: Any, project_id: int) -> str:
+    """Голос рассказчика проекта из брифа (пусто — не задан)."""
+    try:
+        return get_brief(store, int(project_id))["brief"].get("narrator_voice") or ""
+    except KeyError:
+        return ""
+
+
+# Голоса рассказчиков, которые владелец уже выбрал (до поля narrator_voice они жили только в коде):
+# Витубика (проект 9, vtubika.store) — Aoede (app/vtubika.py NARRATOR). Ставится один раз, если поле пустое.
+KNOWN_NARRATORS = ((9, "vtubika", "Aoede"),)
+
+
+def seed_narrator_voices(store: Any) -> list[int]:
+    """Пустой narrator_voice известных проектов — выбранный владельцем голос. Только по id И имени проекта."""
+    done = []
+    for project_id, name_part, voice in KNOWN_NARRATORS:
+        row = store.db.query_one("SELECT name FROM projects WHERE id = ?", (project_id,))
+        if not row or name_part not in str(row["name"] or "").lower():
+            continue
+        try:
+            if get_brief(store, project_id)["brief"].get("narrator_voice"):
+                continue
+            update_brief(store, project_id, {"narrator_voice": voice})
+            done.append(project_id)
+        except (KeyError, ValueError):
+            continue
+    return done
 
 
 def get_brief(store: Any, project_id: int) -> dict:

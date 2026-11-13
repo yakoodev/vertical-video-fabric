@@ -303,6 +303,20 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
             except Exception as exc:  # noqa: BLE001 - нет исходника/звука — скажем, не упадём
                 skipped["sub_sync"] = f"не удалось разобрать звук: {str(exc)[:200]}"
 
+    if "voice" in wanted:
+        # Озвучка (app/voice_check.py): услышано = написано, обрезанные слои, паузы, голос над музыкой, субтитры.
+        # media: false — только по плану (обрезка, роль слоя), без Whisper и замера.
+        try:
+            from app.voice_check import check_voiceover, lint_findings as voice_findings
+
+            report = check_voiceover(store, int(clip_plan_id), asr=mode != "no", levels=mode != "no")
+            findings += voice_findings(report)
+            if report.get("voice_layers"):
+                out["voice"] = {"verdict": report.get("verdict"), "clean": report.get("clean"),
+                                "layers": report.get("voice_layers")}
+        except Exception as exc:  # noqa: BLE001 - нет Whisper/ffmpeg — скажем, не упадём
+            skipped["voice"] = f"озвучка не проверена: {str(exc)[:200]}"
+
     if "audio_mix" in wanted:
         # Сведение по стемам (app/audio_mix.py): ffmpeg по файлам клипа, рендер — если свежий.
         if mode == "no":
@@ -338,7 +352,8 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
     labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
-              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки", "sub_sync": "субтитры и голос"}
+              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки", "sub_sync": "субтитры и голос",
+              "voice": "озвучка"}
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:

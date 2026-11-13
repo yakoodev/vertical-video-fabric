@@ -159,9 +159,21 @@ def h_identify_voices(ctx: ToolContext, args: dict) -> dict:
 
 
 def h_list_voices(ctx: ToolContext, _args: dict) -> dict:
+    from app.dubbing import GEMINI_VOICE_NOTES
     from app.voice_bank import list_voices, plan_project
 
-    return {"voices": list_voices(ctx.store, plan_project(ctx.store, ctx.plan_id))}
+    project = plan_project(ctx.store, ctx.plan_id)
+    out = {"voices": list_voices(ctx.store, project),
+           # Голоса синтеза (озвучка add_voiceover / tts_preview) — не банк узнавания, а чем говорить.
+           "tts_voices": [{"voice": name, "about": about} for name, about in GEMINI_VOICE_NOTES.items()]}
+    from app.asset_scope import clip_project
+
+    owner = clip_project(ctx.store, ctx.plan_id)  # у холста проект — приписка клипа, а не источника
+    if owner is not None:
+        from app.projects_brief import narrator_voice
+
+        out["narrator_voice"] = narrator_voice(ctx.store, int(owner)) or None
+    return out
 
 
 def h_delete_voice(ctx: ToolContext, args: dict) -> dict:
@@ -862,7 +874,9 @@ def tools() -> list[Tool]:
         ),
         Tool(
             "list_voices", "Смотрю банк голосов",
-            "Голоса в банке канала этого клипа и общие: id, name, kind, seconds, samples. / List the voice bank.",
+            "Голоса в банке канала этого клипа и общие (узнавание, кто говорит): id, name, kind, seconds, samples. "
+            "tts_voices — голоса синтеза Gemini для add_voiceover/tts_preview с полом и тембром; narrator_voice — "
+            "рассказчик проекта клипа. / List the voice bank and TTS voices.",
             _obj({}, []), h_list_voices, label=lambda a: "Смотрю банк голосов",
         ),
         Tool(
@@ -897,15 +911,18 @@ def tools() -> list[Tool]:
             "dub_clip", "Озвучка RU",
             "Озвучить русский перевод клипа (после translate_subtitles): фраза → речь → подгонка под окно "
             "реплики (×0.8–1.25, не влезло — обрезка, в ответе overflow) → слои audio dub_ru_* поверх "
-            "оригинала, оригинал под фразами приглушён. provider: gemini — БЕСПЛАТНО (Gemini TTS по ключу "
-            "сервиса, синтез сразу, confirm не нужен; voice — один из 30 голосов Gemini: Kore, Puck, Charon, "
-            "Zephyr, Fenrir, Aoede… — проба tts_preview; style — как говорить: «говори весело, быстро»); "
-            "polza (по умолчанию) — ПЛАТНО: без confirm ТОЛЬКО оценка ₽, покажи её владельцу; confirm=true — "
-            "ТОЛЬКО по явному «да» владельца на эту сумму, работает лишь при DUBBING_ENABLED=1 и не дороже "
-            "budget_rub (по умолчанию 200 ₽); none — сухой прогон тоном (бесплатно, проверить окна). "
-            "remove — снять слои озвучки. / Russian dub: gemini free, polza paid (estimate, confirm with owner).",
+            "оригинала, оригинал под фразами приглушён. Только для ПЕРЕВОДА; свой текст на клип или холст — "
+            "add_voiceover. provider: gemini — БЕСПЛАТНО (Gemini TTS по ключу сервиса, синтез сразу, confirm не "
+            "нужен; voice — один из 30 голосов Gemini: Kore, Puck, Charon, Zephyr, Fenrir, Aoede… — пол и тембр в "
+            "описании tts_preview); polza (по умолчанию) — ПЛАТНО: без confirm ТОЛЬКО оценка ₽, покажи её "
+            "владельцу; confirm=true — ТОЛЬКО по явному «да» владельца на эту сумму, работает лишь при "
+            "DUBBING_ENABLED=1 и не дороже budget_rub (по умолчанию 200 ₽); none — сухой прогон тоном (бесплатно, "
+            "проверить окна). remove — снять слои озвучки. / Russian dub: gemini free, polza paid (estimate, "
+            "confirm with owner).",
             _obj({"provider": {"type": "string", "enum": ["gemini", "polza", "none"]}, "voice": {"type": "string"},
-                  "model": {"type": "string"}, "style": {"type": "string"}, "confirm": {"type": "boolean"},
+                  "model": {"type": "string"},
+                  "style": {"type": "string", "description": "не используется: Gemini зачитывает указание вслух"},
+                  "confirm": {"type": "boolean"},
                   "budget_rub": {"type": "number", "minimum": 0}, "stretch": {"type": "boolean"},
                   "remove": {"type": "boolean"}}),
             h_dub_clip, mutating=True,

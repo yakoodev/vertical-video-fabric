@@ -123,6 +123,10 @@ def _voice_of(store: Any, project_id: int, who: str, emotion: str = "") -> dict:
 
 def _line_key(voice: dict, text: str) -> str:
     key = f"{voice['provider']}|{voice['model']}|{voice['voice']}|{text}"
+    # Gemini style не получает (зачитывал его вслух, app/dubbing.py): ключ без style — старая запись «со style» (с
+    # зачитанным указанием) не подходит, и реплика синтезируется заново, чисто.
+    if str(voice.get("provider") or "").lower() in ("gemini", "google", "gemini-tts"):
+        return key
     return f"{key}|{voice['style']}" if voice.get("style") else key  # без style — как раньше
 
 
