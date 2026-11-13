@@ -317,23 +317,31 @@ def _dodge_lettering(items: list[dict], shots: list[dict], pw: int, ph: int, f1:
         y0 = min(L["y"] - L["h"] / 2 for L in w["letters"]); y1 = max(L["y"] + L["h"] / 2 for L in w["letters"])
         yc = (y0 + y1) / 2
 
-        def hits(dy):
+        def overlap(dy):
+            tot = 0.0
             for s in act:
                 vr = visible_rect(s["rect"], pw, ph)
                 for bx in live:
                     sx0, sy0, sx1, sy1 = screen_box(bx, vr)
-                    if sx1 > wx0 and sx0 < wx1 and sy1 > y0 + dy - 0.01 and sy0 < y1 + dy + 0.01:
-                        return True
-            return False
-        for target in (yc, 0.8, 0.5, 0.25, 0.88, 0.15):
+                    ox = min(sx1, wx1) - max(sx0, wx0)
+                    oy = min(sy1, y1 + dy + 0.01) - max(sy0, y0 + dy - 0.01)
+                    if ox > 0 and oy > 0:
+                        tot += ox * oy * (min(bx["off"], b) - max(bx["on"], a) + 1)
+            return tot
+        if overlap(0.0) == 0.0:
+            continue
+        best = None
+        for k in range(0, 31):                   # полосы от верха до низа кадра, ближе к исходной — лучше
+            target = 0.08 + k * 0.028
             dy = target - yc
             if y0 + dy < 0.04 or y1 + dy > 0.97:
                 continue
-            if not hits(dy):
-                if dy:
-                    for L in w["letters"]:
-                        L["y"] = round(L["y"] + dy, 4)
-                break
+            sc_ = (overlap(dy), abs(dy))
+            if best is None or sc_ < best[0]:
+                best = (sc_, dy)
+        if best and best[1]:
+            for L in w["letters"]:
+                L["y"] = round(L["y"] + best[1], 4)
 
 
 def page_transitions(scenes: list[dict], store, style) -> None:
