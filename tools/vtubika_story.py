@@ -369,21 +369,26 @@ def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> lis
     items = plan.get("voices_extra") or []
     if not items:
         return []
+    from app import vtubika_say as SAY
+
     times = P.token_times(plan, words)
+    mapping = SAY.pronounce_map(plan)
     out, spent = [], 0.0
     for it in items:
         voice = dict(it["voice"])
         if voice.get("provider") == "polza" and not voice.get("paid_ok"):
             raise RuntimeError(f"реплика {it.get('id')}: голос Polza платный — нужен paid_ok")
-        key = hashlib.sha1(json.dumps([it["text"], voice], ensure_ascii=False).encode()).hexdigest()[:12]
+        # Как читать — по тому же словарю произношения, что у рассказчика («витУбике», «фри десять»).
+        say = SAY.apply(str(it.get("say") or it["text"]), mapping)
+        key = hashlib.sha1(json.dumps([say, voice], ensure_ascii=False).encode()).hexdigest()[:12]
         path = work / f"line_{key}.mp3"
         meta = path.with_suffix(".json")
         if not (path.is_file() and meta.is_file()):
             tts = get_tts_provider(voice["provider"], model=voice.get("model"), voice=voice["voice"], style=voice.get("style"))
-            if tts.price_rub_per_char() * len(it["text"]) > POLZA_CAP_RUB:
+            if tts.price_rub_per_char() * len(say) > POLZA_CAP_RUB:
                 raise RuntimeError("реплика: оценка выше потолка")
-            speech = tts.synthesize(it["text"], path)
-            meta.write_text(json.dumps({"text": it["text"], "voice": voice, "cost_rub": float(speech.cost_rub or 0.0)},
+            speech = tts.synthesize(say, path)
+            meta.write_text(json.dumps({"text": say, "voice": voice, "cost_rub": float(speech.cost_rub or 0.0)},
                                        ensure_ascii=False), "utf-8")
         info = json.loads(meta.read_text("utf-8"))
         spent += float(info.get("cost_rub") or 0.0)

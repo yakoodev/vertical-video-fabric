@@ -112,7 +112,7 @@ CAST: dict[str, dict[str, Any]] = {
     # Мила: пушистые светлые волосы с розовым низом, бирюзовая лента, «опущенные» голубые глаза, пышное платье (β4).
     "mila": _cast("vroid_avatarsample_g.vrm", 0.918, "#ffb0e0", ("#fff4fa", "#ff9ad6")),
     # Тая: чёрные хвостики, белые звериные ушки, белое платье-свитер (HairSample_Female).
-    "taya": _cast("vroid_hairsample_female.vrm", 0.966, "#c0b0ff", ("#f4f1ff", "#a08aff")),
+    "taya": _cast("vroid_hairsample_female.vrm", 0.966, "#c0b0ff", ("#2a2440", "#c0b0ff")),
     # Оля: длинные прямые чёрные волосы, ровная чёлка, синий бант, самая высокая из девушек (Сэндагая Сино).
     "olya": _cast("vroid_sendagaya_shino.vrm", 0.97, "#9ac0ff", ("#1c1d22", "#4a8cff")),
     # Дима: растрёпанные чёрные волосы до глаз, синие глаза, белое худи (HairSample_Male).
@@ -156,6 +156,17 @@ AVATARS["sonya_free"] = {"model": GIRL,
 # «Вебка» Жени: она сама на мониторе (трекинг повторяет её движения), в той же гарнитуре.
 AVATARS["zhenya_cam"] = {"model": GIRL, "look": {**ZHENYA_LOOK, "outline": 0.004}, "accessories": [ZHENYA_HEADSET]}
 
+# Аватары эфира из каста (серия 8 «Коллаб»): своя модель стримерши на её эфире — та же, что за столом (трекинг
+# повторяет её), и модель напарницы. ``scale`` — головы двоих в одном кадре на одной высоте (рост 1.63 и 1.68 м).
+def _cast_avatar(hero: str, scale: float) -> dict[str, Any]:
+    her = CAST[hero]
+    return {"model": her["model"], "scale": scale, "look": {**her["look"], "outline": 0.004},
+            "accessories": [her["headphones"]]}
+
+
+AVATARS["taya_av"] = _cast_avatar("taya", 0.97)
+AVATARS["asya_av"] = _cast_avatar("asya", 0.94)
+
 # Камеры сцены аватара (модель стоит в начале координат, рост ≈ 1.55 м): весь рост, по колено, по грудь, двое.
 AV_CAMS: dict[str, dict] = {
     "full": {"pos": [0, 0.95, 3.7], "target": [0, 0.84, 0], "fov": 30},
@@ -164,6 +175,9 @@ AV_CAMS: dict[str, dict] = {
     # Вебка: плечи и голова крупно (героиня-стример в рамке эфира, а не весь рост).
     "bust": {"pos": [0, 1.4, 1.3], "target": [0, 1.35, 0], "fov": 30},
     "two": {"pos": [0, 1.02, 4.3], "target": [0, 0.92, 0], "fov": 30},
+    # Двое по грудь рядом (коллаб: две вебки в одном эфире), одна модель — по грудь по центру (обычный эфир).
+    "two_bust": {"pos": [0, 1.42, 1.42], "target": [0, 1.36, 0], "fov": 30},
+    "solo_bust": {"pos": [0, 1.42, 1.1], "target": [0, 1.37, 0], "fov": 30},
 }
 LOOKS = {"webcam": [0.0, 1.5, 1.1], "monitor": [0, 1.43, 1.15], "chat": [-0.5, 1.36, 0.9], "down": [0.05, 1.08, 0.4]}
 
@@ -206,6 +220,8 @@ def stage(plan: dict, words: list[dict], total: float) -> dict[str, Any]:
     cams: list[dict] = []
     labels: list[dict] = []
     badge: list[dict] = []
+    faces: list[dict] = []
+    talk: list[dict] = []
     cats: list[dict] = []
     nods: list[dict] = []
     bows: list[dict] = []
@@ -225,6 +241,11 @@ def stage(plan: dict, words: list[dict], total: float) -> dict[str, Any]:
             labels.append({"t": t, **({"t1": until} if until else {}), **ev["label"]})
         if "badge" in ev:
             badge.append({"t0": t, "t1": until or t + 3.0, "text": ev["badge"]})
+        if "av_face" in ev:
+            faces.append({"t": t, "who": ev.get("who") or (av_ids[0] if av_ids else "trial"), "face": ev["av_face"]})
+        if "av_talk" in ev:
+            talk.append({"who": ev.get("who") or (av_ids[0] if av_ids else "trial"), "t0": t,
+                         "t1": until or t + float(ev["av_talk"] or 1.5), **({"face": ev["face"]} if ev.get("face") else {})})
         if "cat" in ev:
             cats.append({"t0": t, "t1": until or total, **ev["cat"]})
         if "nod" in ev:
@@ -244,7 +265,10 @@ def stage(plan: dict, words: list[dict], total: float) -> dict[str, Any]:
             models.append(m)
         out["avatar"] = {"models": models, "acts": sorted(acts, key=lambda k: k["t"]), "show": sorted(show, key=lambda k: k["t"]),
                          "cams": sorted(cams, key=lambda k: k["t"]) or [{"t": 0, **AV_CAMS["mid"]}], "labels": labels,
-                         "badge": badge, "positions": cfg.get("positions") or {}}
+                         "badge": badge, "positions": cfg.get("positions") or {},
+                         "faces": sorted(faces, key=lambda k: k["t"]), "talk": talk}
+        if cfg.get("avatar_size"):
+            out["avatar"]["width"], out["avatar"]["height"] = (int(v) for v in cfg["avatar_size"])
         for m in models:
             if m["id"] in out["avatar"]["positions"]:
                 m["x"] = float(out["avatar"]["positions"][m["id"]])

@@ -278,6 +278,9 @@ function render(t: number, pixels = true) {
   key.intensity = L.keyPower ?? 2.6;
   fill.color.set(L.fill || "#6a58b0");
   fill.intensity = L.fillPower ?? 1.1;
+  // Аватар эфира — до монитора: экран монитора (props.update) копирует его холст; позже — экран показывал аватар
+  // прошлого отрисованного кадра (в ролике — на кадр позже, в превью вразброс — кадр совсем другого момента).
+  if (pixels) stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   props.update(shot.props, rig, local, spec.stream, t);
   const c = shot.camKeys?.length ? camAt(rig, shot.camKeys, local)
     : { pos: rig.point(shot.cam!.pos), target: rig.point(shot.cam!.target), fov: shot.cam!.fov ?? 18, roll: shot.cam!.roll ?? 0 };
@@ -305,7 +308,6 @@ function render(t: number, pixels = true) {
     if (models) vrm.scene.traverseVisible((o) => void ((o as THREE.Mesh).isMesh && meshes++));
     return { luma: null, presence: { expect, models, meshes, pixels: false }, lost: [...lost] };
   }
-  stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   vrm.scene.visible = !shot.hideHero;
   if (!shot.plate?.insert) gl.render(scene, camera);
   vrm.scene.visible = true;

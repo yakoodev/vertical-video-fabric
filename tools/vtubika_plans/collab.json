@@ -1,0 +1,323 @@
+{
+  "id": "collab",
+  "title": "Коллаб с Кэт",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "will",
+    "paid_ok": true
+  },
+  "voices_extra": [
+    {
+      "id": "mira1", "after": 2, "dt": 0.25, "who": "hero",
+      "text": "Та самая Кэт?! У неё же пять тысяч зрителей!",
+      "caption": "— Та самая Кэт?! У неё же 5 000 зрителей!",
+      "color": "#c9b6ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "mira2", "after": 3, "dt": 0.3, "who": "hero",
+      "text": "Обои из девятнадцатого года… Позорище.",
+      "caption": "— Обои из 2019-го… Позорище.",
+      "color": "#c9b6ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "kat1", "after": 6, "dt": 0.35, "who": "asya_av",
+      "text": "Мира, привет! Ого, у тебя уютно.",
+      "caption": "Кэт: Мира, привет! Ого, у тебя уютно.",
+      "color": "#7fe8ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "kat2", "after": 7, "dt": 0.3, "who": "asya_av",
+      "text": "Кампай за коллаб!",
+      "caption": "Кэт: Кампай за коллаб!",
+      "color": "#7fe8ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "mira3", "after": 7, "dt": 2.05, "who": "hero",
+      "text": "Кампай!",
+      "caption": "— Кампай!",
+      "color": "#c9b6ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "kat3", "after": 8, "dt": 0.45, "who": "asya_av",
+      "text": "Слушай, а где фон брала?",
+      "caption": "Кэт: Слушай, а где фон брала?",
+      "color": "#7fe8ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "mira4", "after": 8, "dt": 2.9, "who": "hero",
+      "text": "На Витубике. Промокод Free10.",
+      "caption": "— На Витубике. Промокод Free10.",
+      "color": "#c9b6ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    }
+  ],
+  "script": "серия 8 «Коллаб с Кэт» (сценарий D:/vvf-offload/vtubika/story8_collab/script_v1.md): Мира (каст taya: чёрные хвостики, белые ушки) уютно стримит на 40 зрителей; в Коллабике (Telegram Mini App витубики, настоящая запись экрана) её зовёт на коллаб Кэт (каст asya, киберкошка, 5 000 зрителей) — сегодня в девять; Мира видит свой эфир чужими глазами: статичные обои из 2019-го; на витУбике берёт живой фон HIRO «Тихий ночной кабинет» (2 590 ₽), лайтстики すやみや (650 ₽) и бокал Elegant Wine すやみや (650 ₽) — настоящие страницы и кадры превью; общий эфир — две модели рядом на новом фоне, общая плашка, чат машет лайтстиками, «Кампай!» — бокалы ассета у обеих; в личке Кэт спрашивает про фон — «На витУбике, промокод Free10». Голоса: рассказчик Will, Мира Jessica, Кэт Lily. Крючок — одно огромное «КОЛЛАБ?!» на кадре 0 (лицо Миры, шок, смотрит в телефон).",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {"word": "Коллаб?!", "until": 1.45, "y": 0.13, "size": 196, "accent": "#ff6a1f"},
+  "vrm": {
+    "heroine": "taya",
+    "arkit": false,
+    "tail_wide": false,
+    "props_models": {"keyboard": "keyboard/mech_tkl_dark", "mouse": "mouse/black"},
+    "monitor": {"eggs": {"sticker": "eggs/doge_sticker.png", "photo": "eggs/this_is_fine.jpg", "critter": true}},
+    "avatars": ["taya_av", "asya_av"],
+    "positions": {"taya_av": -0.29, "asya_av": 0.29},
+    "avatar_size": [1200, 667]
+  },
+  "pronounce": {
+    "Free10": "фри десять",
+    "Коллабик": "Колла́бик"
+  },
+  "music": {"file": "chill-keys.mp3", "under_db": 7.0},
+  "tail": 6.6,
+  "pace": {"tempo_cap": 1.0, "tempo": 1.0, "lead": 0.2},
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1770,
+    "partner": {"text": "Напарника нашла в Коллабике", "logo": "assets/brand/collabika/collabika-full.png", "y": 1468,
+                "logo_h": 150},
+    "duration": 4.2,
+    "music_fade": 4.0
+  },
+  "presets3d": {
+    "room": {"name": "cozy_desk"},
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": ["bloom", "dust_motes", {"name": "depth_of_field", "amount": 2}, "film_grain"]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {"keyColor": "#e6f0ff", "keyPower": 2.0, "fill": "#5a6a9a", "fillPower": 0.85}
+  },
+  "site_shots": {
+    "dir": "D:/vvf-offload/vtubika/story8_collab/site",
+    "catalog": {"file": "catalog_fony.png", "from": 1100, "scroll": 1560, "tap": [288, 1930]},
+    "product": {"file": "product_bg.png", "scroll": 230, "tap": [195, 1200]},
+    "sets": {
+      "sticks": {"catalog": {"file": "catalog_fony.png", "scroll": 1560, "tap": [288, 1930]},
+                 "product": {"file": "product_sticks.png", "from": 270, "scroll": 330, "tap": [195, 1200]}},
+      "wine": {"catalog": {"file": "catalog_fony.png", "scroll": 1560, "tap": [288, 1930]},
+               "product": {"file": "product_wine.png", "from": 270, "scroll": 330, "tap": [195, 1200]}}
+    }
+  },
+  "screen": {
+    "uptime": 2700,
+    "title": "вечерний стрим · болтаем",
+    "camBg": ["#1a1630", "#0c0a18"],
+    "viewers": [{"t": 0.0, "value": 40, "label": "40 зрителей"}],
+    "chat": [
+      {"t": 0.0, "user": "chai_s_lunoi", "color": "#ffb07e", "text": "мира, а что за трек?"},
+      {"t": 0.0, "user": "nochnoy_dozor", "color": "#9af0ff", "text": "всем привет"}
+    ]
+  },
+  "highlight": {
+    "Коллабике:": "#ff6a1f",
+    "Кэт": "#7fe8ff",
+    "коллаб.": "#ff6a1f",
+    "девять.": "#ffd35c",
+    "«Принять»": "#ff6a1f",
+    "чужими": "#ff9ad6",
+    "глазами.": "#ff9ad6",
+    "три": "#ffd35c",
+    "часа.": "#ffd35c",
+    "Витубику.": "#ff8a4c",
+    "Живой": "#6fd3ff",
+    "фон": "#6fd3ff",
+    "палочки": "#7fe8ff",
+    "бокал": "#ff9ad6",
+    "девять": "#ffd35c",
+    "часов.": "#ffd35c",
+    "«наша».": "#c9b6ff",
+    "личка.": "#7fe8ff"
+  },
+  "sentences": [
+    {
+      "text": "У Миры всё хорошо: стримит по вечерам, сорок своих зрителей, в чате все на «ты».",
+      "pause_after": 0.3,
+      "show": ["кадр 0 (обложка): лицо Миры крупно — шок, глаза круглые, рот открыт, смотрит вниз в телефон (в углу телефон с приглашением Коллабики); сверху огромное «КОЛЛАБ?!»",
+               "на «стримит» — её эфир на мониторе: её модель по грудь на статичных обоях, 40 зрителей, чат «мира база», «67»"],
+      "shots": [{"cam": "face_close", "fov": 7.2, "push": 0.08},
+                {"cam": "monitor", "at": "стримит", "dt": -0.15, "push": 0.1,
+                 "flow": {"kind": "reveal_from", "shape": "rect", "dur": 0.6, "y": 0.42, "w": 360, "h": 220, "radius": 36,
+                          "edge": "#ff6a1f", "edgeWidth": 8}},
+                {"cam": "chat", "at": "сорок", "dt": -0.1, "push": 0.12}],
+      "do": [
+        {"screen": "stream", "dt": -0.3},
+        {"avatar": "live", "dt": -0.3},
+        {"scene": {"bg": {"url": "/site/media/wallpaper_2019.jpg"}}, "dt": -0.3},
+        {"phone": {"screen": "app", "app": {"frames": [{"t": 0, "url": "/site/collab/invite.jpg"}], "clock": "18:02"},
+                   "x": 800, "y": 1560, "scale": 0.9, "cutIn": true, "cutOut": true}, "dt": -0.3, "until": "стримит", "dt_end": -0.15},
+        {"act": "Sit_Loop"},
+        {"face": "shock", "dt": -0.3},
+        {"at": "стримит", "face": "happy", "dt": -0.15},
+        {"at": "сорок", "chat": {"user": "chai_s_lunoi", "color": "#ffb07e", "text": "мира база"}},
+        {"at": "чате", "dt": 0.05, "chat": {"user": "kot_v_shkafu", "color": "#9dff7e", "text": "67"}},
+        {"at": "ты", "dt": 0.1, "chat": {"user": "nochnoy_dozor", "color": "#9af0ff", "text": "мира, ты лучшая"}}
+      ],
+      "vrm": [{"look": "down", "dur": 1.5, "dt": -0.8},
+              {"av": "track", "who": "taya_av", "dt": -0.8},
+              {"av_show": ["taya_av"], "dt": -0.8},
+              {"av_cam": "solo_bust", "dt": -0.8}]
+    },
+    {
+      "text": "И тут в Коллабике: «Кэт зовёт тебя на коллаб. Сегодня, в девять».",
+      "pause_after": 4.1,
+      "show": ["телефон крупно: настоящая запись Коллабики — инбокс «Кэт · R.E.P.O. · Сегодня», касание → «Кэт хочет с тобой заколлабиться!»",
+               "реплика Миры (Jessica): «Та самая Кэт?! У неё же пять тысяч зрителей!» — крупно, глаза круглые"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}},
+                {"cam": "face_close", "at": "end", "dt": 0.15, "fov": 8.2, "push": 0.1}],
+      "do": [
+        {"phone": {"screen": "app", "app": {"frames": [], "clock": "18:04"}, "x": 540, "y": 820, "scale": 1.45, "dim": 0.35},
+         "dt": -0.15, "until": "end", "dt_end": -0.15},
+        {"app_frame": "/site/collab/inbox.jpg", "dt": -0.15},
+        {"at": "Кэт", "app_frame": "/site/collab/invite.jpg", "tap": [0.5, 0.19], "dt": -0.05},
+        {"face": "happy"},
+        {"at": "Кэт", "face": "wide", "dt": 0.1},
+        {"at": "end", "face": "shock", "talk": true, "dt": 0.2}
+      ],
+      "vrm": [{"look": "down", "dur": 4.5, "dt": -0.1}]
+    },
+    {
+      "text": "Мира жмёт «Принять» и смотрит на свой стрим чужими глазами.",
+      "pause_after": 4.0,
+      "show": ["телефон: «Принять» → экран «Коллаб!» с «Приглашение от Кэт принято»",
+               "на «смотрит» — её эфир крупно: статичные обои, ни одной плашки, 40 зрителей",
+               "реплика Миры: «Обои из девятнадцатого года… Позорище.» — морщится"],
+      "shots": [{"cam": "insert", "push": 0.06},
+                {"cam": "monitor", "at": "смотрит", "dt": -0.1, "push": 0.14},
+                {"cam": "face_left", "at": "end", "dt": 1.1, "push": 0.08}],
+      "do": [
+        {"phone": {"screen": "app", "app": {"frames": [{"t": 0, "url": "/site/collab/invite.jpg"}], "clock": "18:04"},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35, "cutIn": true}, "dt": -0.1, "until": "смотрит", "dt_end": -0.1},
+        {"at": "«Принять»", "app_frame": "/site/collab/collab.jpg", "tap": [0.5, 0.547], "dt": 0.25},
+        {"face": "happy"},
+        {"at": "end", "face": "frown", "talk": true, "dt": 0.3}
+      ]
+    },
+    {
+      "text": "До эфира три часа. Мира открывает Витубику.",
+      "pause_after": 0.3,
+      "show": ["Мира у стола, решительно; телефон: настоящий сайт vtubika.store, раздел «Фоны» листается к «Тихому ночному кабинету»"],
+      "shots": [{"cam": "face", "push": 0.08},
+                {"cam": "insert", "at": "Мира", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"face": "tired"},
+        {"at": "Мира", "face": "happy"},
+        {"at": "Мира", "phone": {"screen": "shop", "store": {"title": "Анимированный фон: Тихий ночной кабинет", "price": "2 590 ₽"},
+                                 "x": 540, "y": 820, "scale": 1.45, "dim": 0.35, "to_next": true}, "dt": -0.1, "span": 1}
+      ]
+    },
+    {
+      "text": "Живой фон — тихий ночной кабинет. Светящиеся палочки для зала. И бокал для тоста.",
+      "pause_after": 0.35,
+      "show": ["страница товара HIRO «Тихий ночной кабинет», 2 590 ₽",
+               "на «Светящиеся» — страница лайтстиков すやみや LightSticks Concert, 650 ₽",
+               "на «бокал» — страница бокала Elegant Wine すやみや, 650 ₽"],
+      "do": [
+        {"site_step": "product", "dt": -0.35},
+        {"at": "Светящиеся", "site_step": "tap", "dt": 0.6, "quiet": true},
+        {"at": "Светящиеся", "phone": {"screen": "shop", "siteSet": "sticks", "store": {"title": "LightSticks Concert", "price": "650 ₽"},
+                                       "x": 540, "y": 820, "scale": 1.45, "dim": 0.35, "to_next": true}, "dt": -0.1, "until": "end"},
+        {"at": "Светящиеся", "site_step": "product", "dt": -0.7, "quiet": true},
+        {"at": "end", "site_step": "tap", "dt": 3.0, "quiet": true},
+        {"at": "бокал", "phone": {"screen": "shop", "siteSet": "wine", "store": {"title": "Elegant Wine", "price": "650 ₽"},
+                                  "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.25, "until": "end", "dt_end": 0.3},
+        {"at": "бокал", "site_step": "product", "dt": -0.85, "quiet": true},
+        {"at": "end", "site_step": "tap", "dt": 3.0, "quiet": true}
+      ]
+    },
+    {
+      "text": "Всё приходит за пару минут, полчаса на настройку — и девять часов.",
+      "pause_after": 4.0,
+      "show": ["через плечо: на её эфире статичные обои шторкой сменяются живым ночным кабинетом",
+               "Мира настраивает: руки на клавиатуре",
+               "на «девять» — общий эфир: Мира и Кэт рядом по грудь на новом фоне, плашка «МИРА × КЭТ», 5 012 зрителей",
+               "реплика Кэт (Lily): «Мира, привет! Ого, у тебя уютно.» — Кэт говорит; чат «газ газ», «ого фон»"],
+      "shots": [{"cam": "monitor_close", "push": 0.1},
+                {"cam": "face", "at": "полчаса", "push": 0.06},
+                {"cam": "monitor", "at": "девять", "dt": -0.1, "zoom": 1.04, "push": 0.1,
+                 "flow": {"kind": "reveal_from", "shape": "circle", "dur": 0.6, "y": 0.42, "w": 160, "h": 160, "edge": "#7fe8ff", "edgeWidth": 10}}],
+      "do": [
+        {"face": "happy"},
+        {"at": "пару", "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
+                                 "wipe": 1.3}, "dt": -0.1},
+        {"at": "полчаса", "act": "Typing_Loop"},
+        {"at": "девять", "act": "Sit_Loop", "dt": -0.2},
+        {"at": "девять", "title": "КОЛЛАБ с Кэт · R.E.P.O.", "dt": -0.15},
+        {"at": "девять", "viewers": 5012, "label": "5 012 зрителей", "dt": -0.15},
+        {"at": "девять", "dt": -0.15,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
+                   "plate": {"names": [{"text": "МИРА", "color": "#c9b6ff"}, {"text": "КЭТ", "color": "#7fe8ff"}], "sub": "коллаб · R.E.P.O.", "t0": 0.2, "top": true}}},
+        {"at": "end", "dt": 0.9, "chat": {"user": "zxc_ghoul", "color": "#9dff7e", "text": "газ газ газ"}},
+        {"at": "end", "dt": 1.6, "chat": {"user": "kat_fan_01", "color": "#7fe8ff", "text": "ого фон"}},
+        {"at": "end", "face": "happy", "talk": false}
+      ],
+      "vrm": [{"at": "девять", "av_show": ["taya_av", "asya_av"], "dt": -0.95},
+              {"at": "девять", "av_cam": "two_bust", "dt": -0.95},
+              {"at": "девять", "av": "idle", "who": "asya_av", "dt": -0.95},
+              {"at": "девять", "av_face": "happy", "who": "asya_av", "dt": -0.95},
+              {"at": "end", "av_talk": 3.1, "who": "asya_av", "face": "happy", "dt": 0.45},
+              {"at": "девять", "look": "webcam", "dur": 3.5, "dt": -0.1}]
+    },
+    {
+      "text": "Чат Кэт машет палочками, чат Миры пишет «наша».",
+      "pause_after": 3.4,
+      "show": ["эфир крупно: внизу машут светящиеся палочки (лайтстики すやみや), чат «НАША», «💀», «имба»",
+               "«Кампай за коллаб!» (Кэт) — «Кампай!» (Мира): у обеих поднимаются бокалы ассета Elegant Wine и чокаются"],
+      "shots": [{"cam": "monitor_close", "push": 0.12},
+                {"cam": "chat", "at": "Миры", "dt": -0.1, "push": 0.12},
+                {"cam": "monitor", "at": "end", "dt": 0.15, "zoom": 1.06, "push": 0.1}],
+      "do": [
+        {"dt": -0.2,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
+                   "plate": {"names": [{"text": "МИРА", "color": "#c9b6ff"}, {"text": "КЭТ", "color": "#7fe8ff"}], "sub": "коллаб · R.E.P.O.", "top": true},
+                   "front": [{"seq": {"pattern": "/site/media/sticks_cyan/f_{:03d}.png", "from": 1, "count": 29}, "fps": 30,
+                              "x": 0.5, "y": 0.8, "w": 1.06, "t0": 0.3}]}},
+        {"at": "Миры", "chat": {"user": "chai_s_lunoi", "color": "#ffb07e", "text": "НАША", "big": true}},
+        {"at": "пишет", "dt": 0.1, "chat": {"user": "kot_v_shkafu", "color": "#9dff7e", "text": "💀💀💀"}},
+        {"at": "наша", "dt": 0.1, "chat": {"user": "kat_fan_01", "color": "#7fe8ff", "text": "имба"}},
+        {"at": "end", "dt": 0.2,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
+                   "plate": {"names": [{"text": "МИРА", "color": "#c9b6ff"}, {"text": "КЭТ", "color": "#7fe8ff"}], "sub": "коллаб · R.E.P.O.", "top": true},
+                   "front": [{"seq": {"pattern": "/site/media/sticks_cyan/f_{:03d}.png", "from": 1, "count": 29}, "fps": 30,
+                              "x": 0.5, "y": 0.8, "w": 1.06},
+                             {"seq": {"pattern": "/site/media/wine_hand/f_{:03d}.png", "from": 1, "count": 57}, "fps": 15,
+                              "x": 0.21, "y": 0.92, "w": 0.18, "flip": true, "t0": 0.0, "shadow": true,
+                              "keys": [{"t": 0.3, "dx": 0, "dy": 0, "rot": 0}, {"t": 1.0, "dx": 0.06, "dy": -0.12, "rot": 12},
+                                       {"t": 1.6, "dx": 0.06, "dy": -0.12, "rot": 12}, {"t": 2.0, "dx": 0.1, "dy": -0.11, "rot": 16},
+                                       {"t": 2.25, "dx": 0.06, "dy": -0.12, "rot": 10}]},
+                             {"seq": {"pattern": "/site/media/wine_hand/f_{:03d}.png", "from": 1, "count": 57}, "fps": 15,
+                              "x": 0.79, "y": 0.92, "w": 0.18, "t0": 0.05, "shadow": true,
+                              "keys": [{"t": 0.3, "dx": 0, "dy": 0, "rot": 0}, {"t": 1.0, "dx": -0.06, "dy": -0.12, "rot": -12},
+                                       {"t": 1.6, "dx": -0.06, "dy": -0.12, "rot": -12}, {"t": 2.0, "dx": -0.1, "dy": -0.11, "rot": -16},
+                                       {"t": 2.25, "dx": -0.06, "dy": -0.12, "rot": -10}]}]}},
+        {"at": "end", "face": "laugh", "dt": 1.8, "talk": true}
+      ],
+      "vrm": [{"at": "end", "av_talk": 1.3, "who": "asya_av", "face": "happy", "dt": 0.3},
+              {"at": "end", "av_face": "laugh", "who": "asya_av", "dt": 1.7}]
+    },
+    {
+      "text": "После эфира — личка.",
+      "pause_after": 0.1,
+      "show": ["Мира у стола, довольная; телефон: личка с Кэт — «Слушай, а где фон брала?» → «На Витубике. Промокод Free10.»"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"phone": {"screen": "dm", "dm": {"title": "Кэт", "letter": "К", "color": "#35d0f0", "status": "в сети", "clock": "00:41", "msgs": []},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.15, "until": "end", "dt_end": 6.4},
+        {"at": "end", "dt": 0.45, "dm": {"text": "Слушай, а где фон брала?", "time": "00:41"}},
+        {"at": "end", "dt": 2.9, "dm": {"me": true, "text": "На Витубике. Промокод Free10 😉", "time": "00:41"}},
+        {"face": "happy"},
+        {"at": "end", "dt": 2.9, "face": "happy", "talk": true}
+      ]
+    }
+  ]
+}

@@ -9,6 +9,7 @@
  * Шрифты — из vendor/fonts (render.mjs отдаёт /fonts/): Montserrat — интерфейс, Rubik — крупные цифры.
  */
 import { drawSite, siteImages, type SiteScreen } from "./ui_site.ts";
+import { drawAppFrames, drawDm } from "./ui_phone_app.ts";
 import * as THREE from "three";
 import { ease } from "./timeline.ts";
 import { drawGuy, drawNoCam, drawShopPage, guyPose, type GuyKeys } from "./ui_guy.ts";
@@ -238,6 +239,43 @@ export interface StreamScreen {
    * анимированная музыкальная комната и попкорн (хлопает на каждое сообщение чата); studio_ember — то же и маленький
    * огонёк в углу: [{t, kind}]. */
   decor?: { t: number; kind: string }[];
+  /** Сцена окна превью (ui_stream_flat.ts): фон эфира картинкой или кадрами (статичные обои → живой фон с
+   * товара), слои поверх аватара (лайтстики, рука с бокалом — кадры ассета с прозрачностью) и общая плашка имён;
+   * смена фона — шторкой. [{t, bg?, front?, plate?, wipe?}] — действует до следующего ключа. */
+  scenes?: StreamScene[];
+}
+
+/** Картинка или кадры (URL /site/… — loadSite) в окне превью: центр x, y и ширина w — доли окна. */
+export interface SceneLayer {
+  url?: string;
+  seq?: string[];
+  fps?: number;
+  /** Кадры туда-обратно (по умолчанию) или по кругу. */
+  loop?: boolean;
+  x?: number;
+  y?: number;
+  w?: number;
+  /** Фон: cover (по умолчанию) — по заполнению окна. */
+  fit?: "cover" | "contain";
+  /** Появление (с) — наплыв 0.3 с снизу. */
+  t0?: number;
+  /** Движение по ключам абсолютного времени: смещение (доли окна), поворот (град), масштаб, прозрачность. */
+  keys?: { t: number; dx?: number; dy?: number; rot?: number; s?: number; a?: number }[];
+  flip?: boolean;
+  /** Мягкая тень под слоем (как у ассета поверх кадра). */
+  shadow?: boolean;
+  /** Смешивание (screen — светящиеся палочки ярче на тёмном). */
+  blend?: GlobalCompositeOperation;
+}
+
+export interface StreamScene {
+  t: number;
+  bg?: SceneLayer | null;
+  front?: SceneLayer[];
+  /** Общая плашка: имена своим цветом через разделитель, подпись мельче. */
+  plate?: { names: { text: string; color?: string }[]; sep?: string; sub?: string; t0?: number; top?: boolean } | null;
+  /** Смена фона шторкой слева направо за wipe с (0 — сразу). */
+  wipe?: number;
 }
 
 /** Режим экрана, аватар, рот лисички, кукла волчонка — на момент t. */
@@ -251,7 +289,7 @@ function screenState(s: StreamScreen, t: number) {
   const wolf = wolfPose(t, s.wolf || {});
   const anim = mode === "rig" || mode === "shop" || mode === "shops" || mode === "draw"
     || (mode === "stream" && (avatar === "wolf" || avatar === "hoodie" || avatar === "vtuber" || avatar === "live" || avatar === "sketch" || avatar === "product"
-      || decorAt(s.decor, t) !== "plain"));
+      || decorAt(s.decor, t) !== "plain" || !!s.scenes?.length));
   return { mode, avatar, open, wolf, anim };
 }
 
@@ -496,7 +534,12 @@ export function drawAlert(g: CanvasRenderingContext2D, W: number, H: number,
 export interface PhoneScreen {
   /** notifications — часы и стопка уведомлений; payment — перевод с галочкой; shop — товар; messenger — файл;
    * site — настоящие скриншоты сайта магазина (ui_site.ts). */
-  screen?: "notifications" | "payment" | "shop" | "messenger" | "site";
+  screen?: "notifications" | "payment" | "shop" | "messenger" | "site" | "app" | "dm";
+  /** screen "app": настоящие кадры записи экрана приложения (URL /site/…) по времени, касание пальцем перед сменой. */
+  app?: { frames: { t: number; url: string; tap?: [number, number]; tapT?: number }[]; bg?: string; clock?: string };
+  /** screen "dm": личка в мессенджере — шапка с именем, сообщения пузырями по времени, «печатает…» перед каждым. */
+  dm?: { title: string; status?: string; letter?: string; color?: string; clock?: string;
+    msgs: { t: number; me?: boolean; text: string; time?: string }[] };
   /** screen "site": страницы, прокрутки, касания и шаги (ui_site.ts); t0 — появление телефона. */
   site?: SiteScreen;
   t0?: number;
@@ -530,13 +573,16 @@ export function phoneSignature(p: PhoneScreen, t: number): string {
   const last = n.length ? n[n.length - 1].t : -1;
   const anim = last >= 0 && t - last < 0.35 ? Math.round((t - last) * 60) : "x";
   const pay = p.payment && p.payment.t !== undefined && t - p.payment.t < 0.5 ? Math.round((t - p.payment.t) * 60) : "x";
-  const live = p.screen === "shop" || p.screen === "messenger" || p.screen === "site" ? Math.round(t * 30) : "";
+  const live = p.screen === "shop" || p.screen === "messenger" || p.screen === "site" || p.screen === "app" || p.screen === "dm"
+    ? Math.round(t * 30) : "";
   return [p.screen, n.length, anim, counterValue(p.counter, t), pay, live].join("|");
 }
 
 export function drawPhone(g: CanvasRenderingContext2D, W: number, H: number, p: PhoneScreen, t: number) {
   if (p.screen === "payment") return drawPayment(g, W, H, p, t);
   if (p.screen === "site" && p.site) return drawSite(g, W, H, p.site, t, p.t0 ?? 0);
+  if (p.screen === "app" && p.app) return drawAppFrames(g, W, H, p.app, t);
+  if (p.screen === "dm" && p.dm) return drawDm(g, W, H, p.dm, t);
   if (p.screen === "shop") {
     const pv = (p.store as any)?.preview;
     if (pv === "vrm") return drawStoreCard(g, W, H, t, p.store || {}, (gg, cx, cy, sz) => drawVrmTile(gg, cx, cy, sz, t));

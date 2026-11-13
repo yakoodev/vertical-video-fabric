@@ -27,6 +27,8 @@ export interface AvatarModel {
   /** Где стоит (x, м) и разворот к камере (градусы). */
   x?: number;
   yaw?: number;
+  /** Масштаб модели (каст разного роста: головы двоих в одном кадре на одной высоте). */
+  scale?: number;
   accessories?: AccessorySpec[];
 }
 
@@ -40,6 +42,10 @@ export interface AvatarSpec {
   cams?: { t: number; pos: V3; target: V3; fov: number }[];
   labels?: { t: number; t1?: number; who: string; text: string; color?: string }[];
   badge?: { t0: number; t1: number; text: string }[];
+  /** Окна речи модели (не героини — та говорит через mirror): рот слогами и улыбка, [{who, t0, t1, face?}]. */
+  talk?: { who: string; t0: number; t1: number; face?: string }[];
+  /** Выражение модели по времени (idle/png): [{t, who, face}] — happy, laugh, surprised, wink. */
+  faces?: { t: number; who: string; face: string }[];
   width?: number;
   height?: number;
 }
@@ -50,6 +56,11 @@ const MIRROR_SKIP = /Leg|Foot|Toes|hips|Eye|jaw/;
 const EXPR = ["happy", "relaxed", "sad", "angry", "surprised", "aa", "ih", "ou", "ee", "oh", "blink", "blinkLeft", "blinkRight"];
 const smooth = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
 const D = Math.PI / 180;
+/** Выражения модели на мониторе по имени (ключи ``faces`` и лицо окна речи). */
+const AV_FACES: Record<string, Record<string, number>> = {
+  neutral: { relaxed: 0.15 }, happy: { happy: 0.7 }, laugh: { happy: 1.0, aa: 0.35 }, surprised: { surprised: 0.85 },
+  wink: { happy: 0.6, blinkLeft: 1 }, smile: { happy: 0.45, relaxed: 0.2 },
+};
 
 function mirrorName(b: string): string {
   return b.startsWith("left") ? "right" + b.slice(4) : b.startsWith("right") ? "left" + b.slice(5) : b;
@@ -112,6 +123,7 @@ export class AvatarStage {
       VRMUtils.rotateVRM0(vrm);
       vrm.scene.traverse((o) => (o.frustumCulled = false));
       applyLook(vrm, m.look);
+      if (m.scale && m.scale !== 1) vrm.scene.scale.setScalar(m.scale);
       const a = new Avatar(vrm, m);
       for (const acc of m.accessories || []) accessory(a.rig, acc);
       if (this.spec.acts.some((k) => k.who === m.id && k.act === "mug")) a.mug = makeMug();
@@ -140,10 +152,13 @@ export class AvatarStage {
     const breath = Math.sin(t * 1.6);
     let copied: Map<string, THREE.Quaternion> | null = null;
     const armW = { left: 0, right: 0 };
-    if ((act.act === "mirror" || act.act === "copy") && hero) {
+    if ((act.act === "mirror" || act.act === "copy" || act.act === "track") && hero) {
       // Трекинг: повороты костей героини в осях модели (mirror — зеркально, левое ↔ правое). Корпус и голова —
       // всегда; рука — только когда героиня её подняла (жест), иначе опущена вдоль тела (героиня сидит, модель стоит).
-      const mir = act.act === "mirror";
+      // track — трекинг только головы, корпуса и лица (как веб-камера без трекинга рук): руки опущены, их нет в кадре
+      // «по грудь», и они не тянутся к соседке, пока героиня печатает.
+      const mir = act.act === "mirror" || act.act === "track";
+      const arms = act.act !== "track";
       const mocap: Record<string, number[]> = {};
       copied = new Map();
       for (const name of Object.keys((hero.vrm.humanoid as any).humanBones || {})) {
@@ -158,7 +173,7 @@ export class AvatarStage {
       }
       for (const side of ["left", "right"] as const) {
         const src = mir ? (side === "left" ? "right" : "left") : side;
-        armW[side] = smooth((hero.pos(`${src}Hand`).y - 1.16) / 0.1);
+        armW[side] = arms ? smooth((hero.pos(`${src}Hand`).y - 1.16) / 0.1) : 0;
       }
       p.mocap = mocap;
       p.left = armDown(1, t);
@@ -253,6 +268,11 @@ export class AvatarStage {
     let i = -1;
     while (i + 1 < keys.length && keys[i + 1].t <= t) i++;
     const cur = keys[Math.max(0, i)] || { t: 0, act: "idle" };
+    // Поза (IK рук) — в осях модели, стоящей в начале координат: цели рук заданы в мире (armDown: ладонь у бедра),
+    // и сдвинутая вбок модель (двое рядом) иначе тянула руку к чужому бедру — к соседке. Сдвиг и разворот — после.
+    a.vrm.scene.position.x = 0;
+    a.vrm.scene.rotation.y = a.baseYaw;
+    a.vrm.scene.updateMatrixWorld(true);
     const pb = this.pose(a, cur, t, hero);
     const w = i > 0 ? smooth((t - cur.t) / 0.5) : 1;
     let out = pb;
@@ -264,6 +284,7 @@ export class AvatarStage {
       for (const n of new Set([...Object.keys(pa.expr), ...Object.keys(pb.expr)])) expr[n] = (pa.expr[n] ?? 0) * (1 - w) + (pb.expr[n] ?? 0) * w;
       out = { q, hips: pa.hips.clone().lerp(pb.hips, w), yaw: pa.yaw + (pb.yaw - pa.yaw) * w, expr };
     }
+    out.expr = this.faceAt(a.spec.id, t, out.expr);
     for (const [n, qq] of out.q) a.rig.node(n)!.quaternion.copy(qq);
     a.rig.node("hips")!.position.copy(out.hips);
     a.vrm.scene.position.x = multi ? a.spec.x ?? 0 : 0;
@@ -278,6 +299,38 @@ export class AvatarStage {
     }
     a.rig.update();
     if (a.mug) this.placeMug(a, keys, t);
+  }
+
+  /**
+   * Лицо модели поверх действия: выражение по ключам ``faces`` (наплыв 0.25 с) и рот слогами в окнах ``talk``
+   * (детерминированно от t: открытие «а»/«о» ~6 слогов в секунду, моргание остаётся от действия).
+   */
+  private faceAt(who: string, t: number, base: Record<string, number>): Record<string, number> {
+    const keys = (this.spec.faces || []).filter((k) => k.who === who && k.t <= t);
+    let expr = { ...base };
+    if (keys.length) {
+      const k = keys[keys.length - 1];
+      const w = smooth((t - k.t) / 0.25);
+      const target = AV_FACES[k.face] || {};
+      const blink = expr.blink ?? 0;
+      const mixed: Record<string, number> = {};
+      for (const n of new Set([...Object.keys(expr), ...Object.keys(target)])) mixed[n] = (expr[n] ?? 0) * (1 - w) + (target[n] ?? 0) * w;
+      mixed.blink = target.blink !== undefined ? Math.max(blink * (1 - w), target.blink * w) : blink;
+      expr = mixed;
+    }
+    for (const win of this.spec.talk || []) {
+      if (win.who !== who || t < win.t0 || t > win.t1) continue;
+      const u = t - win.t0;
+      const syl = Math.abs(Math.sin(u * Math.PI * 3.1)) * (0.55 + 0.25 * Math.sin(u * 7.3));
+      const env = smooth(u / 0.08) * smooth((win.t1 - t) / 0.08);
+      expr.aa = Math.max(expr.aa ?? 0, syl * env * 0.75);
+      expr.oh = Math.max(expr.oh ?? 0, Math.max(0, Math.sin(u * 5.1)) * env * 0.25);
+      if (win.face) {
+        const f = AV_FACES[win.face] || {};
+        for (const [n, v] of Object.entries(f)) if (n !== "blink") expr[n] = Math.max(expr[n] ?? 0, v);
+      }
+    }
+    return expr;
   }
 
   /** Кружка: в руке до drop, потом падает (свободное падение с кувырком), ударяется об пол и катится. */
