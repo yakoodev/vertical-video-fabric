@@ -299,7 +299,7 @@ def claudes(env: list[float], spans: dict) -> tuple[list[dict], dict]:
     a.p(T_GIVE + 0.15, "inOutSine", armL="rest", squash=1.0, lean=0)
     a.p(37.95, "outQuad", turn=10)
     a.f(37.95, "grumpy", [-0.5, 0])
-    a.hop_to(38.1, 38.7, HAND9_POS, [0.4, T, 0.2], steps=3)
+    a.hop_to(38.1, 38.7, HAND9_POS, [0.3, T, 0.1], steps=3)  # уходит влево — не перекрывает Кодекса
     to_pile(a, T_FIN, 8)
     out.append(a.spec("c9", 9, E.HERO_YAW, masked(env, [sp["c10b"], sp["c16"], sp["c17"], sp["c18"]])))
     ev["slots"] = SLOTS
@@ -408,7 +408,7 @@ def objects() -> list[dict]:
                   {"t": 12.05, "position": [sx - 0.01, T + 0.25, sz + 0.02], "ease": "outBack"}]},
         # Стакан с карандашом у клавиатуры (бит 9) и карандаш, который Клод 9 несёт Кодексу.
         {"id": "holder", "primitive": "cylinder", "params": {"size": [0.05, 0.07, 0.05], "color": "#3f7f84", "segments": 14},
-         "position": [0.44, T, 0.25]},
+         "position": [0.44, T, 0.25], "visible": vis((0, T_FIN))},  # в финале убран: стоял перед листом
         {"id": "pencilA", "primitive": "cylinder", "params": {"size": [0.016, 0.15, 0.016], "color": "#f2c14e", "segments": 6},
          "position": [0.44, T + 0.08, 0.25], "rotation": [0, 0, 12], "visible": [{"t": 0, "on": True}, {"t": T_GIVE, "on": False}],
          "attach": [{"to": "c9:hand_l", "start": T_OFF + 0.38, "end": T_GIVE, "fadeIn": 0.1, "fadeOut": 0, "offset": [0.0, 0.05, 0.02],
@@ -497,7 +497,7 @@ def camera(ev: dict) -> tuple[dict, list[dict], list[float]]:
     DIAG = ([-0.16, T + 0.22, 1.0], [0.4, T + 0.15, 0.03])
     HAND_W = ([0.3, T + 0.38, 1.6], [0.45, T + 0.14, -0.02])
     HAND2 = ([0.62, T + 0.22, 0.95], [0.65, T + 0.13, -0.1])
-    K_LOOK = ([K[0] + kf[0] * 0.8 - 0.12, kfy + 0.06, K[2] + kf[1] * 0.8], [K[0] - 0.05, kfy - 0.02, K[2]])
+    K_LOOK = ([K[0] + 0.2, kfy + 0.06, K[2] + 0.8], [K[0] - 0.04, kfy - 0.01, K[2]])  # спереди-справа: Клод 9 уходит влево, не в кадр
     FIN = ([E.PAPER[0] + 0.02, T + 0.36, E.PAPER[2] + 1.0], [E.PAPER[0] - 0.02, T + 0.14, E.PAPER[2] - 0.25])
 
     shot(0.0, 0.85, COVER, push(COVER, 0.06), fov=30, dof=0.3)
