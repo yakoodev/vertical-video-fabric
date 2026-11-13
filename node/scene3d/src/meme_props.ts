@@ -181,7 +181,12 @@ export function signPlate(p: Record<string, any>): Prop {
     g.font = FONT(900, px);
     g.fillText(String(p.text ?? ""), W / 2, H * (sub ? 0.4 : 0.54));
     if (sub) {
-      g.font = FONT(700, H * 0.24);
+      // Подпись тоже вписывается в ширину плашки (иначе края обрезаются: «одписка в меся»).
+      let sp = H * 0.24;
+      g.font = FONT(700, sp);
+      const sw = g.measureText(sub).width;
+      if (sw > W * 0.9) sp *= (W * 0.9) / sw;
+      g.font = FONT(700, sp);
       g.fillText(sub, W / 2, H * 0.8);
     }
   });

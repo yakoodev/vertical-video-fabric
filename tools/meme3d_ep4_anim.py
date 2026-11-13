@@ -388,15 +388,15 @@ def objects() -> list[dict]:
         # Подписка за 200 $ на стене у юзера — на «дорого» её перечёркивает красный крест.
         {"id": "sub_plate", "primitive": "sign_plate", "params": {"text": "200 $", "sub": "подписка в месяц", "bg": "#f6e6cf", "fg": "#2b1810",
                                                                   "width": 0.3, "height": 0.15, "tilt": 4, "glow": 0.1},
-         "position": [xu + 0.34, T + 0.42, -0.4]},
+         "position": [xu + 0.24, T + 0.45, -0.4]},
     ]
     for i, rz in enumerate((38, -38)):
         objs.append({"id": f"sub_x{i}", "primitive": "rounded_box", "params": {"size": [0.36, 0.028, 0.012], "color": "#d8342c", "radius": 0.006,
                                                                                 "emissive": "#d8342c", "emissiveIntensity": 0.3},
-                     "position": [xu + 0.34, T + 0.42, -0.385], "rotation": [0, 0, rz], "visible": vis((5.72, DUR + 1)),
-                     "keys": [{"t": 0, "position": [xu + 0.34, T + 0.42, -0.31]},
-                              {"t": 5.72, "position": [xu + 0.34, T + 0.42, -0.31], "ease": "step"},
-                              {"t": 5.82, "position": [xu + 0.34, T + 0.42, -0.385], "ease": "outBack"}]})
+                     "position": [xu + 0.24, T + 0.45, -0.385], "rotation": [0, 0, rz], "visible": vis((5.72, DUR + 1)),
+                     "keys": [{"t": 0, "position": [xu + 0.24, T + 0.45, -0.31]},
+                              {"t": 5.72, "position": [xu + 0.24, T + 0.45, -0.31], "ease": "step"},
+                              {"t": 5.82, "position": [xu + 0.24, T + 0.45, -0.385], "ease": "outBack"}]})
     shop, _ = E.shelf_objects()
     objs += shop
     objs += [
@@ -465,10 +465,11 @@ def camera(ev: dict) -> tuple[dict, list[dict], list[float]]:
     kfy = T + H.face_height(E.W_HERO)
     COVER = ([sx + 0.12, T + 0.11, sz + 1.3], [sx, T + 0.15, sz + 0.1])
     U_CU = ([xu - 0.07, T + 0.21, 0.66], [xu - 0.1, T + 0.18, -0.1])
-    U_MED = ([xu + 0.06, T + 0.26, 1.55], [xu + 0.0, T + 0.17, -0.04])
+    U_MED = ([xu + 0.08, T + 0.27, 1.85], [xu + 0.06, T + 0.2, -0.04])  # юзер, ноутбук и плашка «200 $» целиком
     LAP = ([xu - 0.27, T + 0.14, 0.34], [xu + 0.13, T + 0.08, -0.11])
-    PLATE = ([xu + 0.3, T + 0.42, 0.55], [xu + 0.34, T + 0.42, -0.4])
-    U_PL = ([xu + 0.16, T + 0.33, 1.55], [xu + 0.12, T + 0.27, -0.2])
+    # Плашка «200 $» целиком в кадре: камера дальше (1.4 м), в общем плане юзер и плашка по центру.
+    PLATE = ([xu + 0.23, T + 0.45, 1.0], [xu + 0.24, T + 0.45, -0.4])
+    U_PL = ([xu + 0.06, T + 0.33, 1.95], [xu + 0.05, T + 0.27, -0.2])
     SHELF = ([xs, T + 0.46, 2.45], [xs, T + 0.35, -0.12])
     PRICE = ([xs + 0.12, T + 0.38, 0.75], [xs + 0.16, T + 0.355, 0.04])
     BOX = ([xs, T + 0.55, 0.95], [xs, T + 0.53, -0.12])
