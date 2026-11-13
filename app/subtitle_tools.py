@@ -113,12 +113,12 @@ def _phrases_heard(store: Any, plan: dict, piece: dict, phrases: list[tuple[floa
         return [True] * len(phrases)
 
 
-def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
+def h_separate_voices(ctx: ToolContext, args: dict) -> dict:
     from app.ai.speakers import separate_voices
 
     ctx.before_change()
     try:
-        out = separate_voices(ctx.store, ctx.plan_id)
+        out = separate_voices(ctx.store, ctx.plan_id, all_voices=args.get("all_voices") is True)
     except (RuntimeError, ValueError) as exc:
         raise ToolError(str(exc)) from exc
     voices = len(out["counts"])
@@ -126,6 +126,11 @@ def h_separate_voices(ctx: ToolContext, _args: dict) -> dict:
             f"голосов {voices}: слова каждого помечены. Главный слой captions — props.speakers ['A'], "
             "другие голоса — второй слой captions с speakers ['B','C','D'], мельче (size ~60) и рядом "
             "(auto_edit ставит оба сам)")
+    if out.get("dropped"):
+        note += ("; из субтитров убраны голоса не живых людей (игра, ролик, озвучка доната): "
+                 + ", ".join(f"{k} — {v['about'] or v['why']}" for k, v in out["dropped"].items())
+                 + ". Субтитры только для речи стримера и живых людей, не для голосов игры; вернуть — all_voices: true, "
+                 "только если владелец попросил")
     return {"ok": True, **out, "note": note}
 
 
@@ -848,8 +853,11 @@ def tools() -> list[Tool]:
             "separate_voices", "Разбираю голоса",
             "Послушать звук клипа и расшифровать каждый голос отдельно (стример A, гость/донат/ролик — B, C): "
             "возвращает потерянные под чужим голосом фразы, метит слова, строки не смешивают людей. "
-            "auto_edit делает это сам; вызывай, если перераспознал речь после auto_edit. / Separate voices.",
-            _obj({}, []),
+            "Субтитры только для речи стримера и живых людей, не для голосов игры: голоса игры (персонажи, агенты, "
+            "диктор), ролика и озвучки доната сервис из субтитров убирает сам (dropped); all_voices: true — оставить "
+            "все, только по просьбе владельца. auto_edit делает это сам; вызывай, если перераспознал речь после "
+            "auto_edit. / Separate voices.",
+            _obj({"all_voices": {"type": "boolean"}}, []),
             h_separate_voices, mutating=True, label=lambda a: "Разбираю голоса",
         ),
         Tool(
@@ -934,6 +942,8 @@ def tools() -> list[Tool]:
             "generate_subtitles", "Распознаю речь заново",
             "Заново распознать речь всего клипа и заменить субтитры (ручные правки текста пропадут). "
             "Нужно, когда get_clip предупреждает, что на кусках с речью субтитров нет. После — auto_edit. "
+            "Субтитры только для речи стримера и живых людей, не для голосов игры: у записи с отдельной дорожкой "
+            "микрофона распознаётся только она; голоса игры и ролика убирает separate_voices. "
             "/ Re-transcribe the clip.",
             _obj({}, []),
             h_generate_subtitles, mutating=True, label=lambda a: "Распознаю речь клипа заново",
