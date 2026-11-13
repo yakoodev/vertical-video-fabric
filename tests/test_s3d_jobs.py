@@ -38,7 +38,7 @@ class Render:
     def __init__(self, contact: dict | None = None, code: int = 0, error: str = ""):
         self.calls, self.contact, self.code, self.error = [], contact, code, error
 
-    def render(self, spec_path: Path, out: Path) -> dict:
+    def render(self, spec_path: Path, out: Path, **_kw) -> dict:
         import json
 
         spec = json.loads(Path(spec_path).read_text("utf-8"))

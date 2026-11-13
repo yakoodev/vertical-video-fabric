@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -196,10 +197,36 @@ def source_tracks(source: dict) -> list[int] | None:
     return [m["track"] for m in mix] if mix else None
 
 
-def speech_mix(source: dict) -> list[dict] | None:
-    """Звук для распознавания речи: своя дорожка (``speech_tracks``, без усилений —
-    распознаванию громкость не важна), иначе та же смесь, что для рендера."""
+_MIC_TITLE = re.compile(r"(mic|микро|voice|голос|commentary|комментар|speech|речь|vocal)", re.I)
+_GAME_TITLE = re.compile(r"(game|игр|desktop|system|системн|app|приложен|music|музык|stream mix|mix)", re.I)
+
+
+def mic_track(source: dict) -> int | None:
+    """Дорожка микрофона записи с отдельными игрой и микрофоном (OBS/NVIDIA: заголовки дорожек «Mic», «Game»…):
+    номер, если ровно одна дорожка похожа на микрофон и есть другая, на него не похожая. Иначе None — не гадаем.
+    Только по метаданным загрузки (ffprobe на каждый вызов не гоняем)."""
+    streams = audio_streams(source, probe=False)
+    if len(streams) < 2:
+        return None
+    mics = [s["index"] for s in streams if _MIC_TITLE.search(s.get("title") or "") and not _GAME_TITLE.search(s.get("title") or "")]
+    others = [s for s in streams if s["index"] not in mics]
+    return mics[0] if len(mics) == 1 and others else None
+
+
+def speech_track_list(source: dict) -> list[int] | None:
+    """Дорожки распознавания речи: заданные (``speech_tracks``), иначе найденная дорожка микрофона (субтитры — по голосу
+    стримера и тех, кто в его микрофоне, а не по игре), иначе None — смесь рендера."""
     tracks = normalize_tracks(source.get("speech_tracks"))
+    if tracks:
+        return tracks
+    mic = mic_track(source)
+    return [mic] if mic is not None else None
+
+
+def speech_mix(source: dict) -> list[dict] | None:
+    """Звук для распознавания речи: своя дорожка (``speech_tracks`` или найденная дорожка микрофона, без усилений —
+    распознаванию громкость не важна), иначе та же смесь, что для рендера."""
+    tracks = speech_track_list(source)
     total = _tracks_in_file(source)
     if tracks and total is not None:
         tracks = [t for t in tracks if t < total]
@@ -210,7 +237,7 @@ def speech_mix(source: dict) -> list[dict] | None:
 
 def separate_speech(source: dict) -> bool:
     """Речь распознаётся по своей дорожке, а не по смеси рендера."""
-    speech = normalize_tracks(source.get("speech_tracks"))
+    speech = speech_track_list(source)
     return bool(speech) and speech != (source_tracks(source) or [0])
 
 
@@ -219,10 +246,12 @@ def audio_view(source: dict) -> dict:
     streams = audio_streams(source)
     raw = source.get("audio_mix")
     mix = normalize_mix(raw if raw is not None else source.get("audio_tracks")) or [{"track": 0, "gain_db": 0.0}]
-    speech = normalize_tracks(source.get("speech_tracks"))
+    speech = speech_track_list(source)
     view: dict = {"tracks_total": len(streams), "selected": [m["track"] for m in mix], "mix": mix,
                   "speech_tracks": speech or [m["track"] for m in mix], "speech_separate": bool(speech),
                   "streams": streams}
+    if speech and not normalize_tracks(source.get("speech_tracks")):
+        view["speech_auto"] = f"дорожка микрофона {speech[0]} найдена по названию: субтитры распознаются по ней"
     if len(streams) > 1:
         view["note"] = ("у записи несколько звуковых дорожек (часто 0 — игра, 1 — микрофон): выбранные смешиваются "
                         "в рендере, у каждой своя громкость gain_db (тихий микрофон — подними; gain_db \"auto\" "

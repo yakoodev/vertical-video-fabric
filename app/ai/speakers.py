@@ -72,8 +72,10 @@ A — главный голос клипа (обычно стример, гов�
 Когда два голоса звучат одновременно — дай обе реплики, их время может пересекаться.
 Не выдумывай второго человека: интонации и эмоции одного человека — это один голос.
 Пение и музыку без слов пропускай.
+Описание голоса начинай с вида: «стример», «человек: …» (тиммейт, гость в войсе, кто-то в комнате),
+«игра: …» (персонаж, агент, диктор игры), «ролик: …» (видео, фильм, музыка со словами), «tts: …» (озвучка доната).
 Ответь ТОЛЬКО JSON:
-{"speakers": {"A": "кто это, 2–4 слова", "B": "…"},
+{"speakers": {"A": "стример", "B": "человек: тиммейт", "C": "игра: голос агента"},
  "utterances": [{"s": "A", "start": 0.0, "end": 2.4, "text": "…"}, …]}
 start/end — число секунд от начала этого звука: 83.5, а не 1:23 и не 123.5.
 Реплики — по порядку времени, короткие (одна фраза).
@@ -452,21 +454,100 @@ def _cut_in(others: list[dict], starts: list[float], left: float, right: float) 
 # --------------------------------------------------------------------------- #
 
 
+# Субтитры — только речь стримера и живых людей (владелец 13.11, нарезка Муры: Gemini подписал реплики агентов
+# Valorant). Голос игры или ролика по умолчанию из субтитров убирается. Озвучка доната (TTS чата) остаётся: по
+# плейбуку stream-shorts её реплики идут в субтитры с «чат:».
+_NOT_LIVE_RE = re.compile(r"(^\s*(игра|ролик|видео)\b|игр[аыеуо]\b|игров|персонаж|агент\w*\s+(игр|valorant|валорант)|"
+                          r"голос\w*\s+(из\s+)?(игр|ролик|видео|фильм)|диктор|анонсер|announcer|\bnpc\b|\bнпс\b|"
+                          r"из\s+(ролика|видео|фильма|игры)|трейлер|катсцен|\bgame\b|\bvideo\b|музык|песн)", re.I)
+_LIVE_RE = re.compile(r"(^\s*(стример|человек|tts)\b|тиммейт|напарник|гость|войс|дискорд|discord|соведущ|друг|подруг|"
+                      r"модер|в комнате|оператор|донат|tts|чат)", re.I)
+# Буква с отдельной дорожкой микрофона, у которой whisper (он слушал микрофон) расслышал меньше этой доли слов, —
+# голос не из микрофона: игра или ролик.
+MIC_HEARD_SHARE = 0.2
+
+
+def not_live_voices(speakers: dict, utterances: list[dict] | None = None, mic_words: list[dict] | None = None,
+                    main: str = "A") -> dict[str, str]:
+    """Буквы голосов не живых людей → причина: игра или ролик по описанию модели или, если речь распознавалась по
+    отдельной дорожке микрофона (``mic_words`` — слова whisper с неё), — голоса почти нет в микрофоне, а модель не
+    назвала его живым человеком (тиммейт в войсе и озвучка доната звучат не из микрофона, но остаются). Главный голос
+    (стример) не трогаем никогда."""
+    out: dict[str, str] = {}
+    for letter, about in (speakers or {}).items():
+        text = str(about or "")
+        if letter != main and _NOT_LIVE_RE.search(text) and not _LIVE_RE.search(text):
+            out[letter] = f"не живой человек: «{text[:40]}»"
+    if mic_words is not None and utterances:
+        by_letter: dict[str, list[dict]] = {}
+        for u in utterances:
+            by_letter.setdefault(u["s"], []).append(u)
+        for letter, items in by_letter.items():
+            if letter == main or letter in out or _LIVE_RE.search(str((speakers or {}).get(letter) or "")):
+                continue
+            said = sum(len(u["text"].split()) for u in items)
+            heard = _heard_total(items, mic_words)
+            if said >= 3 and heard < MIC_HEARD_SHARE * said:
+                out[letter] = f"нет в дорожке микрофона (слышно {heard} из {said} слов): голос игры или ролика"
+    return out
+
+
+def drop_voices(payload: dict, drop: dict[str, str]) -> dict:
+    """Убрать из субтитров слова голосов ``drop`` (буква → причина). Убранное — в ``dropped_voices`` (вернуть:
+    separate_voices с all_voices). Остался один голос — метки снимаются, как у клипа с одним голосом."""
+    if not drop:
+        return payload
+    words = [dict(w) for w in payload.get("words") or []]
+    keep = [w for w in words if (w.get("speaker") or "A") not in drop]
+    gone = len(words) - len(keep)
+    speakers = {k: v for k, v in (payload.get("speakers") or {}).items() if k not in drop}
+    if len({w.get("speaker") or "A" for w in keep}) <= 1:
+        for w in keep:
+            w.pop("speaker", None)
+        speakers = {k: v for k, v in speakers.items() if k == "A"}
+    record = {letter: {"about": str((payload.get("speakers") or {}).get(letter) or ""), "why": why,
+                       "words": sum(1 for w in words if (w.get("speaker") or "A") == letter)}
+              for letter, why in drop.items()}
+    dropped_words = [{"word": w["word"], "start": float(w["start"]), "end": float(w["end"])}
+                     for w in words if (w.get("speaker") or "A") in drop]
+    fresh = {**payload, "words": keep, "lines": lines_from_words(keep), "speakers": speakers,
+             "dropped_voices": record, "dropped_words": dropped_words[:2000], "edited": True}
+    fresh["speakers_key"] = _words_key(keep)
+    fresh["dropped_count"] = gone
+    return fresh
+
+
+def _mic_separate(store: Any, clip_plan_id: int) -> bool:
+    """Речь клипа распознавалась по своей дорожке микрофона, а не по смеси с игрой."""
+    try:
+        from app.source_audio import separate_speech
+
+        plan = store.get_clip_plan(clip_plan_id, include_segments=False)
+        return separate_speech(store.get_source(int(plan["source_id"])))
+    except Exception:  # noqa: BLE001 - нет источника (холст) — микрофона отдельно нет
+        return False
+
+
 def _words_key(words: list[dict]) -> str:
     raw = json.dumps([(w.get("word"), round(float(w.get("start", 0)), 2)) for w in words], ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def separate_voices(
-    store: Any, clip_plan_id: int, client: Any = None, *, force: bool = False, retranscribe: bool = False
+    store: Any, clip_plan_id: int, client: Any = None, *, force: bool = False, retranscribe: bool = False,
+    all_voices: bool = False,
 ) -> dict:
     """Разобрать голоса клипа и переписать субтитры: у каждого слова — чей голос,
     потерянные whisper'ом слова — на месте. Возвращает
-    ``{speakers, counts, changed, added, retranscribed, warning?}``.
+    ``{speakers, counts, changed, added, retranscribed, dropped?, warning?}``.
 
     ``retranscribe`` — сначала распознать речь точной моделью (large-v3-turbo), если
     субтитры сделаны более слабой: время слов берётся у whisper, и от small под
-    чужими голосами толку мало."""
+    чужими голосами толку мало.
+
+    По умолчанию в субтитрах остаются только стример и живые люди (тиммейт, гость): голоса игры, ролика и озвучки
+    доната (``not_live_voices``: по описанию голоса или — при отдельной дорожке микрофона — голоса нет в микрофоне)
+    убираются, что убрано — ``dropped``. ``all_voices`` — оставить все голоса."""
     from app import modules
 
     modules.require("voices", store)
@@ -480,11 +561,16 @@ def separate_voices(
             payload = generate_for_plan(store, clip_plan_id, provider="whisper", model=QUALITY_WHISPER_MODEL)
             retranscribed, force = True, True
     words = [dict(w) for w in payload.get("words") or [] if str(w.get("word") or "").strip()]
+    if all_voices and payload.get("dropped_words"):
+        # Вернуть убранные голоса: их слова снова в черновике, разбор — заново.
+        words = sorted(words + [dict(w) for w in payload["dropped_words"]], key=lambda w: float(w["start"]))
+        force = True
     if not words:
         raise ValueError("у клипа нет распознанной речи — сначала распознайте субтитры")
     if not force and payload.get("speakers_key") and payload.get("speakers_key") == _words_key(words):
-        return {"speakers": payload.get("speakers") or {}, "counts": _counts(words), "changed": False, "added": 0,
-                "retranscribed": False}
+        cached = {"speakers": payload.get("speakers") or {}, "counts": _counts(words), "changed": False, "added": 0,
+                  "retranscribed": False}
+        return {**cached, "dropped": payload["dropped_voices"]} if payload.get("dropped_voices") else cached
     if client is None:
         if not settings.gemini_api_key:
             raise RuntimeError("Gemini не настроен — разобрать голоса нечем")
@@ -544,10 +630,20 @@ def separate_voices(
     except Exception:  # noqa: BLE001 - нет звука для сверки — время как разобрал Gemini, lint_clip покажет
         pass
     fresh = {**payload, "words": merged, "lines": lines, "speakers": speakers, "edited": True}
+    for key in ("dropped_voices", "dropped_count", "dropped_words"):
+        fresh.pop(key, None)
     fresh["speakers_key"] = _words_key(merged)
+    drop = {} if all_voices else not_live_voices(speakers, utterances,
+                                                 draft if _mic_separate(store, clip_plan_id) else None)
+    if drop:
+        fresh = drop_voices(fresh, drop)
+        # Кэш по словам до чистки: повторный вызов с теми же словами не зовёт модель заново.
+        fresh["speakers_key"] = _words_key(fresh["words"])
     store.set_clip_plan_subtitles(clip_plan_id, fresh)
-    out = {"speakers": speakers, "counts": _counts(merged), "changed": True,
+    out = {"speakers": fresh["speakers"], "counts": _counts(fresh["words"]), "changed": True,
            "added": max(0, len(merged) - len(draft)), "retranscribed": retranscribed, "windows": len(windows)}
+    if drop:
+        out["dropped"] = fresh["dropped_voices"]
     if fit["minutes"] or fit["moved"] or fit["dropped"]:
         out["retimed"] = fit
     if book.unsure:

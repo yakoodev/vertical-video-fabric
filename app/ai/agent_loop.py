@@ -45,6 +45,7 @@ _log = logging.getLogger(__name__)
 
 MAX_OUTPUT_TOKENS = 8192
 SAY_MAX_CHARS = 600
+from app.ai.finish_guard import FINISH_BONUS_ROUNDS, MAX_FINISH_NUDGES  # noqa: E402
 
 
 class TurnCancelled(Exception):
@@ -129,6 +130,7 @@ class TurnState:
     steps: list[dict] = field(default_factory=list)
     rounds: int = 0
     report_only: bool = False  # дальше только отчёт, без инструментов
+    finish_nudges: int = 0  # сколько раз сервис не дал закончить ход (finish_guard)
     use_json_schema: bool = True
 
     def nudge(self, text: str) -> None:
@@ -167,6 +169,11 @@ class TurnPolicy:
     def on_blocked(self, state: TurnState, reason: Any) -> str:
         """Фильтр контента Gemini: текст ответа или исключение."""
         raise NotImplementedError
+
+    def finish_guard(self, state: TurnState, answer: str) -> str | None:
+        """Модель хочет закончить ход ответом ``answer``. Реплика сервиса — ход ещё не окончен (не больше
+        ``MAX_FINISH_NUDGES`` раз за ход, с добавкой раундов на вызовы), None — можно сдавать."""
+        return None
 
     def finish(self, state: TurnState, text: str) -> str:
         """Ход окончен: последняя правка ответа."""
@@ -284,6 +291,16 @@ def run_loop(policy: TurnPolicy, gemini: Any, model: str, contents: list[dict], 
             contents.append({"role": "model", "parts": parts})
         if not calls or not tools_on:
             answer = policy.on_answer(state, parts, calls, tools_on, candidate)
+            if answer is not None and tools_on and not state.report_only and state.finish_nudges < MAX_FINISH_NUDGES:
+                # Проверка конца хода на уровне цикла (повтор эксперимента 13.11: «осталось: render_clip» вместо рендера).
+                guard = policy.finish_guard(state, answer)
+                if guard:
+                    state.finish_nudges += 1
+                    state.nudge(guard)
+                    limit += FINISH_BONUS_ROUNDS
+                    if run is not None:
+                        run.take_text()
+                    continue
             if answer is not None:
                 return policy.finish(state, answer), state
             if run is not None:

@@ -49,10 +49,40 @@ def h_render_clip(ctx: ToolContext, _args: dict) -> dict:
     return out
 
 
+_DB_STATUS = {"succeeded": "done", "failed": "failed", "queued": "queued", "rendering": "rendering"}
+
+
+def _db_render_view(ctx: ToolContext, render_clip_id: int) -> dict:
+    """Готовый рендер по номеру из базы (render_clip_id из lint_clip/get_clip, а не id задания r…): повтор 13.11,
+    RC3 — агент дал render_status число 1047 из lint_clip и получил «нет задания»."""
+    try:
+        clip = ctx.store.get_clip(int(render_clip_id))
+    except KeyError:
+        clip = None
+    if not clip:
+        raise ToolError(f"нет ни задания рендера, ни готового рендера #{render_clip_id}: id задания — из render_clip "
+                        "(вида r…), номер готового рендера — render_clip_id в get_clip / lint_clip")
+    status = _DB_STATUS.get(str(clip.get("status") or ""), str(clip.get("status") or ""))
+    out = {"ok": status != "failed", "render_id": None, "render_clip_id": int(clip["id"]),
+           "clip_id": clip.get("clip_plan_id"), "status": status, "created_at": clip.get("created_at"),
+           "finished_at": clip.get("updated_at") if status in ("done", "failed") else None,
+           "note": (f"#{clip['id']} — номер готового рендера в базе (render_clip_id), не задание: статус — из базы. "
+                    "Новый рендер — render_clip(clip_id), его задание — render_id вида r…")}
+    out.update({k: v for k, v in RJ._brief_clip(clip).items() if k not in ("render_status",)})
+    if status == "done":
+        out["next"] = "готово: lint_clip, contact_sheet, потом submit_for_approval(clip_id, title, …)"
+    elif status == "failed":
+        out["next"] = "поправь клип по ошибке и запусти render_clip снова"
+    return out
+
+
 def h_render_status(ctx: ToolContext, args: dict) -> dict:
-    render_id = str(args.get("render_id") or "").strip()
+    render_id = str(args.get("render_id") or "").strip().lstrip("#")
     if not render_id:
         raise ToolError("нужен render_id (из render_clip)")
+    if render_id.isdigit() and RJ.get(render_id) is None:
+        # Число — номер готового рендера в базе (render_clip_id), а не id задания: отвечаем из базы.
+        return _db_render_view(ctx, int(render_id))
     try:
         wait = min(MAX_WAIT_SEC, max(0.0, float(args.get("wait_sec") or 0)))
     except (TypeError, ValueError):
@@ -82,8 +112,11 @@ def tools() -> list[Tool]:
             "Статус задания render_clip: status queued|rendering|done|failed; done — render_clip_id (id готового "
             "рендера), video_url, длительность, размер и qc (отчёт проверки файла); voice — вердикт озвучки («озвучка "
             "с ошибками: …» — файл есть, но сдавать нельзя: check_voiceover и поправить); failed — error. wait_sec (до 50) — "
-            "подождать окончания в этом вызове, чтобы не опрашивать часто. / Status of a render_clip job.",
-            _obj({"render_id": {"type": "string", "description": "id задания из render_clip"},
+            "подождать окончания в этом вызове, чтобы не опрашивать часто. render_id — id задания (r…) из render_clip; "
+            "число — номер готового рендера (render_clip_id из get_clip / lint_clip): статус из базы. "
+            "/ Status of a render_clip job (or of a finished render by its numeric render_clip_id).",
+            _obj({"render_id": {"type": "string",
+                                "description": "id задания из render_clip (r…) или номер готового рендера render_clip_id"},
                   "wait_sec": {"type": "number", "minimum": 0, "maximum": MAX_WAIT_SEC,
                                "description": "ждать окончания до N секунд (0 — ответить сразу)"}}, ["render_id"]),
             h_render_status, scope="global",

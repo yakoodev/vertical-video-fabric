@@ -241,7 +241,12 @@ function settle(t: number, shot: Shot, local: number) {
   simT = t;
 }
 
-function render(t: number) {
+/**
+ * Кадр на время t. ``pixels: false`` — только поза, физика и проверки касаний (contact.mjs): без отрисовки WebGL и
+ * 2D-кадра. Под SwiftShader отрисовка — почти всё время кадра (1–5 с на 1080×1920), а проверкам касаний пиксели не
+ * нужны; присутствие тогда — только «модель загружена и видимые сетки есть» (pixels: false, frameProblem это знает).
+ */
+function render(t: number, pixels = true) {
   const { shot, local } = shotAt(t);
   settle(t, shot, local);
   const surf = spec.timeline?.surfaces;
@@ -291,6 +296,13 @@ function render(t: number) {
     const z = pl.zoom ?? 1;
     const tx = W / 2 + (pl.anchor.at[0] - (pl.cx ?? 720)) * z, ty = H / 2 + (pl.anchor.at[1] - (pl.cy ?? 1200)) * z;
     camera.setViewOffset(W, H, sx - tx, sy - ty, W, H);
+  }
+  if (!pixels) {
+    const expect = pl.insert || shot.hideHero ? 0 : 1;
+    const models = vrm && vrm.scene.parent === scene ? 1 : 0;
+    let meshes = 0;
+    if (models) vrm.scene.traverseVisible((o) => void ((o as THREE.Mesh).isMesh && meshes++));
+    return { luma: null, presence: { expect, models, meshes, pixels: false }, lost: [...lost] };
   }
   stage?.render(t, 1 / (spec.fps || 30), gl, rig);
   vrm.scene.visible = !shot.hideHero;
@@ -422,7 +434,8 @@ async function preparePlate(t: number) {
 
 (window as any).__scene3d = {
   load,
-  render: async (t: number) => {
+  render: async (t: number, o?: { pixels?: boolean }) => {
+    if (o?.pixels === false) return render(t, false);
     await preparePlate(t);
     return render(t);
   },

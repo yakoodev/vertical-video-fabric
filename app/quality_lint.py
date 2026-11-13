@@ -201,7 +201,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                            "final_duration": clock.final_duration, "platforms": list(uis)}
 
     words: list[dict] = []
-    if "ui_zones" in wanted or "reading" in wanted:
+    if "ui_zones" in wanted or "reading" in wanted or "sub_sync" in wanted:
         try:
             from app.motion_render import plan_caption_words
 
@@ -232,13 +232,21 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                                               duration, layer=str(layer.get("id")), fast=fast)
         if ass:
             findings += page_reading_findings(ass["pages"], "прожигаемые субтитры", clock, duration)
+        if layers_fmt == "9:16":
+            # Субтитры под непрозрачным слоем (повтор 13.11, RC1: телефон со страницей поверх субтитров).
+            from app.quality_lint_cover import subtitle_cover_findings
+
+            findings += subtitle_cover_findings(layers, pages_by_layer, ass, camera)
 
     mode = _media_flag(media)
     clip, path = (None, None)
     if mode != "no" and ("flashes" in wanted or "loop" in wanted):
         clip, path = _latest_render_file(store, clip_plan_id)
         if clip is not None:
-            out["render_id"] = int(clip["id"])
+            # Два номера с подписями: render_clip_id (готовый рендер в базе) и render_job_id (задание render_clip).
+            from app.render_jobs import render_ids
+
+            out.update(render_ids(int(clip_plan_id), int(clip["id"])))
             if render_is_stale(store, int(clip_plan_id), clip):
                 out["render_stale"] = ("клип правили после этого рендера — вспышки и луп проверены по старому файлу; "
                                        "перерендерь и проверь снова")
@@ -266,7 +274,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                 skipped["loop"] = f"оценка лупа не удалась: {str(exc)[:200]} — только подсказки по настройкам"
         elif mode != "no":
             skipped["loop"] = f"{no_media}: оценки лупа нет, только подсказки по настройкам"
-        loop_items, loop_info = loop_findings(metrics, loop_plan_hints(rs, clock), out.get("render_id"))
+        loop_items, loop_info = loop_findings(metrics, loop_plan_hints(rs, clock), out.get("render_clip_id"))
         findings += loop_items
         if loop_info:
             out["loop"] = loop_info
@@ -285,6 +293,11 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
         findings += avatar_face_findings(store, int(clip_plan_id), rs)
         findings += avatar_presence_findings(store, int(clip_plan_id), rs)
         findings += tail_fragment_findings(store, plan, rs)
+        if fmt == "9:16":
+            # Донат-бар и алерты стрима в окне игры split (повтор 13.11, RC2).
+            from app.quality_lint_cover import stream_overlay_findings
+
+            findings += stream_overlay_findings(store, plan, rs, media=mode != "no")
 
     if "fragments" in wanted:
         items, info = fragment_findings(store, plan, rs, clock)
@@ -300,6 +313,16 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                 findings += items
                 if info:
                     out["sub_sync"] = info
+                # Субтитров мало для речи (повтор 13.11, RC2): доля секунд речи со словами.
+                from app.quality_lint_cover import coverage_findings
+
+                shown = [(p["t0"], p["t1"]) for pages in pages_by_layer.values() for p in pages]
+                if ass and rs.get("subs_on"):
+                    shown += [(p["t0"], p["t1"]) for p in ass.get("pages") or []]
+                cov_items, cov = coverage_findings(store, plan, rs, clock, shown)
+                findings += cov_items
+                if cov:
+                    out["subtitle_coverage"] = cov
             except Exception as exc:  # noqa: BLE001 - нет исходника/звука — скажем, не упадём
                 skipped["sub_sync"] = f"не удалось разобрать звук: {str(exc)[:200]}"
 

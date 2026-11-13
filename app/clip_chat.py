@@ -36,7 +36,9 @@ CLIP_NOTE = (
     "Готовый ролик (mp4) — только render_clip → render_status(render_id, wait_sec=30) до status done. Просят "
     "«отрендеренный клип», «готовый ролик», «результат» — запусти render_clip сам и дождись done. Не пиши "
     "«отрендерен», «готов», «соберётся автоматически», пока render_status не ответил done: сам сервис клип не "
-    "рендерит, а ответ о готовом ролике без рендера он пометит.\n"
+    "рендерит, а ответ о готовом ролике без рендера он пометит. Задание просит готовый ролик или плейбук велит рендер — "
+    "ход не кончается, пока render_status не ответил done: не пиши «осталось: render_clip», сделай сам.\n"
+    "Клип, созданный не в этой переписке, — не твоя работа; не выдавай его за результат (get_clip, поле made_in).\n"
 )
 
 
@@ -129,6 +131,10 @@ def run_clip_turn(store: Any, thread: dict, message: str, *, reply_id: int | Non
     # «Отрендерено»/«готово» без рендера после правок этого хода — пометка сервиса (эксперимент 12.11).
     text = with_render_note(store, text, [{**s, "clip_id": s.get("clip_id", clip_id)} for s in result["steps"]],
                             started)
+    # Другой клип, сделанный не в этой переписке, результатом не выдаём (повтор 13.11, RC3).
+    from app.ai.finish_guard import thread_clips, with_foreign_note
+
+    text = with_foreign_note(store, text, thread_clips(store, thread.get("id"), result["steps"]), exempt={clip_id})
     return {"text": text, "steps": result["steps"], "remembered": remembered, "ai": True, "model": result["model"],
             "changes": changes}
 
