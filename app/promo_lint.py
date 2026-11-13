@@ -685,9 +685,19 @@ def shown(layer: dict, t: float, camera: Any = None) -> bool:
     return rect is None or _intersection(rect, (0.0, 0.0, *frame())) > 0
 
 
+def is_shot_layer(layer: dict, duration: float) -> bool:
+    """Картинка во весь кадр, которая держится меньше половины ролика, — кадр нарезки (поза маскота
+    объяснялки, иллюстрация бита), а не фон: фон стоит весь ролик или большую его часть. Клип 1077
+    (сова, 13.11): позы 9:16 на цвете холста считались фоном — «пустой кадр» на всём ролике."""
+    if layer.get("type") != "image" or layer.get("hidden") or not is_backdrop_layer(layer) or duration <= 0:
+        return False
+    span = _num(layer.get("end"), 0.0) - _num(layer.get("start"), 0.0)
+    return 0 < span < 0.5 * duration
+
+
 def empty_frames(layers: list[dict], duration: float, camera: Any = None) -> list[tuple[tuple, str]]:
     """6) На холсте отрезки > 1 с, где кроме фона ничего не видно."""
-    content = [l for l in layers if is_content_layer(l)]
+    content = [l for l in layers if is_content_layer(l) or is_shot_layer(l, duration)]
     out, run = [], None
     for t in _samples(0.0, duration) + [None]:
         empty = t is not None and not any(shown(l, t, camera) for l in content)

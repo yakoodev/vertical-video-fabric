@@ -268,6 +268,19 @@ def test_empty_frame_respects_opacity_keys_animations_and_backdrop_layers():
     assert lint([{**title, "end": 2.5}, {**title, "id": "t2", "start": 3.5}]) == []
 
 
+def test_full_frame_shots_are_content_but_one_long_backdrop_is_not():
+    """Клип 1077 (сова): позы 9:16 во весь кадр по 2–3 с — кадры нарезки, не фон; «пустой кадр» был ложным."""
+    def lint(raw, duration=12.0):
+        return [w for w in promo_lint.scene_warnings(motion.normalize_layers(raw), duration, canvas=True)
+                if w.startswith("пустой кадр")]
+
+    shots = [{"id": f"pose{i}", "type": "image", "start": i * 3.0, "end": i * 3.0 + 3.0,
+              "props": {"asset_id": str(100 + i), "w": 1080}} for i in range(4)]
+    assert lint(shots) == []
+    # одна картинка во весь кадр на весь ролик — по-прежнему фон: без титров кадр пустой
+    assert lint([{**shots[0], "end": 12.0}])[0].startswith("пустой кадр 0.0–12.0 с")
+
+
 def test_no_final_only_for_phone_promo_and_logo_or_cta_counts():
     phone = {"id": "ph", "type": "video", "start": 0, "end": 4, "y": 0.6,
              "props": {"asset_id": 1, "w": 580, "device": "phone"}}
