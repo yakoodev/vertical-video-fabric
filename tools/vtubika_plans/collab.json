@@ -182,7 +182,7 @@
         {"at": "Кэт", "app_frame": "/site/collab/invite.jpg", "tap": [0.5, 0.19], "dt": -0.05},
         {"face": "happy"},
         {"at": "Кэт", "face": "wide", "dt": 0.1},
-        {"at": "end", "face": "shock", "talk": true, "dt": 0.2}
+        {"at": "end", "face": "shock", "dt": 0.2}
       ],
       "vrm": [{"look": "down", "dur": 4.5, "dt": -0.1}]
     },
@@ -200,7 +200,7 @@
                    "x": 540, "y": 820, "scale": 1.45, "dim": 0.35, "cutIn": true}, "dt": -0.1, "until": "смотрит", "dt_end": -0.1},
         {"at": "«Принять»", "app_frame": "/site/collab/collab.jpg", "tap": [0.5, 0.547], "dt": 0.25},
         {"face": "happy"},
-        {"at": "end", "face": "frown", "talk": true, "dt": 0.3}
+        {"at": "end", "face": "frown", "dt": 0.3}
       ]
     },
     {
@@ -259,23 +259,25 @@
                    "plate": {"names": [{"text": "МИРА", "color": "#c9b6ff"}, {"text": "КЭТ", "color": "#7fe8ff"}], "sub": "коллаб · R.E.P.O.", "t0": 0.2, "top": true}}},
         {"at": "end", "dt": 0.9, "chat": {"user": "zxc_ghoul", "color": "#9dff7e", "text": "газ газ газ"}},
         {"at": "end", "dt": 1.6, "chat": {"user": "kat_fan_01", "color": "#7fe8ff", "text": "ого фон"}},
-        {"at": "end", "face": "happy", "talk": false}
+        {"at": "end", "face": "happy"}
       ],
       "vrm": [{"at": "девять", "av_show": ["taya_av", "asya_av"], "dt": -0.95},
               {"at": "девять", "av_cam": "two_bust", "dt": -0.95},
               {"at": "девять", "av": "idle", "who": "asya_av", "dt": -0.95},
-              {"at": "девять", "av_face": "happy", "who": "asya_av", "dt": -0.95},
-              {"at": "end", "av_talk": 3.1, "who": "asya_av", "face": "happy", "dt": 0.45},
+              {"at": "девять", "av_face": "smile", "who": "asya_av", "dt": -0.95},
+              {"at": "end", "av_talk": 3.1, "who": "asya_av", "face": "smile", "dt": 0.45},
               {"at": "девять", "look": "webcam", "dur": 3.5, "dt": -0.1}]
     },
     {
       "text": "Чат Кэт машет палочками, чат Миры пишет «наша».",
       "pause_after": 3.4,
       "show": ["эфир крупно: внизу машут светящиеся палочки (лайтстики すやみや), чат «НАША», «💀», «имба»",
-               "«Кампай за коллаб!» (Кэт) — «Кампай!» (Мира): у обеих поднимаются бокалы ассета Elegant Wine и чокаются"],
+               "«Кампай за коллаб!» (Кэт): у обеих поднимаются бокалы ассета Elegant Wine и чокаются",
+               "«Кампай!» — Мира у стола крупно, смеётся и говорит (рот по её голосу)"],
       "shots": [{"cam": "monitor_close", "push": 0.12},
                 {"cam": "chat", "at": "Миры", "dt": -0.1, "push": 0.12},
-                {"cam": "monitor", "at": "end", "dt": 0.15, "zoom": 1.06, "push": 0.1}],
+                {"cam": "monitor", "at": "end", "dt": 0.15, "zoom": 1.06, "push": 0.1},
+                {"cam": "smile", "at": "end", "dt": 1.95, "push": 0.08}],
       "do": [
         {"dt": -0.2,
          "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
@@ -292,18 +294,20 @@
                               "x": 0.5, "y": 0.8, "w": 1.06},
                              {"seq": {"pattern": "/site/media/wine_hand/f_{:03d}.png", "from": 1, "count": 57}, "fps": 15,
                               "x": 0.21, "y": 0.92, "w": 0.18, "flip": true, "t0": 0.0, "shadow": true,
-                              "keys": [{"t": 0.3, "dx": 0, "dy": 0, "rot": 0}, {"t": 1.0, "dx": 0.06, "dy": -0.12, "rot": 12},
-                                       {"t": 1.6, "dx": 0.06, "dy": -0.12, "rot": 12}, {"t": 2.0, "dx": 0.1, "dy": -0.11, "rot": 16},
-                                       {"t": 2.25, "dx": 0.06, "dy": -0.12, "rot": 10}]},
+                              "keys": [{"t": 0.2, "dx": 0, "dy": 0, "rot": 0}, {"t": 0.75, "dx": 0.06, "dy": -0.12, "rot": 12},
+                                       {"t": 1.1, "dx": 0.06, "dy": -0.12, "rot": 12}, {"t": 1.35, "dx": 0.1, "dy": -0.11, "rot": 16},
+                                       {"t": 1.6, "dx": 0.06, "dy": -0.12, "rot": 10}]},
                              {"seq": {"pattern": "/site/media/wine_hand/f_{:03d}.png", "from": 1, "count": 57}, "fps": 15,
                               "x": 0.79, "y": 0.92, "w": 0.18, "t0": 0.05, "shadow": true,
-                              "keys": [{"t": 0.3, "dx": 0, "dy": 0, "rot": 0}, {"t": 1.0, "dx": -0.06, "dy": -0.12, "rot": -12},
-                                       {"t": 1.6, "dx": -0.06, "dy": -0.12, "rot": -12}, {"t": 2.0, "dx": -0.1, "dy": -0.11, "rot": -16},
-                                       {"t": 2.25, "dx": -0.06, "dy": -0.12, "rot": -10}]}]}},
-        {"at": "end", "face": "laugh", "dt": 1.8, "talk": true}
+                              "keys": [{"t": 0.2, "dx": 0, "dy": 0, "rot": 0}, {"t": 0.75, "dx": -0.06, "dy": -0.12, "rot": -12},
+                                       {"t": 1.1, "dx": -0.06, "dy": -0.12, "rot": -12}, {"t": 1.35, "dx": -0.1, "dy": -0.11, "rot": -16},
+                                       {"t": 1.6, "dx": -0.06, "dy": -0.12, "rot": -10}]}]}},
+        {"at": "end", "face": "happy", "dt": 1.8},
+        {"at": "end", "face": "laugh", "dt": 3.2}
       ],
-      "vrm": [{"at": "end", "av_talk": 1.3, "who": "asya_av", "face": "happy", "dt": 0.3},
-              {"at": "end", "av_face": "laugh", "who": "asya_av", "dt": 1.7}]
+      "vrm": [{"at": "end", "av_talk": 1.3, "who": "asya_av", "face": "smile", "dt": 0.3},
+              {"at": "end", "av_face": "laugh", "who": "asya_av", "dt": 1.95},
+              {"at": "end", "av_face": "smile", "who": "asya_av", "dt": 3.3}]
     },
     {
       "text": "После эфира — личка.",
@@ -316,7 +320,7 @@
         {"at": "end", "dt": 0.45, "dm": {"text": "Слушай, а где фон брала?", "time": "00:41"}},
         {"at": "end", "dt": 2.9, "dm": {"me": true, "text": "На Витубике. Промокод Free10 😉", "time": "00:41"}},
         {"face": "happy"},
-        {"at": "end", "dt": 2.9, "face": "happy", "talk": true}
+        {"at": "end", "dt": 2.9, "face": "happy"}
       ]
     }
   ]

@@ -399,7 +399,9 @@ def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> lis
         if dur > room + 0.05:
             report.setdefault("voices_extra_warn", []).append(f"{it.get('id')}: реплика {dur:.2f} с, пауза {room:.2f} с")
         out.append({"id": it.get("id"), "t": t, "dur": dur, "path": str(path), "caption": it.get("caption"),
-                    "color": it.get("color"), "gain_db": float(it.get("gain_db", -1.5))})
+                    "color": it.get("color"), "gain_db": float(it.get("gain_db", -1.5)),
+                    # Кто говорит (рот по своему голосу — app/vtubika_voices.py): hero или id модели на мониторе.
+                    **({"who": str(it["who"]), "text": str(it["text"])} if it.get("who") else {})})
     report["voices_extra"] = {"lines": [{k: v for k, v in o.items() if k != "path"} for o in out], "cost_rub": round(spent, 2)}
     return out
 
@@ -656,12 +658,13 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
 
     spec = to_vrm_spec(plan, built, words, total)
     # Рот по гласным (голос + слова), брови на ударениях (и выделенных словах) и слой жизни; голос — с lead.
-    from app import lipsync
-
     # Модель с perfect sync (52 формы ARKit, ``vrm.arkit`` плана): рот в окнах речи героя — ещё по Wav2ARKit.
-    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead,
-                            highlight=list((plan.get("highlight") or {}).keys()),
-                            arkit=bool((plan.get("vrm") or {}).get("arkit")))
+    # Реплики со своим голосом (voices_extra.who): героиня и модели на мониторе говорят своими голосами
+    # (app/vtubika_voices.py); без них — как раньше, по рассказчику в окнах «говорит в эфир».
+    from app import vtubika_voices as VOICES
+
+    lines = extra_voices(plan, words, work, report)
+    report["lipsync"] = VOICES.attach(plan, spec, lines, narration, words, total, lead, work, transcribe_words)
     if (plan.get("vrm") or {}).get("arkit"):
         report["arkit"] = bool(spec["timeline"].get("arkit"))
     # Комната 3D-пресета (presets3d.room): отрисована отдельно той же камерой — подложкой под героиню.
@@ -720,7 +723,6 @@ def run_vrm(args, plan: dict, built: dict, words: list[dict], total: float, narr
     capped = work / "caps_vrm.mp4"
     # Субтитры — текст сценария («девятнадцать», а не «19» распознавания) на временах слов озвучки.
     script = [w for sent in P.token_times(plan, words) for w in sent]
-    lines = extra_voices(plan, words, work, report)
     burn_captions(plan, script, raw_video, capped, work, total, y=0.8, shots=built["shots"], lines=lines)
     report["flow"] = [{"t": round(float(sh["t0"]), 3), **sh["flow"]} for sh in built["shots"] if sh.get("flow")]
     capped, full, card_sfx, music_fade = end_card(plan, capped, work, total, report)

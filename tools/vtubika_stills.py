@@ -107,22 +107,9 @@ def sheet(plan: dict, out_dir: Path, made: list[dict]) -> None:
     VS.tile(files, out_dir / "stills_sheet.jpg", 6, labels)
 
 
-def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("plan")
-    ap.add_argument("out_dir")
-    ap.add_argument("--only", help="метки кадров через запятую (0, 3a, 6+kat1)")
-    ap.add_argument("--gl", default=os.environ.get("SCENE3D_GL", "gpu"))
-    ap.add_argument("--env", default=str(ROOT.parent.parent.parent / ".env") if ".claude" in str(ROOT) else str(ROOT / ".env"))
-    ap.add_argument("--vrm-packs", default=r"D:\vvf-offload\vtubika\vrm\vendor")
-    ap.add_argument("--extra", help="ещё моменты: метка=секунды через запятую (7x=41.2)")
-    ap.add_argument("--sheet-only", action="store_true", help="только собрать лист из OUT/stills.json (и концовки)")
-    a = ap.parse_args(argv)
-    if a.sheet_only:
-        out_dir = Path(a.out_dir).resolve()
-        info = json.loads((out_dir / "stills.json").read_text("utf-8"))
-        sheet(P_load(a.plan), out_dir, info["stills"])
-        return 0
+def prepare(a: argparse.Namespace) -> dict:
+    """Те же шаги, что у истории до рендера: озвучка и слова (кэш), сцена, реплики, рот по голосам, спека VRM,
+    комната 3D-пресета, бандл."""
     if Path(a.env).is_file():
         VS.load_env(Path(a.env))
     main_root = ROOT.parent.parent.parent if ".claude" in str(ROOT) else ROOT
@@ -137,9 +124,9 @@ def main(argv: list[str] | None = None) -> int:
     if hf.is_dir():
         settings.whisper_model_dir = hf
     os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
-    from app import lipsync
     from app import vtubika_plan as P
     from app import vtubika_room3d as ROOM
+    from app import vtubika_voices as VOICES
     from app.vtubika_vrm import to_vrm_spec
 
     plan = P.load_plan(a.plan)
@@ -153,15 +140,91 @@ def main(argv: list[str] | None = None) -> int:
     lead = float((plan.get("pace") or {}).get("lead", 0.0))
     words = [{**w, "start": round(w["start"] + lead, 3), "end": round(w["end"] + lead, 3)} for w in words]
     total = round(float(words[-1]["end"]) + float(plan.get("tail") or 1.8), 3)
+    report["lead"] = lead
     built = P.build(plan, words, total)
     lines = VS.extra_voices(plan, words, work, report)
     spec = to_vrm_spec(plan, built, words, total)
-    lipsync.attach_timeline(spec["timeline"], narration, words, total, offset=lead,
-                            highlight=list((plan.get("highlight") or {}).keys()), arkit=False)
+    report["lipsync"] = VOICES.attach(plan, spec, lines, narration, words, total, lead, work, VS.transcribe_words)
     plates = ROOM.apply(plan, spec, work, gl=a.gl, log=VS._log)
     spec_path = work / "scene_vrm_stills.json"
     spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
     subprocess.run(["npm", "run", "build:vrm"], cwd=ROOT, check=True, shell=sys.platform == "win32", stdin=subprocess.DEVNULL)
+    return {"plan": plan, "built": built, "words": words, "lines": lines, "spec": spec, "plates": plates, "total": total,
+            "report": report, "out_dir": out_dir, "work": work, "spec_path": spec_path, "narration": narration,
+            "lead": lead}
+
+
+def segment(a: argparse.Namespace, st: dict) -> int:
+    """Отрезок A:B ролика: кадры VRM (тот же рендер), субтитры и подписи реплик, звук — из полного сведения
+    (голос, реплики, музыка, звуки) с проверкой стыков звука по всему ролику; лента кадров рядом."""
+    plan, built, words, lines, spec = st["plan"], st["built"], st["words"], st["lines"], st["spec"]
+    work, total, report, lead = st["work"], st["total"], st["report"], st["lead"]
+    a0, b0 = (float(x) for x in a.segment.split(":"))
+    fps = int(spec.get("fps") or 30)
+    out = Path(a.segment_out or st["out_dir"] / "segment.mp4")
+    raw = work / "segment_raw.mp4"
+    render = ["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(st["spec_path"]), "--bundle",
+              str(ROOT / "node" / "vrm" / "dist" / "vrm.js"), "--packs", a.vrm_packs, "--gl", a.gl, "--workers", "1",
+              *(["--site", spec["siteDir"]] if spec.get("siteDir") else []),
+              *(["--plates", str(st["plates"])] if st["plates"] else []),
+              "--frames", f"{round(a0 * fps)}:{round(b0 * fps)}", "--out", str(raw)]
+    r = subprocess.run(render, capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL)
+    if r.returncode != 0:
+        raise SystemExit(f"рендер отрезка: {r.stderr.strip()[-1500:]}")
+    rep = json.loads(r.stdout.strip().splitlines()[-1])
+    # Полное сведение звука на пустой картинке (быстро) — проверка стыков по всему ролику, как у готового.
+    blank = work / "blank.mp4"
+    VS._run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", f"color=c=black:s=360x640:r={fps}:d={total}",
+             "-c:v", "libx264", "-preset", "ultrafast", str(blank)], "пустая картинка")
+    mixed = work / "mixed_audio_check.mp4"
+    VS.mix(plan, blank, st["narration"], built["sfx"], total, mixed, work, report, lead, None, lines=lines)
+    audio = VS.audio_check(st["narration"], mixed, lead, report, lines)
+    # Субтитры отрезка: слова и реплики сдвинуты к его началу.
+    dur = round(b0 - a0, 3)
+    shifted = [{**w, "start": round(w["start"] - a0, 3), "end": round(w["end"] - a0, 3)} for w in words if w["end"] > a0 - 0.5]
+    lns = [{**ln, "t": round(ln["t"] - a0, 3)} for ln in lines if a0 <= ln["t"] < b0]
+    p = copy.deepcopy(plan)
+    p.pop("hook", None)
+    capped = work / "segment_caps.mp4"
+    VS.burn_captions(p, shifted, raw, capped, work, dur, y=0.8, lines=lns)
+    VS._run(["ffmpeg", "-y", "-v", "error", "-i", str(capped), "-ss", f"{a0:.3f}", "-t", f"{dur:.3f}", "-i", str(mixed),
+             "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest", str(out)], "отрезок со звуком")
+    strip = out.with_name(out.stem + "_strip.jpg")
+    VS._run(["ffmpeg", "-y", "-v", "error", "-i", str(out), "-vf",
+             "fps=5,scale=270:480,drawtext=text='%{pts\\:hms}':x=6:y=6:fontsize=20:fontcolor=white:box=1:boxcolor=black@0.6,tile=10x5",
+             "-frames:v", "1", "-q:v", "3", str(strip)], "лента кадров")
+    info = {"segment": [a0, b0], "video": str(out), "strip": str(strip), "render": {k: rep.get(k) for k in ("ok", "frames", "presence", "warnings")},
+            "audio_check": audio, "lipsync": report.get("lipsync"),
+            "lines": [{k: v for k, v in ln.items() if k != "path"} for ln in lines if a0 <= ln["t"] < b0]}
+    out.with_suffix(".json").write_text(json.dumps(info, ensure_ascii=False, indent=1), "utf-8")
+    print(json.dumps(info, ensure_ascii=False, indent=1))
+    return 0 if audio.get("ok") else 4
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("plan")
+    ap.add_argument("out_dir")
+    ap.add_argument("--only", help="метки кадров через запятую (0, 3a, 6+kat1)")
+    ap.add_argument("--gl", default=os.environ.get("SCENE3D_GL", "gpu"))
+    ap.add_argument("--env", default=str(ROOT.parent.parent.parent / ".env") if ".claude" in str(ROOT) else str(ROOT / ".env"))
+    ap.add_argument("--vrm-packs", default=r"D:\vvf-offload\vtubika\vrm\vendor")
+    ap.add_argument("--extra", help="ещё моменты: метка=секунды через запятую (7x=41.2)")
+    ap.add_argument("--sheet-only", action="store_true", help="только собрать лист из OUT/stills.json (и концовки)")
+    ap.add_argument("--segment", help="вместо кадров — отрезок ролика A:B секунд со звуком и субтитрами (проверка рта)")
+    ap.add_argument("--segment-out", help="куда положить отрезок (mp4); рядом — лента кадров *_strip.jpg")
+    a = ap.parse_args(argv)
+    if a.sheet_only:
+        out_dir = Path(a.out_dir).resolve()
+        info = json.loads((out_dir / "stills.json").read_text("utf-8"))
+        sheet(P_load(a.plan), out_dir, info["stills"])
+        return 0
+    st = prepare(a)
+    plan, built, words, lines, spec, plates, total, report = (st[k] for k in ("plan", "built", "words", "lines", "spec",
+                                                                               "plates", "total", "report"))
+    out_dir, work, spec_path = st["out_dir"], st["work"], st["spec_path"]
+    if a.segment:
+        return segment(a, st)
     marks = moments(plan, built, lines)
     for kv in (a.extra or "").split(","):
         if "=" in kv:

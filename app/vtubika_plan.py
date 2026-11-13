@@ -220,7 +220,9 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
         st = times[n]
         t_end = st[-1]["end"]
         for shot in s.get("shots") or []:
-            shots.append({**shot, "t0": round(anchor(st, shot.get("at"), n), 3), "n": n})
+            # dt — сдвиг склейки от слова (как у событий); раньше не учитывался: два плана на «end» с разным dt
+            # сливались в один (серия 8: план на монитор пропадал, реплика Кэт шла на лице Миры).
+            shots.append({**shot, "t0": round(anchor(st, shot.get("at"), n) + float(shot.get("dt") or 0), 3), "n": n})
         for ev in s.get("do") or []:
             t = round(anchor(st, ev.get("at"), n) + float(ev.get("dt") or 0), 3)
             until = (anchor(st, ev["until"], n) + float(ev.get("dt_end") or 0) if ev.get("until") else

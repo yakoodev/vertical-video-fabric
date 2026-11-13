@@ -19,6 +19,7 @@ import { blinkAt } from "./poses.ts";
 import { accessory, type AccessorySpec } from "./props.ts";
 import { liveImages } from "../../scene3d/src/ui.ts";
 import { FINGERS } from "./sequence.ts";
+import { visemeAt, type Visemes } from "./lipsync.ts";
 
 export interface AvatarModel {
   id: string;
@@ -46,6 +47,8 @@ export interface AvatarSpec {
   talk?: { who: string; t0: number; t1: number; face?: string }[];
   /** Выражение модели по времени (idle/png): [{t, who, face}] — happy, laugh, surprised, wink. */
   faces?: { t: number; who: string; face: string }[];
+  /** Гласные по голосу модели (app/vtubika_voices.py → lipsync.from_track), по id: рот по ним, а не ритмом слогов. */
+  visemes?: Record<string, Visemes>;
   width?: number;
   height?: number;
 }
@@ -59,7 +62,9 @@ const D = Math.PI / 180;
 /** Выражения модели на мониторе по имени (ключи ``faces`` и лицо окна речи). */
 const AV_FACES: Record<string, Record<string, number>> = {
   neutral: { relaxed: 0.15 }, happy: { happy: 0.7 }, laugh: { happy: 1.0, aa: 0.35 }, surprised: { surprised: 0.85 },
-  wink: { happy: 0.6, blinkLeft: 1 }, smile: { happy: 0.45, relaxed: 0.2 },
+  wink: { happy: 0.6, blinkLeft: 1 },
+  // Улыбка с закрытым ртом (VRoid: relaxed — «Fun»): рот открывает только голос (гласные), а не выражение.
+  smile: { relaxed: 0.75 },
 };
 
 function mirrorName(b: string): string {
@@ -318,13 +323,20 @@ export class AvatarStage {
       mixed.blink = target.blink !== undefined ? Math.max(blink * (1 - w), target.blink * w) : blink;
       expr = mixed;
     }
+    const vis = visemeAt(this.spec.visemes?.[who], t);
+    if (vis) {
+      // Рот по её голосу: гласные дорожки (вне реплик — закрыт); лицо окна речи — поверх.
+      for (const k of ["aa", "ih", "ou", "ee", "oh"]) expr[k] = Math.max(expr[k] ?? 0, vis[k] ?? 0);
+    }
     for (const win of this.spec.talk || []) {
       if (win.who !== who || t < win.t0 || t > win.t1) continue;
       const u = t - win.t0;
-      const syl = Math.abs(Math.sin(u * Math.PI * 3.1)) * (0.55 + 0.25 * Math.sin(u * 7.3));
-      const env = smooth(u / 0.08) * smooth((win.t1 - t) / 0.08);
-      expr.aa = Math.max(expr.aa ?? 0, syl * env * 0.75);
-      expr.oh = Math.max(expr.oh ?? 0, Math.max(0, Math.sin(u * 5.1)) * env * 0.25);
+      if (!vis) {
+        const syl = Math.abs(Math.sin(u * Math.PI * 3.1)) * (0.55 + 0.25 * Math.sin(u * 7.3));
+        const env = smooth(u / 0.08) * smooth((win.t1 - t) / 0.08);
+        expr.aa = Math.max(expr.aa ?? 0, syl * env * 0.75);
+        expr.oh = Math.max(expr.oh ?? 0, Math.max(0, Math.sin(u * 5.1)) * env * 0.25);
+      }
       if (win.face) {
         const f = AV_FACES[win.face] || {};
         for (const [n, v] of Object.entries(f)) if (n !== "blink") expr[n] = Math.max(expr[n] ?? 0, v);
