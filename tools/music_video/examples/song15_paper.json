@@ -1,0 +1,326 @@
+{
+ "title": "song15 (paper regression)",
+ "style": "paper",
+ "fps": 30,
+ "size": [
+  1080,
+  1920
+ ],
+ "censor": [],
+ "lyrics_fix": {
+  "0": {
+   "at": 19.45
+  },
+  "1": {
+   "at": 20.1
+  },
+  "2": {
+   "at": 20.68
+  },
+  "3": {
+   "at": 21.27
+  },
+  "4": {
+   "syl": [
+    21.9,
+    22.47
+   ]
+  },
+  "5": {
+   "at": 24.25
+  },
+  "6": {
+   "at": 24.86
+  },
+  "7": {
+   "at": 25.46
+  },
+  "8": {
+   "at": 25.98
+  },
+  "9": {
+   "syl": [
+    26.58,
+    27.16
+   ]
+  },
+  "10": {
+   "at": 28.88
+  },
+  "11": {
+   "at": 29.47
+  },
+  "12": {
+   "at": 29.92
+  },
+  "13": {
+   "at": 30.6
+  }
+ },
+ "image_style": {
+  "common": "Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. No text, no letters, no watermark, no border.",
+  "plate": "Vertical 9:16 composition.",
+  "cutout": "Full subject visible, sharp clean silhouette edges."
+ },
+ "images": {
+  "a_plate": {
+   "kind": "plate",
+   "prompt": "A gothic cemetery on a hill at night: crooked old gravestones, a rusted wrought-iron fence, two bare twisted dead trees, thick low fog rolling over the ground. The upper half of the frame is an EMPTY dark night sky with thin cold clouds and NO moon (keep the sky clean for compositing). Seen from a low angle, the hill fills the lower half. Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. Vertical 9:16 composition. No text, no letters, no watermark, no border."
+  },
+  "b_plate": {
+   "kind": "plate",
+   "prompt": "An empty barren hilltop at night with dead grass, a vast stormy sky with heavy dark clouds, a faint crimson-red glow behind the clouds near the horizon, fog drifting low. No people, no figures. The horizon is at about 55% of the frame height. Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. Vertical 9:16 composition. No text, no letters, no watermark, no border."
+  },
+  "c_plate": {
+   "kind": "plate",
+   "prompt": "Inside a dark ruined gothic chapel at night: stone pillars, an old stone altar covered with dripping wax, cobwebs, a tall broken stained-glass window glowing faint crimson red in the background, deep shadows, dust in the air. No candles in the foreground, the lower third is the dark top of the altar. Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. Vertical 9:16 composition. No text, no letters, no watermark, no border."
+  },
+  "d_plate": {
+   "kind": "plate",
+   "prompt": "An empty straight two-lane asphalt road at night stretching to a vanishing point at the centre of the horizon, wet asphalt with faint reflections, a broken centre line, dead flat fields on both sides, a row of old crooked telephone poles with sagging wires along the right side, low fog on the horizon, a deep crimson-red glow on the horizon where the road ends. Low camera close to the road surface. No cars, no people. Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. Vertical 9:16 composition. No text, no letters, no watermark, no border."
+  },
+  "e_plate": {
+   "kind": "plate",
+   "prompt": "Thick swirling smoke and mist in a black void, a shaft of deep crimson-red light falling from above, dust particles floating in the light, high contrast, abstract, lots of empty dark space. Style: dark gothic cinematic photograph, black-and-white monochrome with deep crimson red as the ONLY colour accent, rich deep blacks, soft silver highlights, analog film grain, atmospheric fog, moody low-key light, highly detailed, realistic. Vertical 9:16 composition. No text, no letters, no watermark, no border."
+  },
+  "b_figure": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A lone hooded figure in a long dark tattered cloak, standing still, seen from behind, full body from head to feet, arms hanging down, the cloak hem frayed and moving slightly in the wind, dramatic rim light on the edges. Isolated on a perfectly flat solid chroma-key green background (#00FF00), evenly lit, no shadow on the background, no ground, sharp clean silhouette edges. Monochrome dark subject, only the background is green."
+  },
+  "c_candles": {
+   "kind": "cutout",
+   "key": "green",
+   "prompt": "A cluster of seven tall melting white candles of different heights with lit warm flames, thick wax drips running down, close-up, full candles visible from the flames to the bottoms. Isolated on a perfectly flat solid chroma-key green background (#00FF00), evenly lit, no shadow, no table, clean edges. The candles are pale ivory, the flames small and bright."
+  },
+  "e_hands": {
+   "kind": "cutout",
+   "key": "green",
+   "split": "x",
+   "prompt": "Five pale human hands and forearms reaching desperately straight upward from the bottom edge of the frame, fingers spread, of different heights, dramatic light from above, grim and emotional. Isolated on a perfectly flat solid chroma-key green background (#00FF00), evenly lit, no shadow on the background, sharp clean edges. The hands are pale grey, monochrome."
+  }
+ },
+ "scenes": [
+  {
+   "id": "A",
+   "from": 17.98,
+   "bg": "a_plate",
+   "camera": {
+    "move": "push",
+    "amount": 1.3,
+    "roll": 3
+   },
+   "captions": {
+    "from": "w:0",
+    "to": "w:2",
+    "y": 0.7,
+    "h": 0.034
+   }
+  },
+  {
+   "id": "B",
+   "from": 21.21,
+   "bg": "b_plate",
+   "camera": {
+    "move": "push",
+    "amount": 0.8
+   },
+   "props": [
+    {
+     "img": "b_figure",
+     "x": 0.56,
+     "y": 0.86,
+     "h": 0.5,
+     "anim": "still",
+     "beat": false
+    }
+   ],
+   "words": [
+    {
+     "text": "STAY",
+     "at": [
+      "w:3"
+     ],
+     "y": 0.31,
+     "w": 0.74,
+     "fill": "white"
+    },
+    {
+     "text": "ALIVE",
+     "at": [
+      "w:4"
+     ],
+     "y": 0.46,
+     "w": 0.84,
+     "fill": "white"
+    }
+   ],
+   "transition": "panel"
+  },
+  {
+   "id": "C",
+   "from": 23.58,
+   "bg": "c_plate",
+   "camera": {
+    "move": "truck_l",
+    "amount": 0.7
+   },
+   "props": [
+    {
+     "img": "c_candles",
+     "x": 0.3,
+     "y": 0.8,
+     "h": 0.36,
+     "anim": "still",
+     "beat": false
+    }
+   ],
+   "captions": {
+    "from": "w:5",
+    "to": "w:7",
+    "y": 0.2,
+    "h": 0.034
+   }
+  },
+  {
+   "id": "D",
+   "from": 25.91,
+   "bg": "d_plate",
+   "camera": {
+    "move": "zoom",
+    "amount": 1.2
+   },
+   "words": [
+    {
+     "text": "LIVE",
+     "at": [
+      "w:8"
+     ],
+     "y": 0.37,
+     "w": 0.8,
+     "fill": "white"
+    },
+    {
+     "text": "TONIGHT",
+     "at": [
+      "w:9"
+     ],
+     "y": 0.56,
+     "w": 0.86,
+     "fill": "white"
+    }
+   ],
+   "transition": "panel"
+  },
+  {
+   "id": "E",
+   "from": 27.68,
+   "bg": "e_plate",
+   "camera": {
+    "move": "crane_up",
+    "amount": 0.8
+   },
+   "props": [
+    {
+     "img": "e_hands#0",
+     "x": 0.2,
+     "y": 1.05,
+     "h": 0.6,
+     "anim": "peek",
+     "in": 27.7,
+     "beat": false,
+     "shadow": false,
+     "args": {
+      "dur": 40
+     }
+    },
+    {
+     "img": "e_hands#1",
+     "x": 0.4,
+     "y": 1.05,
+     "h": 0.6,
+     "anim": "peek",
+     "in": 28.0,
+     "beat": false,
+     "shadow": false,
+     "args": {
+      "dur": 40
+     }
+    },
+    {
+     "img": "e_hands#2",
+     "x": 0.6,
+     "y": 1.05,
+     "h": 0.6,
+     "anim": "peek",
+     "in": 28.3,
+     "beat": false,
+     "shadow": false,
+     "args": {
+      "dur": 40
+     }
+    },
+    {
+     "img": "e_hands#3",
+     "x": 0.8,
+     "y": 1.05,
+     "h": 0.6,
+     "anim": "peek",
+     "in": 28.599999999999998,
+     "beat": false,
+     "shadow": false,
+     "args": {
+      "dur": 40
+     }
+    }
+   ],
+   "captions": {
+    "from": "w:10",
+    "to": "w:11",
+    "y": 0.17,
+    "h": 0.034
+   },
+   "words": [
+    {
+     "text": "LET",
+     "at": [
+      "w:12"
+     ],
+     "y": 0.28,
+     "w": 0.5,
+     "fill": "white"
+    },
+    {
+     "text": "GO",
+     "at": [
+      "w:13"
+     ],
+     "y": 0.48,
+     "w": 0.45,
+     "fill": "white"
+    }
+   ]
+  },
+  {
+   "id": "H",
+   "from": 30.65,
+   "bg": "b_plate",
+   "camera": {
+    "move": "pull",
+    "amount": 0.8
+   },
+   "words": [
+    {
+     "text": "STAY\nALIVE",
+     "at": [
+      "b:20",
+      "b:21"
+     ],
+     "y": 0.42,
+     "w": 0.8,
+     "fill": "white"
+    }
+   ]
+  }
+ ]
+}
