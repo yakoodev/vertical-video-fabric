@@ -13,6 +13,8 @@
  *
  * node node/vrm/contact.mjs --spec node/vrm/examples/motion_test_v2.json [--packs DIR] [--no-clamp] [--hands-out F]
  * [--from S --to S] — только отрезок ролика (быстрый разбор одного плана).
+ * [--pixels] — рисовать кадры (как раньше); по умолчанию — только поза и касания без отрисовки: под SwiftShader
+ *   отрисовка — секунды на кадр, а проверке нужны кости (13.11: проход 1593 кадров шёл бы ещё 2 ч после рендера).
  * --no-clamp — без подъёма кистей (показать, что проверка ловит проход сквозь клавиатуру).
  * Пустые замеры (нет кадров, нет зазоров пальцев/кресла/волос/рук) или кадры без модели — ok: false, поле empty.
  */
@@ -40,8 +42,10 @@ let c;
 let heroFrames = 0;
 const presenceBad = [];
 try {
+  const pixels = args.includes("--pixels");
   for (let i = i0; i < i1; i++) {
-    const st = await scene.render(i / fps);
+    const st = await (pixels ? scene.render(i / fps) : scene.renderPose(i / fps));
+    if ((i - i0 + 1) % 300 === 0) process.stderr.write(`касания: ${i - i0 + 1}/${i1 - i0}\n`);
     if (st?.presence?.expect > 0) heroFrames++;
     const problem = frameProblem(st);
     if (problem) presenceBad.push(`кадр ${i}: ${problem}`);

@@ -181,41 +181,223 @@ def _last_json(text: str) -> dict | None:
     return None
 
 
-def render_vrm(spec_path: Path, out: Path) -> dict:
-    """Спека VRM → mp4. {code, report, error}: report — отчёт render.mjs (кадры, чёрные, присутствие)."""
+# --------------------------------------------------------------------------- время и память рендера
+#
+# 13.11 (эксперимент A3): серия 4, 53 с = 1593 кадра, висела на «рисую 3D» с progress 0.25 и упала через 30 мин
+# («не уложились в 1800 с»). Разбор в одноразовом контейнере с копией базы: render.mjs по умолчанию ждёт 1800 с, а
+# сервис его не продлевал; рисовал одним браузером; под SwiftShader GPU-2D-холст кадра давал ~5 с на кадр (весь
+# ролик — 2,2 ч), проверка касаний рисовала все кадры ещё раз, а прогресс между началом и концом не обновлялся.
+# Теперь: 2D-холст на CPU (~1,4 с на кадр), куски параллельно, сколько влезает в память, касания без отрисовки,
+# срок — по числу кадров, прогресс и остановка зависшего рендера.
+
+SEC_PER_FRAME_BUDGET = 6.0  # потолок на кадр одного браузера (замер 1,0–1,5 с под нагрузкой ПК; запас ×4)
+RENDER_BASE_SEC = 300  # запуск браузеров, склейка, запас
+STALL_SEC = 600  # ни одного нового кадра столько — рендер завис
+WORKER_RAM_MB = 2000  # Chromium + SwiftShader на 1080×1920 (замер 1,7–1,8 ГБ на браузер)
+RAM_RESERVE_MB = 1000  # сервису и ffmpeg
+MAX_WORKERS = 3
+MIN_FRAMES_PER_WORKER = 240  # короче — второй браузер не окупает прогрев
+_PROGRESS_RE = re.compile(r"кусок (\d+-\d+): (\d+)/(\d+)")
+
+
+def _meminfo_available_mb() -> float | None:
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _cgroup_headroom_mb() -> float | None:
+    """Свободно до потолка памяти контейнера (cgroup v2/v1); потолка нет — None."""
+    for limit_f, used_f in (("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory.current"),
+                            ("/sys/fs/cgroup/memory/memory.limit_in_bytes", "/sys/fs/cgroup/memory/memory.usage_in_bytes")):
+        try:
+            raw = Path(limit_f).read_text().strip()
+            if raw == "max" or int(raw) >= 1 << 60:
+                return None
+            return (int(raw) - int(Path(used_f).read_text().strip())) / 2 ** 20
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def free_ram_mb() -> float | None:
+    """Сколько памяти можно занять сейчас: меньшее из свободного в системе и до потолка контейнера."""
+    vals = [v for v in (_meminfo_available_mb(), _cgroup_headroom_mb()) if v is not None]
+    return min(vals) if vals else None
+
+
+def plan_workers(frames: int, free_mb: float | None = None) -> int:
+    """Сколько браузеров рисуют куски параллельно: ``SERIES3D_WORKERS``, иначе по памяти (~2 ГБ на браузер, запас
+    сервису) и длине ролика (короткий — одним). Памяти не узнать — один, как раньше."""
+    env = os.environ.get("SERIES3D_WORKERS", "").strip()
+    if env:
+        try:
+            return max(1, min(MAX_WORKERS, int(env)))
+        except ValueError:
+            pass
+    free_mb = free_ram_mb() if free_mb is None else free_mb
+    if free_mb is None:
+        return 1
+    by_ram = int((free_mb - RAM_RESERVE_MB) // WORKER_RAM_MB)
+    by_len = max(1, int(frames) // MIN_FRAMES_PER_WORKER)
+    return max(1, min(MAX_WORKERS, by_ram, by_len))
+
+
+def render_budget(frames: int, workers: int) -> int:
+    """Срок рендера по числу кадров: на кусок одного браузера — SEC_PER_FRAME_BUDGET с на кадр, не больше TIMEOUT_SEC."""
+    per = -(-int(frames) // max(1, int(workers)))
+    return int(min(TIMEOUT_SEC, RENDER_BASE_SEC + per * SEC_PER_FRAME_BUDGET))
+
+
+def _kill_tree(proc: Any) -> None:
+    """node и его браузеры: своя группа процессов (Chromium не остаётся сиротой и не держит память)."""
+    try:
+        if os.name != "nt":
+            import signal
+
+            os.killpg(proc.pid, signal.SIGKILL)
+        else:
+            proc.kill()
+    except (OSError, ProcessLookupError, AttributeError):
+        try:
+            proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def run_watched(args: list[str], *, total: int, budget: int, on_progress: Any = None, stall: int = STALL_SEC,
+                progress_re: re.Pattern = _PROGRESS_RE, popen: Any = None, clock: Any = time.monotonic,
+                tick: float = 2.0) -> dict:
+    """Запуск node с разбором прогресса из stderr. {code, stdout, stderr, done, elapsed, reason}: reason —
+    «timeout» (вышел срок ``budget``), «stall» (нет нового кадра ``stall`` с), «stopped» (``on_progress`` вернул
+    False — задание отменили), иначе пусто. ``on_progress(done, total, elapsed)`` — не чаще раза в ``tick`` с."""
+    popen = popen or subprocess.Popen
+    kw: dict = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "stdin": subprocess.DEVNULL, "text": True,
+                "encoding": "utf-8", "errors": "replace"}
+    if os.name != "nt":
+        kw["start_new_session"] = True
+    proc = popen(args, **kw)
+    out_chunks: list[str] = []
+    err_lines: list[str] = []
+    chunks: dict[str, int] = {}
+    state = {"done": 0, "moved": clock()}
+    lock = threading.Lock()
+
+    def read_err() -> None:
+        for line in proc.stderr:
+            line = line.rstrip("\n")
+            with lock:
+                err_lines.append(line)
+                del err_lines[:-400]
+                hit = progress_re.search(line)
+                if hit:
+                    chunks[hit.group(1)] = int(hit.group(2))
+                    done = sum(chunks.values())
+                    if done > state["done"]:
+                        state["done"], state["moved"] = done, clock()
+
+    def read_out() -> None:
+        out_chunks.append(proc.stdout.read())
+
+    readers = [threading.Thread(target=read_err, daemon=True), threading.Thread(target=read_out, daemon=True)]
+    for r in readers:
+        r.start()
+    started = clock()
+    reason = ""
+    last_report = None
+    while proc.poll() is None:
+        now = clock()
+        with lock:
+            done, moved = state["done"], state["moved"]
+        if on_progress is not None and (last_report is None or now - last_report >= tick):
+            last_report = now
+            if on_progress(done, total, now - started) is False:
+                reason = "stopped"
+        if not reason and now - started > budget:
+            reason = "timeout"
+        if not reason and now - moved > stall:
+            reason = "stall"
+        if reason:
+            _kill_tree(proc)
+            break
+        time.sleep(min(tick, 0.5))
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+    for r in readers:
+        r.join(timeout=5)
+    return {"code": proc.returncode, "stdout": "".join(out_chunks), "stderr": "\n".join(err_lines),
+            "done": state["done"], "elapsed": round(clock() - started, 1), "reason": reason}
+
+
+def _spec_frames(spec: dict) -> int:
+    return max(1, round(float(spec.get("duration") or 5) * int(spec.get("fps") or 30)))
+
+
+def render_vrm(spec_path: Path, out: Path, on_progress: Any = None) -> dict:
+    """Спека VRM → mp4. {code, report, error, workers, budget_sec, …}: report — отчёт render.mjs (кадры, чёрные,
+    присутствие). Куски рисуются параллельно (``plan_workers``), срок — по числу кадров, зависший рендер (нет нового
+    кадра ``STALL_SEC``) останавливается с понятной причиной. ``on_progress(done, total, elapsed)``; False — стоп."""
     from app.scene3d import chromium_path, node_bin
 
     ensure_vrm_bundle()
     try:
-        ensure_vrm_packs(json.loads(spec_path.read_text("utf-8")))
+        spec = json.loads(spec_path.read_text("utf-8"))
+        ensure_vrm_packs(spec)
     except RenderFailed as exc:
         return {"code": 1, "report": None, "error": str(exc)}
+    frames = _spec_frames(spec)
+    workers = plan_workers(frames)
+    budget = render_budget(frames, workers)
+    # Свой срок у render.mjs — позже нашего: останавливает сервис (и с причиной), а не таймер node.
     args = [node_bin(), str(RENDERER), "--spec", str(spec_path), "--out", str(out), "--bundle", str(VRM_BUNDLE),
-            "--packs", str(vrm_dir()), "--gl", _gl(), "--workers", "1"]
+            "--packs", str(vrm_dir()), "--gl", _gl(), "--workers", str(workers), "--timeout", str(budget + 120)]
     chrome = chromium_path()
     if chrome:
         args += ["--chrome", chrome]
-    try:
-        proc = subprocess.run(args, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=TIMEOUT_SEC,
-                              check=False, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return {"code": -1, "report": None, "error": f"рендер не уложился в {TIMEOUT_SEC // 60} мин"}
-    return {"code": proc.returncode, "report": _last_json(proc.stdout),
-            "error": (render_error(proc.stderr) if proc.returncode != 0
-                      else " ".join((proc.stderr or "").strip().splitlines()[-4:])[-1200:])}
+    _log.info("series3d: рендер %s кадров, браузеров %s, срок %s с", frames, workers, budget)
+    run = run_watched(args, total=frames, budget=budget, on_progress=on_progress)
+    meta = {"workers": workers, "budget_sec": budget, "frames_total": frames, "frames_done": run["done"],
+            "elapsed_sec": run["elapsed"]}
+    rate = f"{run['elapsed'] / run['done']:.1f} с на кадр" if run["done"] else "ни одного кадра"
+    if run["reason"] == "timeout":
+        return {"code": -1, "report": None, **meta,
+                "error": f"3D не дорисовано за {budget // 60} мин (срок по длине: {frames} кадров, браузеров "
+                         f"{workers}): готово {run['done']} из {frames} кадров, {rate}. Сервер перегружен или сцена "
+                         "слишком тяжёлая — повтори рендер позже или укороти серию"}
+    if run["reason"] == "stall":
+        return {"code": -1, "report": None, **meta,
+                "error": f"3D-рендер завис: {STALL_SEC // 60} мин ни одного нового кадра (готово {run['done']} из "
+                         f"{frames}). Остановлен; повтори рендер, а если встанет на том же кадре — скажи владельцу"}
+    if run["reason"] == "stopped":
+        return {"code": -1, "report": None, **meta, "error": "рендер остановлен: задание отменено"}
+    code = run["code"]
+    return {"code": code, "report": _last_json(run["stdout"]), **meta,
+            "error": (render_error(run["stderr"]) if code != 0
+                      else " ".join((run["stderr"] or "").strip().splitlines()[-4:])[-1200:])}
 
 
 def check_vrm(spec_path: Path) -> dict | None:
-    """Проверки касаний по всем кадрам (пальцы, кресло, волосы, руки против тела) — отчёт contact.mjs."""
+    """Проверки касаний по всем кадрам (пальцы, кресло, волосы, руки против тела) — отчёт contact.mjs.
+    Без отрисовки кадров (позы и кости): ~30 с на серию в 1600 кадров, а не часы."""
     from app.scene3d import node_bin
 
     try:
-        proc = subprocess.run([node_bin(), str(CONTACT), "--spec", str(spec_path), "--packs", str(vrm_dir()),
-                               "--bundle", str(VRM_BUNDLE), "--gl", _gl()], capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=CHECK_TIMEOUT_SEC, check=False, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return {"error": "проверки касаний не уложились во время"}
-    return _last_json(proc.stdout) or {"error": render_error(proc.stderr, 400) or f"код {proc.returncode}"}
+        frames = _spec_frames(json.loads(spec_path.read_text("utf-8")))
+    except (OSError, ValueError):
+        frames = 1800
+    budget = int(min(CHECK_TIMEOUT_SEC, 180 + frames * 0.5))
+    run = run_watched([node_bin(), str(CONTACT), "--spec", str(spec_path), "--packs", str(vrm_dir()),
+                       "--bundle", str(VRM_BUNDLE), "--gl", _gl()], total=frames, budget=budget, stall=budget,
+                      progress_re=re.compile(r"(касания): (\d+)/(\d+)"))
+    if run["reason"]:
+        return {"error": f"проверки касаний не уложились в {budget} с (готово {run['done']} из {frames} кадров)"}
+    return _last_json(run["stdout"]) or {"error": render_error(run["stderr"], 400) or f"код {run['code']}"}
 
 
 def contact_sheet(video: Path, out: Path) -> Path:
@@ -237,7 +419,8 @@ def build_checks(spec: dict, render: dict, contact: dict | None, words_info: dic
     rendered = render.get("code") == 0 and bool(rep)
     black = rep.get("black_frames") or []
     checks.append({"id": "render", "label": "3D отрисовано", "ok": rendered,
-                   "detail": (f"{rep.get('frames')} кадров за {rep.get('seconds')} с" if rendered
+                   "detail": (f"{rep.get('frames')} кадров за {rep.get('seconds')} с"
+                              + (f", браузеров {render['workers']}" if render.get("workers") else "") if rendered
                               else (err or "рендер не вернул отчёт")[:500])})
     checks.append({"id": "black", "label": "без чёрных кадров", "ok": bool(rep) and not black,
                    "detail": (f"чёрные кадры: {black[:12]}" if black else ("нет" if rep else "не измерено"))})
@@ -445,6 +628,37 @@ def cancel(store: Any, episode_id: int) -> dict | None:
 # --------------------------------------------------------------------------- сам рендер
 
 
+def progress_note(done: int, total: int, elapsed: float) -> tuple[str, float]:
+    """Заметка и доля задания на шаге 3D (0.25 → 0.7): кадры и сколько осталось по текущей скорости."""
+    share = 0.25 + 0.45 * (min(done, total) / total if total else 0)
+    if done <= 0:
+        return f"рисую 3D: {total} кадров, запускаю браузеры", round(share, 3)
+    left = max(0.0, elapsed / done * (total - done))
+    eta = f"~{max(1, round(left / 60))} мин" if left >= 60 else "меньше минуты"
+    return f"рисую 3D: {done} из {total} кадров, осталось {eta}", round(share, 3)
+
+
+def render_progress(store: Any, job_id: int, every: float = 10.0) -> Any:
+    """Колбэк прогресса рендера → заметка и доля задания (не чаще раза в ``every`` с). Задание отменили — False
+    (рендер останавливается, браузеры не рисуют впустую)."""
+    last = {"at": -1e9}
+
+    def report(done: int, total: int, elapsed: float) -> bool:
+        if elapsed - last["at"] < every and done < total:
+            return True
+        last["at"] = elapsed
+        try:
+            if D.get_job(store, job_id)["status"] != "render":
+                return False
+            note, share = progress_note(done, total, elapsed)
+            D.set_job(store, job_id, note=note, progress=share)
+        except Exception as exc:  # noqa: BLE001 - прогресс не повод рушить рендер
+            _log.info("series3d progress %s: %s", job_id, exc)
+        return True
+
+    return report
+
+
 def produce(store: Any, job: dict) -> dict:
     """Голос → слова → рот → спека → 3D → проверки → лист → холст-клип. Возвращает итог для карточки серии."""
     from app import s3d_clip as C
@@ -492,10 +706,11 @@ def produce(store: Any, job: dict) -> dict:
                                                   life_seed=sum(map(ord, str(hero))) % 997 + 1)
         spec_path = work / "scene_vrm.json"
         spec_path.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
-        D.set_job(store, job["id"], note=f"рисую 3D: {round(total * 30)} кадров", progress=0.25)
+        frames_total = round(total * 30)
+        D.set_job(store, job["id"], note=f"рисую 3D: {frames_total} кадров", progress=0.25)
         raw = work / "scene_vrm.mp4"
         t3d = time.time()
-        render = render_vrm(spec_path, raw)
+        render = render_vrm(spec_path, raw, on_progress=render_progress(store, int(job["id"])))
         render_sec = round(time.time() - t3d, 1)
         ok = render.get("code") == 0 and raw.is_file()
         contact = None
@@ -521,7 +736,7 @@ def produce(store: Any, job: dict) -> dict:
     return {"clip_id": clip["clip_id"], "editor_url": f"/clips/{clip['clip_id']}", "video_asset_id": clip["video_asset_id"],
             "sheet_asset_id": clip.get("sheet_asset_id"), "sheet_url": clip.get("sheet_url"),
             "video_url": clip.get("video_url"), "checks": checks, "checks_ok": checks_ok, "duration": total,
-            "render_sec": render_sec, "total_sec": round(time.time() - started, 1),
+            "render_sec": render_sec, "render_workers": render.get("workers"), "total_sec": round(time.time() - started, 1),
             "frames": (render.get("report") or {}).get("frames"), "voices": SV.voice_summary(state["lines"]),
             "words_source": info.get("source"), "lines": compiled["lines"], "shots": compiled["shots"],
             "applied": {k: v for k, v in compiled["applied"].items() if k != "light"} | {"light": bool(compiled["applied"].get("light"))},

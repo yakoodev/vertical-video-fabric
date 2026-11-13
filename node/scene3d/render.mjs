@@ -13,6 +13,8 @@
  * node node/scene3d/render.mjs --spec scene.json --out out.mp4 [--packs vendor/packs] [--workers 3]
  *   [--fps 30] [--duration 9] [--frames A:B] [--preview 0,2.5,5 --preview-dir DIR] [--inspect T]
  *   [--gl swiftshader|gpu] [--format jpeg|png] [--quality 92] [--crf 18] [--chrome PATH] [--ffmpeg ffmpeg]
+ *   [--canvas2d cpu|gpu — 2D-холст кадра; по умолчанию cpu при SwiftShader: GPU-2D через программный GL в 3–4 раза
+ *    медленнее (13.11, 3D-серия 4: 5 с на кадр против 1,4 с), картинка та же]
  *   [--timeout 1800] [--site DIR — скриншоты сайта для телефона «site», отдаются как /site/…]
  *   [--plates DIR — кадры подложки (комната 3D-пресета за VRM-героиней), отдаются как /plates/…]
  *   [--models DIR — библиотека вещей (manifest.json + <категория>/<slug>.glb, docs/3d/models.md), отдаётся как /models3d/…;
@@ -72,6 +74,8 @@ export function parseArgs(argv) {
   // off — без постобработки. По умолчанию: GPU — full, SwiftShader — lite.
   const post = out.post || process.env.SCENE3D_POST || (gl === "gpu" ? "full" : "lite");
   if (!["full", "lite", "off"].includes(post)) throw new UsageError("--post full|lite|off");
+  const canvas2d = out.canvas2d || process.env.SCENE3D_CANVAS2D || (gl === "gpu" ? "gpu" : "cpu");
+  if (!["cpu", "gpu"].includes(canvas2d)) throw new UsageError("--canvas2d cpu|gpu");
   return {
     spec: resolve(out.spec),
     output: out.out ? resolve(out.out) : null,
@@ -89,6 +93,7 @@ export function parseArgs(argv) {
     inspect: out.inspect !== undefined ? num("inspect", 0, 0, 600) : null,
     gl,
     post,
+    canvas2d,
     format,
     quality: Math.round(num("quality", 92, 50, 100)),
     crf: Math.round(num("crf", 18, 0, 51)),
@@ -269,7 +274,7 @@ export class Cdp {
   }
 }
 
-export function chromeArgs(profile, gl) {
+export function chromeArgs(profile, gl, canvas2d = gl === "gpu" ? "gpu" : "cpu") {
   const args = [
     "--headless=new", "--remote-debugging-pipe", `--user-data-dir=${profile}`, "--no-first-run",
     "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync",
@@ -280,6 +285,8 @@ export function chromeArgs(profile, gl) {
   ];
   if (gl === "gpu") args.splice(1, 0, "--enable-gpu", "--use-angle=default");
   else args.splice(1, 0, "--use-angle=swiftshader", "--enable-unsafe-swiftshader");
+  // 2D-холст кадра на CPU (Skia): под SwiftShader GPU-2D (размытия, drawImage WebGL-холста) — главный тормоз кадра.
+  if (canvas2d === "cpu") args.splice(1, 0, "--disable-accelerated-2d-canvas");
   return args;
 }
 
@@ -323,7 +330,7 @@ export async function openScene(opts, spec, log = () => {}) {
   const width = spec.width || 1080, height = spec.height || 1920;
   if (!existsSync(opts.bundle)) throw new Error(`нет бандла ${opts.bundle}: npm run build:scene3d`);
   const work = mkdtempSync(join(tmpdir(), "vvf-scene3d-"));
-  const chrome = spawn(findChrome(opts.chrome), chromeArgs(join(work, "profile"), opts.gl), { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
+  const chrome = spawn(findChrome(opts.chrome), chromeArgs(join(work, "profile"), opts.gl, opts.canvas2d), { stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"], windowsHide: true });
   let chromeErr = "";
   chrome.stderr.on("data", (d) => {
     chromeErr = (chromeErr + d.toString()).slice(-3000);
@@ -400,6 +407,8 @@ export async function openScene(opts, spec, log = () => {}) {
       height,
       console: consoleLines,
       render: (t) => evaluate(`window.__scene3d.render(${Number(t).toFixed(6)})`),
+      // Только поза и проверки касаний, без отрисовки (VRM-движок; scene3d такого режима не знает и рисует кадр).
+      renderPose: (t) => evaluate(`window.__scene3d.render(${Number(t).toFixed(6)}, {pixels: false})`),
       inspect: (t) => evaluate(`window.__scene3d.inspect(${Number(t).toFixed(6)})`),
       warnings: () => evaluate("window.__scene3d.warnings()"),
       evaluate,
@@ -451,11 +460,18 @@ function run(cmd, args) {
 
 function write(stream, buf) {
   return new Promise((resolve, reject) => {
-    if (stream.write(buf)) resolve();
-    else {
-      stream.once("drain", resolve);
-      stream.once("error", reject);
-    }
+    if (stream.write(buf)) return resolve();
+    // Слушатели снимаются после ответа: раньше «error» копился на каждый drain (MaxListenersExceededWarning).
+    const done = () => {
+      stream.off("error", fail);
+      resolve();
+    };
+    const fail = (err) => {
+      stream.off("drain", done);
+      reject(err);
+    };
+    stream.once("drain", done);
+    stream.once("error", fail);
   });
 }
 
@@ -480,6 +496,7 @@ export function frameProblem(st) {
   if (!p || !(p.expect > 0)) return null;
   if (!(p.models >= p.expect)) return `модели нет в сцене (загружено ${p.models ?? 0} из ${p.expect})`;
   if (!(p.meshes > 0)) return "у модели нет видимых сеток";
+  if (p.pixels === false) return null; // проход без отрисовки (проверки касаний): пикселей не было
   if (!(p.cover > 0)) return "WebGL-холст пуст (персонаж не нарисован)";
   // Персонаж разрезан ровной линией внутри кадра (край сдвинутого холста, вьюпорт) — пороги сообщает страница.
   if (p.cut?.x?.run >= (p.cutX ?? 0.2)) return `персонаж разрезан вертикалью x=${p.cut.x.at} на ${Math.round(p.cut.x.run * 100)}% высоты кадра`;
@@ -567,14 +584,22 @@ export async function renderVideo(opts, spec, log = () => {}) {
   const [from, to] = opts.frames || [0, total];
   const chunks = splitFrames(to - from, opts.workers).map(([a, b]) => [a + from, b + from]);
   const work = mkdtempSync(join(dirname(opts.output), ".scene3d-"));
+  // Сколько кадров готово по всем кускам («кусок a-b: n/m» — последняя строка куска; пересъёмка куска считает заново).
+  const done = new Map();
+  const chunkLog = (m) => {
+    const hit = /^кусок (\d+-\d+): (\d+)\/\d+/.exec(m);
+    if (hit) done.set(hit[1], Number(hit[2]));
+    log(m);
+  };
   const timer = setTimeout(() => {
-    log(`не уложились в ${opts.timeout} с`);
+    const ready = [...done.values()].reduce((a, b) => a + b, 0);
+    log(`scene3d: не уложились в ${opts.timeout} с: готово ${ready} из ${to - from} кадров`);
     process.exit(1);
   }, opts.timeout * 1000);
   try {
     log(`${to - from} кадров ${spec.width || 1080}×${spec.height || 1920} @${fps}, кусков: ${chunks.length}, GL: ${opts.gl}`);
     const segs = chunks.map((_, i) => join(work, `seg_${String(i).padStart(3, "0")}.mp4`));
-    const results = await Promise.all(chunks.map((c, i) => renderChunkRetry(opts, spec, fps, c, segs[i], log)));
+    const results = await Promise.all(chunks.map((c, i) => renderChunkRetry(opts, spec, fps, c, segs[i], chunkLog)));
     const list = join(work, "list.txt");
     writeFileSync(list, segs.map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`).join("\n") + "\n");
     await run(opts.ffmpeg, concatArgs(list, opts.output));
