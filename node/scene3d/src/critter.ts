@@ -183,6 +183,8 @@ export const CP = {
   bodyW: 1, bodyH: 0.56, bodyD: 0.5, radius: 0.075,
   legH: 0.15, legW: 0.115, legD: 0.26, legX: [-0.375, -0.2, 0.2, 0.375],
   armW: 0.17, armH: 0.18, armD: 0.26, armY: 0.38,
+  /** Скругление ножек и ручек (доли ширины корпуса). */
+  legRad: 0.022, armRad: 0.03,
   eyeX: 0.21, eyeY: 0.55, eyeW: 0.058, eyeH: 0.23,
 };
 
@@ -406,7 +408,7 @@ export function buildCritter(S: number, body: string, shade: string, dims: Parti
   lean.position.y = P.legH * S;
   root.add(lean);
   // Ножки — кубики в ряд (как у пиксельного маскота), под корпусом; наклоняются вместе с ним.
-  const legGeo = new RoundedBoxGeometry(P.legW * S, (P.legH + 0.04) * S, P.legD * S, 3, 0.022 * S);
+  const legGeo = new RoundedBoxGeometry(P.legW * S, (P.legH + 0.04) * S, P.legD * S, P.legRad > 0.03 ? 5 : 3, P.legRad * S);
   const legs: THREE.Mesh[] = [];
   for (const x of P.legX) {
     const l = new THREE.Mesh(legGeo, shadeMat);
@@ -418,11 +420,11 @@ export function buildCritter(S: number, body: string, shade: string, dims: Parti
   lean.add(turn);
   const squash = new THREE.Group();
   turn.add(squash);
-  const bodyMesh = new THREE.Mesh(new RoundedBoxGeometry(P.bodyW * S, P.bodyH * S, P.bodyD * S, 5, P.radius * S), bodyMat);
+  const bodyMesh = new THREE.Mesh(new RoundedBoxGeometry(P.bodyW * S, P.bodyH * S, P.bodyD * S, P.radius > 0.1 ? 8 : 5, P.radius * S), bodyMat);
   bodyMesh.position.y = (P.bodyH / 2) * S;
   squash.add(bodyMesh);
   // Ручки-обрубки: пивот у боковой грани, блок торчит наружу.
-  const armGeo = new RoundedBoxGeometry(P.armW * S, P.armH * S, P.armD * S, 3, 0.03 * S);
+  const armGeo = new RoundedBoxGeometry(P.armW * S, P.armH * S, P.armD * S, P.armRad > 0.04 ? 5 : 3, P.armRad * S);
   const arms: Parts["arms"] = [];
   for (const side of [1, -1]) {
     const pivot = new THREE.Group();
@@ -793,7 +795,7 @@ function darker(c: string, k = 0.78): string {
 export function critterHelper(p: Record<string, any>): Prop {
   const size = p.size ?? 0.13;
   const dims: typeof CP = { bodyW: 1, bodyH: 0.74, bodyD: 0.7, radius: 0.09, legH: 0.16, legW: 0.16, legD: 0.32, legX: [-0.24, 0.24],
-    armW: 0.17, armH: 0.2, armD: 0.3, armY: 0.36, eyeX: 0.2, eyeY: 0.58, eyeW: 0.06, eyeH: 0.22 };
+    armW: 0.17, armH: 0.2, armD: 0.3, armY: 0.36, eyeX: 0.2, eyeY: 0.58, eyeW: 0.06, eyeH: 0.22, legRad: 0.022, armRad: 0.03 };
   const S = size / (dims.bodyH + dims.legH);
   const col = p.color || "#6fd3c1";
   const parts = buildCritter(S, col, darker(col), dims);

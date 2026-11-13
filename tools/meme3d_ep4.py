@@ -140,7 +140,7 @@ def room_objects(session: dict, state: list[dict] | None = None) -> list[dict]:
         elif i in ("mug", "notes"):
             continue
         elif i == "plant":
-            o["position"] = [0.9, T, -0.5]
+            o["position"] = [-0.88, T, -0.46]  # в левый угол: за Кодексом ростки читались как хохолок
         elif i == "lamp":
             o["position"] = [-0.66, T, -0.4]
             o["rotation"] = [0, 160, 0]
@@ -398,12 +398,15 @@ def stills_spec() -> tuple[dict, list[tuple[float, str]]]:
 KODEX_OPTIONS = {"a": ("А — терминал >_", 0.27), "b": ("Б — кот-кубик", 0.26), "c": ("В — капсула", 0.24)}
 # Второй заход (владелец: «из их логотипа сделай персонажа, похожего на клода»): узел-цветок телом и головой.
 KODEX_OPTIONS2 = {"d": ("1 — узел-тело", 0.25), "e": ("2 — узел-голова", 0.25)}
+# Третий заход (владелец: «сделай его как клода, только более округлым и светлого цвета»): два тона.
+KODEX_OPTIONS3 = {"f": ("1 крем", 0.27), "g": ("2 светло-серый", 0.27)}
 
 
-def kodex_options_spec(options: dict) -> tuple[dict, list[tuple[float, str]]]:
+def kodex_options_spec(options: dict, shots: tuple[str, ...] = ("beat8", "cu")) -> tuple[dict, list[tuple[float, str]]]:
     """Три варианта Кодекса (kodex2.ts): на каждый — бит 8 (с чаем рядом с горой спящих Клодов) и крупный план."""
     sx, sy, sz = SEAT
-    names = [f"{v}_{s}" for v in options for s in ("beat8", "cu")]
+    names = [f"{v}_{s}" for v in options for s in shots]
+    ns = len(shots)
     n = len(names)
     sess = {"account": 9, "speed": 8, "limits": [], "resets": [{"t": 0, "account": 9, "idle": 99}]}
     objs = room_objects(sess)
@@ -418,16 +421,29 @@ def kodex_options_spec(options: dict) -> tuple[dict, list[tuple[float, str]]]:
                          "position": [pos[0] + 0.04, pos[1] + 0.16, pos[2] + 0.05]})
     keys = []
     for vi, (v, (_, width)) in enumerate(options.items()):
-        on = [{"t": 0, "on": False}, {"t": vi * 2, "on": True}, {"t": vi * 2 + 2, "on": False}]
+        on = [{"t": 0, "on": False}, {"t": vi * ns, "on": True}, {"t": vi * ns + ns, "on": False}]
         if vi == 0:
             on = on[1:]
-        chars.append({"id": f"kodex_{v}", "style": "kodex2", "variant": v, "width": width, "position": KODEX, "yaw": -30,
-                      "pose": [{"t": 0, "armL": "mug", "armR": "rest", "holdL": "mug"}, {"t": vi * 2 + 1, "ease": "step", "turn": 8}],
-                      "face": [{"t": 0, "expr": "calm", "look": [-0.3, 0]}], "stepFps": 15, "visible": on})
+        pose = [{"t": 0, "armL": "mug", "armR": "rest", "holdL": "mug", "turn": 0}, {"t": vi * ns + 1, "ease": "step", "turn": 8}]
+        move = [{"t": 0, "position": KODEX, "ease": "step"}]
+        if "cmp" in shots:
+            # Рядом с Клодом на нейтральном столе — анфас, для сравнения роста и силуэта.
+            pose.append({"t": vi * ns + 2, "ease": "step", "turn": 30})
+            move += [{"t": vi * ns + 2, "position": [X_CAST + 0.18, T, 0.0], "ease": "step"},
+                     {"t": vi * ns + 3, "position": KODEX, "ease": "step"}]
+        chars.append({"id": f"kodex_{v}", "style": "kodex2", "variant": v, "width": width, "position": KODEX, "yaw": -30, "pose": pose,
+                      "face": [{"t": 0, "expr": "calm", "look": [-0.3, 0]}], "stepFps": 15, "visible": on, "move": move})
+    if "cmp" in shots:
+        objs += vignette_set(X_CAST, "#3d4a66", "#334059", "cast")
+        chars.append(critter("cmp", 1, [{"t": 0, "armL": "rest", "armR": "rest"}], [{"t": 0, "expr": "neutral", "look": [0.3, 0]}],
+                             [X_CAST - 0.18, T, 0.0], 8, stepFps=15))
     a = math.radians(-30 + 8)
     K = KODEX
     for i in range(n):
-        if i % 2 == 0:
+        shot = shots[i % ns]
+        if shot == "cmp":
+            pos, tgt, fov = [X_CAST, T + 0.2, 2.35], [X_CAST, T + 0.12, 0.0], 34
+        elif shot == "beat8":
             pos, tgt, fov = [0.52, T + 0.3, 1.3], [0.76, T + 0.13, -0.2], 42
         else:
             pos, tgt, fov = [K[0] + math.sin(a) * 1.2, T + 0.22, K[2] + math.cos(a) * 1.2], [K[0] - 0.02, T + 0.15, K[2]], 34
@@ -446,12 +462,13 @@ def kodex_options_spec(options: dict) -> tuple[dict, list[tuple[float, str]]]:
     return spec, [(i + 0.5, name) for i, name in enumerate(names)]
 
 
-def kodex_options(out_dir: Path, gl: str, build: bool, options: dict = KODEX_OPTIONS, name: str = "kodex_options") -> Path:
+def kodex_options(out_dir: Path, gl: str, build: bool, options: dict = KODEX_OPTIONS, name: str = "kodex_options",
+                  shots: tuple[str, ...] = ("beat8", "cu")) -> Path:
     work = out_dir / "work"
     work.mkdir(parents=True, exist_ok=True)
     if build:
         P1._run(["npm", "run", "build:scene3d"], "сборка движка", cwd=ROOT, shell=sys.platform == "win32")
-    spec, times = kodex_options_spec(options)
+    spec, times = kodex_options_spec(options, shots)
     sp = work / f"{name}.json"
     sp.write_text(json.dumps(spec, ensure_ascii=False), "utf-8")
     prev = work / f"{name}_frames"
@@ -469,7 +486,7 @@ def kodex_options(out_dir: Path, gl: str, build: bool, options: dict = KODEX_OPT
         f = dst / f"{nm}.png"
         shutil.copy2(prev / ("frame_" + f"{t:.2f}".replace(".", "_") + ".png"), f)
         files.append(f)
-        labels.append(options[nm[0]][0] + (" · бит 8" if nm.endswith("beat8") else " · крупно"))
+        labels.append(options[nm[0]][0] + {"beat8": " · бит 8", "cu": " · крупно", "cmp": " · с Клодом"}[nm.split("_", 1)[1]])
     out = out_dir / f"{name}.jpg"
     sheet(files, labels, out, cols=min(6, len(files)), w=360)
     return out
@@ -551,14 +568,16 @@ def stills(out_dir: Path, gl: str, build: bool) -> Path:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["stills", "kodex_options", "kodex_options2"])
+    ap.add_argument("cmd", choices=["stills", "kodex_options", "kodex_options2", "kodex_options3"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
     a = ap.parse_args()
     os.environ.setdefault("MOTION_PACKS_DIR", str(P1.PACKS))
     od = Path(a.out_dir).resolve()
-    if a.cmd == "kodex_options2":
+    if a.cmd == "kodex_options3":
+        out = kodex_options(od, a.gl, not a.no_build, KODEX_OPTIONS3, "kodex_options3", ("beat8", "cu", "cmp"))
+    elif a.cmd == "kodex_options2":
         out = kodex_options(od, a.gl, not a.no_build, KODEX_OPTIONS2, "kodex_options2")
     elif a.cmd == "kodex_options":
         out = kodex_options(od, a.gl, not a.no_build)

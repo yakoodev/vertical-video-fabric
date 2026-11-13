@@ -10,7 +10,9 @@
  * - ``c`` — аккуратная белая капсула: тёмный визор с одной светящейся щелью-глазом, крошечные ножки;
  * - ``d`` — «узел-цветок» из шести сцепленных скруглённых звеньев и есть тело (тёмный, глаза-бусинки на светлой
  *   шестигранной пластине в центре), на коротких ножках;
- * - ``e`` — маленькое светлое тело-блок, голова — тёмный «узел» со светлыми глазами.
+ * - ``e`` — маленькое тёмное тело-блок, голова — светлый «узел» со светлыми глазами на тёмной пластине;
+ * - ``f`` / ``g`` — «как Клод, только круглее и светлее»: тот же зверёк, сильно скруглённый, тёплый кремовый (f) или
+ *   холодный светло-серый (g), без гарнитуры.
  *
  * Движение — как у critter: ``pose: [{t, ease, lean, tilt, turn, hop, squash, armL, armR, sip, holdL, holdR}]`` (руки — имя
  * из NUB_POSES критера или [поднять°, вперёд°, выдвинуть, покачивание]; ``mug`` / ``sip`` — свои позы с кружкой; кружка —
@@ -27,7 +29,7 @@ import type { Character } from "./character.ts";
 export interface Kodex2Spec {
   id: string;
   style: "kodex2";
-  variant?: "a" | "b" | "c" | "d" | "e";
+  variant?: "a" | "b" | "c" | "d" | "e" | "f" | "g";
   width?: number;
   position?: number[];
   yaw?: number;
@@ -570,12 +572,48 @@ function knotHeadRig(S: number, badge: string): Rig {
     height: (P.legH + P.bodyH) * S + D };
 }
 
+/* ---------------------------------------------------------------- «как Клод, только круглее и светлее» */
+
+const SOFT_EXPR: Record<string, string> = { calm: "neutral", smile: "happy", hopeful: "surprised", closed: "sigh" };
+const TONES: Record<string, { body: string; shade: string }> = {
+  f: { body: "#efe5d3", shade: "#cbbda4" }, // тёплый кремовый
+  g: { body: "#e1e6ec", shade: "#b3bcc8" }, // холодный светло-серый
+};
+
+/**
+ * F/G — тот же зверёк, что и Клод (buildCritter: корпус-кирпичик, четыре ножки в ряд, ручки-обрубки, глаза и брови
+ * той же системы эмоций), но всё сильно скруглено — силуэт мягкий, почти «таблетка»; светлый тон, без гарнитуры,
+ * бирка «Кодекс» в углу морды, как у Клода «Claude».
+ */
+function softRig(variant: "f" | "g", S: number, badge: string): Rig {
+  const tone = TONES[variant];
+  const dims = { radius: 0.25, legRad: 0.05, armRad: 0.075 };
+  const parts = buildCritter(S, tone.body, tone.shade, dims, 0);
+  const P = { ...CP, ...dims };
+  const root = new THREE.Group();
+  const hopG = new THREE.Group();
+  root.add(hopG);
+  parts.root.remove(parts.lean);
+  hopG.add(parts.lean);
+  const plate = labelPlate(badge, 0.24 * S, 0.075 * S, "#ffffff", "#3a2c30");
+  plate.position.set(-0.22 * S, 0.15 * S, (P.bodyD / 2 + 0.006) * S);
+  plate.rotation.z = 0.06;
+  parts.squash.add(plate);
+  const paint: FacePaint = (g, W, H, expr, blink, talk, look, t) => {
+    const name = CRITTER_EXPR[expr] ? expr : SOFT_EXPR[expr] || "neutral";
+    const f = { ...(paintCatBase as any), ...(CRITTER_EXPR[name] || {}) } as CritterFace;
+    paintCritterFace(g, W, H, parts.faceU, f, look, blink, talk, t, { eye: "#2a2226", cheeks: "#ffa9a0" }, P as typeof CP);
+  };
+  return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: parts.faceCanvas, tex: parts.faceTex, paint,
+    height: (P.legH + P.bodyH) * S };
+}
+
 export function createKodex2(spec: Kodex2Spec): Character {
   const variant = spec.variant || "a";
   const S = spec.width ?? 0.27;
   const badge = spec.badge ?? "Кодекс";
   const rig = variant === "c" ? capsuleRig(S, badge) : variant === "d" ? knotBodyRig(S, badge) : variant === "e" ? knotHeadRig(S, badge)
-    : blockRig(variant, S, badge);
+    : variant === "f" || variant === "g" ? softRig(variant, S, badge) : blockRig(variant, S, badge);
   const { root, hopG, lean, squash, arms } = rig;
   root.name = `kodex2:${spec.id}`;
   const p = spec.position || [0, 0, 0];
