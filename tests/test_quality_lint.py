@@ -263,7 +263,7 @@ def test_lint_clip_uses_rendered_file(tmp_path, monkeypatch):
                     "geq=lum='if(lt(mod(N,6),3),235,16)':cb=128:cr=128")
     store.finish_clip_render(clip["id"], "succeeded", output_path=video, duration_sec=3)
     result = Q.lint_clip(store, plan["id"], checks=["flashes", "loop"])
-    assert result["render_id"] == clip["id"] and "flashes" not in result["skipped"]
+    assert result["render_clip_id"] == clip["id"] and "flashes" not in result["skipped"]
     flashes = _by(result["findings"], "flashes")
     assert flashes and flashes[0]["final_t"] < 0.5
     assert result["loop"]["score"] is not None

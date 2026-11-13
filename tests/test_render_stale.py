@@ -33,7 +33,7 @@ def test_fresh_render_is_not_stale_until_the_clip_is_edited(tmp_path, monkeypatc
     assert plan_row["status"] == "rendered"
 
     fresh = Q.lint_clip(store, plan["id"], checks=["loop"])
-    assert fresh["render_id"] == clip["id"] and "render_stale" not in fresh
+    assert fresh["render_clip_id"] == clip["id"] and "render_stale" not in fresh
 
     # Название и описание (автоописание после рендера) — не монтаж.
     store.db.execute("UPDATE clip_plans SET title = 'Новое' WHERE id = ?", (plan["id"],))
