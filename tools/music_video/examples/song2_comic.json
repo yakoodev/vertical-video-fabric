@@ -496,7 +496,7 @@
      "frame": "page"
     },
     {
-     "at": 12.02,
+     "at": 12.52,
      "frame": [
       "letsgo"
      ],
@@ -885,7 +885,7 @@
      "max_h": 0.11,
      "fill": "lime",
      "fill2": "yellow",
-     "out": 12.33,
+     "out": 12.2,
      "tilt": -6
     },
     {
@@ -898,7 +898,7 @@
      "max_h": 0.12,
      "fill": "white",
      "fill2": "lime",
-     "out": 12.33,
+     "out": 12.2,
      "tilt": 4
     }
    ]
@@ -1602,17 +1602,17 @@
      "to": "w:104",
      "kind": "caption",
      "x": 0.5,
-     "y": 0.1,
-     "w": 0.86
+     "y": 0.05,
+     "w": 0.92
     },
     {
-     "panel": "stamp",
+     "panel": "cowglade",
      "from": "w:105",
      "to": "w:111",
      "kind": "caption",
      "x": 0.5,
-     "y": 0.88,
-     "w": 0.86
+     "y": 0.1,
+     "w": 0.92
     },
     {
      "panel": "cowglade",
@@ -2263,24 +2263,18 @@
      "img": "p_boo"
     },
     "hatp": {
-     "stamp": "БАЦ!\nХРЯСЬ!",
-     "aspect": 1.0,
-     "colors": {
+     "burst": {
       "bg": "yellow",
-      "line": "red",
-      "fill": "red",
-      "fill2": "orange"
-     }
+      "line": "red"
+     },
+     "aspect": 1.0
     },
     "yearsp": {
-     "stamp": "МНОГО-МНОГО\nЛЕТ...",
-     "aspect": 1.7,
-     "colors": {
+     "burst": {
       "bg": "cream",
-      "line": "purple",
-      "fill": "cream",
-      "fill2": "orange"
-     }
+      "line": "purple"
+     },
+     "aspect": 1.7
     },
     "cabbage": {
      "img": "p_cabbage"
@@ -2469,6 +2463,25 @@
      "dur": 1.0
     },
     {
+     "panel": "hatp",
+     "text": "БАЦ!",
+     "at": "w:211",
+     "x": 0.3,
+     "y": 0.3,
+     "h": 0.3,
+     "dur": 1.2
+    },
+    {
+     "panel": "yearsp",
+     "text": "ОГО!",
+     "at": "w:216",
+     "x": 0.8,
+     "y": 0.75,
+     "h": 0.3,
+     "dur": 1.0,
+     "kind": "cool"
+    },
+    {
      "panel": "cabbage",
      "text": "ВЖЖ!",
      "at": "w:230",
@@ -2526,6 +2539,18 @@
      "fill2": "orange",
      "max_h": 0.1,
      "out": "w:213"
+    },
+    {
+     "text": "МНОГО-\nМНОГО ЛЕТ...",
+     "at": [
+      "w:220",
+      "w:221"
+     ],
+     "y": 0.66,
+     "w": 0.84,
+     "fill": "cream",
+     "fill2": "orange",
+     "out": "w:222-0.1"
     },
     {
      "text": "ОГОРОДНИКОМ",

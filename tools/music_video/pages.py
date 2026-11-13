@@ -96,9 +96,12 @@ def visible_rect(rect, page_w, page_h) -> list[float]:
     """Что реально видно в кадре 9:16, когда камера кадрирует rect (он вписывается целиком)."""
     x0, y0, x1, y1 = rect
     w, h = x1 - x0, y1 - y0
-    vh = max(h, w / SCREEN_AR) * 1.04
+    vh = max(h, w / SCREEN_AR) * 1.07
     vw = vh * SCREEN_AR
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    # как камера в Blender: кадр не выходит за край страницы, пока страница больше кадра
+    cx = min(max(cx, vw / 2 * 1.02), page_w - vw / 2 * 1.02) if page_w > vw * 1.02 else page_w / 2
+    cy = min(max(cy, vh / 2 * 1.02), page_h - vh / 2 * 1.02) if page_h > vh * 1.02 else page_h / 2
     return [cx - vw / 2, cy - vh / 2, cx + vw / 2, cy + vh / 2]
 
 
@@ -227,7 +230,11 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
             store.put(bnm, bimg, text_at=[bx, by])
         BW, BH = store.size(bnm)
         cx, cy = r[0] + tx.get("x", 0.5) * pw_, r[1] + tx.get("y", 0.15) * ph_
-        # пузырь целиком внутри страницы
+        # пузырь целиком внутри своей панели (иначе верх рамки рассказчика срезается краем кадра)
+        hw_, hh_ = BW * k_scale / 2, BH * k_scale / 2
+        m_ = 0.025 * min(pw_, ph_)
+        cx = min(max(cx, r[0] + hw_ + m_), r[2] - hw_ - m_) if pw_ > 2 * (hw_ + m_) else (r[0] + r[2]) / 2
+        cy = min(max(cy, r[1] + hh_ + m_), r[3] - hh_ - m_) if ph_ > 2 * (hh_ + m_) else (r[1] + r[3]) / 2
         tl_x, tl_y = cx - BW * k_scale / 2, cy - BH * k_scale / 2
         nxt_on = None
         for tx2 in texts[n + 1:]:
@@ -239,7 +246,7 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
         if nxt_on is not None:
             off = min(off, nxt_on)
         on = max(f0, first_on - 2)
-        items.append({"type": "bubble", "tex": bnm, "px": [cx, cy], "h_px": BH * k_scale, "on": on, "off": max(on + 6, off),
+        items.append({"type": "bubble", "tex": bnm, "px": [cx, cy], "h_px": BH * k_scale, "w_px": BW * k_scale, "on": on, "off": max(on + 6, off),
                       "z": 0.45 + 0.004 * n, "ref": rr, "kind": kind})
         y = by
         for ln, lw in lines:
@@ -265,6 +272,14 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
         items.append(word_item(w, clk, style, fps, f0, f1, seed * 7 + k))
     from resolve import clear_hero_overlaps
     clear_hero_overlaps(items)
+    # надписи, нарисованные в самой странице (штампы, «продолжение следует»), — тоже препятствия
+    marks = []
+    for pid, spec in sc.get("panels", {}).items():
+        if ("stamp" in spec or spec.get("tbc")) and pid in layout:
+            r = layout[pid]["rect"]
+            marks.append({"type": "stampbox", "px": [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2], "h_px": 0.66 * (r[3] - r[1]),
+                          "w_px": 0.84 * (r[2] - r[0]), "on": f0, "off": f1})
+    _dodge_lettering(items + marks, shots, pw, ph, f1)
     cam = dict(sc.get("camera", {}))
     cam.setdefault("seed", seed)
     cam["punch"] = sorted({it["letters"][0]["land"] for it in items if it["type"] == "word" and it["letters"]} |
@@ -273,6 +288,45 @@ def resolve_page(sc: dict, idx: int, f0: int, f1: int, clk, style, imgs: dict, s
     return {"id": sc.get("id", f"s{idx}"), "kind": "page", "f0": f0, "f1": f1, "cam": cam,
             "page": {"tex": tex, "w": pw, "h": ph, "m_per_px": S_M, "desk": desk}, "shots": shots, "items": items,
             "transition": sc.get("transition", "cut")}
+
+
+def _dodge_lettering(items: list[dict], shots: list[dict], pw: int, ph: int, f1: int) -> None:
+    """Большое слово не ложится на пузыри и звуки в кадре: если полоса слова пересекает их экранный прямоугольник
+    в любом из кадров камеры за время жизни слова — слово переезжает в свободную полосу экрана."""
+    boxes = [it for it in items if it["type"] in ("bubble", "pburst", "stampbox")]
+
+    def screen_box(it, vr):
+        x0, y0, x1, y1 = vr
+        hh = it["h_px"] / 2
+        ww = it["w_px"] / 2 if "w_px" in it else hh * 1.6
+        return ((it["px"][0] - ww - x0) / (x1 - x0), (it["px"][1] - hh - y0) / (y1 - y0),
+                (it["px"][0] + ww - x0) / (x1 - x0), (it["px"][1] + hh - y0) / (y1 - y0))
+    for w in (it for it in items if it["type"] == "word" and it["letters"]):
+        a = min(L["land"] for L in w["letters"]) - 3
+        b = (w["out"] + len(w["letters"]) // 2 + 6) if w["out"] is not None else f1
+        act = [s for k, s in enumerate(shots) if s["f"] - s["dur"] <= b and (k + 1 == len(shots) or shots[k + 1]["f"] - shots[k + 1]["dur"] >= a)]
+        live = [bx for bx in boxes if bx["on"] <= b and bx["off"] >= a]
+        wx0 = min(L["x"] - L["h"] * 0.5 for L in w["letters"]); wx1 = max(L["x"] + L["h"] * 0.5 for L in w["letters"])
+        y0 = min(L["y"] - L["h"] / 2 for L in w["letters"]); y1 = max(L["y"] + L["h"] / 2 for L in w["letters"])
+        yc = (y0 + y1) / 2
+
+        def hits(dy):
+            for s in act:
+                vr = visible_rect(s["rect"], pw, ph)
+                for bx in live:
+                    sx0, sy0, sx1, sy1 = screen_box(bx, vr)
+                    if sx1 > wx0 and sx0 < wx1 and sy1 > y0 + dy - 0.01 and sy0 < y1 + dy + 0.01:
+                        return True
+            return False
+        for target in (yc, 0.8, 0.5, 0.25, 0.88, 0.15):
+            dy = target - yc
+            if y0 + dy < 0.04 or y1 + dy > 0.97:
+                continue
+            if not hits(dy):
+                if dy:
+                    for L in w["letters"]:
+                        L["y"] = round(L["y"] + dy, 4)
+                break
 
 
 def page_transitions(scenes: list[dict], store, style) -> None:

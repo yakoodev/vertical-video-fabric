@@ -79,7 +79,7 @@ def stamp_panel(text: str, w: int, h: int, rng: np.random.Generator, bg="yellow"
     lines = [s for s in text.split("\n") if s] or [""]
     cap = int(min(h / (len(lines) * 1.3), w / (max(len(s) for s in lines) * 0.9 + 0.5)))
     tiles = [Image.fromarray(letter_word(s, rng, cap, font_name, fill, fill2), "RGBA") for s in lines if s]
-    k = min(1.0, 0.9 * w / max(t.width for t in tiles), 0.85 * h / sum(t.height * 0.9 for t in tiles))
+    k = min(1.0, 0.8 * w / max(t.width for t in tiles), 0.6 * h / sum(t.height * 0.9 for t in tiles))
     if k < 1.0:
         tiles = [t.resize((int(t.width * k), int(t.height * k)), Image.LANCZOS) for t in tiles]
     y = h / 2 - sum(t.height * 0.9 for t in tiles) / 2

@@ -701,7 +701,7 @@ class Page:
 
     def dist(self, rect):
         x0, y0, x1, y1 = rect
-        return max((y1 - y0) * self.s / VH, (x1 - x0) * self.s / VW) * 1.04
+        return max((y1 - y0) * self.s / VH, (x1 - x0) * self.s / VW) * 1.07
 
     def cam_for(self, rect):
         x0, y0, x1, y1 = rect
