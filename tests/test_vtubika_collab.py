@@ -107,3 +107,15 @@ def test_end_card_partner_line_and_logo():
     assert "Напарника нашла в Коллабике" in svg and "data:image/png;base64," in svg
     assert "Промокод Free10" in svg
     assert E.partner_block({"partner": None}) == "" and E.partner_block({}) == ""
+
+
+def test_frame_count_rounds_half_up_like_renderer():
+    from app.vtubika_room3d import frame_cameras
+    from app.vtubika_vrm import hero_frames
+
+    # 56.35 с × 30 = 1690.5: render.mjs (Math.round) рисует 1691 кадр; round() Питона давал 1690 — присутствие
+    # героини браковало годный рендер, а последний кадр оставался без комнаты.
+    spec = {"duration": 56.35, "fps": 30, "shots": [{"t0": 0, "t1": 60, "camKeys": [{"t": 0, "pos": [0, 1, 2], "target": [0, 1, 0]}],
+                                                     "plate": {"room": True}}]}
+    assert hero_frames(spec) == 1691
+    assert len(frame_cameras(spec)) == 1691

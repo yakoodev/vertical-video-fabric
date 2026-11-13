@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 MODEL = "VRM1_Constraint_Twist_Sample.vrm"
@@ -350,7 +351,9 @@ class VrmRenderError(RuntimeError):
 def hero_frames(spec: dict, fps: int | None = None) -> int:
     """Сколько кадров ролика героиня должна быть в кадре (планы без вставки и не «её глазами» — ``hideHero``)."""
     fps = int(fps or spec.get("fps") or 30)
-    n = round(float(spec.get("duration") or 0) * fps)
+    # Как render.mjs (Math.round): половина — вверх. round() Питона — к чётному: 56.35 с × 30 = 1690.5 давало на кадр
+    # меньше, чем отрисовано, и проверка присутствия браковала годный рендер.
+    n = math.floor(float(spec.get("duration") or 0) * fps + 0.5)
     shots = spec.get("shots") or []
     if not shots or not n:
         return 0

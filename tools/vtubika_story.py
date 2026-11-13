@@ -347,10 +347,15 @@ def line_layers(lines: list[dict]) -> list[dict]:
     from app.motion_normalize import normalize_layers
 
     out = []
+    starts = sorted(float(ln["t"]) for ln in lines if ln.get("caption"))
     for n, ln in enumerate(lines):
         if not ln.get("caption"):
             continue
-        out.append({"id": f"line{n}", "type": "text", "start": round(ln["t"], 3), "end": round(ln["t"] + ln["dur"] + 0.35, 3),
+        # Подпись держится 0.35 с после реплики, но не дольше начала следующей: иначе две подписи стоят друг на друге
+        # (серия 8: «Кэт: Кампай за коллаб!» гасла под «— Кампай!» Миры).
+        nxt = next((s for s in starts if s > float(ln["t"]) + 1e-3), None)
+        end = ln["t"] + ln["dur"] + 0.35 if nxt is None else min(ln["t"] + ln["dur"] + 0.35, nxt - 0.02)
+        out.append({"id": f"line{n}", "type": "text", "start": round(ln["t"], 3), "end": round(end, 3),
                     "x": 0.5, "y": 0.8, "track": 9,
                     "props": {"text": ln["caption"], "size": 78, "weight": 900, "color": ln.get("color", "#ff9ad6"),
                               "stroke": {"color": "#0b0812", "width": 10}, "maxWidth": 980},
