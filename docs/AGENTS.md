@@ -122,6 +122,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | `list_subtitle_styles`, `set_subtitles`, `edit_subtitle_lines` | субтитры: вкл/стиль/высота, правка текста строк |
 | `set_transition(type?, duration?, …, fit_speech?)` | переход между кусками; наплыв на речь — `warnings` (какие слова уйдут под переход и как поправить), `fit_speech: true` — сам укоротит |
 | `trim_piece(index, start_sec?, end_sec?)`, `add_insert`, `remove_insert` | подрезка куска (время исходника), вставки-мемы |
+| `search_video_memes(query, tag?, max_sec?)`, `place_video_meme(meme_id, at, mode?, game_audio?)`, `describe_video_meme` | **видеомемы**: реакция по смыслу → врезка во весь кадр со своим звуком (звук клипа выключен) или окошко; только одобренные владельцем — см. «Видеомемы» ниже |
 | `set_segment_speed(piece, speed?, reverse?, audio?)` | **скорость и реверс куска основы** (`render.speed`, по id куска — едет с ним): `speed` 0.25..4 (0.5 — слоу-мо, 1.5/2 — быстрее, 1 — как есть), `reverse: true` — задом наперёд (кусок ≤ 10 с исходника). Кусок на шкале clip — `(end_sec − start_sec)/speed` (`get_clip.pieces[].length`, `speed`, `reverse`): слои, камера, вставки, вырезы после него сдвигаются сами, субтитры куска растягиваются ровно в `1/speed` (у реверса — скрыты: речь задом не читается). `audio`: `tempo` (по умолчанию у скорости — речь без смены тона), `pitch` (как плёнка), `mute` (по умолчанию у реверса), `reverse` (звук задом, только с реверсом). `focus` куска — по-прежнему секунды ИСХОДНИКА от начала куска. J/L на стыке с развёрнутым куском не работают. Повтор килла в слоу-мо — второй кусок того же момента со `speed: 0.5`; плавного ramp нет — разрежь кусок. В редакторе — группа «Скорость куска» (REST `POST /api/clip-plans/{id}/segment-speed`) |
 | `set_piece_color(piece, exposure?, contrast?, saturation?, temperature?, tint?, reset?)` | **цветокоррекция куска основы** (`render.color_fix`, по id куска — едет с ним): `exposure` −2..2 (ступени EV, +1 — вдвое светлее), `contrast` 0.5..1.5, `saturation` 0..2 (0 — ч/б), `temperature` −1..1 (+ теплее, − холоднее), `tint` −1..1 (+ пурпурнее, − зеленее). Не переданное поле остаётся, `reset: true` — снять. Рендер: `lutyuv` + `eq` на кадре куска до лука пресета (куски с поправкой идут путём частей); с хромакеем источника не применяется. `get_clip.pieces[].color_fix`. В редакторе — группа «Цвет куска» (REST `POST /api/clip-plans/{id}/piece-color`) |
 | `match_piece_colors(reference?, pieces?, strength?)` | **авто-подгонка цвета кусков**: ffmpeg `signalstats` по 5 кадрам каждого куска (без чёрных полос `content_crop`) — средняя яркость, U/V, насыщенность; кускам `pieces` (нет — всем, кроме образца) ставится `exposure`/`saturation`/`temperature`/`tint` (контраст куска остаётся), чтобы средние совпали с куском-образцом `reference` (нет — самый длинный; его своя поправка учитывается). `strength` 0..1 — доля пути. Ответ: замеры до/после, `luma_gap_before/after`; «упёрлось в предел» (±1.5 EV, насыщенность 0.4..1.8) — сцены слишком разные. Редактор: «🎨 Подогнать остальные к этому» (REST `POST …/piece-color/match`) |
@@ -174,6 +175,35 @@ bearer_token_env_var = "VVF_TOKEN"
 * **Старые файлы.** `tools/assign_assets_to_projects.py`: по умолчанию dry-run с разбором на копии базы, `--apply`
   пишет, повтор ничего не меняет, `--rule 'РЕГЭКСП=ПРОЕКТ'` — решение владельца по названию. Неясное остаётся общим и
   печатается списком.
+
+### Видеомемы: врезки-реакции (мем-монтаж игры)
+
+Библиотека коротких реакций 0.5–4 с (человек орёт «вау», молится, кричит, ржёт) — «Общие файлы → Видеомемы»
+(`/files?tab=memes`). Мем = общий «Файл для монтажа» вида `video` + строка `video_memes` (`app/video_memes.py`):
+`description` (что значит), `when_to_use`, `tags` (шок, фейл, победа, кринж, смех, злость, тиммейт…), `transcript` +
+`transcript_lang` (локальный Whisper в фоне, без VAD, язык сам; `transcript_status` pending → done | empty | failed),
+`has_real_people` (по умолчанию да; это же готовая проверка «реальный человек» у файла — Gemini не зовётся),
+`source_url`, `license_note` («без открытой лицензии»), `approved`.
+
+* **Неодобренный мем ИИ не ставит никогда.** Одобряет владелец (страница или `PATCH … {"approved": true}`);
+  `place_video_meme` и `add_insert` отказывают, `list_assets` и ИИ-монтаж (`app/ai/montage.py`) его не видят. Gemini
+  для мемов не нужен: описание и теги пишешь ты (`describe_video_meme`) или владелец.
+* **Найти:** `search_video_memes(query, tag?, max_sec?, limit?)` — слова ищутся в тегах, «когда», описании и
+  расшифровке (грубая основа слова: «шоке» найдёт «шок»); только одобренные (`include_unapproved` — посмотреть, но
+  ставить нельзя).
+* **Поставить:** `place_video_meme(meme_id, at | at_word, mode?, duration?, game_audio?, fill?, x/y/scale?)`.
+  `full` (по умолчанию) — врезка во весь кадр на длину мема (≤ 4 с): картинка клипа заменена, звучит мем вровень с
+  голосом (`level: "speech"`), звук клипа выключен (`game_audio: cut` → `duck_volume: 0`) или приглушён (`duck` →
+  0.2); горизонтальный мем — `fill` blur (по умолчанию) или cover. `pip` — окошко поверх клипа (звук клипа приглушён).
+  Это обычная вставка `render.inserts` (`app/montage_assets.py`, до 12 на клип): рендер, превью, вырезы и пакет для
+  монтажки работают как с любой вставкой. Ставь ровно на момент (выстрел, смерть, фраза); рядом — `fx negate` на
+  0.3–1 с (синий «запретная зона», `color: "#6fa8ff"`) и удар звуком.
+* **REST:** `GET /api/video-memes?q=&tag=&approved=&max_sec=`, `POST /api/video-memes` (multipart `file`, `title`,
+  `tags`, `when_to_use`, `description`, `has_real_people`, `source_url`, `license_note`, `trim_start`, `trim_end`,
+  `auto_trim` — срезать тишину и чёрное по краям, по умолчанию да), `POST /api/video-memes/from-url`
+  (`{url, start?, end?}`; без `end` — 8 с от `start`; тот же yt-dlp и прокси, что у источников), `PATCH`/`DELETE
+  /api/video-memes/{id}` (удаление уносит файл), `POST /api/video-memes/{id}/transcribe` — расшифровать заново.
+  Мем длиннее 8 с не принимается — подрежь `trim_start`/`trim_end`.
 
 ### Смотреть монтаж: рендер 480p во время показа
 
@@ -307,7 +337,7 @@ bearer_token_env_var = "VVF_TOKEN"
 | Маркер | `props.highlight: {words: [2, 3], style: "marker", bg: "#ffd400", draw: 0.5}` | ключевая фраза в обучалке, разговоре, рекламе — вместо цвета слова |
 | Удар | `in: {type: "stomp", duration: 0.45}` у любого слоя; субтитры `style: "stomp"` (или `animation: "stomp"`) + `highlightWords` | панчлайн, «БАХ», цифра-итог; субтитры-акценты 1–2 слова; не на каждом слове ролика |
 | Глитч на отрезке | `add_glitch(at, duration 0.3–1, style, intensity 0.6–1, sfx: true)` | скример, шок, «сбой», поломка в игре: `rgb_split` — удар, `tear` — поломка, `vhs` — флешбек, `datamosh_lite` — «мозг сломался», `pixel_sort_lite` — арт; не больше пары за ролик, не в рекламе заказчика |
-| Эффект кадра | слой `{type: "fx", start, end, track, props: {kind, intensity?}}` | `vhs` — ретро, «запись с кассеты», флешбек; `grain_overlay` — кино, атмосфера; `light_leak` — тёплое, лайфстайл; `scanlines` — монитор, стрим; `chromatic` — удар, шок (0.3–1 с); `flash_frame` — склейка/удар (0.2–0.5 с); `grayscale` — **ч/б на отрезке** (панчлайн 1–2 с, `intensity` 1, `in`/`out` fade; после `end` цвет вернётся сам) |
+| Эффект кадра | слой `{type: "fx", start, end, track, props: {kind, intensity?}}` | `vhs` — ретро, «запись с кассеты», флешбек; `grain_overlay` — кино, атмосфера; `light_leak` — тёплое, лайфстайл; `scanlines` — монитор, стрим; `chromatic` — удар, шок (0.3–1 с); `flash_frame` — склейка/удар (0.2–0.5 с); `grayscale` — **ч/б на отрезке** (панчлайн 1–2 с, `intensity` 1, `in`/`out` fade; после `end` цвет вернётся сам); `negate` — **негатив на отрезке** (0.3–1.5 с, шок; `color: "#6fa8ff"` — синий «запретная зона», нет — чистый негатив) |
 | Реакция на звук | `react: {source: "voice"\|"music"\|"mix", prop: "scale"\|"glow"\|"opacity"\|"y", amount: 0.5–1.5}` | логотип/плашка «дышит» музыкой, PNGtuber-подпись под голос, CTA пульсирует в такт; 1–2 слоя на сцену |
 
 - **Эффект кадра** ложится на видео и слои **ниже** по `track`: титры, которые должны остаться чистыми, —

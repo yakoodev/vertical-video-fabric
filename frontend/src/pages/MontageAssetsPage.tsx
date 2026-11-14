@@ -14,8 +14,9 @@ import { AssetSearchPanel } from "@/pages/AssetSearchPanel";
 import { AssetGeneratePanel } from "@/pages/AssetGeneratePanel";
 import { useModuleOn, useModules } from "@/hooks/useModules";
 import { SECTIONS } from "@/lib/tabs";
+import { VideoMemesPanel } from "@/pages/VideoMemesPanel";
 
-type AssetTab = "shared" | "project" | "all";
+type AssetTab = "shared" | "project" | "all" | "memes";
 const PROJECT_ASSET_TABS: [AssetTab, string][] = [
   ["project", "Файлы проекта"],
   ["shared", "Общие"],
@@ -180,7 +181,8 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
   const [params, setParams] = useSearchParams();
   const tab: AssetTab = fixedProject
     ? params.get("sub") === "shared" ? "shared" : "project"
-    : params.get("tab") === "project" ? "project" : params.get("tab") === "all" ? "all" : "shared";
+    : params.get("tab") === "project" ? "project" : params.get("tab") === "all" ? "all"
+      : params.get("tab") === "memes" ? "memes" : "shared";
   const projects = useQuery({ queryKey: qk.channelProjects, queryFn: projectsApi.list, staleTime: 60_000 });
   const projectList = useMemo(() => projects.data ?? [], [projects.data]);
   const asked = fixedProject ?? (Number(params.get("project")) || null);
@@ -200,14 +202,14 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
       : setParams(
       next === "shared"
         ? {}
-        : next === "all"
-          ? { tab: "all" }
+        : next === "all" || next === "memes"
+          ? { tab: next }
           : { tab: "project", ...(project ? { project: String(project) } : {}) },
     );
   const query = useQuery({
     queryKey: qk.montageAssetsScoped(filter),
     queryFn: () => montageAssetsApi.listScoped(filter),
-    enabled: tab !== "project" || projectId != null,
+    enabled: tab !== "memes" && (tab !== "project" || projectId != null),
   });
   // Поиск картинок и ИИ-описание/генерация — модули (app/modules.py).
   const { on: moduleOn } = useModules();
@@ -287,7 +289,7 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
           </select>
         ) : null}
       </div>
-      {undescribed.length && moduleOn("asset_ai") ? (
+      {tab !== "memes" && undescribed.length && moduleOn("asset_ai") ? (
         <div className="asset-hint">
           <span>
             <b>{undescribed.length}</b> файл(ов) без описания — ИИ-монтаж их почти не использует.
@@ -312,66 +314,72 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
           </button>
         </div>
       ) : null}
-      {moduleOn("web_images") || moduleOn("asset_ai") ? (
+      {tab !== "memes" && (moduleOn("web_images") || moduleOn("asset_ai")) ? (
         <div className="asset-ai-row">
           {moduleOn("web_images") ? <AssetSearchPanel projectId={projectId} /> : null}
           {moduleOn("asset_ai") ? <AssetGeneratePanel projectId={projectId} /> : null}
         </div>
       ) : null}
-      <div
-        className={`asset-drop${drag ? " on" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDrag(true);
-        }}
-        onDragLeave={() => setDrag(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDrag(false);
-          void uploadAll(e.dataTransfer.files);
-        }}
-        onClick={() => inputRef.current?.click()}
-        role="button"
-        tabIndex={0}
-      >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*,video/*,audio/*,.gif"
-          multiple
-          hidden
-          onChange={(e) => {
-            if (e.target.files) void uploadAll(e.target.files);
-            e.target.value = "";
-          }}
-        />
-        <strong>{uploading ? `Загружаю… осталось ${uploading}` : "Перетащите файлы сюда или нажмите"}</strong>
-        <span className="muted">
-          картинки, GIF, короткие видео (до 8 с в клипе), звуки · можно много сразу · подпись «когда уместно» — главное
-          для ИИ
-        </span>
-      </div>
-
-      {query.isLoading || (tab === "project" && projects.isLoading) ? (
-        <Loading />
-      ) : query.isError ? (
-        <ErrorState error={query.error} onRetry={() => query.refetch()} />
-      ) : tab === "project" && projects.isSuccess && !projectList.length ? (
-        <EmptyState icon="📁" title="Проектов пока нет" hint="Файлы проекта появятся, когда будет создан проект" />
-      ) : !assets.length ? (
-        <EmptyState
-          icon="🧩"
-          title={tab === "project" ? "В этом проекте файлов нет" : tab === "shared" ? "Общих файлов нет" : "Библиотека пуста"}
-          hint="Закиньте пару мемов и звуков — и 🤖 ИИ-монтаж начнёт вставлять их в подходящие моменты"
-        />
+      {tab === "memes" ? (
+        <VideoMemesPanel />
       ) : (
         <>
-          <div className="asset-grid">
-            {shown.visible.map((a) => (
-              <AssetCard key={a.id} asset={a} onDelete={setPending} projects={projectList} />
-            ))}
+          <div
+            className={`asset-drop${drag ? " on" : ""}`}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDrag(true);
+            }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              void uploadAll(e.dataTransfer.files);
+            }}
+            onClick={() => inputRef.current?.click()}
+            role="button"
+            tabIndex={0}
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/*,video/*,audio/*,.gif"
+              multiple
+              hidden
+              onChange={(e) => {
+                if (e.target.files) void uploadAll(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <strong>{uploading ? `Загружаю… осталось ${uploading}` : "Перетащите файлы сюда или нажмите"}</strong>
+            <span className="muted">
+              картинки, GIF, короткие видео (до 8 с в клипе), звуки · можно много сразу · подпись «когда уместно» — главное
+              для ИИ
+            </span>
           </div>
-          <ShowMore rest={shown.rest} onMore={shown.more} />
+
+          {query.isLoading || (tab === "project" && projects.isLoading) ? (
+            <Loading />
+          ) : query.isError ? (
+            <ErrorState error={query.error} onRetry={() => query.refetch()} />
+          ) : tab === "project" && projects.isSuccess && !projectList.length ? (
+            <EmptyState icon="📁" title="Проектов пока нет" hint="Файлы проекта появятся, когда будет создан проект" />
+          ) : !assets.length ? (
+            <EmptyState
+              icon="🧩"
+              title={tab === "project" ? "В этом проекте файлов нет" : tab === "shared" ? "Общих файлов нет" : "Библиотека пуста"}
+              hint="Закиньте пару мемов и звуков — и 🤖 ИИ-монтаж начнёт вставлять их в подходящие моменты"
+            />
+          ) : (
+            <>
+              <div className="asset-grid">
+                {shown.visible.map((a) => (
+                  <AssetCard key={a.id} asset={a} onDelete={setPending} projects={projectList} />
+                ))}
+              </div>
+              <ShowMore rest={shown.rest} onMore={shown.more} />
+            </>
+          )}
         </>
       )}
 
