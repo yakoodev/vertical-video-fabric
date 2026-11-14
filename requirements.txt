@@ -9,6 +9,10 @@ jinja2>=3.1,<4
 numpy>=1.26,<3
 # Банк голосов (app/voice_bank.py); уже приезжает с faster-whisper
 onnxruntime>=1.14,<2
+# Смысл фраз для подбора видеомемов (app/text_embed.py): токенизатор и загрузка модели; оба уже приезжают с
+# faster-whisper — здесь явно, чтобы не пропали при его обновлении.
+tokenizers>=0.15,<1
+huggingface_hub>=0.20,<3
 opentimelineio>=0.17,<1
 opentimelineio-plugins>=0.17,<1
 opencv-python-headless>=4.9,<5

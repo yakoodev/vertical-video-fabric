@@ -327,23 +327,50 @@ def score(meme: dict, query: str) -> float:
     return round(total * (hit / len(words)) ** 2, 3)
 
 
+# Поиск по смыслу (app/meme_semantic.search_scores): мем на SEARCH_MIN_Z σ ближе среднего по библиотеке находится и
+# без общих слов («болезнь» → Малышева «…ужасная болезнь» и «Альцгеймер»); очки — SEARCH_WEIGHT за σ сверх 1.
+SEARCH_MIN_Z = 1.6
+SEARCH_WEIGHT = 1.5
+
+
+def semantic_search_scores(memes: list[dict], query: str) -> Any:
+    """z-оценки смысла запроса по мемам (по порядку) или None — модели нет (app/text_embed.py)."""
+    from app import meme_semantic as MS
+
+    try:
+        return MS.search_scores(query, MS.bank(memes))
+    except Exception:  # noqa: BLE001 - поиск по словам работает и без модели
+        return None
+
+
 def search_memes(store: Any, query: str = "", *, tag: str | None = None, approved: bool | None = True,
-                 max_sec: float | None = None, limit: int = 8) -> list[dict]:
-    """Мемы по смыслу: слова запроса в тегах, когда вставлять, описании, словах; фильтры одобрения, тега и длины.
-    Пустой запрос — новые первыми."""
+                 max_sec: float | None = None, limit: int = 8, semantic: bool = True) -> list[dict]:
+    """Мемы по смыслу: слова запроса в тегах, когда вставлять, описании, словах, плюс (``semantic``, по умолчанию)
+    близость по смыслу локальной моделью — мем находится и без общих слов; фильтры одобрения, тега и длины. Пустой
+    запрос — новые первыми. ``score`` — очки, ``semantic`` — насколько мем ближе по смыслу среднего (σ)."""
     want_tag = normalize_tags(tag)[0] if tag and normalize_tags(tag) else None
-    out: list[tuple[float, dict]] = []
-    for meme in list_memes(store, approved=approved):
+    memes = list_memes(store, approved=approved)
+    q = query.strip()
+    # шкала смысла — по всей библиотеке (до фильтров тега и длины), чтобы σ не зависела от фильтра
+    z = semantic_search_scores(memes, q) if (q and semantic and memes) else None
+    out: list[tuple[float, dict, float | None]] = []
+    for i, meme in enumerate(memes):
         if want_tag and not any(t == want_tag or t.startswith(_stem(want_tag)) for t in meme["tags"]):
             continue
         if max_sec is not None and meme["duration_sec"] > float(max_sec) + 1e-6:
             continue
-        points = score(meme, query) if query.strip() else 0.0
-        if query.strip() and points <= 0:
+        points = score(meme, q) if q else 0.0
+        sem = float(z[i]) if z is not None else None
+        if sem is not None:
+            points += SEARCH_WEIGHT * max(0.0, sem - 1.0)
+        if q and points <= 0:
             continue
-        out.append((points, meme))
+        if q and sem is not None and score(meme, q) <= 0 and sem < SEARCH_MIN_Z:
+            continue  # без общих слов — только заметно близкие по смыслу
+        out.append((round(points, 3), meme, sem))
     out.sort(key=lambda pair: (-pair[0], -int(pair[1]["id"])))
-    return [{**meme, "score": points} for points, meme in out[: max(1, min(50, int(limit or 8)))]]
+    return [{**meme, "score": points, **({"semantic": round(sem, 2)} if sem is not None else {})}
+            for points, meme, sem in out[: max(1, min(50, int(limit or 8)))]]
 
 
 def brief(meme: dict) -> dict:
@@ -356,4 +383,5 @@ def brief(meme: dict) -> dict:
         "tags": meme["tags"], "has_real_people": meme["has_real_people"], "approved": meme["approved"],
         "has_audio": meme["has_audio"], "size": f"{meme['width']}×{meme['height']}",
         **({"score": meme["score"]} if "score" in meme else {}),
+        **({"semantic": meme["semantic"]} if "semantic" in meme else {}),
     }

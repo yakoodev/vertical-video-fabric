@@ -4,7 +4,8 @@
 
 * мем — **ответ на реплику игрока или событие**, а не на громкость: сетап (фраза) → удар (событие рядом) → мем;
 * мем ставится **сразу после сетапа** (конец фразы), лучший — «эхо»: мем повторяет слово игрока («Не надо» → …,
-  «Альцгеймер» → «…ужасная болезнь», «158 в голову» → «Emotional damage»);
+  «Альцгеймер» → «…ужасная болезнь», «158 в голову» → «Emotional damage»); эхо по буквам — ``echo_words``, по
+  смыслу (без общих слов) — локальная модель, app/meme_semantic.py (``semantic_z``);
 * мемов немного: ~1 на 20–25 с («мемов чересчур много» на 1/10 с), не больше двух на бой, ни одного повтора;
 * последний кадр боя — почти всегда мем (реакция на итог боя);
 * мем — только удар: 0.8–2.2 с без пауз внутри (app/meme_trim.py), «мемы вставляй недолго — это темп портит».
@@ -27,6 +28,11 @@ MIN_GAP_SEC = 10.0      # мемы одного боя не ближе (секу
 MIN_FIT = 2.0           # хуже — мем не по смыслу, момент остаётся без мема
 MIN_FIT_LAST = 1.5      # конец боя: мем-ответ на итог (фейл → «Нет.») — хватает главного тега итога
 ECHO_POINTS = 4.0
+# Смысл (app/meme_semantic.line_scores): z-оценка мема среди библиотеки на эту реплику. Ниже SEM_FLOOR σ — шум,
+# выше — SEM_WEIGHT очков за σ (до SEM_CAP σ). Мем на 2.5 σ выше среднего — +2.25: как настроение + вид события.
+SEM_FLOOR = 1.0
+SEM_WEIGHT = 1.5
+SEM_CAP = 3.0
 KIND_TAGS = {
     "kill": ("победа", "хвастовство", "шок", "уважение", "вау"),
     "knock": ("шок", "победа", "вау", "хвастовство"),
@@ -137,15 +143,33 @@ def candidates(fight: Fight) -> list[Candidate]:
     return out
 
 
-def meme_fit(meme: dict, cand: Candidate) -> tuple[float, list[str]]:
-    """Насколько мем отвечает на момент: слова реплики в полях мема (app/video_memes.score), «эхо» — сильнее
-    всего, теги вида события — подсказка. Ответ — (очки, слова-эхо)."""
+def semantic_z(cand: Candidate, bank: Any) -> Any:
+    """Смысл реплики-сетапа против каждого мема библиотеки (app/meme_semantic.line_scores — фраза и смысловое эхо
+    слов): z-оценки по порядку библиотеки ``bank`` или None — модели нет / реплики нет. Реплики перед сетапом и вид
+    события в запрос не идут: на выборе монтажёра они только мешали (tools/meme_semantic_eval.py)."""
+    from app import meme_semantic as MS
+
+    return MS.line_scores(cand.text, bank) if cand.text and bank is not None else None
+
+
+def semantic_points(z: float | None) -> float:
+    """Очки смысла: мем ближе среднего на SEM_FLOOR σ и больше — SEM_WEIGHT за каждую σ сверх, до SEM_CAP σ."""
+    if z is None:
+        return 0.0
+    return SEM_WEIGHT * min(SEM_CAP, max(0.0, float(z) - SEM_FLOOR))
+
+
+def meme_fit(meme: dict, cand: Candidate, semantic: float | None = None) -> tuple[float, list[str]]:
+    """Насколько мем отвечает на момент: смысл реплики (``semantic`` — z-оценка из ``semantic_z``; None — модели
+    нет), слова реплики в полях мема (app/video_memes.score), «эхо» — сильнее всего, настроение реплики и теги вида
+    события — подсказка. Ответ — (очки, слова-эхо)."""
     from app.video_memes import score
 
     echo = echo_words(cand.text, meme) if cand.text else []
     query = " ".join(_content(cand.text))  # длинная реплика из служебных слов не топит смысл (оценка — доля слов)
     points = score(meme, query) if query else 0.0
     points += ECHO_POINTS * min(2, len(echo))
+    points += semantic_points(semantic)
     tags = [str(t).lower() for t in meme.get("tags") or []]
 
     def has(tag: str) -> bool:
@@ -172,12 +196,18 @@ def assign_memes(fights: list[Fight], library: list[dict], total_sec: float,
     notes: list[str] = []
     if not library:
         return [], ["одобренных видеомемов нет — эдит без мемов (одобрить: «Общие файлы → Видеомемы»)"]
+    from app import meme_semantic as MS
+
     budget = max(1, int(round(total_sec / every_sec)))
+    bank = MS.bank(library)  # None — модели нет: подбор по словам и тегам, как раньше
+    if bank is None:
+        notes.append("смысловой подбор мемов недоступен (модель не загрузилась) — мемы по словам и тегам")
     pairs: list[tuple[float, float, Candidate, dict, list[str]]] = []
     for f in fights:
         for cand in candidates(f):
-            for meme in library:
-                fit, echo = meme_fit(meme, cand)
+            z = semantic_z(cand, bank)
+            for i, meme in enumerate(library):
+                fit, echo = meme_fit(meme, cand, None if z is None else float(z[i]))
                 if fit >= (MIN_FIT_LAST if cand.last else MIN_FIT):
                     pairs.append((cand.weight * fit, fit, cand, meme, echo))
     pairs.sort(key=lambda p: (-p[0], -p[1], int(p[3]["meme_id"])))

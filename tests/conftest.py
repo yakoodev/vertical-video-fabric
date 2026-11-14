@@ -43,6 +43,8 @@ os.environ.setdefault("SESSION_KEEPALIVE", "0")
 os.environ.setdefault("AUTO_PUBLISH_META", "0")
 # Защита синтеза TTS слушает начало файла Whisper-ом — в тестах только явно (guard=True / monkeypatch).
 os.environ.setdefault("TTS_GUARD", "0")
+# Смысловой подбор мемов качает модель с Hugging Face — в тестах подмена app.text_embed.EMBED или явно.
+os.environ.setdefault("EMBED_MODEL", "off")
 
 
 @pytest.fixture(autouse=True, scope="session")

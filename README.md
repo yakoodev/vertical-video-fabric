@@ -67,7 +67,9 @@ Swagger UI: `http://localhost:8088/docs`. Порт меняется в `docker-c
 ### Данные, бэкап, обновление
 
 - Том `vv-fabric-data` → `/data`: `app.sqlite` (база), `secret.key` (ключ шифрования куки — **не теряй**),
-  `api_token.txt`, загрузки/клипы, `whisper-models/`. Дефолтный пак (луки, стили субтитров, промпты) сеется сам.
+  `api_token.txt`, загрузки/клипы, `whisper-models/`, `embed-models/` (модель смысла фраз для подбора видеомемов,
+  ~135 МБ, качается с Hugging Face при первом использовании; без сети — подбор по словам; `EMBED_MODEL=off` —
+  выключить). Дефолтный пак (луки, стили субтитров, промпты) сеется сам.
 - **Копия базы** (перед обновлением и в любой момент, сервис не останавливаем):
   ```bash
   docker compose exec app python -m app.db_backup /data/app.sqlite.bak-$(date +%Y%m%d-%H%M)
