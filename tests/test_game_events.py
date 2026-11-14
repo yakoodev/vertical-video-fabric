@@ -124,12 +124,13 @@ def _feed_frame(row: int = 0, knock: bool = False, owner: str = "yakoodev", seed
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(img, owner, (1400, yc + 7), font, 0.65, ORANGE, 2, cv2.LINE_AA)
     (w, _), _ = cv2.getTextSize(owner, font, 0.65, 2)
-    cv2.putText(img, "[gun]", (1400 + w + 10, yc + 7), font, 0.6, (240, 240, 240), 2, cv2.LINE_AA)
+    cv2.putText(img, "[bleed out]", (1400 + w + 10, yc + 7), font, 0.6, (240, 240, 240), 2, cv2.LINE_AA)
     if knock:
-        pts = np.array([[1660, yc - 8], [1676, yc - 8], [1668, yc + 8]], np.int32)
+        pts = np.array([[1636, yc - 8], [1652, yc - 8], [1644, yc + 8]], np.int32)
         cv2.fillPoly(img, [pts], (20, 20, 235))
-    (vw, _), _ = cv2.getTextSize("Victim", font, 0.6, 2)
-    cv2.putText(img, "Victim", (HUD.FEED_RIGHT - vw, yc + 7), font, 0.6, (240, 240, 240), 2, cv2.LINE_AA)
+    victim = "Victim_Name"  # строка ленты сплошная: оружие, значок, ник жертвы у правого края
+    (vw, _), _ = cv2.getTextSize(victim, font, 0.6, 2)
+    cv2.putText(img, victim, (HUD.FEED_RIGHT - vw, yc + 7), font, 0.6, (240, 240, 240), 2, cv2.LINE_AA)
     return img
 
 
@@ -152,7 +153,15 @@ def test_feed_track_becomes_one_kill_and_knock_rows_do_not():
     for i in range(16):  # строка 4 с, съезжает вниз
         frames.append((30 + i * 0.25, {"feed": HUD.feed_rows(_feed_frame(row=min(3, i // 4), seed=i))}))
     kills = [e for e in HUD.hud_events(frames) if e["kind"] == "kill"]
+    # ширину ника игрока узнать не из чего — убийство с низкой оценкой и пометкой
+    assert [e["t"] for e in kills] == [30.0] and kills[0]["score"] < 0.55 and "не подтверждён" in kills[0]["detail"]
+    # плашка «НОКАУТ» и строка нокаута того же ника раньше — ширина ника известна, убийство уверенное
+    banner = HUD.analyze_frame(_knock_frame())
+    knock = [(20 + i * 0.25, {**banner, "feed": HUD.feed_rows(_feed_frame(knock=True, seed=i))}) for i in range(6)]
+    kills = [e for e in HUD.hud_events(knock + frames) if e["kind"] == "kill"]
     assert [e["t"] for e in kills] == [30.0] and kills[0]["score"] >= 0.85
+    other = [(t, {"feed": HUD.feed_rows(_feed_frame(owner="teammate_long_name", seed=i))}) for i, t in enumerate(np.arange(50, 52, 0.25))]
+    assert [e["t"] for e in HUD.hud_events(knock + frames + other) if e["kind"] == "kill"] == [30.0]  # чужая ширина
     knocks = [(40 + i * 0.25, {"feed": HUD.feed_rows(_feed_frame(knock=True, seed=i))}) for i in range(8)]
     assert [e for e in HUD.hud_events(knocks) if e["kind"] == "kill"] == []
     lone = [(50.0, {"feed": HUD.feed_rows(_feed_frame())})]  # один кадр — пятно, не убийство

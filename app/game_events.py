@@ -33,10 +33,10 @@ SAMPLE_FPS = 4.0
 KEYFRAME_MAX_GAP = 0.5   # опорные кадры не реже — декодируем только их
 FLASH_JUMP = 70          # средняя яркость кадра выросла на столько за 0.25 с …
 FLASH_LEVEL = 200        # … и кадр почти белый
-FIGHT_GAP = 25.0
+FIGHT_GAP = 15.0
 FIGHT_LEAD = 4.0
 FIGHT_TAIL = 3.0
-DEDUPE = {"knock": 1.5, "kill": 3.0, "squad_wipe": 4.0, "win": 20.0, "level_up": 5.0, "max_level": 30.0,
+DEDUPE = {"knock": 1.5, "squad_wipe": 4.0, "win": 20.0, "level_up": 5.0, "max_level": 30.0,
           "death": 8.0, "ult": 3.0}
 
 

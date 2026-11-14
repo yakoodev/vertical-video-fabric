@@ -33,6 +33,8 @@ FEED_ROI = (1000, 190, 1860, 405)
 FEED_RIGHT = 1789
 FEED_ROW0, FEED_ROW_STEP, FEED_ROWS = 223.5, 32.3, 6  # центры строк ленты по y
 FEED_CONTRAST = 20
+FEED_MAX_GAP = 70  # px пустоты внутри строки ленты
+FEED_OTHER_ORANGE = 8  # столбцов оранжевых букв левее ника — не больше
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,8 @@ SPECS: dict[str, tuple[Spec, ...]] = {
     "apex": (
         Spec("knock_ru", "knock", BANNER_ROI, 0.72, needs_chevron=True, detail="НОКАУТ"),
         Spec("knock_en", "knock", BANNER_ROI, 0.70, needs_chevron=True, detail="KNOCKED DOWN"),
+        # Повторный нокаут (сбитого и поднятого врага) очков не даёт — плашка без значка ⌃.
+        Spec("reknock_ru", "knock", BANNER_ROI, 0.75, detail="ПОВТОРНЫЙ НОКАУТ"),
         Spec("assist_ru", "assist", BANNER_ROI, 0.72, needs_chevron=True, detail="СОДЕЙСТВИЕ В НОКАУТЕ"),
         Spec("wipe_ru", "squad_wipe", BANNER_ROI, 0.72, needs_chevron=True, detail="УНИЧТОЖЕНИЕ ОТРЯДА"),
         Spec("levelup_ru", "level_up", (480, 170, 1440, 320), 0.70, shrink=2, detail="НОВЫЙ УРОВЕНЬ"),
@@ -102,7 +106,7 @@ def _match(gray: Any, spec: Spec, tpl: Any) -> tuple[float, int]:
 def feed_rows(bgr: Any) -> list[dict]:
     """Строки ленты убийств с ником игрока слева: [{y, x0, x1, knock}] (1080p).
 
-    Ник игрока — оранжевый (тон 17–26 по OpenCV, полупрозрачная плашка гасит насыщенность до ~100),
+    Ник игрока — оранжевый (тон 15–24 по OpenCV; ник напарника в ленте жёлто-зелёный, 28+, полупрозрачная плашка гасит насыщенность до ~100),
     названия легенд в «Вражеский щит пробит — Октейн» — краснее (11–16) и стоят у правого края. Строка
     игрока-убийцы: оранжевого ≥ 70 px в ширину и он кончается левее правого края ленты на 120+ px
     (справа — значок и ник жертвы). Красный значок (тон ≤ 5 / ≥ 175) правее ника — нокаут, иначе
@@ -113,9 +117,11 @@ def feed_rows(bgr: Any) -> list[dict]:
     x0, y0, x1, y1 = FEED_ROI
     hsv = cv2.cvtColor(bgr[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
     h, s, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
-    orange = (h >= 17) & (h <= 26) & (s >= 70) & (v >= 150)
+    orange = (h >= 15) & (h <= 24) & (s >= 80) & (v >= 150)
     red = ((h <= 5) | (h >= 172)) & (s >= 110) & (v >= 120)
     white = (s <= 60) & (v >= 190)
+    # Штрихи букв и значков: ярче своего окружения (гладкое небо или стена — нет).
+    strokes = (white | (s >= 90) & (v >= 140)) & (v.astype(np.int16) - cv2.blur(v, (9, 9)).astype(np.int16) >= 18)
     edge = FEED_RIGHT - x0
     rows: list[dict] = []
     for k in range(FEED_ROWS):
@@ -135,10 +141,19 @@ def feed_rows(bgr: Any) -> list[dict]:
                 continue
             if int(white[lo:hi, b + 4:b + 70].sum()) < 20:
                 continue
+            # Ник убийцы — первый текст строки; в чате «Вы — Спецумение [Пилон…] не готово» левее оранжевого
+            # слова стоит ещё оранжевое «Вы» (значки рядом с ником — мелкие, до FEED_OTHER_ORANGE столбцов).
+            if int((orange & strokes)[lo:hi, max(0, a - 200):max(0, a - 12)].any(axis=0).sum()) > FEED_OTHER_ORANGE:
+                continue
             # Строка ленты прижата вправо: белый ник жертвы кончается у FEED_RIGHT (инвентарь, карта,
             # подписи предметов так не выглядят).
             tail = white[lo:hi, edge - 45:edge + 3]
             if int(tail.sum()) < 15 or tail.mean() > 0.45:
+                continue
+            # Одна строка от ника до ника жертвы: между ними причина/оружие/значки без пустых разрывов
+            # (вывеска на фоне + чужая строка чата справа так не выглядят).
+            texty = strokes[lo:hi, b + 1:edge].any(axis=0)
+            if _longest_false(texty) > FEED_MAX_GAP:
                 continue
             knock = int(red[lo:hi, b + 1:edge - 20].sum()) >= 8
             rows.append({"y": y0 + yc, "x0": x0 + a, "x1": x0 + b, "knock": knock})
@@ -149,6 +164,15 @@ def feed_rows(bgr: Any) -> list[dict]:
 # --------------------------------------------------------------------------- #
 # Кадр → наблюдение
 # --------------------------------------------------------------------------- #
+
+def _longest_false(mask: Any) -> int:
+    """Самый длинный подряд идущий кусок False."""
+    best = run = 0
+    for on in mask:
+        run = 0 if on else run + 1
+        best = max(best, run)
+    return best
+
 
 def _clusters(mask: Any, gap: int) -> list[tuple[int, int]]:
     """Отрезки True вдоль строки, разрывы ≤ gap сливаются: [(начало, конец)] включительно."""
@@ -194,10 +218,11 @@ BANNER_GAP = 0.8     # разрыв внутри одного показа пл�
 BANNER_SHIFT = 6     # сдвиг слова (другой ник — другая длина строки) — новая плашка, px
 BANNER_MIN_FRAMES = 2
 STATE_MIN_SEC = 1.0  # состояние засчитывается, если держится столько
-STATE_REARM = 12.0   # новое событие состояния — после стольких секунд без него
-FEED_TRACK_PX = 4
+STATE_KEEP_DROP = 0.25  # удержание состояния — по порогу ниже входного на столько
+FEED_TRACK_PX = 8
 FEED_TRACK_GAP = 1.6
 FEED_MIN_SEC = 0.75
+FEED_WIDTH_PX = 5   # ширина ника игрока в ленте — одна на запись
 
 
 def _score(best: float, thr: float) -> float:
@@ -233,22 +258,23 @@ def hud_events(frames: list[tuple[float, dict]], game: str = "apex") -> list[dic
                 continue
             events.append(_event(run["t0"], spec.kind, _score(run["best"], spec.thr), spec.detail))
 
-    # Состояния: событие при входе, если держится STATE_MIN_SEC и не было его STATE_REARM.
+    # Состояния: событие при входе, если держится STATE_MIN_SEC и прошлое было раньше spec.rearm.
     for name, spec in specs.items():
         if spec.style != "state":
             continue
         on_since: float | None = None
-        last_seen = fired_end = -1e9
+        fired_end = -1e9
         fired = False
         best_run = 0.0
         for t, obs in frames:
             best, _x = obs.get(name, (0.0, 0))
-            if best >= spec.thr:
+            # Гистерезис: вход — по порогу, удержание — по пониженному (надпись над панелью без подложки
+            # на светлом песке скачет 0.5–0.9 от кадра к кадру).
+            if best >= spec.thr or (on_since is not None and best >= spec.thr - STATE_KEEP_DROP):
                 if on_since is None:
                     on_since, best_run, fired = t, best, False
                 best_run = max(best_run, best)
-                last_seen = t
-                # Мигание состояния (кадр без совпадения посреди) не даёт второго события: ждём STATE_REARM.
+                # Мигание состояния (кадр без совпадения посреди) не даёт второго события: ждём spec.rearm.
                 if not fired and t - on_since >= STATE_MIN_SEC - 1e-6 and on_since - fired_end > spec.rearm:
                     events.append(_event(on_since, spec.kind, _score(best_run, spec.thr), spec.detail))
                     fired = True
@@ -259,7 +285,8 @@ def hud_events(frames: list[tuple[float, dict]], game: str = "apex") -> list[dic
 
     # После победы матч кончен: на подиуме и в сводке «строки ленты» — это фон, не убийства.
     wins = [e["t"] for e in events if e["kind"] == "win"]
-    events.extend(k for k in _feed_events(frames) if not any(3.0 < k["t"] - w < 240.0 for w in wins))
+    knocks = [e["t"] for e in events if e["kind"] == "knock" and "помощь" not in e["detail"]]
+    events.extend(k for k in _feed_events(frames, knocks) if not any(3.0 < k["t"] - w < 240.0 for w in wins))
     return _dedupe_levels(sorted(events, key=lambda e: e["t"]))
 
 
@@ -307,15 +334,31 @@ def feed_tracks(frames: list[tuple[float, dict]]) -> list[dict]:
     return tracks
 
 
-def _feed_events(frames: list[tuple[float, dict]]) -> list[dict]:
+def _feed_events(frames: list[tuple[float, dict]], knock_times: list[float] | None = None) -> list[dict]:
     """Убийства из ленты: трек строки «ник игрока слева», замеченный в нескольких кадрах, где значка
-    нокаута нет в большинстве кадров (красный значок в одном кадре — дым или фон за плашкой)."""
+    нокаута нет в большинстве кадров (красный значок в одном кадре — дым или фон за плашкой).
+
+    Ник игрока в записи один — и ширина его в ленте одна. Её узнаём по строкам нокаута рядом с плашкой
+    «НОКАУТ» (``knock_times``), иначе — по ширине, повторившейся хотя бы в двух треках. Строка другой
+    ширины (оранжевый ник напарника в «изготавливает: …», вывеска) — не убийство игрока; ширину узнать
+    не из чего — убийство с низкой оценкой и пометкой."""
     step = _step(frames)
     need = max(2, int(round(FEED_MIN_SEC / max(step, 1e-3))))
+    tracks = [tr for tr in feed_tracks(frames) if tr["n"] >= need]
+    width = lambda tr: tr["x1"] - tr["x0"]  # noqa: E731
+    owner = [width(tr) for tr in tracks if tr["knock_votes"] >= tr["kill_votes"]
+             and any(-1.0 <= tr["t0"] - k <= 3.0 for k in knock_times or [])]
+    if not owner:
+        widths = [width(tr) for tr in tracks]
+        owner = [w for w in widths if sum(abs(w - o) <= FEED_WIDTH_PX for o in widths) >= 2]
     out = []
-    for tr in feed_tracks(frames):
-        if tr["n"] >= need and tr["kill_votes"] > tr["knock_votes"]:
-            share = tr["kill_votes"] / tr["n"]
+    for tr in tracks:
+        if tr["kill_votes"] <= tr["knock_votes"]:
+            continue
+        share = tr["kill_votes"] / tr["n"]
+        if not owner:
+            out.append(_event(tr["t0"], "kill", 0.3 + 0.2 * share, "лента убийств: игрок добил (ник не подтверждён)"))
+        elif any(abs(width(tr) - w) <= FEED_WIDTH_PX for w in owner):
             out.append(_event(tr["t0"], "kill", 0.55 + 0.35 * share, "лента убийств: игрок добил"))
     return out
 
