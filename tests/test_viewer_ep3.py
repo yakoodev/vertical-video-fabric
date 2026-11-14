@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
+
+import pytest
 
 from app import viewer_ep3 as E3
 
@@ -40,22 +44,21 @@ def test_events_order_length_and_static_ramps():
              "look0", "resume", "col0", "raise", "self0", "her0", "her1", "reveal", "flick", "wide", "choice", "cta", "static_end"]
     assert [ev[n] for n in order] == sorted(ev[n] for n in order)
     assert 45.0 <= total <= 70.0
-    keys = [x for x in scene["fx_keys"] if "static" in x]
-
-    def static(t):
-        for a, b in zip(keys, keys[1:]):
-            if a["t"] <= t < b["t"]:
-                return a["static"] + (b["static"] - a["static"]) * (t - a["t"]) / (b["t"] - a["t"])
-        return keys[-1]["static"]
+    from app import psx_look as L
 
     n = int(round(total * E3.FPS))
-    lv = [static(f / E3.FPS) for f in range(n)]
-    assert lv[0] == 0.0  # кадр 0 — чистая обложка (её лицо + титр)
-    peak = max(range(45), key=lambda f: lv[f])
-    assert lv[peak] > 0.99 and 0.4 <= peak / E3.FPS <= 0.6
-    assert max(abs(lv[f + 1] - lv[f]) for f in range(45)) < 0.25
-    tail = lv[n - 30:]
-    assert tail[-1] > 0.99 and max(b - a for a, b in zip(tail, tail[1:])) < 0.25
+    lv = L.static_levels(scene["fx_keys"], n, E3.FPS)
+    # Кадр 0 и весь крючок (до первой склейки без пары кадров) — чистая обложка: её лицо + титр (lag_report.md).
+    first_cut = int(round(ev["card0"] * E3.FPS))
+    assert max(lv[: first_cut - 1]) == 0.0
+    runs = L.static_runs(lv)
+    # Помехи — короткие всплески ≤ 6 кадров, приглушённые; в конце — 6 кадров.
+    assert runs and all(r["frames"] <= L.BURST_FRAMES for r in runs), runs
+    assert all(r["peak"] <= L.BURST_PEAK_MAX + 1e-9 for r in runs[:-1])
+    assert runs[0]["start"] <= first_cut < runs[0]["start"] + runs[0]["frames"]  # первый всплеск — на склейке крючка
+    assert runs[-1]["start"] + runs[-1]["frames"] == n and lv[-1] >= 0.7
+    # Срывы трекинга по 0.1 с (+0.1 с выхода в vhs.ts) — тоже ≤ 6 кадров.
+    assert all(b - a <= E3.TEAR + 1e-9 for a, b in scene["vhs"]["tears"])
     assert scene["titles"][0]["t0"] == 0 and scene["titles"][0]["lines"] == ["НЕ ДЫШИ"]
     assert scene["roll"]["stat"] == "ВОЛЯ" and scene["comment"]["nick"] == "Neko_Sil Flood"
     assert scene["cards"][0]["lines"][-1] == "4 — СВОЁ"
@@ -89,6 +92,24 @@ def test_onryo_is_the_approved_look_and_keeps_distance():
             p = pos(t)
             assert math.hypot(p[0], p[2]) >= 0.8, (t, p)
         t += 1 / 30
+
+
+PACKS_VTB = Path("D:/vvf-offload/vtubika/packs_vtb")
+
+
+@pytest.mark.skipif(not (PACKS_VTB / "packs.json").is_file(), reason="нет паков vtubika на этой машине")
+def test_every_sound_of_the_episode_is_in_the_pack_index(monkeypatch):
+    """Чистовая падала бы после озвучки и рендера: riser-subtle.ogg лежал в папке, но не в индексе пака."""
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "motion_packs_dir", PACKS_VTB)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import viewer_ep3 as T3
+
+    roll, script, beats, total = _beats()
+    ev = E3.ep3_scene(beats, total, roll, 1.6, 1.3)["events"]
+    hits = T3.hits_ep3(ev, [1.0, 2.0, 3.0, 4.0], total, [(1.0, 2.0), (1.5, 1.8), (2.0, 1.6), (2.5, 1.5), (3.0, 1.4)])
+    assert len(hits) > 20 and all(Path(p).is_file() for _, p, _, _ in hits)
 
 
 def test_sneak_keys_smooth_and_stop_on_crunch():

@@ -11,10 +11,12 @@
  *    цвет пропадает, картинка бьётся;
  *  - переключение головок: нижние ~9 строк кадра — сдвиг «клюв» и шум (узнаваемый признак VHS);
  *  - выпадения: короткие светлые и тёмные чёрточки в одну строку, шум яркости (сильнее в тёмном).
- * Шум — хеш (x, y, кадр) из fx.ts: повторный рендер даёт тот же кадр.
+ * Шум — хеш (x, y, узор) из fx.ts: узор держится несколько кадров (grainFrame), строки развёртки и гребёнка
+ * стоят на месте — шум на каждый кадр по всему экрану TikTok пережимает в кашу и рывки (lag_report.md).
+ * Повторный рендер даёт тот же кадр.
  * handheld() — ручная съёмка: покачивание камеры (положение, наклон, крен) по сумме синусов.
  */
-import { hash3 } from "./fx.ts";
+import { grainFrame, hash3 } from "./fx.ts";
 
 export interface VhsSpec {
   /** Сила по времени [t, k] (линейно): 0 — выкл, 1 — камера, ~1.8 — затёртая старая плёнка. */
@@ -49,12 +51,15 @@ export function focusBlur(s: VhsSpec | undefined, t: number): number {
   return b;
 }
 
-/** Срыв трекинга 0..1: быстрый, но не мгновенный вход (~2 кадра, плавно), плавный выход. */
+/** Выход из срыва трекинга (с): 3 кадра — срыв [a, b] длиной 0.1 с весь укладывается в 6 кадров. */
+export const TEAR_OUT = 0.1;
+
+/** Срыв трекинга 0..1: быстрый, но не мгновенный вход (~2 кадра, плавно), короткий плавный выход (TEAR_OUT). */
 export function tearAt(s: VhsSpec | undefined, t: number): number {
   let v = 0;
   for (const [a, b] of s?.tears || []) {
     if (t >= a && t < b) v = Math.max(v, Math.min(1, (t - a) / 0.07) ** 1.5);
-    else if (t >= b && t < b + 0.25) v = Math.max(v, 1 - (t - b) / 0.25);
+    else if (t >= b && t < b + TEAR_OUT) v = Math.max(v, 1 - (t - b) / TEAR_OUT);
   }
   return v;
 }
@@ -100,9 +105,11 @@ export function vhs(d: Uint8ClampedArray | Uint8Array, w: number, h: number, k: 
   const Y = new Float32Array(w), U = new Float32Array(w), V = new Float32Array(w);
   const Yb = new Float32Array(w), Ub = new Float32Array(w), Vb = new Float32Array(w);
   const tmp = new Float32Array(w), pre = new Float32Array(w + 1);
-  // Вертикальный подскок кадра: редко на ±1–2 строки, при срыве чаще.
-  const jumpy = hash3(3, 7, frame) < 0.1 * k + 0.5 * tear;
-  const dy = jumpy ? Math.round((hash3(4, 8, frame) - 0.5) * 4) : 0;
+  const nf = grainFrame(frame), hf = frame >> 1; // узор шума (раз в GRAIN_HOLD кадров) и «полукадр» для мелочей
+  // Вертикальный подскок кадра: редко на ±1–2 строки (≈ раз в 3 с; был 3 раза в секунду — читалось как рывки),
+  // при срыве чаще.
+  const jumpy = hash3(3, 7, hf) < 0.02 * k + 0.5 * tear;
+  const dy = jumpy ? Math.round((hash3(4, 8, hf) - 0.5) * 4) : 0;
   // Полосы трекинга: две ползут снизу вверх; при срыве — до шести.
   const nb = tear > 0.05 ? 6 : 2;
   const bands: number[] = [];
@@ -113,19 +120,19 @@ export function vhs(d: Uint8ClampedArray | Uint8Array, w: number, h: number, k: 
   for (let y = 0; y < h; y++) {
     const sy = Math.max(0, Math.min(h - 1, y + dy));
     // Сдвиг строки: плавная волна + мелкая дрожь + полоса трекинга + «клюв» нижних строк.
-    let sx = 0.9 * k * Math.sin(y * 0.045 + t * 2.6) + (hash3(5, y, frame) - 0.5) * 0.9 * k;
+    let sx = 0.9 * k * Math.sin(y * 0.045 + t * 2.6) + (hash3(5, y, nf) - 0.5) * 0.5 * k;
     let snow = 0;
     for (const by of bands) {
       const dd = Math.abs(y - by);
       if (dd < bandH) {
         const m = 1 - dd / bandH;
-        sx += (hash3(6, y, frame) - 0.5) * (9 + 22 * tear) * m * k;
+        sx += (hash3(6, y, hf) - 0.5) * (9 + 22 * tear) * m * k;
         snow = Math.max(snow, 0.22 * m * Math.min(1.4, k) + 0.4 * tear * m);
       }
     }
     if (y >= h - headRows) {
       const e = (y - (h - headRows)) / headRows;
-      sx += (4 + 14 * e + 10 * tear) * (0.6 + 0.4 * hash3(7, y, frame)) * (hash3(8, frame, 1) < 0.5 ? 1 : -0.4);
+      sx += (4 + 14 * e + 10 * tear) * (0.6 + 0.4 * hash3(7, y, hf)) * (hash3(8, hf, 1) < 0.5 ? 1 : -0.4);
       snow = Math.max(snow, 0.3 + 0.35 * e);
     }
     if (tear > 0.05) sx += (hash3(9, y >> 1, frame) - 0.5) * 16 * tear;
@@ -146,17 +153,18 @@ export function vhs(d: Uint8ClampedArray | Uint8Array, w: number, h: number, k: 
     for (let x = 0; x < w; x++) Ub[x] = tmp[Math.max(0, x - 2)];
     box(V, tmp, w, cr, pre);
     for (let x = 0; x < w; x++) Vb[x] = tmp[Math.max(0, x - 2)];
-    const odd = (y & 1) === (frame & 1);
+    const odd = (y & 1) === 1; // строки развёртки и гребёнка — на месте (не мигают через кадр)
     const scan = odd ? 1 - 0.1 * Math.min(1.4, k) : 1;
     for (let x = 0; x < w; x++) {
       // Гребёнка чересстрочки: на одном из полей строка взята с пол-пикселя левее.
       let l = odd ? 0.5 * (Yb[x] + Yb[Math.max(0, x - 1)]) : Yb[x];
       const u = Ub[x] * sat * 1.05, v = Vb[x] * sat * 1.05;
-      // Шум яркости: сильнее в тёмном; поднятые чёрные; светлое выгорает.
-      const nz = (hash3(x, y, frame + 11) - 0.5) * (14 + 10 * (1 - l / 255)) * Math.min(1.6, k);
+      // Шум яркости: слабый, клетка 2×1 (полоска, как на кассете), узор держится; сильнее в тёмном; поднятые чёрные;
+      // светлое выгорает.
+      const nz = (hash3(x >> 1, y, nf * 7919 + 11) - 0.5) * (6 + 5 * (1 - l / 255)) * Math.min(1.6, k);
       l = l * 0.92 + 14 * Math.min(1.4, k) + nz;
       if (l > 200) l += (l - 200) * 0.25;
-      if (snow > 0) l += (hash3(x >> 1, y, frame + 3) * 255 - l) * snow;
+      if (snow > 0) l += (hash3(x >> 1, y, hf + 3) * 255 - l) * snow;
       l *= scan;
       const r = l + v, b = l + u;
       const g = (l - 0.299 * r - 0.114 * b) / 0.587;
@@ -169,8 +177,8 @@ export function vhs(d: Uint8ClampedArray | Uint8Array, w: number, h: number, k: 
   // Выпадения: светлые/тёмные чёрточки в одну строку.
   const n = Math.round((2 + 7 * tear) * Math.min(1.5, k));
   for (let i = 0; i < n; i++) {
-    const y = Math.floor(hash3(i, 21, frame) * h), x0 = Math.floor(hash3(i, 22, frame) * w);
-    const len = 6 + Math.floor(hash3(i, 23, frame) * 34), bright = hash3(i, 24, frame) < 0.7 ? 235 : 20;
+    const y = Math.floor(hash3(i, 21, hf) * h), x0 = Math.floor(hash3(i, 22, hf) * w);
+    const len = 6 + Math.floor(hash3(i, 23, hf) * 34), bright = hash3(i, 24, hf) < 0.7 ? 235 : 20;
     for (let x = x0; x < Math.min(w, x0 + len); x++) {
       const j = (y * w + x) * 4;
       d[j] = d[j] * 0.3 + bright * 0.7;

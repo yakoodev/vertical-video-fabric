@@ -1,7 +1,13 @@
 """Серия 3 «Замри» (проект 10, @.psx53) от сценария до готового mp4.
 
     python tools/viewer_ep3.py [--out D:/vvf-offload/vtubika/psx/ep3] [--env ../.env] [--gl gpu]
-        [--dry] [--preview marks|0,3.5,12] [--tag a] [--tts-only] [--skip-render]
+        [--dry [--animatic]] [--rehearsal] [--wait-tts MIN] [--preview marks|0,3.5,12] [--tag a] [--tts-only] [--skip-render]
+
+Чистовая, когда Gemini TTS снова доступен (одна команда — озвучка, рендер, звук, ep3_tiktok.mp4, проверки):
+    .venv\\Scripts\\python.exe tools\\viewer_ep3.py --env .env [--wait-tts 30]
+``--wait-tts 30`` — если Gemini ещё недоступен (геоблок/лимит), ждать и пробовать каждые 30 мин (до --wait-hours 24),
+голос не подменяется. ``--rehearsal`` — тот же путь целиком без озвучки (заглушки вместо голосов, ep3_rehearsal*.mp4):
+проверка сведения, экспорта и правил файла для TikTok (app/psx_look.py) до появления голоса.
 
 Конвейер серии 2 (озвучка → Whisper-слова → темп → рендер кусками → звук → файл для TikTok): огонёк — бесплатный
 Gemini Enceladus, её шёпот — Leda, громкая связь вокзала — Charon через «рупор». Каждая отдельная реплика (её, громкая
@@ -117,7 +123,8 @@ def hits_ep3(events: dict, glitch_times: list[float], total: float, steps: list[
             ("sub", pack("freesound/bass-drop.ogg"), ev["reveal"], slow(0.52, 300)),
             ("tick", pack("kenney-interface/switch_002.ogg"), ev["flick"] + 0.04, slow(0.8)),
             ("tick", pack("kenney-interface/switch_003.ogg"), ev["flick"] + 0.19, slow(0.8)),
-            ("riser", pack("freesound/riser-subtle.ogg"), ev["wide"] - 0.2, slow(0.7, 2200)),
+            # riser.ogg, как в серии 2: riser-subtle.ogg лежит в папке, но не в индексе пака (packs.json) — pack() его не видит
+            ("riser", pack("freesound/riser.ogg"), ev["wide"] - 0.2, slow(0.7, 2200)),
             ("beep", pack("kenney-interface/error_004.ogg"), ev["self0"] + 0.4, ""),
             ("chime_soft", pack("freesound/triangle.ogg"), ev["choice"] + 0.15, slow(0.84) + ",atrim=0:0.8,afade=t=out:st=0.5:d=0.3")]
     for i, g in enumerate(glitch_times):
@@ -198,6 +205,61 @@ def heard_vs_script(heard: list[dict], want_text: str, nick: str) -> dict:
             "extra_heard": n - dp[m][n], "nick_heard": nick_hit, "heard": " ".join(w["word"] for w in heard)}
 
 
+def placeholder_voice(spans: list[tuple[float, float]], length: float, path: Path) -> Path:
+    """Заглушка голоса для прогона без озвучки (--rehearsal): шум в полосе речи с огибающей слогов (~4 Гц) на время
+    слов. Только чтобы прогнать сведение и экспорт целиком — в серию не идёт."""
+    import wave
+
+    import numpy as np
+
+    rate = 48000
+    n = int(round(max(0.1, length) * rate))
+    rng = np.random.default_rng(17)
+    x = rng.standard_normal(n).astype(np.float32)
+    k = np.ones(12, np.float32) / 12  # грубый ФНЧ: шипение → «гул голоса»
+    x = np.convolve(x, k, mode="same") - np.convolve(x, np.ones(240, np.float32) / 240, mode="same")
+    t = np.arange(n) / rate
+    env = np.zeros(n, np.float32)
+    for a, b in spans:
+        m = (t >= a) & (t < b)
+        env[m] = 0.55 + 0.45 * np.sin(2 * np.pi * 4.2 * (t[m] - a)) ** 2
+    y = x / (np.abs(x).max() + 1e-6) * env * 0.5
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes((np.clip(y, -1, 1) * 32767).astype(np.int16).tobytes())
+    return path
+
+
+def narrate_all(E, E3, text: str, work: Path, wait_min: float, wait_hours: float):
+    """Три голоса Gemini (её шёпот, громкая связь, огонёк). Геоблок: без --wait-tts — выход с объяснением; с ним — ждём
+    и пробуем снова каждые wait_min минут (не дольше wait_hours). Другой голос не подставляем (владелец: «ждём»)."""
+    import time
+
+    t_end = time.time() + wait_hours * 3600
+    while True:
+        try:
+            her = V.narrate(E3.HER_TEXT, work, E3.HER_VOICE)
+            pa = V.narrate(E3.PA_TEXT, work, E3.PA_VOICE)
+            wisp = V.narrate(text, work, E.WISP_VOICE)
+            return her, pa, wisp
+        except (RuntimeError, ValueError) as e:
+            if not tts_unavailable(e):
+                raise
+            if wait_min <= 0 or time.time() + wait_min * 60 > t_end:
+                raise SystemExit(f"Gemini TTS недоступен ({str(e)[:160]}) — голос не меняем, ждём; запустите позже "
+                                 "(или с --wait-tts 30 — сам дождётся), для проб кадров — --dry") from e
+            log(f"Gemini TTS пока недоступен ({str(e)[:120]}) — жду {wait_min:g} мин и пробую снова")
+            time.sleep(wait_min * 60)
+
+
+def tts_unavailable(e: BaseException) -> bool:
+    """Ошибка Gemini TTS, которая проходит сама: геоблок, прокси/сеть не отвечает, лимит бесплатного тарифа."""
+    s = str(e)
+    return any(m in s for m in ("location is not supported", "Gemini TTS не ответил", "лимит"))
+
+
 def main(argv: list[str] | None = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -213,7 +275,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--animatic", action="store_true", help="с --dry: весь ролик без звука (проверка планов и движения) + лист")
     ap.add_argument("--debug-cam", default="", help="пробы: все планы с этой камеры «x,y,z,tx,ty,tz,fov» (проверка касаний сбоку)")
+    ap.add_argument("--rehearsal", action="store_true",
+                    help="прогон без озвучки целиком: планы --dry, вместо голосов — заглушки; сведение, файл для TikTok и "
+                         "проверки как в чистовой (ep3_rehearsal*.mp4) — чтобы чистовая с голосом прошла с первого раза")
+    ap.add_argument("--wait-tts", type=float, default=0.0, metavar="MIN",
+                    help="Gemini TTS недоступен (геоблок/лимит) — ждать и пробовать снова каждые MIN минут, потом доделать всё")
+    ap.add_argument("--wait-hours", type=float, default=24.0)
     a = ap.parse_args(argv)
+    dry = a.dry or a.rehearsal
     work = a.out / "work"
     work.mkdir(parents=True, exist_ok=True)
     if a.env.is_file():
@@ -232,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
     text = " ".join(s["text"] for s in script)
     log(f"бросок: {r['die']} + {r['bonus']} = {r['total']} против {r['dc']} → {'успех' if r['ok'] else 'провал'}; текст: {text}")
     checks: dict = {}
-    if a.dry:
+    if dry:
         words = E3.estimate_words(text)
         her_words, her_len = E3.estimate_words(E3.HER_TEXT, cps=9.0), 1.6
         pa_words, pa_len = E3.estimate_words(E3.PA_TEXT, cps=8.0), 1.3
@@ -240,15 +309,7 @@ def main(argv: list[str] | None = None) -> int:
         voice = None
         env, her_env, tts = [], [], {"dry": True}
     else:
-        try:
-            her_raw, her_tts = V.narrate(E3.HER_TEXT, work, E3.HER_VOICE)
-            pa_raw, pa_tts = V.narrate(E3.PA_TEXT, work, E3.PA_VOICE)
-            take, tts = V.narrate(text, work, E.WISP_VOICE)
-        except RuntimeError as e:
-            if "location is not supported" in str(e):
-                raise SystemExit("Gemini TTS недоступен отсюда (геоблок, прокси не отвечает) — платный голос не берём; "
-                                 "запустите позже или с --dry для проб кадров") from e
-            raise
+        (her_raw, her_tts), (pa_raw, pa_tts), (take, tts) = narrate_all(E, E3, text, work, a.wait_tts, a.wait_hours)
         log(f"озвучка: огонёк {tts}, она {her_tts}, связь {pa_tts}")
         if a.tts_only:
             print(json.dumps({"wisp": str(take), "her": str(her_raw), "pa": str(pa_raw)}, ensure_ascii=False))
@@ -274,7 +335,7 @@ def main(argv: list[str] | None = None) -> int:
     spec = E3.build_ep3_spec(E.scene_base("street"), beats, shifted, total, env, roll, her_len, her_env, her_words, pa_len, pa_words)
     events = spec.pop("_events")
     tag = f"_{a.tag}" if a.tag else ""
-    rwork = work / ("dry" if a.dry else "final")
+    rwork = work / ("dry" if dry else "final")  # прогон (--rehearsal) — тот же рендер, что у --dry
     rwork.mkdir(exist_ok=True)
     if a.debug_cam:
         from app.viewer_ep2 import pov_key
@@ -289,12 +350,12 @@ def main(argv: list[str] | None = None) -> int:
         rwork = rwork / "debug"
         rwork.mkdir(exist_ok=True)
     spec_path = rwork / "spec.json"
-    if not a.dry:
+    if not dry:
         from app import lipsync
 
         lipsync.attach_psx(spec, her_wav, her_words, her_len)
     spec_path.write_text(json.dumps(spec, ensure_ascii=False, indent=1), "utf-8")
-    write_script(a.out / ("script_dry.md" if a.dry else "script.md"), script, beats, roll, events, total, a.dry)
+    write_script(a.out / ("script_dry.md" if dry else "script.md"), script, beats, roll, events, total, dry)
     if a.preview or (a.dry and not a.animatic):
         from vtubika_story import tile
 
@@ -316,6 +377,10 @@ def main(argv: list[str] | None = None) -> int:
         log(f"рендер: {res['frames']} кадров, чёрных {len(res['black_frames'])}")
         if res["black_frames"]:
             raise SystemExit(f"чёрные кадры: {res['black_frames'][:10]}")
+    from app import psx_look as L
+
+    nfr = int(round(total * fps))
+    static_plan = L.static_runs(L.static_levels(spec["fx"]["keys"], nfr, fps))
     if a.dry:  # раскадровка без звука: только картинка и лист кадр-в-секунду
         from vtubika_story import tile
 
@@ -325,9 +390,15 @@ def main(argv: list[str] | None = None) -> int:
         marks = sheet_marks(total)
         frames = [V.frame_at(anim, t, rwork / f"sheet_{i:02d}.png", "scale=270:480:flags=neighbor") for i, (t, _) in enumerate(marks)]
         tile(frames, a.out / "sheet_dry.jpg", cols=10, labels=[f"{t:.0f}" if not lab else f"{t:.2f} {lab}" for t, lab in marks])
-        print(json.dumps({"animatic": str(anim), "sheet": str(a.out / "sheet_dry.jpg"), "motion": {k: v for k, v in T2.motion_check(anim, spec).items() if k != "shots"},
+        head = [(round(i * 2 / 30, 3), "") for i in range(min(40, nfr // 2))]
+        hframes = [V.frame_at(anim, t, rwork / f"head_{i:02d}.png", "scale=270:480:flags=neighbor") for i, (t, _) in enumerate(head)]
+        tile(hframes, a.out / "sheet_dry_head.jpg", cols=10, labels=[f"{t:.2f}" for t, _ in head])
+        print(json.dumps({"animatic": str(anim), "sheet": str(a.out / "sheet_dry.jpg"), "static_plan": static_plan,
+                          "motion": {k: v for k, v in T2.motion_check(anim, spec).items() if k != "shots"},
                           "static": T2.static_profile(anim)}, ensure_ascii=False))
         return 0
+    if any(r["frames"] > L.BURST_FRAMES for r in static_plan):
+        raise SystemExit(f"помехи длиннее {L.BURST_FRAMES} кадров: {static_plan}")
     cuts: dict = {}
     for name, fn in (("scdet", check_cuts), ("frames", V.frame_cuts)):
         try:
@@ -340,50 +411,60 @@ def main(argv: list[str] | None = None) -> int:
     A.UNDER.update({"sub": 9.0, "wet": 13.0, "bone": 13.0, "heart": 11.0, "riser": 14.0, "chime_soft": 18.0, "barefoot": 9.0,
                     "gong": 8.0, "crunch": 6.0, "tick": 12.0})
     steps = onryo_steps(spec["onryo"]["keys"], spec["onryo"]["walk"]["stride"], 0.0, events["col0"])
-    final = a.out / "ep3.mp4"
+    base = "ep3_rehearsal" if a.rehearsal else "ep3"  # прогон без голоса не затирает чистовую
+    sfx = "_rehearsal" if a.rehearsal else ""
+    if a.rehearsal:  # заглушки голосов на время слов (огонёк — от начала голоса, без LEAD)
+        voice = placeholder_voice([(w["start"] - E3.LEAD, w["end"] - E3.LEAD) for w in shifted], total - E3.LEAD, rwork / "rh_wisp.wav")
+        her_wav = placeholder_voice([(w["start"], w["end"]) for w in her_words], her_len, rwork / "rh_her.wav")
+        pa_wav = placeholder_voice([(w["start"], w["end"]) for w in pa_words], pa_len, rwork / "rh_pa.wav")
+    final = a.out / f"{base}.mp4"
     glitch = sorted(set(round(g, 2) for g in spec["cuts"] if g > 0.5))
     extras = [{"name": "her", "path": her_wav, "at": events["her0"], "rel_db": -3.0},
               {"name": "pa", "path": pa_wav, "at": events["pa_voice"], "rel_db": -4.0}]
     mixed = A.mix(silent, voice, E3.LEAD, total, events, spec["fx"]["keys"], glitch[:9], final, rwork,
                   hits_fn=lambda ev, g, tt: hits_ep3(ev, g, tt, steps), extras=extras,
                   voice_peak_lu=10.0, bus_db=-3.0, headroom=1.0, release_ms=150)
-    # Для TikTok: постоянные 30 к/с, поток ограничен, ключевой кадр раз в секунду, level 4.2, faststart.
-    tiktok = a.out / "ep3_tiktok.mp4"
-    nfr = int(round(total * fps))
-    run(["ffmpeg", "-y", "-v", "error", "-i", str(final), "-frames:v", str(nfr), "-c:v", "libx264", "-preset", "slow", "-crf", "18",
-         "-fps_mode", "cfr", "-r", "30", "-maxrate", "12M", "-bufsize", "24M", "-profile:v", "high", "-level", "4.2", "-g", "30",
-         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", str(tiktok)], "файл для TikTok")
-    tg = a.out / "ep3_tg.mp4"
+    # Для TikTok (app/psx_look.py, lag_report.md): картинка — прямо из рендера (без лишнего пережатия сведённого mp4),
+    # звук — из сведения; H.264 High@4.0, ровно 30 к/с, ключевой кадр раз в секунду, CRF 20 ≤ 8 Мбит/с, +faststart.
+    tiktok = a.out / f"{base}_tiktok.mp4"
+    run(L.tiktok_args(silent, tiktok, nfr, audio=final, fps=fps), "файл для TikTok")
+    stream = L.check_tiktok(tiktok, fps)
+    log(f"файл для TikTok: {stream['mbps']} Мбит/с, пик {stream['peak_1s_mbps']}, замечания: {stream['issues'] or 'нет'}")
+    tg = a.out / f"{base}_tg.mp4"
     kbps = int((19.0 * 8 * 1000) / total) - 160
-    run(["ffmpeg", "-y", "-v", "error", "-i", str(final), "-vf", "scale=720:-2", "-c:v", "libx264", "-preset", "slow", "-b:v",
+    run(["ffmpeg", "-y", "-v", "error", "-i", str(tiktok), "-vf", "scale=720:-2", "-c:v", "libx264", "-preset", "slow", "-b:v",
          f"{min(2400, kbps)}k", "-maxrate", f"{min(2800, kbps + 300)}k", "-bufsize", "4000k", "-fps_mode", "cfr", "-r", "30",
          "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(tg)], "копия для Telegram")
     from vtubika_story import tile
 
     marks = sheet_marks(total)
     frames = [V.frame_at(tiktok, t, rwork / f"sheet_{i:02d}.png", "scale=270:480:flags=neighbor") for i, (t, _) in enumerate(marks)]
-    tile(frames, a.out / "sheet.jpg", cols=10, labels=[f"{t:.0f}" if not lab else f"{t:.2f} {lab}" for t, lab in marks])
-    head = [(round(i * 2 / 30, 3), "") for i in range(23)]
+    tile(frames, a.out / f"sheet{sfx}.jpg", cols=10, labels=[f"{t:.0f}" if not lab else f"{t:.2f} {lab}" for t, lab in marks])
+    head = [(round(i * 2 / 30, 3), "") for i in range(min(40, nfr // 2))]
     hframes = [V.frame_at(tiktok, t, rwork / f"head_{i:02d}.png", "scale=270:480:flags=neighbor") for i, (t, _) in enumerate(head)]
-    tile(hframes, a.out / "sheet_head.jpg", cols=8, labels=[f"{t:.2f}" for t, _ in head])
-    V.frame_at(tiktok, 0.0, a.out / "cover.png")
-    (a.out / "caption.txt").write_text(CAPTION + "\n", "utf-8")
+    tile(hframes, a.out / f"sheet_head{sfx}.jpg", cols=10, labels=[f"{t:.2f}" for t, _ in head])
+    V.frame_at(tiktok, 0.0, a.out / f"cover{sfx}.png")
+    if not a.rehearsal:
+        (a.out / "caption.txt").write_text(CAPTION + "\n", "utf-8")
     statics = T2.static_profile(tiktok)
     motion = T2.motion_check(tiktok, spec)
-    probe = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                 "stream=r_frame_rate,avg_frame_rate,nb_frames,profile,level,bit_rate", "-of", "json", str(tiktok)], "ffprobe").stdout
-    heard = T2.asr_words(tiktok)
+    heard = [] if a.rehearsal else T2.asr_words(tiktok)
     want = " ".join([text, E3.HER_TEXT, E3.PA_TEXT])
     report = {"final": str(tiktok), "mixed": str(final), "tg": str(tg), "tg_mb": round(tg.stat().st_size / 1e6, 1),
               "tiktok_mb": round(tiktok.stat().st_size / 1e6, 1), "duration": total, "frames": res.get("frames"),
-              "presence": res.get("presence"), "cuts": cuts, "static": statics, "motion": motion,
-              "tiktok_stream": json.loads(probe)["streams"][0], "tts": tts, "mix": mixed, "events": events,
+              "presence": res.get("presence"), "cuts": cuts, "static": statics, "static_plan": static_plan, "motion": motion,
+              "tiktok_stream": stream, "tts": tts, "mix": mixed, "events": events, "rehearsal": a.rehearsal,
               "roll": {k: v for k, v in roll.items() if k != "heroine"}, "text": text, "her_text": E3.HER_TEXT, "pa_text": E3.PA_TEXT,
-              "line_checks": checks, "asr_final": heard_vs_script(heard, want, E3.COMMENT["nick"]), "asr_words": heard, "steps": steps}
-    (a.out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
-    print(json.dumps({k: report[k] for k in ("final", "tg", "tg_mb", "tiktok_mb", "duration", "frames", "static", "cuts")}, ensure_ascii=False))
-    print(json.dumps({k: v for k, v in report["asr_final"].items() if k != "heard"}, ensure_ascii=False))
+              "line_checks": checks, "asr_final": heard_vs_script(heard, want, E3.COMMENT["nick"]) if heard else None,
+              "asr_words": heard, "steps": steps}
+    (a.out / f"report{sfx}.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
+    print(json.dumps({k: report[k] for k in ("final", "tg", "tg_mb", "tiktok_mb", "duration", "frames", "cuts")}, ensure_ascii=False))
+    print(json.dumps({k: v for k, v in stream.items()}, ensure_ascii=False))
+    if report["asr_final"]:
+        print(json.dumps({k: v for k, v in report["asr_final"].items() if k != "heard"}, ensure_ascii=False))
     print(json.dumps({k: v for k, v in motion.items() if k != "shots"}, ensure_ascii=False))
+    if not stream["ok"]:
+        raise SystemExit(f"файл для TikTok не по правилам: {stream['issues']}")
     return 0
 
 

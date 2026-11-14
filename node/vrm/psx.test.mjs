@@ -19,7 +19,8 @@ export { standPose } from "./src/psx/idle.ts";
 export { sitWeight, sitBones, sitHips } from "./src/psx/sit.ts";
 export { spawnScale } from "./src/psx/things.ts";
 export { typed } from "./src/psx/captions.ts";
-export { fxAt, grade, noise, hash3 } from "./src/psx/fx.ts";
+export { fxAt, grade, noise, hash3, grainFrame, grainAt, GRAIN_HOLD, GRAIN_CYCLE, GRAIN_GAIN, STATIC_CONTRAST } from "./src/psx/fx.ts";
+export { vhs, tearAt, TEAR_OUT } from "./src/psx/vhs.ts";
 export { lieWeight, lieBones } from "./src/psx/wake.ts";
 export { wispPath, wispGlow, voiceAt } from "./src/psx/wisp.ts";
 export { rollOutcome, spinFace, creationHeight } from "./src/psx/menu.ts";
@@ -167,6 +168,67 @@ test("плёнка: уровни по ключам линейно, чёрное 
   assert.deepEqual(e, f);
   assert.notDeepEqual(e, e0);
   assert.equal(M.hash3(1, 2, 3), M.hash3(1, 2, 3));
+});
+
+// lag_report.md: шум на каждый кадр по всему экрану TikTok пережимает в кашу и рывки — узор держится несколько кадров.
+test("зерно: узор держится GRAIN_HOLD кадров, по кругу из GRAIN_CYCLE, клетка 2×2, слабее прежнего", () => {
+  const H = M.GRAIN_HOLD, C = M.GRAIN_CYCLE;
+  assert.ok(H >= 2 && H <= 3 && C >= 3);
+  for (let f = 0; f < H * C * 2; f++) {
+    assert.equal(M.grainFrame(f), M.grainFrame(f - (f % H)));
+    assert.equal(M.grainFrame(f), M.grainFrame(f + H * C));
+  }
+  assert.notEqual(M.grainFrame(0), M.grainFrame(H));
+  const W = 16, img = () => new Uint8ClampedArray(W * W * 4).fill(128);
+  const at = (f) => { const d = img(); M.grade(d, W, W, { grain: 14 }, 0, f); return d; };
+  const f0 = at(0);
+  for (let f = 1; f < H; f++) assert.deepEqual(at(f), f0); // кадры внутри узора одинаковые — кодеку почти даром
+  assert.notDeepEqual(at(H), f0);
+  const lv = [...f0].filter((_, i) => i % 4 === 0);
+  assert.ok(Math.max(...lv.map((v) => Math.abs(v - 128))) <= 14 * M.GRAIN_GAIN + 1); // ±6, а не ±14
+  for (let y = 0; y < W; y += 2) for (let x = 0; x < W; x += 2) { // одна клетка 2×2 — одно значение
+    const v = f0[(y * W + x) * 4];
+    assert.equal(f0[(y * W + x + 1) * 4], v);
+    assert.equal(f0[((y + 1) * W + x) * 4], v);
+  }
+});
+
+test("помехи: приглушённый «снег» (не во весь диапазон), меняется раз в 2 кадра", () => {
+  const W = 64, H = 400, img = () => new Uint8ClampedArray(W * H * 4).fill(128);
+  const at = (f) => { const d = img(); M.noise(d, W, H, 1, f); return d; };
+  const share = (p, q) => { let c = 0; for (let i = 0; i < p.length; i += 4) if (p[i] !== q[i]) c++; return c / (p.length / 4); };
+  const a = at(10);
+  // Кадры 10 и 11 — один узор «снега»: отличаются только бегущие полосы (движение), 11 и 12 — новый узор.
+  assert.ok(share(at(11), a) < 0.2, `${share(at(11), a)}`);
+  assert.ok(share(at(12), at(11)) > 0.6);
+  const lv = [...a].filter((_, i) => i % 4 === 0);
+  assert.ok(M.STATIC_CONTRAST <= 0.6);
+  assert.ok(Math.min(...lv) > 20 && Math.max(...lv) < 235, `${Math.min(...lv)}..${Math.max(...lv)}`);
+});
+
+test("плёнка VHS: строки развёртки на месте, шум держится — соседние кадры одинаковые; шум слабый", () => {
+  const w = 48, h = 64;
+  const src = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    const i = (y * w + x) * 4;
+    src[i] = 40 + 3 * x; src[i + 1] = 60 + 2 * y; src[i + 2] = 90; src[i + 3] = 255;
+  }
+  const at = (f) => { const d = src.slice(); M.vhs(d, w, h, 1, 0.45, 0, 2.0, f); return d; };
+  const f0 = at(0);
+  assert.deepEqual(at(1), f0); // ни гребёнка, ни шум не мигают через кадр
+  const f3 = at(M.GRAIN_HOLD);
+  let diff = 0, n = 0;
+  for (let i = 0; i < f0.length; i += 4) if (Math.floor(i / 4 / w) < h - 9) { diff += Math.abs(f3[i + 1] - f0[i + 1]); n++; }
+  assert.ok(diff / n > 0 && diff / n < 6, `средняя смена узора ${diff / n}`); // узор сменился, но шум слабый
+});
+
+test("срыв трекинга 0.1 с с выходом укладывается в 6 кадров", () => {
+  const s = { keys: [[0, 1]], tears: [[1.0, 1.1]] };
+  let frames = 0;
+  for (let f = 0; f < 90; f++) if (M.tearAt(s, f / 30) > 0) frames++;
+  assert.ok(M.TEAR_OUT <= 0.1 + 1e-9);
+  assert.ok(frames <= 6, `${frames}`);
+  assert.equal(M.tearAt(s, 1.21), 0);
 });
 
 test("пробуждение: лежит до situp, садится за dur, голова выпрямляется раньше корпуса", () => {

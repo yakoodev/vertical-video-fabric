@@ -4,7 +4,8 @@
 
 Под серией 2 победил комментарий Neko_Sil Flood: замереть (они идут на шум, бегом догонят), а потом отойти
 подальше и перепрятаться. Что в серии:
-1. Кадр 0 — её лицо крупно, испуганное, титр «НЕ ДЫШИ / ВЫ РЕШИЛИ: ЗАМЕРЕТЬ» (обложка), помехи плавно.
+1. Кадр 0 — её лицо крупно, испуганное, титр «НЕ ДЫШИ / ВЫ РЕШИЛИ: ЗАМЕРЕТЬ» (обложка); помехи — только короткие
+   всплески ≤ 6 кадров на склейках и 6 кадров в конце (app/psx_look.py: иначе TikTok пережимает в «лаги»).
 2. Огонёк: «Вы решили — замереть», карточка-комментарий как в TikTok (ник только на карточке, вслух не читается).
 3. Онрё медленно идёт к будке и встаёт в шаге от неё, наклоняется — слушает. Она закрывает глаза, не дышит.
 4. Честный бросок d20: ВОЛЯ (выдержать страх, не выдать себя) против 12, строка ROLL_SEED — выпало 12 + 1 = 13,
@@ -24,11 +25,12 @@ import math
 from copy import deepcopy
 from typing import Any
 
+from app import psx_look as L
 from app.viewer_dnd import resolve
 from app.viewer_ep import _key, _wisp_pos, cue_times, pace, scale_beats, shift_beats, speed_for
 from app.viewer_ep1 import HER_VOICE  # noqa: F401 — её голос (Gemini Leda), как в сериях 1–2
 from app.viewer_ep2 import (BOOTH, HALL, HALL_FX, HALL_PSX, LAMP, LENS, NUMS, ONRYO_NEAR, SPOTS, WISP_BACK, WISP_HIDE,
-                            onryo, pov_key, static_ramp)
+                            onryo, pov_key)
 from app.viewer_episode import caption_chunks, sentence_times
 
 NAME = "Сара"
@@ -99,11 +101,10 @@ def ep3_script(roll: dict[str, Any]) -> list[dict]:
     ]
 
 
-LEAD = 0.95  # до первой фразы: обложка, помехи нарастают и растворяются в её лице с титром (с)
-TAIL = 2.3  # после последней фразы: титр-призыв, потом плавно — в помехи (с)
+LEAD = 0.95  # до первой фразы: обложка — её лицо с титром, без помех (с)
+TAIL = 2.3  # после последней фразы: титр-призыв, потом 6 кадров помех (с)
 FPS = 30
-HEAD_RAMP = (0.5, 0.58, 1.08)  # как в серии 2 v2: кадр 0 — обложка, помехи плавно нарастают и растворяются
-END_RAMP = (0.62, 0.1)
+TEAR = 0.1  # срыв трекинга (с): с выходом vhs.ts TEAR_OUT — 6 кадров
 SPIN = 1.5  # кубик крутится (с)
 LEAN_T = 1.4  # наклон к ней (с)
 BEHIND_T = 1.5  # заходит ей за спину (с)
@@ -161,7 +162,7 @@ def timeline(beats: list[dict], her_len: float, pa_len: float, total: float) -> 
     ev["choice"] = ph["choice1"]["t0"] - 0.15
     ev["cta"] = cue("choice2", 0, 0.1) - 0.1
     ev["end"] = total
-    ev["static_end"] = round(total - END_RAMP[0] - END_RAMP[1], 3)
+    ev["static_end"] = round(total - L.TAIL_FRAMES / FPS, 3)  # последние кадры — помехи
     if ev["roll"] < ev["close0"] or ev["land"] > ph["result"]["t0"] - 0.2:
         raise ValueError(f"бросок не помещается до итога: {ev['land']:.2f} > {ph['result']['t0']:.2f}")
     if ev["pa1"] > ph["radio"]["t0"] - 0.2:
@@ -345,15 +346,15 @@ def ep3_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
         return [[_r(a - 0.01), 0], [_r(a), kk], [_r(b - 0.01), kk], [_r(b), 0]]
     vk = [[0, 0]] + vwin(ev["pov0"], ev["col0"]) + [[_r(ev["self0"] - 0.01), 0], [_r(ev["self0"]), 1.0], [_r(end), 1.15]]
     vhs = {"keys": vk, "hunts": [_r(ev["pov0"] + 0.3), _r(ev["reveal"] - 0.35), _r(ev["flick"] + 0.2)],
-           "tears": [[_r(ev["crunch"]), _r(ev["crunch"] + 0.1)], [_r(ev["reveal"]), _r(ev["reveal"] + 0.18)],
-                     [_r(ev["choice"] - 0.35), _r(ev["choice"] - 0.2)]],
+           # срывы по 0.1 с (+ выход 0.1 с в vhs.ts) — каждый укладывается в 6 кадров
+           "tears": [[_r(ev["crunch"]), _r(ev["crunch"] + TEAR)], [_r(ev["reveal"]), _r(ev["reveal"] + TEAR)],
+                     [_r(ev["choice"] - 0.35), _r(ev["choice"] - 0.35 + TEAR)]],
            "shake": 0.006}
-    spike = lambda t, a: [{"t": _r(t - 0.05), "static": 0.0}, {"t": _r(t), "static": a},  # noqa: E731
-                          {"t": _r(t + 0.1), "static": a * 0.5}, {"t": _r(t + 0.2), "static": 0.0}]
-    se = ev["static_end"]
-    fx_keys = [{"t": 0, "black": 0.0}] + static_ramp(0.0, HEAD_RAMP[0], 0.0, 1.0) + static_ramp(HEAD_RAMP[1], HEAD_RAMP[2], 1.0, 0.0)
-    fx_keys += spike(ev["pov0"], 0.35) + spike(ev["self0"], 0.3) + spike(ev["reveal"] + 0.05, 0.4)
-    fx_keys += static_ramp(se, se + END_RAMP[0], 0.0, 1.0) + [{"t": _r(end + 1), "static": 1.0}]
+    # Помехи (app/psx_look.py, lag_report.md): кадр 0 и весь крючок — чистые (обложка); всплески ≤ 6 кадров, приглушённые,
+    # на склейках; в конце — 6 кадров.
+    fx_keys = [{"t": 0, "black": 0.0}, {"t": 0, "static": 0.0}]
+    fx_keys += (L.cut_burst(ev["card0"], 0.4) + L.cut_burst(ev["pov0"], 0.35) + L.cut_burst(ev["self0"], 0.3)
+                + L.static_burst(ev["reveal"], 0.4) + L.tail_static(total))
     fx_keys.sort(key=lambda kk: kk["t"])
     holds = {"object": "camcorder", "keys": [{"t": -5, "mode": "chest", "blend": 0.1}, {"t": _r(ev["raise"]), "mode": "selfie_side", "blend": 0.9}]}
     # Лампа зала: над ним у турникетов; гонг — мигнула. В укрытии — лампа над углом: тускло, на срыве мигает и горит.
@@ -365,7 +366,7 @@ def ep3_scene(beats: list[dict], total: float, roll: dict[str, Any], her_len: fl
                         [_r(ev["flick"] + 0.4), 2.6], [_r(end), 2.6]]}
     # Её лицо рядом с ним — в свете экранчика камеры у груди (вместо лампы зала: свет-конус в сцене один).
     lcd_glow = [{"t0": _r(ev["close0"]), "t1": _r(ev["pov0"]), "color": "#9ccaff", "power": 1.5, "range": 2.4}]
-    glitch = [_r(x) for x in (0.2, HEAD_RAMP[1], ev["pov0"], ev["crunch"], ev["self0"], ev["reveal"], ev["choice"] - 0.35, se + END_RAMP[0] * 0.5)]
+    glitch = [_r(x) for x in (ev["card0"], ev["pov0"], ev["crunch"], ev["self0"], ev["reveal"], ev["choice"] - 0.35, ev["static_end"])]
     hall = {**deepcopy(HALL), "moves": [[_r(ev["col0"]), list(HIDE)]]}
     return {"shots": shots, "cuts": cuts, "look_at": look, "wisp": wisp, "comment": card, "roll": rolls, "cards": cards,
             "titles": titles, "cam": cam, "vhs": vhs, "fx_keys": fx_keys, "onryo": monster, "holds": holds, "flashlight": fl,
