@@ -45,6 +45,8 @@ os.environ.setdefault("AUTO_PUBLISH_META", "0")
 os.environ.setdefault("TTS_GUARD", "0")
 # Смысловой подбор мемов качает модель с Hugging Face — в тестах подмена app.text_embed.EMBED или явно.
 os.environ.setdefault("EMBED_MODEL", "off")
+# Словарь слов для фильтра шума тиммейтов (app/meme_edit_team.py) скачивается — в тестах только явно.
+os.environ.setdefault("WORDLIST_DOWNLOAD", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

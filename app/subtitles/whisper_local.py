@@ -148,8 +148,11 @@ class WhisperSubtitleProvider:
         decoded_any = False
         dropped = 0
         salvaged = 0
+        want_stats = bool(profile.get("segment_stats"))
+        stats: list[dict] = []
         for segment in segments_iter:
             decoded_any = True
+            original = segment
             # Belt-and-braces on top of the decoder thresholds: never emit words
             # for a window that scores as non-speech / low confidence.
             if _is_hallucination(segment):
@@ -160,6 +163,8 @@ class WhisperSubtitleProvider:
                 # Пение / TTS / речь под игрой: только уверенные слова, своим сегментом.
                 salvaged += 1
                 segment = _Salvaged(kept)
+            if want_stats:
+                stats.append(_segment_stats(original, segment))
             text = str(getattr(segment, "text", "") or "").strip()
             if text:
                 texts.append(text)
@@ -201,7 +206,7 @@ class WhisperSubtitleProvider:
             duration=words[-1].end,
             segments=segments or [SubtitleSegment(words[0].start, words[-1].end, " ".join(w.word for w in words))],
             words=words,
-            response={"provider": "whisper", "model": size},
+            response={"provider": "whisper", "model": size, **({"segmentStats": stats} if want_stats else {})},
             usage={
                 "provider": "whisper",
                 "model": size,
@@ -308,6 +313,26 @@ class _Salvaged:
         self.text = " ".join(str(getattr(w, "word", "")).strip() for w in words)
         self.start = _num(getattr(words[0], "start", None))
         self.end = _num(getattr(words[-1], "end", None))
+
+
+def _segment_stats(original: Any, segment: Any) -> dict:
+    """Уверенность декодера по сегменту (``profile["segment_stats"]``: фильтр шума тиммейтов, app/meme_edit_team.py):
+    средний логарифм вероятности, «это не речь», сжатие (повторы), спасён ли из «не речи», слова с вероятностью."""
+    def rnd(value: Any) -> float | None:
+        num = _num(value)
+        return None if num is None else round(num, 3)
+
+    return {
+        "start": rnd(getattr(segment, "start", None)), "end": rnd(getattr(segment, "end", None)),
+        "text": str(getattr(segment, "text", "") or "").strip(),
+        "avg_logprob": rnd(getattr(original, "avg_logprob", None)),
+        "no_speech_prob": rnd(getattr(original, "no_speech_prob", None)),
+        "compression_ratio": rnd(getattr(original, "compression_ratio", None)),
+        "salvaged": segment is not original,
+        "words": [{"word": str(getattr(w, "word", "") or "").strip(), "start": rnd(getattr(w, "start", None)),
+                   "end": rnd(getattr(w, "end", None)), "p": rnd(getattr(w, "probability", None))}
+                  for w in getattr(segment, "words", None) or [] if str(getattr(w, "word", "") or "").strip()],
+    }
 
 
 def _num(value: Any) -> float | None:
