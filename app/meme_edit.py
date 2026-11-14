@@ -29,6 +29,7 @@ from app import meme_edit_fights as F
 from app import meme_edit_inputs as I
 from app import meme_edit_memes as M
 from app import meme_edit_plan as P
+from app import meme_edit_team as T
 
 _log = logging.getLogger(__name__)
 
@@ -118,9 +119,10 @@ def gather(store: Any, sources: list[dict], *, game: str = "apex", teammates: bo
             if teammates:
                 team += I.track_words(source, 0, lo, hi)
         team = I.drop_bleed(team, owner)
+        team, noise = T.filter_team(team, owner)  # шум дорожки игры вместо речи тиммейтов — прочь
         fights = F.find_fights(sid, events, shots, owner, team, duration)
         out[sid] = {"source": source, "duration": duration, "mic": mic, "events": events, "shots": shots,
-                    "owner": owner, "team": team, "fights": fights}
+                    "owner": owner, "team": team, "team_noise": noise, "fights": fights}
     return out
 
 
@@ -175,6 +177,10 @@ def plan_edit(store: Any, *, source_ids: Any = None, project_id: Any = None, mus
     notes: list[str] = []
     data = gather(store, sources, game=game, teammates=teammates, say=say)
     all_fights = [f for d in data.values() for f in d["fights"]]
+    noise = [n for d in data.values() for n in d.get("team_noise") or []]
+    if noise:
+        notes.append(f"тиммейты: {len(noise)} реплик шума выброшено (" + "; ".join(
+            f"«{n['text'][:30]}» — {n['why'].split(':')[0]}" for n in noise[:3]) + ")")
     if not all_fights:
         raise ValueError("в записях не нашлось боёв (нет нокаутов, убийств, смертей и плотной стрельбы)")
     say("план: бои, мемы, доли")

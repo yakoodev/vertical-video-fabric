@@ -28,7 +28,8 @@ def h_search_video_memes(ctx: ToolContext, args: dict) -> dict:
     include_unapproved = bool(args.get("include_unapproved"))
     found = VM.search_memes(ctx.store, query, tag=args.get("tag") or None,
                             approved=None if include_unapproved else True,
-                            max_sec=_num(args.get("max_sec")), limit=int(_num(args.get("limit"), 8) or 8))
+                            max_sec=_num(args.get("max_sec")), limit=int(_num(args.get("limit"), 8) or 8),
+                            semantic=args.get("semantic") is not False)
     out: dict = {"memes": [VM.brief(m) for m in found], "count": len(found)}
     if not found:
         waiting = len(VM.list_memes(ctx.store, approved=False))
@@ -103,12 +104,15 @@ def tools() -> list[Tool]:
             "search_video_memes", "Ищу видеомем",
             "Видеомемы — короткие реакции (0.5–4 с: человек орёт «вау», молится, кричит, ржёт) для мем-монтажа игры "
             "и стрима. Поиск по смыслу: query — слова (что происходит в клипе: «фейл», «победа», «тиммейт подвёл», "
-            "«шок»), ищутся в тегах, «когда вставлять», описании и расшифровке; tag — один тег; max_sec — не длиннее. "
-            "По умолчанию только одобренные владельцем (только их можно ставить). Ответ: meme_id, длительность, "
-            "что значит, когда вставлять, что сказано (transcript), теги, has_real_people. Ставить — place_video_meme. "
-            "/ Search the owner's reaction video memes by meaning.",
+            "«шок»), ищутся в тегах, «когда вставлять», описании и расшифровке; плюс смысл локальной моделью — можно "
+            "дать реплику игрока целиком («Альцгеймер у тебя» найдёт «…ужасная болезнь» без общих слов; semantic "
+            "в ответе — насколько мем ближе по смыслу среднего, σ); semantic: false — только слова. tag — один тег; "
+            "max_sec — не длиннее. По умолчанию только одобренные владельцем (только их можно ставить). Ответ: "
+            "meme_id, длительность, что значит, когда вставлять, что сказано (transcript), теги, has_real_people. "
+            "Ставить — place_video_meme. / Search the owner's reaction video memes by meaning.",
             _obj({"query": {"type": "string"}, "tag": {"type": "string"},
                   "max_sec": {"type": "number"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                  "semantic": {"type": "boolean", "description": "искать и по смыслу (по умолчанию да)"},
                   "include_unapproved": {"type": "boolean",
                                          "description": "показать и неодобренные (ставить их нельзя)"}}),
             h_search_video_memes, scope="global",

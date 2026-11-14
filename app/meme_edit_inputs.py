@@ -28,6 +28,8 @@ SINGLE_JUMP_DB = 12.0   # одиночный выстрел: скачок гро
 SINGLE_OVER_BG_DB = 14.0  # … и громче фона дорожки на столько
 SHOT_GAP = 0.6
 VERSION = 1
+WORDS_VERSION = 2  # 2 — слова с уверенностью Whisper (CONFIDENCE) для фильтра шума тиммейтов
+CONFIDENCE = ("p", "lp", "ns", "cr", "sv")
 
 
 def _cache_dir() -> Path:
@@ -151,15 +153,30 @@ def shot_spans(source: dict) -> list[list[float]]:
 
 
 def _whisper(path: Path) -> list[dict]:
+    """Слова с уверенностью: ``p`` — слова, по его сегменту ``lp`` (avg_logprob), ``ns`` (no_speech_prob), ``cr``
+    (compression_ratio), ``sv`` — спасён из «не речи». По ним app/meme_edit_team.py отсеивает шум тиммейтов."""
     from app.subtitles.registry import QUALITY_WHISPER_MODEL
     from app.subtitles.whisper_local import WhisperSubtitleProvider
 
     try:
-        result = WhisperSubtitleProvider().transcribe(path, {"language": "ru"}, QUALITY_WHISPER_MODEL)
+        result = WhisperSubtitleProvider().transcribe(path, {"language": "ru", "segment_stats": True},
+                                                      QUALITY_WHISPER_MODEL)
     except RuntimeError:  # «нет слов» — речи нет
         return []
-    return [{"word": w.word.strip(), "start": round(float(w.start), 3), "end": round(float(w.end), 3)}
-            for w in result.words if str(w.word or "").strip()]
+    stats = (result.response or {}).get("segmentStats")
+    if not stats:
+        return [{"word": w.word.strip(), "start": round(float(w.start), 3), "end": round(float(w.end), 3)}
+                for w in result.words if str(w.word or "").strip()]
+    out = []
+    for seg in stats:
+        for w in seg.get("words") or []:
+            if not w.get("word") or w.get("start") is None or w.get("end") is None:
+                continue
+            start = round(max(0.0, float(w["start"])), 3)
+            out.append({"word": w["word"], "start": start, "end": round(max(float(w["end"]), start + 0.05), 3),
+                        "p": w.get("p"), "lp": seg.get("avg_logprob"), "ns": seg.get("no_speech_prob"),
+                        "cr": seg.get("compression_ratio"), "sv": bool(seg.get("salvaged"))})
+    return out
 
 
 def track_words(source: dict, track: int, lo: float, hi: float) -> list[dict]:
@@ -183,13 +200,14 @@ def track_words(source: dict, track: int, lo: float, hi: float) -> list[dict]:
             words = (TRANSCRIBE or _whisper)(wav)
         finally:
             wav.unlink(missing_ok=True)
-        return [{"word": str(w["word"]).strip(), "start": round(lo + float(w["start"]), 3),
-                 "end": round(lo + float(w["end"]), 3)} for w in words if str(w.get("word") or "").strip()]
+        return [{**{k: w[k] for k in CONFIDENCE if k in w}, "word": str(w["word"]).strip(),
+                 "start": round(lo + float(w["start"]), 3), "end": round(lo + float(w["end"]), 3)}
+                for w in words if str(w.get("word") or "").strip()]
 
     if TRANSCRIBE is not None:
         words = build()
     else:
-        words = _cached(f"words-{_key(_stamp(path), track, round(lo, 2), round(hi, 2), VERSION)}.json", build)
+        words = _cached(f"words-{_key(_stamp(path), track, round(lo, 2), round(hi, 2), WORDS_VERSION)}.json", build)
     return [w for w in words if not is_phantom_text(w["word"])]
 
 

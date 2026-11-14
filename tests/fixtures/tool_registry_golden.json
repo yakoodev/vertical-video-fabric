@@ -1432,8 +1432,8 @@
 {
 "name": "search_video_memes",
 "title": "Ищу видеомем",
-"description": "cdd13a2d3126e511",
-"parameters": "ae7de6820dd7ea58",
+"description": "9859d24e7bc16a62",
+"parameters": "46815985887b58aa",
 "mutating": false,
 "scope": "global",
 "module": null,

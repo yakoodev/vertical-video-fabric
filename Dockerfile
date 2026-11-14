@@ -100,6 +100,9 @@ RUN python3 -m venv /opt/venv
 
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
+# Подбор видеомемов по смыслу (app/text_embed.py): ONNX multilingual-e5-small int8 (~135 МБ) не вшит в образ —
+# качается с Hugging Face при первом мем-эдите/поиске в том данных (/data/embed-models, как whisper-models),
+# дальше без сети. Нет сети — подбор по словам. EMBED_MODEL=off выключает, EMBED_MODEL_DIR — свой каталог.
 
 # DNN models for the deterministic autofocus, vendored so the build needs no
 # network (both degrade gracefully at runtime if absent):

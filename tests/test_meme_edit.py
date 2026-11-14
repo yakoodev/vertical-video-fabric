@@ -282,6 +282,25 @@ def env(tmp_path, monkeypatch):
     return client, store, ids
 
 
+def test_teammate_noise_dropped_before_fights(env, monkeypatch):
+    """Шум дорожки игры («В ЛОВЫЙ ГОЛОВ А», неуверенно) не становится репликой тиммейта; настоящая — остаётся."""
+    from app.meme_edit_fights import lines_from_words
+
+    _client_, store, ids = env
+    team = [{"word": w, "start": round(24.6 + i * 0.3, 2), "end": round(24.85 + i * 0.3, 2), "lp": -0.9, "p": 0.3}
+            for i, w in enumerate("В ЛОВЫЙ ГОЛОВ А".split())]
+    team += [{"word": "Красавцы!", "start": 27.0, "end": 27.6, "lp": -0.2, "p": 0.95}]
+    owner_words = I.track_words
+    monkeypatch.setattr(I, "track_words", lambda source, track, lo, hi: [
+        w for w in team if lo <= w["start"] <= hi] if track == 0 and int(source["id"]) == ids[0]
+        else owner_words(source, track, lo, hi))
+    data = ME.gather(store, [store.get_source(ids[0])])
+    assert [ln["text"] for ln in lines_from_words(data[ids[0]]["team"])] == ["Красавцы!"]
+    assert data[ids[0]]["team_noise"][0]["why"].startswith("неуверенно")
+    edit = ME.plan_edit(store, source_ids=ids, target_sec=120, vertical=False)
+    assert any(n.startswith("тиммейты: 1 реплик шума") for n in edit["notes"])
+
+
 def test_block_specs_validate_both_formats(env):
     from app.clip_spec import validate_spec
     from app.manual_clips import create_manual_clip

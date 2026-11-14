@@ -88,8 +88,10 @@ def build_video_memes_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
         approved: Annotated[bool | None, Query(description="true — только одобренные, false — ждут одобрения")] = None,
         max_sec: Annotated[float | None, Query(gt=0)] = None,
         limit: Annotated[int, Query(ge=1, le=500)] = 200,
+        semantic: Annotated[bool, Query(description="и по смыслу (локальная модель), не только по словам")] = True,
     ) -> dict:
-        memes = VM.search_memes(get_store(), q, tag=tag, approved=approved, max_sec=max_sec, limit=min(limit, 50)) \
+        memes = VM.search_memes(get_store(), q, tag=tag, approved=approved, max_sec=max_sec, limit=min(limit, 50),
+                                semantic=semantic) \
             if (q.strip() or tag or max_sec) else VM.list_memes(get_store(), approved=approved)[:limit]
         return {"memes": [_public(m) for m in memes], "suggested_tags": list(VM.SUGGESTED_TAGS)}
 
