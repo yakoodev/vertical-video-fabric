@@ -53,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     data = out / "data"
     shutil.rmtree(data, ignore_errors=True)
     out.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("YUNET_MODEL", str(ROOT / "vendor" / "yunet.onnx"))  # лица в мемах (app/meme_frame.py)
     os.environ.update({"DATA_DIR": str(data), "AUTO_MIX": "0", "AUTO_PUBLISH_META": "0", "TTS_GUARD": "0",
                        "AUTOPILOT_WORKER": "0", "STATS_INTERVAL_HOURS": "0"})
     if a.compositor:
@@ -99,7 +100,10 @@ def main(argv: list[str] | None = None) -> int:
                          description=label, when_to_use=", ".join(tags))
     result = meme_edit.build_meme_edit(store, int(source["id"]), music_track_id=int(track["id"]),
                                        target_sec=a.target, seed=a.seed, subtitles=not a.no_subtitles, render=False)
+    for clip in result["clips"]:
+        clip["inserts"] = store.get_clip_plan(clip["clip_id"])["render_settings"].get("inserts")
     report = {k: result[k] for k in ("clips", "duration", "bpm", "period", "events", "events_origin", "mic_track",
+                                     "dead_spans",
                                      "music_start_sec", "memes", "words", "windows", "notes")}
     (out / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps({k: report[k] for k in ("clips", "duration", "bpm", "memes", "words", "notes")},

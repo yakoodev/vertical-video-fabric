@@ -209,8 +209,12 @@ def test_spec_for_both_aspects_validates(env):
         assert render["cuts"] and render["transition"]["type"] == "cut" and render["end_hold_sec"] == 0
         memes = [w for w in prepared["timeline"].windows if w.role == "meme"]
         assert len(render["inserts"]) == len(memes) >= 3
-        assert all(i["mode"] == "full" and i["duck_volume"] == 0 and i.get("level") == "speech"
+        # Звук клипа под мемом глушит не вставка (тогда пропала бы и музыка), а вырезы звука игры по дорожке.
+        assert all(i["mode"] == "full" and not i["duck"] and "duck_volume" not in i and i.get("level") == "speech"
                    for i in render["inserts"])
+        for ins in render["inserts"]:
+            assert any(m.get("track") == 0 and m["start"] <= ins["at"] + 0.01
+                       and m["end"] >= ins["at"] + ins["duration"] - 0.01 for m in render["mute"])
         kinds = [(layer["type"], layer["props"].get("kind")) for layer in render["layers"]]
         assert ("fx", "negate") in kinds
         negate = next(layer for layer in render["layers"] if layer["props"].get("kind") == "negate")
@@ -218,7 +222,7 @@ def test_spec_for_both_aspects_validates(env):
         words = [layer for layer in render["layers"] if layer["type"] == "text"]
         assert 2 <= len(words) <= 4
         for layer in words:
-            assert layer["props"]["font"] == "Pangolin" and layer["props"]["stroke"]["width"] >= 12
+            assert layer["props"]["font"] == "Dela Gothic One" and layer["props"]["stroke"]["width"] >= 12
             assert layer["start"] >= MP.final_to_clip(prepared["timeline"], MP.NO_TEXT_BEFORE_SEC) - 1e-3
         assert render["camera"] and any(k.get("shake") for k in render["camera"])
         if aspect == "9:16":
@@ -258,3 +262,92 @@ def test_meme_edit_tool_dry_run_and_errors(env):
     assert out["spec"]["render"]["inserts"]
     out, ok = run_tool(ToolContext(store), "meme_edit", {"source_id": source_id, "events": []})
     assert not ok and "эдит" in out["error"]
+
+
+# ------------------------------------------------------------------ кадр мема: поля и подрезка
+
+
+def test_cropdetect_parse_widest_box_and_noise():
+    from app.meme_frame import parse_cropdetect
+
+    log = "[Parsed_cropdetect_0] x1:0 crop=1280:552:0:84\n[Parsed_cropdetect_0] crop=1276:548:2:86\n"
+    assert parse_cropdetect(log, 1280, 720) == {"x": 0.0, "y": 0.1167, "w": 1.0, "h": 0.7667}
+    assert parse_cropdetect("crop=1280:716:0:2", 1280, 720) is None  # 2 px — шум кодека, не поле
+    assert parse_cropdetect("crop=100:80:600:300", 1280, 720) is None  # почти весь кадр чёрный — тёмная сцена
+
+
+def test_framing_cover_when_cheap_blur_when_too_much_lost():
+    from app.meme_frame import framing
+
+    # 4:3 с вшитыми полями в 16:9 → в 16:9-клип: поля прочь, подрезка высоты 25 % — во весь кадр.
+    crop, fill = framing({"x": 0.125, "y": 0.0, "w": 0.75, "h": 1.0}, 1920, 1080, 1920, 1080)
+    assert fill == "cover" and crop["x"] == 0.125 and crop["w"] == 0.75 and crop["h"] == pytest.approx(0.75)
+    # Широкий мем (2.35:1 в letterbox) → в вертикаль: подрезка ровно на 45 % ширины вокруг лица, вокруг — размытие.
+    crop, fill = framing({"x": 0.0, "y": 0.12, "w": 1.0, "h": 0.76}, 1280, 720, 1080, 1920, face=(0.7, 0.5))
+    assert fill == "blur" and crop["w"] == pytest.approx(0.55) and crop["y"] == 0.12 and crop["h"] == 0.76
+    assert crop["x"] == pytest.approx(0.7 - 0.275, abs=1e-3)
+    # Почти вертикальный мем в вертикаль — во весь кадр; квадрат в 16:9 — тоже (теряется 44 % высоты).
+    assert framing(None, 900, 1400, 1080, 1920)[1] == "cover"
+    assert framing(None, 1000, 1000, 1920, 1080)[1] == "cover"
+    assert framing(None, 1920, 1080, 1920, 1080) == (None, "cover")
+
+
+def test_insert_crop_reaches_the_render_graph():
+    from app.montage_assets import full_insert_chain, normalize_inserts
+
+    [ins] = normalize_inserts([{"asset_id": 1, "at": 1, "duration": 2, "fill": "cover",
+                                "crop": {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}}])
+    assert ins["crop"] == {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}
+    chain = full_insert_chain("[1:v]", 1080, 1920, "cover", "1", crop=ins["crop"])
+    assert chain.startswith("[1:v]crop=trunc(iw*0.5000/2)*2:trunc(ih*0.6000/2)*2:") and "scale=1080:1920" in chain
+    assert "crop" not in normalize_inserts([{"asset_id": 1, "at": 1, "crop": {"x": 0, "y": 0, "w": 1, "h": 1}}])[0]
+
+
+# ------------------------------------------------------------------ картинка записи: смерть и движение
+
+
+def test_dead_spans_turn_last_knock_into_death():
+    from app import meme_edit_visual as V
+
+    times = [i * 0.5 for i in range(40)]
+    sat = [0.35] * 30 + [0.04] * 8 + [0.35] * 2  # 15–19 с — серый экран
+    prof = {"t": times, "sat": sat, "motion": [10.0] * 40, "banner": [60.0] * 40}
+    spans = V.dead_spans(prof)
+    assert spans == [(15.0, 19.0)]
+    events = [{"t": 12.0, "kind": "knock", "score": 0.8, "detail": ""},
+              {"t": 13.6, "kind": "shot_burst", "score": 0.5, "detail": ""},
+              {"t": 16.0, "kind": "knock", "score": 0.9, "detail": ""},
+              {"t": 17.0, "kind": "reaction", "score": 0.7, "detail": ""}]
+    out = V.apply_deaths(events, spans)
+    kinds = [(e["t"], e["kind"]) for e in out]
+    assert (16.0, "knock") not in kinds  # на сером экране нока не бывает
+    assert (12.0, "death") in kinds and (17.0, "reaction") in kinds  # сильнейший удар перед смертью — по игроку
+    tl = MP.plan_timeline(out, duration=40, period=PERIOD, target_sec=20, library=_library(), seed=1,
+                          ctx=MP.Context(avoid=spans))
+    death = next(w for w in tl.windows if w.event and w.event["kind"] == "death" and w.role == "meme")
+    assert set(death.meme["tags"]) & {"фейл", "грусть"}
+    assert not any(w.word in MP.KIND_WORDS["knock"] + MP.KIND_WORDS["kill"] and _inside(w, spans) for w in tl.windows)
+
+
+def _inside(w: MP.Window, spans) -> bool:
+    return any(a <= w.start <= b for a, b in spans)
+
+
+def test_chops_skip_intro_still_frames_and_dead_screen():
+    still = (30.0, 40.0)
+    dead = [(60.0, 66.0)]
+
+    def motion(t: float) -> float:
+        return 0.05 if still[0] <= t <= still[1] else 0.9
+
+    events = [{"t": float(t), "kind": "shot_burst", "score": 0.5} for t in range(1, 100, 2)]
+    events += [{"t": 4.0, "kind": "knock", "score": 0.9}, {"t": 42.0, "kind": "kill", "score": 0.9},
+               {"t": 70.0, "kind": "knock", "score": 0.8}, {"t": 90.0, "kind": "kill", "score": 0.8}]
+    tl = MP.plan_timeline(events, duration=100, period=PERIOD, target_sec=40, library=_library(), seed=2,
+                          ctx=MP.Context(motion=motion, avoid=dead))
+    chops = [w for w in tl.windows if w.role == "chop"]
+    assert chops
+    for w in chops:
+        assert w.start >= MP.MIN_CHOP_START_SEC - 1e-6
+        assert not (still[0] <= w.start <= still[1] and still[0] <= w.end <= still[1])
+        assert not any(a <= w.start <= b or a <= w.end <= b for a, b in dead)

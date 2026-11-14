@@ -36,6 +36,9 @@ PUNCH_SHAKE = 0.5
 MAX_FLASHES = 3
 MAX_PUNCHES = 12
 BIG_SFX = "sfx:freesound/bass-drop.ogg"
+# Музыка под мемом: в рефе бас музыки в окнах мемов на 3–11 дБ тише, чем в геймплее (медиана ≈ −4) — берём −8:
+# реакцию слышно, ритм не обрывается. Игра и микрофон под мемом — тишина.
+MUSIC_UNDER_MEME_DB = -8.0
 MUSIC_PROBE_SEC = 70.0
 TITLES = {"9:16": "Мем-эдит · вертикаль", "16:9": "Мем-эдит · горизонталь"}
 
@@ -149,8 +152,10 @@ def _clamp_target(value: Any) -> float:
 
 def prepare(store: Any, source_id: int, *, music_track_id: Any = None, music_asset_id: Any = None,
             target_sec: Any = DEFAULT_TARGET_SEC, events: Any = None, seed: int = 0, game: str = "apex",
-            words: int = 3, library: list[dict] | None = None, grid: dict | None = None) -> dict:
-    """Всё, что общее у вертикали и горизонтали: события, музыка, окна, куски и вырезы."""
+            words: int = 3, library: list[dict] | None = None, grid: dict | None = None,
+            visual: bool = True) -> dict:
+    """Всё, что общее у вертикали и горизонтали: события, музыка, окна, куски и вырезы. ``visual`` — взглянуть на
+    картинку записи (движение для рубки, серый экран смерти/зрителя — app/meme_edit_visual.py)."""
     source = store.get_source(int(source_id))
     duration = float(source.get("duration_sec") or 0)
     if duration < 5:
@@ -163,6 +168,18 @@ def prepare(store: Any, source_id: int, *, music_track_id: Any = None, music_ass
         found, origin = EV.detect_events(source, game=game, mic=mic)
     if origin == "audio":
         notes.append("события найдены по звуку (app.game_events нет в сборке): нок/килл — догадка по пику перестрелки")
+    prof: dict = {}
+    path = Path(str(source.get("local_path") or ""))
+    if visual and path.is_file():
+        from app import meme_edit_visual as V
+
+        prof = V.profile(path, duration)
+    dead = V.dead_spans(prof) if prof else []
+    if dead and origin == "audio":
+        found = V.apply_deaths(found, dead)
+        notes.append("серый экран смерти/зрителя: " + ", ".join(f"{a:.0f}–{b:.0f} с" for a, b in dead)
+                     + " — там не «нок», а смерть (фейл/грусть)")
+    ctx = MP.Context(motion=V.motion_at(prof), avoid=dead) if prof else MP.Context()
     music, music_notes = _music_file(store, music_track_id, music_asset_id)
     notes += music_notes
     if grid is None and music is not None:
@@ -174,27 +191,68 @@ def prepare(store: Any, source_id: int, *, music_track_id: Any = None, music_ass
     if not library:
         notes.append("одобренных видеомемов нет — эдит без врезок (одобрить: «Общие файлы → Видеомемы»)")
     timeline = MP.plan_timeline(found, duration=duration, period=period, target_sec=_clamp_target(target_sec),
-                                library=library, seed=int(seed or 0), words=max(0, min(4, int(words))))
+                                library=library, seed=int(seed or 0), words=max(0, min(4, int(words))), ctx=ctx)
     if not timeline.windows:
         raise ValueError("; ".join(timeline.warnings) or "эдит не собрался")
     pieces, cuts = MP.to_pieces(timeline, duration)
     return {"source": source, "duration": duration, "mic": mic, "events": found, "events_origin": origin,
             "music": music, "grid": grid, "period": period, "timeline": timeline, "pieces": pieces, "cuts": cuts,
-            "notes": notes + timeline.warnings}
+            "dead": dead, "notes": notes + timeline.warnings}
 
 
-def _inserts(timeline: MP.Timeline) -> list[dict]:
+_FRAMING: dict[tuple, dict] = {}
+
+
+def meme_framing(path: str, aspect: str) -> dict:
+    """Окно и заполнение мема под кадр формата (app/meme_frame.py): вшитые поля прочь, подрезка до 45 %."""
+    from app.formats import frame_size
+    from app.meme_frame import insert_framing
+
+    width, height = frame_size(aspect)
+    try:
+        key = (path, Path(path).stat().st_mtime_ns, width, height)
+    except OSError:
+        return {"crop": None, "fill": None}
+    if key not in _FRAMING:
+        _FRAMING[key] = insert_framing(path, width, height)
+    return _FRAMING[key]
+
+
+def _inserts(timeline: MP.Timeline, aspect: str = "9:16") -> list[dict]:
+    """Врезки мемов: звук клипа под ними глушат вырезы звука игры и микрофона (``_meme_audio``), а не сама вставка —
+    так музыка продолжает играть под мемом (приглушённая)."""
     out = []
     for w in timeline.windows:
         if w.role != "meme" or not w.meme:
             continue
         item = {"asset_id": int(w.meme["asset_id"]), "at": round(w.clip_start, 2), "duration": w.insert_sec,
-                "mode": "full", "duck": True, "duck_volume": 0.0, "volume": 1.0,
+                "mode": "full", "duck": False, "volume": 1.0,
                 "reason": f"видеомем «{w.meme.get('title') or w.meme['meme_id']}» на {w.event['kind'] if w.event else 'момент'}"}
         if w.meme.get("has_audio", True):
             item["level"] = "speech"  # реакция говорит вместо клипа — вровень с голосом
+        path = str(w.meme.get("file_path") or "")
+        if path and Path(path).is_file():
+            frame = meme_framing(path, aspect)
+            if frame.get("crop"):
+                item["crop"] = frame["crop"]
+            if frame.get("fill"):
+                item["fill"] = frame["fill"]
         out.append(item)
     return out
+
+
+def _meme_audio(timeline: MP.Timeline, mic: int | None) -> tuple[list[dict], list[dict]]:
+    """Под мемом: звук игры и микрофона — тишина (по дорожкам, до музыки), музыка — тише на ``MUSIC_UNDER_MEME_DB``.
+    Ответ — (``render.mute``, ``audio.music_duck``)."""
+    tracks = [0] + ([mic] if mic not in (None, 0) else [])
+    mute, duck = [], []
+    for w in timeline.windows:
+        if w.role != "meme" or not w.meme:
+            continue
+        a, b = round(w.clip_start, 3), round(w.clip_start + w.length, 3)
+        mute += [{"start": a, "end": b, "track": t} for t in tracks]
+        duck.append({"start": a, "end": b, "gain_db": MUSIC_UNDER_MEME_DB})
+    return mute, duck
 
 
 def _hits(timeline: MP.Timeline) -> list[tuple[MP.Window, float]]:
@@ -280,7 +338,7 @@ def spec_for(prepared: dict, aspect: str, base_render: dict, *, subtitles: bool 
         "format": aspect, "layers_format": aspect,
         "transition": {"type": "cut"},
         "cuts": prepared["cuts"],
-        "inserts": _inserts(timeline),
+        "inserts": _inserts(timeline, aspect),
         "layers": _fx_layers(timeline) + _word_layers(timeline, aspect, seed),
         "camera": _camera(timeline),
         "end_hold_sec": 0.0,
@@ -294,9 +352,13 @@ def spec_for(prepared: dict, aspect: str, base_render: dict, *, subtitles: bool 
         render["layers"].append({"type": "audio", "name": "Музыка эдита", "start": 0.0, "end": clip_total,
                                  "props": {"asset_id": music["id"], "mode": "track", "role": "music", "volume": 0.8,
                                            "offset": round(start, 3), "fadeOut": 0.4}})
+    mute, duck = _meme_audio(timeline, prepared["mic"])
+    render["mute"] = mute
+    audio: dict = {"music_duck": duck} if music and music["kind"] == "track" else {}
     if prepared["mic"] is not None:
-        render["audio"] = {"fx": [{"start": 0.0, "end": clip_total, "fx": "denoise", "track": prepared["mic"],
-                                   "amount": 0.5}]}
+        audio["fx"] = [{"start": 0.0, "end": clip_total, "fx": "denoise", "track": prepared["mic"], "amount": 0.5}]
+    if audio:
+        render["audio"] = audio
     focus = [{"t": 0.0, "x": 0.5}] if aspect != "16:9" else None  # прицел Apex — по центру кадра
     pieces = [{**p, **({"focus": focus} if focus else {})} for p in prepared["pieces"]]
     notes = "Мем-эдит (app/meme_edit.py): " + "; ".join(
@@ -331,7 +393,7 @@ def report(prepared: dict) -> dict:
         "music_start_sec": (prepared["grid"] or {}).get("start_sec"),
         "memes": [w.meme["meme_id"] for w in timeline.windows if w.meme],
         "words": [w.word for w in timeline.windows if w.word],
-        "windows": MP.summary(timeline), "notes": prepared["notes"],
+        "dead_spans": prepared.get("dead") or [], "windows": MP.summary(timeline), "notes": prepared["notes"],
     }
 
 

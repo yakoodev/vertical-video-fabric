@@ -70,6 +70,20 @@ MIN_PIECE_SEC = 1.5
 MAX_PIECES = 12
 MIN_CUT_SEC = 0.08
 DEFAULT_PERIOD = 0.5  # 120 BPM, если у музыки не нашлось пульса
+MIN_CHOP_START_SEC = 5.0  # начало записи (загрузка, лобби, «стоим у двери») рубкой не берём
+MIN_MOTION = 0.25  # доля «движения» (90-й перцентиль записи = 1): ниже — статичный кадр, рубку туда не ставим
+
+
+def _always(_t: float) -> float:
+    return 1.0
+
+
+@dataclass
+class Context:
+    """Что известно о картинке записи (app/meme_edit_visual.py): движение по времени, серый экран смерти/зрителя."""
+    motion: Any = _always
+    avoid: list[tuple[float, float]] = field(default_factory=list)
+    min_start: float = MIN_CHOP_START_SEC
 
 
 @dataclass
@@ -151,27 +165,33 @@ def choose_moments(events: list[dict], count: int, sep: float = MOMENT_SEP_SEC) 
     return sorted(picked, key=lambda e: e["t"])
 
 
+def _inside(t: float, spans: list[tuple[float, float]]) -> bool:
+    return any(a - 1e-6 <= t <= b + 1e-6 for a, b in spans)
+
+
 def _lead_chops(events: list[dict], lo: float, hi: float, count: int, period: float,
-                rng: random.Random) -> list[Window]:
-    """Рубка перед моментом: кусочки по 1–4 доли вокруг ударов в [lo, hi], по времени, без нахлёста."""
+                rng: random.Random, ctx: "Context | None" = None) -> list[Window]:
+    """Рубка перед моментом: кусочки по 1–4 доли в [lo, hi], по времени, без нахлёста. Кандидаты — удары и сетка
+    каждые 0.5 с; не раньше ``ctx.min_start`` (заставка, лобби), не на сером экране смерти (``ctx.avoid``), без
+    кадров без движения (дверь, пустой коридор: ``ctx.motion`` ниже ``MIN_MOTION``)."""
+    ctx = ctx or Context()
+    lo = max(lo, ctx.min_start)
     if count <= 0 or hi - lo < CHOP_MIN_SEC:
         return []
-    anchors = [e["t"] for e in sorted((e for e in events if lo + 0.2 <= e["t"] <= hi - 0.2),
-                                      key=lambda e: -weight(e))]
+
+    def ok(t: float) -> bool:
+        return not _inside(t, ctx.avoid) and ctx.motion(t) >= MIN_MOTION
+
+    hits = sorted((e for e in events if lo + 0.2 <= e["t"] <= hi - 0.2 and ok(e["t"])),
+                  key=lambda e: -weight(e) * (0.5 + ctx.motion(e["t"])))
+    grid = [lo + 0.3 + k * 0.5 for k in range(int(max(0.0, hi - lo - 0.6) / 0.5) + 1)]
+    grid = sorted((t for t in grid if ok(t)), key=lambda t: -ctx.motion(t))
     chosen: list[float] = []
-    for t in anchors:
+    for t in [e["t"] for e in hits] + grid:  # сначала удары, потом самое подвижное из окна
         if all(abs(t - c) >= 1.2 for c in chosen):
             chosen.append(t)
         if len(chosen) >= count:
             break
-    if len(chosen) < count:  # ударов мало — берём равномерно из окна (перед моментом обычно и так идёт бой)
-        step = (hi - lo) / (count + 1)
-        for k in range(1, count + 1):
-            t = lo + k * step
-            if all(abs(t - c) >= 1.0 for c in chosen):
-                chosen.append(t)
-            if len(chosen) >= count:
-                break
     out: list[Window] = []
     cursor = lo
     for t in sorted(chosen):
@@ -187,7 +207,8 @@ def _lead_chops(events: list[dict], lo: float, hi: float, count: int, period: fl
         end = start + length
         if end > hi:
             start, end = hi - length, hi
-        if start < cursor - 1e-6 or end - start < CHOP_MIN_SEC - 1e-6:
+        if start < cursor - 1e-6 or end - start < CHOP_MIN_SEC - 1e-6 or _inside(start, ctx.avoid) \
+                or _inside(end, ctx.avoid):
             continue
         ev = next((e for e in events if start <= e["t"] <= end), None)
         out.append(Window(round(start, 3), round(end, 3), "chop", event=ev))
@@ -197,12 +218,15 @@ def _lead_chops(events: list[dict], lo: float, hi: float, count: int, period: fl
 
 def build_timeline(events: list[dict], *, duration: float, period: float, target_sec: float,
                    library: list[dict], seed: int = 0, chops_per_moment: int = 3,
-                   moments: int | None = None, words: int = 3) -> Timeline:
+                   moments: int | None = None, words: int = 3, ctx: Context | None = None) -> Timeline:
     """Окна эдита по событиям. ``moments`` — сколько моментов (нет — по длине ``target_sec``)."""
     period = float(period) if period and period > 0.2 else DEFAULT_PERIOD
     rng = random.Random(seed)
     count = moments or max(2, min(MAX_MOMENTS, int(round(target_sec / EST_MOMENT_SEC))))
-    chosen = choose_moments(events, count)
+    ctx = ctx or Context()
+    # На сером экране смерти нет ни килла, ни нока: там только сама смерть и голос.
+    usable = [e for e in events if e["kind"] in ("death", "reaction") or not _inside(e["t"], ctx.avoid)]
+    chosen = choose_moments(usable, count)
     timeline = Timeline(period=period)
     if not chosen:
         timeline.warnings.append("в записи не нашлось ни одного события — эдит не из чего собрать")
@@ -227,7 +251,7 @@ def build_timeline(events: list[dict], *, duration: float, period: float, target
                 timeline.warnings.append(f"момент {e:.1f} с пропущен: вплотную к прошлому")
                 continue
             hs = e - room * period
-        lead = _lead_chops(events, max(cursor, hs - LEAD_SPAN_SEC), hs, chops_per_moment, period, rng)
+        lead = _lead_chops(events, max(cursor, hs - LEAD_SPAN_SEC), hs, chops_per_moment, period, rng, ctx)
         timeline.windows.extend(lead)
         hit = Window(round(hs, 3), round(he, 3), "voice" if voice else "hit", event=ev, big=ev is big,
                      word=_word_for(kind, rng, timeline) if id(ev) in word_moments else "")
@@ -267,7 +291,7 @@ def _word_for(kind: str, rng: random.Random, timeline: Timeline) -> str:
 
 
 def plan_timeline(events: list[dict], *, duration: float, period: float, target_sec: float, library: list[dict],
-                  seed: int = 0, words: int = 3) -> Timeline:
+                  seed: int = 0, words: int = 3, ctx: Context | None = None) -> Timeline:
     """Подбор числа моментов и рубки под длину ``target_sec`` (±15 %): лишние моменты — прочь (слабые первыми),
     не хватает — больше рубки и моментов, пока есть события."""
     target = float(target_sec)
@@ -276,7 +300,7 @@ def plan_timeline(events: list[dict], *, duration: float, period: float, target_
     chops = 3
     for _ in range(10):
         timeline = build_timeline(events, duration=duration, period=period, target_sec=target, library=library,
-                                  seed=seed, chops_per_moment=chops, moments=moments, words=words)
+                                  seed=seed, chops_per_moment=chops, moments=moments, words=words, ctx=ctx)
         if best is None or abs(timeline.total - target) < abs(best.total - target):
             best = timeline
         if target * 0.85 <= timeline.total <= target * 1.15 or not timeline.windows:

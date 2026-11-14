@@ -157,7 +157,8 @@ def _overlay_inserts(store: Any, inserts: list[dict], t: float, png: Path, width
 
             x, y = "(W-w)/2", "(H-h)/2"
             fill = resolve_fill(ins, asset)
-            chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, asset))
+            chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, asset),
+                                      crop=ins.get("crop"))
             graph.append(f"{chain},format=rgba[i{n}]")
             if fill == ALPHA_FILL:
                 # Прозрачная вставка — поверх размытого кадра клипа, как в рендере.

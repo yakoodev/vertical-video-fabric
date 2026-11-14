@@ -325,10 +325,10 @@ const TEXT_PRESETS: TextPreset[] = [
     id: "cartoon-yellow",
     label: "Мульт-жёлтый",
     sample: "Видели?",
-    css: { fontFamily: "Pangolin, 'Comic Sans MS', sans-serif", color: "#FFD60A", WebkitTextStroke: "1px #000", transform: "rotate(-4deg)" },
+    css: { fontFamily: "'Dela Gothic One', Impact, sans-serif", color: "#FFD60A", WebkitTextStroke: "1px #000", transform: "rotate(-4deg)" },
     make: () =>
       textLayer(
-        { text: "Видели?", font: "Pangolin", weight: 400, size: 150, color: "#FFD60A", stroke: { color: "#000000", width: 16 }, lineHeight: 1 },
+        { text: "Видели?", font: "Dela Gothic One", weight: 400, size: 130, color: "#FFD60A", stroke: { color: "#000000", width: 14 }, lineHeight: 1 },
         {
           y: 0.62,
           end: 1.3,

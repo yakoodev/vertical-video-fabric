@@ -1,4 +1,5 @@
-"""Стиль текста «мульт-жёлтый»: жёлтая заливка, толстая чёрная обводка, мультяшный шрифт, прыжок на входе и лёгкий
+"""Стиль текста «мульт-жёлтый»: жёлтая заливка, толстая чёрная обводка, жирный мультяшный шрифт (Dela Gothic One, OFL —
+самый «мультяшный» из жирных кириллических в vendor/fonts; рукописного жирного с кириллицей там нет), прыжок на входе и лёгкий
 наклон — слова мем-эдита («Джампнул», «Видели?», «Рокет» в рефе владельца). Тот же стиль — в библиотеке текста
 редактора (frontend/src/pages/workspace/motion/LibraryPanels.tsx, «Мульт-жёлтый»).
 
@@ -10,8 +11,8 @@ from __future__ import annotations
 CARTOON_YELLOW = {
     "id": "cartoon-yellow",
     "label": "Мульт-жёлтый",
-    "props": {"font": "Pangolin", "weight": 400, "size": 150, "color": "#FFD60A",
-              "stroke": {"color": "#000000", "width": 16}, "align": "center", "maxWidth": 900, "lineHeight": 1.0},
+    "props": {"font": "Dela Gothic One", "weight": 400, "size": 130, "color": "#FFD60A",
+              "stroke": {"color": "#000000", "width": 14}, "align": "center", "maxWidth": 900, "lineHeight": 1.0},
     "shadow": {"color": "#000000", "blur": 0, "x": 6, "y": 9, "opacity": 0.9},
     "in": {"type": "pop", "duration": 0.28},
     "out": {"type": "fade", "duration": 0.12},
@@ -24,7 +25,8 @@ PLACES = {
     "9:16": ((0.32, 0.62), (0.68, 0.58), (0.5, 0.66), (0.4, 0.55)),
     "16:9": ((0.3, 0.74), (0.68, 0.7), (0.42, 0.66), (0.6, 0.76)),
 }
-SIZE = {"9:16": 150, "16:9": 130}
+SIZE = {"9:16": 130, "16:9": 180}  # 16:9 — в 1.4 раза крупнее относительно кадра (опорный кегль по высоте 1080)
+MAX_WIDTH = {"9:16": 900, "16:9": 1500}
 
 
 def word_layer(text: str, start: float, end: float, aspect: str = "9:16", index: int = 0) -> dict:
@@ -36,6 +38,6 @@ def word_layer(text: str, start: float, end: float, aspect: str = "9:16", index:
     return {
         "type": "text", "name": f"Слово «{text}»", "start": round(start, 3), "end": round(end, 3),
         "x": x, "y": y, "track": 3, "rotation": sign * style["rotation"],
-        "props": {**style["props"], "text": text, "size": SIZE.get(aspect, 150)},
+        "props": {**style["props"], "text": text, "size": SIZE.get(aspect, 130), "maxWidth": MAX_WIDTH.get(aspect, 900)},
         "shadow": dict(style["shadow"]), "in": dict(style["in"]), "out": dict(style["out"]), "loop": dict(style["loop"]),
     }
