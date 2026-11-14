@@ -34,8 +34,8 @@ from app.settings import settings
 
 KINDS = ("image", "gif", "video", "audio")
 MODES = ("full", "pip", "sound")
-# Мем-монтаж игры (врезки видеомемов каждые 4–6 с, app/video_memes.py) — до 12 вставок на клип.
-MAX_INSERTS = 12
+# Мем-монтаж игры (врезки видеомемов каждые 4–6 с, app/video_memes.py) — до 40 вставок на клип (длинные нарезки на минуты).
+MAX_INSERTS = 40
 MAX_INSERT_SEC = 8.0
 MIN_INSERT_SEC = 0.3
 DUCK_VOLUME = 0.2
