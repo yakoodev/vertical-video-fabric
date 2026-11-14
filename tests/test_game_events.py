@@ -232,6 +232,25 @@ def test_fight_spans_group_contact_to_last_decisive_event():
     assert 0 < spans[1]["score"] < spans[0]["score"] <= 1.0
 
 
+def test_after_a_win_gunfire_and_flashes_are_dropped_but_reactions_stay():
+    events = [_e(100, "win"), _e(102, "shot_burst"), _e(150, "shot_burst"), _e(160, "ult"), _e(170, "reaction"),
+              _e(400, "shot_burst")]
+    assert [(e["t"], e["kind"]) for e in GE.after_match(events)] == [(100, "win"), (102, "shot_burst"),
+                                                                     (170, "reaction"), (400, "shot_burst")]
+
+
+def test_match_spans_from_the_in_match_label():
+    g = _frame(4)
+    _paste(g, _raw_tpl("inmatch_ru"), 1617, 52)
+    on, off = HUD.analyze_frame(g), HUD.analyze_frame(_frame(5))
+    assert on["inmatch_ru"][0] > 0.95 and off["inmatch_ru"][0] < 0.65
+    frames = [(t, on if 10 <= t <= 60 and not 30 <= t <= 35 else off) for t in np.arange(0, 120, 0.5)]
+    assert HUD.match_spans(frames) == [(7.0, 63.0)]  # пропала на 5 с — матч тот же
+    assert HUD.hud_events(frames) == []  # метка — не событие
+    assert GE.in_match([_e(5, "shot_burst"), _e(40, "ult"), _e(70, "reaction")], [(7.0, 63.0)]) ==         [_e(40, "ult"), _e(70, "reaction")]
+    assert len(GE.in_match([_e(5, "shot_burst")], None)) == 1
+
+
 def test_dedupe_keeps_first_of_close_duplicates():
     out = GE.dedupe([_e(10, "level_up", 0.8, "НОВЫЙ УРОВЕНЬ"), _e(11, "level_up", 1.0, "НОВЫЙ УРОВЕНЬ"),
                      _e(10.5, "knock", 0.9, "НОКАУТ"), _e(13, "knock", 0.9, "НОКАУТ"), _e(14, "shot_burst")])
@@ -251,8 +270,9 @@ def test_detect_game_events_contract(tmp_path, monkeypatch):
     video.write_bytes(b"x")
     monkeypatch.setattr(GE, "probe", lambda p: {"duration": 120.0, "width": 2560, "height": 1440, "audio_tracks": 2,
                                                 "has_video": True, "keyframe_gap": 0.25})
-    monkeypatch.setattr(GE, "hud_scan", lambda *a, **k: [_e(30, "knock", 0.95, "НОКАУТ"), _e(130, "kill")])
-    monkeypatch.setattr(GA, "audio_events", lambda *a, **k: [_e(29.5, "shot_burst", 0.6, "4 выстр.")])
+    monkeypatch.setattr(GE, "hud_scan", lambda *a, **k: ([_e(30, "knock", 0.95, "НОКАУТ"), _e(130, "kill")], [(20.0, 90.0)]))
+    monkeypatch.setattr(GA, "audio_events", lambda *a, **k: [_e(29.5, "shot_burst", 0.6, "4 выстр."),
+                                                             _e(95.0, "shot_burst", 0.6, "3 выстр.")])  # вне матча
     events = GE.detect_game_events(video, start=10, end=100)
     assert [(e["t"], e["kind"]) for e in events] == [(29.5, "shot_burst"), (30, "knock")]
     assert all(set(e) == {"t", "kind", "score", "detail"} and 0 <= e["score"] <= 1 and e["kind"] in GE.KINDS for e in events)

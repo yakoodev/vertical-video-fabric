@@ -43,7 +43,7 @@ class Spec:
     kind: str        # событие (knock, squad_wipe, …) или служебное (assist, chevron)
     roi: tuple[int, int, int, int]  # x0, y0, x1, y1 в 1080p
     thr: float       # порог совпадения
-    style: str = "banner"  # banner — показ на 1–3 с; state — держится, событие на входе в состояние
+    style: str = "banner"  # banner — показ на 1–3 с; state — держится, событие на входе; marker — не событие
     rearm: float = 12.0    # state: новое событие — не раньше, чем через столько секунд после прошлого
     shrink: int = 1  # сравнивать в уменьшении (крупные надписи)
     needs_chevron: bool = False
@@ -62,6 +62,8 @@ SPECS: dict[str, tuple[Spec, ...]] = {
         Spec("maxlevel_ru", "max_level", (480, 170, 1440, 320), 0.70, shrink=2, detail="МАКС. УРОВЕНЬ"),
         Spec("champion_ru", "win", (240, 300, 1680, 680), 0.62, shrink=4, detail="ВЫ ЧЕМПИОН"),
         Spec("kshield_ru", "death", (700, 840, 1220, 960), 0.72, style="state", detail="сбит (Нокаут-щит)"),
+        # «N ОТР. В ИГРЕ» справа сверху — идёт матч (не меню, не лобби, не подиум): не событие, а метка.
+        Spec("inmatch_ru", "in_match", (1450, 20, 1800, 110), 0.65, style="marker", detail="идёт матч"),
         Spec("spectate_ru", "death", (480, 0, 1300, 110), 0.72, style="state", rearm=180.0, shrink=2, detail="убит (режим зрителя)"),
     ),
 }
@@ -288,6 +290,24 @@ def hud_events(frames: list[tuple[float, dict]], game: str = "apex") -> list[dic
     knocks = [e["t"] for e in events if e["kind"] == "knock" and "помощь" not in e["detail"]]
     events.extend(k for k in _feed_events(frames, knocks) if not any(3.0 < k["t"] - w < 240.0 for w in wins))
     return _dedupe_levels(sorted(events, key=lambda e: e["t"]))
+
+
+MATCH_GAP = 8.0   # метка «ОТР. В ИГРЕ» пропала не дольше — матч тот же
+MATCH_PAD = 3.0
+
+
+def match_spans(frames: list[tuple[float, dict]], game: str = "apex") -> list[tuple[float, float]]:
+    """Отрезки, где идёт матч (видна метка ``style="marker"``): [(начало, конец)] с запасом MATCH_PAD."""
+    specs = [spec for spec, _ in load_templates(game) if spec.style == "marker"]
+    spans: list[list[float]] = []
+    for t, obs in frames:
+        if not any(obs.get(spec.name, (0.0, 0))[0] >= spec.thr for spec in specs):
+            continue
+        if spans and t - spans[-1][1] <= MATCH_GAP:
+            spans[-1][1] = t
+        else:
+            spans.append([t, t])
+    return [(round(a - MATCH_PAD, 2), round(b + MATCH_PAD, 2)) for a, b in spans]
 
 
 def _step(frames: list[tuple[float, dict]]) -> float:

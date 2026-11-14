@@ -113,9 +113,10 @@ def _flash_events(brightness: list[tuple[float, float]]) -> list[dict]:
 
 
 def hud_scan(path: Path, start: float, end: float, info: dict, game: str = "apex",
-             progress: Callable[[float], None] | None = None) -> list[dict]:
-    """HUD-события и засветы по кадрам (16:9; иначе только засветы)."""
-    from app.game_events_hud import analyze_frame, hud_events
+             progress: Callable[[float], None] | None = None) -> tuple[list[dict], list[tuple[float, float]] | None]:
+    """HUD-события и засветы по кадрам (16:9; иначе только засветы) и отрезки, где идёт матч (метка
+    «ОТР. В ИГРЕ»; None — HUD не смотрели или метки не было ни разу: другой режим/язык, не фильтруем)."""
+    from app.game_events_hud import analyze_frame, hud_events, match_spans
 
     w, h = info.get("width") or 0, info.get("height") or 0
     hud_ok = w > 0 and h > 0 and abs(w / h - 16 / 9) < 0.02
@@ -128,7 +129,15 @@ def hud_scan(path: Path, start: float, end: float, info: dict, game: str = "apex
         if progress and len(brightness) % 40 == 0:
             progress(t)
     events = hud_events(frames, game) if hud_ok else []
-    return events + _flash_events(brightness)
+    spans = match_spans(frames, game) if hud_ok else []
+    return events + _flash_events(brightness), (spans or None)
+
+
+def in_match(events: list[dict], spans: list[tuple[float, float]] | None) -> list[dict]:
+    """Выстрелы и засветы вне матча (меню, выбор легенды, подиум, сводка: музыка и вспышки) — прочь."""
+    if not spans:
+        return events
+    return [e for e in events if e["kind"] not in ("shot_burst", "ult") or any(a <= e["t"] <= b for a, b in spans)]
 
 
 def dedupe(events: list[dict]) -> list[dict]:
@@ -161,9 +170,17 @@ def detect_game_events(video_path: Any, *, game: str = "apex", start: float | No
         return []
     from app.game_events_audio import audio_events
 
-    events = hud_scan(path, lo, hi, info, game, progress) if info["has_video"] else []
-    events += audio_events(path, lo, hi, info["audio_tracks"])
-    return dedupe([e for e in events if lo - 1e-6 <= e["t"] <= hi + 1e-6])
+    events, spans = hud_scan(path, lo, hi, info, game, progress) if info["has_video"] else ([], None)
+    events = in_match(events + audio_events(path, lo, hi, info["audio_tracks"]), spans)
+    return dedupe(after_match([e for e in events if lo - 1e-6 <= e["t"] <= hi + 1e-6]))
+
+
+def after_match(events: list[dict], quiet: float = 240.0) -> list[dict]:
+    """После «ВЫ ЧЕМПИОН» матч кончен: подиум, сводка и меню — не бой. Выстрелы и засветы там (музыка,
+    анимации, вспышки меню) — прочь; реакции голосом остаются (радость после победы — то, что нужно)."""
+    wins = [e["t"] for e in events if e["kind"] == "win"]
+    return [e for e in events
+            if not (e["kind"] in ("shot_burst", "ult") and any(3.0 < e["t"] - w < quiet for w in wins))]
 
 
 def fight_spans(events: list[dict], *, gap: float = FIGHT_GAP, lead: float = FIGHT_LEAD, tail: float = FIGHT_TAIL,
