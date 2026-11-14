@@ -321,6 +321,26 @@ const TEXT_PRESETS: TextPreset[] = [
       ),
   },
   {
+    // Слова мем-эдита (app/meme_edit_text.py CARTOON_YELLOW): жёлтый, толстая обводка, прыжок и наклон.
+    id: "cartoon-yellow",
+    label: "Мульт-жёлтый",
+    sample: "Видели?",
+    css: { fontFamily: "Pangolin, 'Comic Sans MS', sans-serif", color: "#FFD60A", WebkitTextStroke: "1px #000", transform: "rotate(-4deg)" },
+    make: () =>
+      textLayer(
+        { text: "Видели?", font: "Pangolin", weight: 400, size: 150, color: "#FFD60A", stroke: { color: "#000000", width: 16 }, lineHeight: 1 },
+        {
+          y: 0.62,
+          end: 1.3,
+          rotation: -6,
+          in: { type: "pop", duration: 0.28 },
+          out: { type: "fade", duration: 0.12 },
+          loop: { type: "wiggle", speed: 1.2, amount: 0.25 },
+          shadow: { color: "#000000", blur: 0, x: 6, y: 9, opacity: 0.9 },
+        },
+      ),
+  },
+  {
     id: "plate",
     label: "На плашке",
     sample: "Подпись на плашке",

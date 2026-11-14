@@ -477,6 +477,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "remove_insert", "auto_edit", "set_transition", "list_brands", "apply_brand", "set_nameplate",
     # видеомемы: поиск реакции, врезка в клип, описание (app/video_meme_tools.py)
     "search_video_memes", "place_video_meme", "describe_video_meme",
+    # мем-эдит игры одним вызовом: рубка по долям музыки + врезки видеомемов (app/meme_edit_tools.py)
+    "meme_edit",
     # субтитры (стиль и правка; распознавание — модуль transcription)
     "list_subtitle_styles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "emphasize_words",
     # цвет кусков и такт музыки
