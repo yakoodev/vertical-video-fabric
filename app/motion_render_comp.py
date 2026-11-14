@@ -45,11 +45,19 @@ def compositor_command() -> list[str]:
     from app.settings import settings
 
     script = Path(settings.motion_compositor)
+    node = settings.motion_node
+    # Локально бандл собирается руками и устаревает молча (не было fx negate) — сверка с исходниками,
+    # пересборка локальным esbuild или громкое предупреждение (app/motion_bundle.py).
+    from app.motion_bundle import ensure_fresh
+
+    try:
+        ensure_fresh(script, node)
+    except Exception:  # noqa: BLE001 - сверка — подстраховка, рендер важнее
+        pass
     if not script.exists():
         raise CompositorMissing(
             f"компоновщик моушна не собран: нет {script} (соберите: npm run build:motion)"
         )
-    node = settings.motion_node
     if not (Path(node).exists() or shutil.which(node)):
         raise CompositorMissing(f"Node не найден: {node!r} (MOTION_NODE)")
     return [node, str(script)]
