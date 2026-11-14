@@ -40,22 +40,21 @@ def test_events_order_length_and_static_ramps():
              "look0", "resume", "col0", "raise", "self0", "her0", "her1", "reveal", "flick", "wide", "choice", "cta", "static_end"]
     assert [ev[n] for n in order] == sorted(ev[n] for n in order)
     assert 45.0 <= total <= 70.0
-    keys = [x for x in scene["fx_keys"] if "static" in x]
-
-    def static(t):
-        for a, b in zip(keys, keys[1:]):
-            if a["t"] <= t < b["t"]:
-                return a["static"] + (b["static"] - a["static"]) * (t - a["t"]) / (b["t"] - a["t"])
-        return keys[-1]["static"]
+    from app import psx_look as L
 
     n = int(round(total * E3.FPS))
-    lv = [static(f / E3.FPS) for f in range(n)]
-    assert lv[0] == 0.0  # кадр 0 — чистая обложка (её лицо + титр)
-    peak = max(range(45), key=lambda f: lv[f])
-    assert lv[peak] > 0.99 and 0.4 <= peak / E3.FPS <= 0.6
-    assert max(abs(lv[f + 1] - lv[f]) for f in range(45)) < 0.25
-    tail = lv[n - 30:]
-    assert tail[-1] > 0.99 and max(b - a for a, b in zip(tail, tail[1:])) < 0.25
+    lv = L.static_levels(scene["fx_keys"], n, E3.FPS)
+    # Кадр 0 и весь крючок (до первой склейки без пары кадров) — чистая обложка: её лицо + титр (lag_report.md).
+    first_cut = int(round(ev["card0"] * E3.FPS))
+    assert max(lv[: first_cut - 1]) == 0.0
+    runs = L.static_runs(lv)
+    # Помехи — короткие всплески ≤ 6 кадров, приглушённые; в конце — 6 кадров.
+    assert runs and all(r["frames"] <= L.BURST_FRAMES for r in runs), runs
+    assert all(r["peak"] <= L.BURST_PEAK_MAX + 1e-9 for r in runs[:-1])
+    assert runs[0]["start"] <= first_cut < runs[0]["start"] + runs[0]["frames"]  # первый всплеск — на склейке крючка
+    assert runs[-1]["start"] + runs[-1]["frames"] == n and lv[-1] >= 0.7
+    # Срывы трекинга по 0.1 с (+0.1 с выхода в vhs.ts) — тоже ≤ 6 кадров.
+    assert all(b - a <= E3.TEAR + 1e-9 for a, b in scene["vhs"]["tears"])
     assert scene["titles"][0]["t0"] == 0 and scene["titles"][0]["lines"] == ["НЕ ДЫШИ"]
     assert scene["roll"]["stat"] == "ВОЛЯ" and scene["comment"]["nick"] == "Neko_Sil Flood"
     assert scene["cards"][0]["lines"][-1] == "4 — СВОЁ"
