@@ -59,6 +59,20 @@ class MemePlaceRequest(BaseModel):
     fill: Literal["blur", "cover", "black"] | None = None
 
 
+class MemeEditRequest(BaseModel):
+    """Мем-эдит записи (app/meme_edit.py): два клипа 9:16 и 16:9 из одного монтажа."""
+    music_track_id: int | None = Field(default=None, description="трек фона (list_music); нет — ближе к 128 BPM")
+    music_asset_id: int | None = Field(default=None, description="или звук из «Файлов для монтажа»")
+    target_sec: float = Field(default=40.0, ge=15, le=90)
+    aspects: list[str] = Field(default_factory=lambda: ["9:16", "16:9"])
+    events: list[dict] | None = Field(default=None, description="свои события [{t, kind, score?}] (секунды исходника)")
+    seed: int = 0
+    words: int = Field(default=3, ge=0, le=4)
+    subtitles: bool = True
+    render: bool = True
+    dry_run: bool = Field(default=False, description="только план (файл клипа), без клипов")
+
+
 def _public(meme: dict) -> dict:
     return {k: v for k, v in meme.items() if k != "file_path"}
 
@@ -202,5 +216,26 @@ def build_video_memes_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": True}
+
+    @router.post("/api/sources/{source_id}/meme-edit", tags=["Video memes"],
+                 summary="Мем-эдит игры: геймплей по долям музыки + врезки видеомемов, два клипа 9:16 и 16:9")
+    def api_meme_edit(source_id: int, payload: MemeEditRequest, request: Request, _auth: auth_dep) -> dict:
+        from app.meme_edit import build_meme_edit, plan_meme_edit
+        from app.stream_questions_api import refuse_agent_montage
+
+        refuse_agent_montage(request, get_store(), source_id)
+        options = dict(music_track_id=payload.music_track_id, music_asset_id=payload.music_asset_id,
+                       target_sec=payload.target_sec, events=payload.events, seed=payload.seed,
+                       words=payload.words, subtitles=payload.subtitles)
+        try:
+            if payload.dry_run:
+                return {"dry_run": True,
+                        "spec": plan_meme_edit(get_store(), source_id, aspect=(payload.aspects or ["9:16"])[0],
+                                               **options)}
+            return build_meme_edit(get_store(), source_id, aspects=payload.aspects, render=payload.render, **options)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return router

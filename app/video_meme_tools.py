@@ -61,6 +61,17 @@ def h_place_video_meme(ctx: ToolContext, args: dict) -> dict:
               if args.get(k) is not None}
     if args.get("fill") in FULL_FILLS:
         insert["fill"] = args["fill"]
+    elif mode == "full" and meme.get("file_path"):
+        # Вшитые чёрные поля мема прочь, подрезка под кадр клипа до 45 %, дальше — размытая копия (app/meme_frame.py).
+        from app.formats import settings_render_format
+        from app.meme_edit import meme_framing
+        from app.tool_core import _current_render
+
+        frame = meme_framing(meme["file_path"], settings_render_format(_current_render(ctx)))
+        if frame.get("crop"):
+            insert["crop"] = frame["crop"]
+        if frame.get("fill"):
+            insert["fill"] = frame["fill"]
     insert.update(asset_id=meme["asset_id"], mode=mode, duration=duration, duck=duck,
                   reason=insert.get("reason") or f"видеомем «{meme['title']}»")
     if meme["has_audio"]:

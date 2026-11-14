@@ -270,7 +270,7 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
         raise ToolError("нужно at (секунды клипа) или at_word")
     people = people_gate(ctx, asset)  # реальный человек при запрете — отказ до записи
     entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill",
-                                  "duck_volume", "level") if args.get(k) is not None}
+                                  "duck_volume", "level", "crop") if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})

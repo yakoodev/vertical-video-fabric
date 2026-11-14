@@ -1461,6 +1461,20 @@
 "module": null,
 "handler": "h_describe_video_meme",
 "label": true
+},
+{
+"name": "meme_edit",
+"title": "Собираю мем-эдит",
+"description": "7f73466c4d8aafab",
+"parameters": "84718973f5dc67bc",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_meme_edit",
+"label": true,
+"cost": [
+"cpu"
+]
 }
 ],
 "discovery": [

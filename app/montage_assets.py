@@ -131,12 +131,43 @@ def key_black(ins: dict, asset: dict | None) -> bool:
             and asset_matte(asset.get("file_path") or "") == "black")
 
 
-def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: str, key: bool = False) -> str:
+def crop_filter(crop: Any) -> str:
+    """``crop=…,`` ffmpeg по окну вставки ``{x, y, w, h}`` (доли её кадра) или пусто — без окна."""
+    box = normalize_crop(crop)
+    if not box:
+        return ""
+    return (f"crop=trunc(iw*{box['w']:.4f}/2)*2:trunc(ih*{box['h']:.4f}/2)*2:"
+            f"trunc(iw*{box['x']:.4f}):trunc(ih*{box['y']:.4f}),")
+
+
+def normalize_crop(raw: Any) -> dict | None:
+    """Окно вставки в долях её кадра: срезать вшитые чёрные поля мема и/или подрезать под кадр клипа
+    (app/meme_frame.py). Мусор, окно меньше 10 % или весь кадр — None."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        x, y, w, h = (float(raw.get(k, d)) for k, d in (("x", 0), ("y", 0), ("w", 1), ("h", 1)))
+    except (TypeError, ValueError):
+        return None
+    if not all(v == v for v in (x, y, w, h)):
+        return None
+    x, y = min(0.9, max(0.0, x)), min(0.9, max(0.0, y))
+    w, h = min(1.0 - x, max(0.1, w)), min(1.0 - y, max(0.1, h))
+    if w > 0.995 and h > 0.995:
+        return None
+    return {"x": round(x, 4), "y": round(y, 4), "w": round(w, 4), "h": round(h, 4)}
+
+
+def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: str, key: bool = False,
+                      crop: Any = None) -> str:
     """Граф полнокадровой вставки ``src`` (метка входа, например ``[1:v]``) в кадр ``width``×``height`` —
     без выходной метки (дописывает вызывающий). ``tag`` — уникальная часть внутренних меток. ``clip`` —
     вставка по центру на прозрачном поле (``key`` — чёрный фон выбит): под неё вызывающий кладёт размытый
-    кадр клипа."""
+    кадр клипа. ``crop`` — окно вставки (доли её кадра) до всего остального: вшитые поля мема прочь."""
     fill = fill if fill in FULL_FILLS else DEFAULT_FULL_FILL
+    window = crop_filter(crop)
+    if window:
+        src = f"{src}{window}"
     if fill == "clip":
         return (f"{src}format=rgba,{BLACK_KEY + ',' if key else ''}"
                 f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
@@ -279,6 +310,9 @@ def normalize_inserts(raw: Any) -> list[dict]:
             entry["level"] = item["level"]
         if item.get("fill") in FULL_FILLS and item.get("fill") != DEFAULT_FULL_FILL:
             entry["fill"] = item["fill"]  # чем заполнить кадр вокруг полнокадровой вставки (по умолчанию — размытие)
+        crop = normalize_crop(item.get("crop"))
+        if crop:
+            entry["crop"] = crop  # окно вставки: вшитые поля мема срезаны, подрезка под кадр клипа
         reason = item.get("reason")
         if isinstance(reason, str) and reason.strip():
             entry["reason"] = reason.strip()[:200]
@@ -352,7 +386,8 @@ def build_inserts_args(
                 # прозрачная гифка/картинка — поверх размытого кадра клипа (resolve_fill → clip).
                 x, y = "(W-w)/2", "(H-h)/2"
                 fill = resolve_fill(ins, ins["asset"])
-                chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, ins["asset"]))
+                chain = full_insert_chain(f"[{n}:v]", width, height, fill, str(n), key=key_black(ins, ins["asset"]),
+                                          crop=ins.get("crop"))
                 graph.append(
                     f"{chain},format=yuva420p,"
                     f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"

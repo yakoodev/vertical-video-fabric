@@ -566,6 +566,7 @@ TOOL_ORDER = (
     "apply_cuts", "auto_edit", "compose_cover", "make_compilation", "set_transition", "trim_piece", "auto_focus",
     "auto_crop_layer", "set_focus", "set_segment_speed", "set_piece_color", "match_piece_colors", "snap_to_beats",
     "set_piece_fit", "add_insert", "remove_insert", "search_video_memes", "place_video_meme", "describe_video_meme",
+    "meme_edit",
 )
 
 
@@ -656,10 +657,12 @@ def registry() -> dict[str, Tool]:
         from app.voice_tools import tools as voice_tools
         # Видеомемы: поиск реакции по смыслу и врезка в клип (app/video_meme_tools.py).
         from app.video_meme_tools import tools as video_meme_tools
+        # Мем-эдит игры одним вызовом: рубка по долям + врезки видеомемов (app/meme_edit_tools.py).
+        from app.meme_edit_tools import tools as meme_edit_tools
 
         _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools(), *lint_tools(),
                                                   *render_tools(), *webpage_tools(), *voice_tools(),
-                                                  *video_meme_tools()]}
+                                                  *video_meme_tools(), *meme_edit_tools()]}
     return _REGISTRY
 
 
