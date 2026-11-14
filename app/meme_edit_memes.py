@@ -25,6 +25,7 @@ MEME_EVERY_SEC = 22.0
 MAX_PER_FIGHT = 2
 MIN_GAP_SEC = 10.0      # мемы одного боя не ближе (секунды исходника)
 MIN_FIT = 2.0           # хуже — мем не по смыслу, момент остаётся без мема
+MIN_FIT_LAST = 1.5      # конец боя: мем-ответ на итог (фейл → «Нет.») — хватает главного тега итога
 ECHO_POINTS = 4.0
 KIND_TAGS = {
     "kill": ("победа", "хвастовство", "шок", "уважение", "вау"),
@@ -36,10 +37,25 @@ KIND_TAGS = {
     "reaction": ("смех", "шок", "непонимание", "кринж", "радость"),
     "none": ("непонимание", "смех", "кринж"),
 }
+# Настроение реплики → теги мема (по основам слов): «смысл» без ИИ. Порядок тегов — от главного.
+LINE_MOODS = (
+    (("не надо", "нет нет", "стой", "стоп", "мама", "летим", "падаю", "упал", "аааа", "страшн", "испуг"),
+     ("страх", "шок", "фейл")),
+    (("убил", "убило", "умер", "сдох", "кончил", "лег", "лёг", "сбили", "меня нок", "всё", "конец", "анлак", "обидно"),
+     ("фейл", "грусть", "кринж")),
+    (("легко", "изи", "красав", "хорош", "нокнул", "убрал", "всех", "сквад", "чемпион", "умный", "сделал"),
+     ("хвастовство", "победа", "радость")),
+    (("почему", "зачем", "что это", "как так", "кажется", "не понял", "альцгейм", "забыл", "логично"),
+     ("непонимание", "кринж")),
+    (("ахах", "хаха", "смешн", "ржу", "угар"), ("смех", "радость")),
+    (("тиммейт", "командн", "помоги", "где вы", "вы где", "один остал"), ("тиммейт", "непонимание", "фейл")),
+)
 # Слова, которые не делают «эхо» (служебные, местоимения, связки)
 _ECHO_STOP = frozenset("""это эта этот эти того тому там тут так вот ну да нет ага угу я ты он она оно мы вы они меня тебя
 его её ее нас вас их мне тебе ему ей нам вам им все всё всех уже еще ещё как что кто где когда зачем почему если чтобы
-только просто вообще сейчас тоже очень было была были будет есть нету надо можно нужно давай давайте блин бля""".split())
+только просто вообще сейчас тоже очень было была были будет есть нету надо можно нужно давай давайте блин бля
+потому поэтому другой другая другого какой какая такой такая одного одной один одна этого этой тогда потом снова
+опять может вроде типа короче слушай смотри""".split())
 _WORD = re.compile(r"[a-zа-яё0-9]+")
 
 
@@ -47,10 +63,29 @@ def _tokens(text: Any) -> list[str]:
     return [w.replace("ё", "е") for w in _WORD.findall(str(text or "").lower())]
 
 
+def _content(text: Any) -> list[str]:
+    """Значимые слова: ≥ 4 букв, не служебные и не мат (мат — не смысл, его глушат)."""
+    from app.profanity import classify_token
+
+    return [w for w in _tokens(text) if len(w) >= 4 and w not in _ECHO_STOP and not classify_token(w)]
+
+
+def line_moods(text: str) -> list[str]:
+    """Теги мемов под настроение реплики (LINE_MOODS), без повторов, по порядку важности; вопрос — «непонимание»."""
+    low = " " + " ".join(_tokens(text)) + " "
+    out: list[str] = []
+    for stems, tags in LINE_MOODS:
+        if any((" " + st) in low for st in stems):
+            out += [t for t in tags if t not in out]
+    if "?" in str(text) and "непонимание" not in out:
+        out.append("непонимание")
+    return out
+
+
 def echo_words(line_text: str, meme: dict) -> list[str]:
-    """Слова реплики, которые повторяет мем (по основе 5 букв, слова ≥ 4 букв, без служебных)."""
-    said = {w[:5] for w in _tokens(meme.get("transcript")) + _tokens(meme.get("title")) if len(w) >= 4}
-    return sorted({w for w in _tokens(line_text) if len(w) >= 4 and w not in _ECHO_STOP and w[:5] in said})
+    """Слова реплики, которые повторяет мем (по основе 5 букв, значимые слова)."""
+    said = {w[:5] for w in _content(meme.get("transcript")) + _content(meme.get("title"))}
+    return sorted({w for w in _content(line_text) if w[:5] in said})
 
 
 @dataclass
@@ -108,9 +143,19 @@ def meme_fit(meme: dict, cand: Candidate) -> tuple[float, list[str]]:
     from app.video_memes import score
 
     echo = echo_words(cand.text, meme) if cand.text else []
-    points = score(meme, cand.text) if cand.text else 0.0
+    query = " ".join(_content(cand.text))  # длинная реплика из служебных слов не топит смысл (оценка — доля слов)
+    points = score(meme, query) if query else 0.0
     points += ECHO_POINTS * min(2, len(echo))
     tags = [str(t).lower() for t in meme.get("tags") or []]
+
+    def has(tag: str) -> bool:
+        return any(t == tag or t.startswith(tag[:5]) for t in tags)
+
+    moods = line_moods(cand.text) if cand.text else []
+    for rank, tag in enumerate(moods[:4]):  # настроение реплики — главнее вида события
+        if has(tag):
+            points += 2.2 if rank == 0 else 1.5
+            break
     want = KIND_TAGS.get(cand.kind, ())
     for rank, tag in enumerate(want):
         if any(t == tag or t.startswith(tag[:5]) for t in tags):
@@ -133,7 +178,7 @@ def assign_memes(fights: list[Fight], library: list[dict], total_sec: float,
         for cand in candidates(f):
             for meme in library:
                 fit, echo = meme_fit(meme, cand)
-                if fit >= MIN_FIT:
+                if fit >= (MIN_FIT_LAST if cand.last else MIN_FIT):
                     pairs.append((cand.weight * fit, fit, cand, meme, echo))
     pairs.sort(key=lambda p: (-p[0], -p[1], int(p[3]["meme_id"])))
     used_memes: set[int] = set()

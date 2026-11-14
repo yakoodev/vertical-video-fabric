@@ -38,6 +38,8 @@ WEIGHT = {"win": 4.0, "squad_wipe": 2.5, "kill": 1.2, "knock": 1.0, "death": 1.0
           "level_up": 0.1, "ult": 0.2, "reaction": 0.4}
 MEME_SHARE = 0.08       # мемы добавляют к длине боёв примерно столько (1 мем ~1.8 с на 22 с)
 MIN_SCORE = 1.0         # бой без решающего события и без реплик — не берём
+NO_EVENT_BURSTS = 8     # без решающего события бой — только при такой плотной стрельбе (детектор мог не увидеть нок)
+JOIN_GAP = 8.0          # бои одной записи ближе — один бой (A05: нок → ползёт → «бочка кончилась» → смерть)
 
 
 @dataclass
@@ -209,8 +211,8 @@ def find_fights(source_id: int, events: list[dict], shots: list[list[float]] | N
         evs = [x[2] for x in g if x[2] is not None]
         dec = [e for e in evs if e["kind"] in DECISIVE]
         bursts = sum(1 for x in g if x[2] is None or x[2]["kind"] == "shot_burst")
-        if not dec and bursts < 3:
-            continue
+        if not dec and bursts < NO_EVENT_BURSTS:
+            continue  # без нока, килла, смерти — не бой (разговор на высадке, стрельба по пустоте)
         start = max(0.0, g[0][0] - LEAD)
         # колл перед боем: реплика, идущая в момент начала (или кончившаяся меньше чем за 1 с до него)
         for ln in lines_from_words(every):
@@ -237,10 +239,10 @@ def find_fights(source_id: int, events: list[dict], shots: list[list[float]] | N
                       team_lines=[ln for ln in lines_from_words(team) if start <= ln["start"] < end])
         fight.score, fight.result = score_fight(fight)
         fights.append(fight)
-    # бои, задевшие друг друга запасами, — один бой (склейка)
+    # бои, задевшие друг друга запасами или идущие почти подряд, — один бой (склейка; пауза станет мёртвым временем)
     merged: list[Fight] = []
     for f in fights:
-        if merged and f.start <= merged[-1].end:
+        if merged and f.start <= merged[-1].end + JOIN_GAP:
             m = merged[-1]
             m.end = max(m.end, f.end)
             m.events = [e for e in events if m.start <= float(e["t"]) <= m.end]

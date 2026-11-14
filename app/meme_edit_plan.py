@@ -126,12 +126,14 @@ def _cuts_word(nz: float, b: float, words: list[dict], shots: list[list[float]])
 
 
 def snap_end(a: float, b: float, t_out: float, period: float, *, words: list[dict], shots: list[list[float]],
-             duration: float, bar_after: int | None = None, limit: float | None = None) -> tuple[float, int]:
+             duration: float, bar_after: int | None = None, limit: float | None = None,
+             strict: bool = False) -> tuple[float, int] | None:
     """Конец куска ``[a, b]``, идущего в ролике с ``t_out``, на долю. Ответ — (новый конец в source, номер доли).
 
     Ближайшая доля, если сдвиг ≤ полдоли и он не режет слово/стрельбу; иначе позже (до MAX_NUDGE_BEATS долей).
     ``bar_after`` — после куска ещё столько долей (мем), и всё вместе должно кончиться на такт (шов музыки).
-    ``limit`` — дальше конец не уходит (там начинается следующий кусок: кадры не повторяются)."""
+    ``limit`` — дальше конец не уходит (там начинается следующий кусок: кадры не повторяются). ``strict`` — нет
+    доли, которая не режет слово, — None (вызывающий попробует шире)."""
     hi = min(duration - 0.05, limit if limit is not None else duration)
     end_out = t_out + (b - a)
     k = round(end_out / period)
@@ -152,6 +154,8 @@ def snap_end(a: float, b: float, t_out: float, period: float, *, words: list[dic
             continue
         if not _cuts_word(nz, b, words, shots):
             return nz, c
+    if strict:
+        return None
     for c in cand:  # всё режет слово — берём ближайшую позднюю, что влезает в запись
         nz = nz_of(c)
         if nz - a >= MIN_PIECE - 1e-6 and nz <= hi + 1e-6:
@@ -182,8 +186,16 @@ def lay_block(fight: Fight, picks: list[Pick], punch_len: dict[int, float], *, t
     for i, s in enumerate(segs):
         pick: Pick | None = s["pick"]
         last = i == len(segs) - 1
-        if prev_pick and visible and abs(s["a"] - visible[-1]["z"]) <= 0.8:
-            s["a"] = visible[-1]["z"]  # после мема бой идёт ровно с того кадра, где его закрыл мем
+        if prev_pick and visible:
+            # после мема бой идёт ровно с того кадра, где его закрыл мем (кадры не повторяются)
+            s["a"] = max(s["a"], visible[-1]["z"])
+            if s["b"] - s["a"] < MIN_PIECE:
+                fits = s["a"] + MIN_PIECE <= duration - 0.05
+                if fits and (last or segs[i + 1]["a"] >= s["a"] + MIN_PIECE):
+                    s["b"] = s["a"] + MIN_PIECE
+                else:
+                    prev_pick = False
+                    continue  # остаток боя целиком ушёл в сдвиг конца в долю
         limit = None
         if pick is None and not last and segs[i + 1]["a"] > s["b"] + 1e-6:
             limit = segs[i + 1]["a"]
@@ -193,8 +205,21 @@ def lay_block(fight: Fight, picks: list[Pick], punch_len: dict[int, float], *, t
             room = duration - 0.05 - s["b"]
             need = punch_len.get(int(pick.meme["meme_id"]), 1.8)
             nb = meme_beats(need, period, 0.0 if room >= need + period * 2 else MIN_PIECE)
-        z, k_end = snap_end(s["a"], s["b"], t, period, words=words, shots=shots, duration=duration,
-                            bar_after=(nb if (seam_after and last) else None), limit=limit)
+        bar = nb if (seam_after and last) else None
+        snapped = None
+        if pick is not None:  # мем сразу после реплики: конец куска сдвигается не дальше чем на ~0.45 с
+            # голоса тиммейтов тут не держат: под мемом звук игры всё равно молчит
+            snapped = snap_end(s["a"], s["b"], t, period, words=owner_words, shots=shots, duration=duration,
+                               bar_after=bar, limit=s["b"] + 0.45, strict=True)
+        z, k_end = snapped or snap_end(s["a"], s["b"], t, period, words=words, shots=shots, duration=duration,
+                                       bar_after=bar, limit=limit)
+        if z > duration - 0.05 + 1e-6:  # у конца записи доли позже нет — последняя доля до конца файла
+            k_end = math.floor((frame(t) + duration - 0.05 - s["a"]) / period + 1e-9)
+            z = round(s["a"] + frame(k_end * period) - frame(t), 4)
+            if z - s["a"] < MIN_PIECE - 1e-6:
+                if visible:  # хвост короче куска — без него (кадр перед ним — мем или конец боя)
+                    prev_pick = False
+                    continue
         prev_pick = pick is not None
         clip_in = round(t - frame(t0), 4)
         visible.append({"a": round(s["a"], 4), "z": z, "clip_in": clip_in})
@@ -375,7 +400,9 @@ def yellow_words(blocks: list[dict], total: float) -> dict[str, list[dict]]:
         final = b["final_at"] + start
         if final < NO_TEXT_BEFORE_SEC or any(abs(final - u) < WORD_EVERY_SEC / 2 for u in used):
             continue
-        tail = [w for w in ins["after_line"].split() if w.strip(",.!?…")][-3:]
+        from app.profanity import classify_token
+
+        tail = [w for w in ins["after_line"].split() if w.strip(",.!?…-") and not classify_token(w)][-3:]
         text = " ".join(tail).strip(",. ").upper()
         while len(text) > 18 and len(tail) > 1:
             tail = tail[1:]

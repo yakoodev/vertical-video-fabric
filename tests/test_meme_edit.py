@@ -77,7 +77,9 @@ def test_fight_is_whole_from_first_contact_with_reaction_and_no_dead_time():
 
 
 def test_weak_fights_dropped_and_chosen_never_trimmed():
-    weak = F.find_fights(3, [{"t": 5.0, "kind": "shot_burst", "score": 0.4}], [[4, 5], [6, 7], [8, 9]], [], [], 30.0)
+    assert F.find_fights(3, [{"t": 5.0, "kind": "shot_burst", "score": 0.4}], [[4, 5], [6, 7], [8, 9]], [], [],
+                         30.0) == []  # стрельба без нока/килла/смерти — не бой
+    weak = F.find_fights(3, [{"t": 5.0, "kind": "death", "score": 0.6}], [[4, 5], [6, 7]], [], [], 30.0)
     fights = _fights() + weak
     chosen, notes = F.select_fights(fights, 300.0)
     assert weak[0] not in chosen and any("слабых" in n for n in notes)
