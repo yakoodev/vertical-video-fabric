@@ -28,6 +28,7 @@ TAIL_PEAK = 0.8
 # Файл для заливки в TikTok.
 TIKTOK = {"crf": 20, "maxrate": "8M", "bufsize": "16M", "profile": "high", "level": "4.0", "gop": 30, "audio_rate": 48000,
           "audio_bitrate": "192k"}
+PEAK_1S_MAX_MBPS = 16.0  # поток за любую секунду файла — не больше 2× потолка maxrate
 AAC_FRAME_S = 1024 / 48000  # звук AAC кратен 1024 отсчётам: длины совпадают с точностью до одного такого кадра
 
 
@@ -195,7 +196,8 @@ def check_tiktok(mp4: Path, fps: int = FPS) -> dict:
         issues.append(f"не ровные {fps} к/с: {rep['fps']}, шаг {rep['min_frame_step_ms']}–{rep['max_frame_step_ms']} мс")
     if gop > TIKTOK["gop"]:
         issues.append(f"ключевые кадры реже раза в секунду: {gop} кадров")
-    if peak > 8.0 * 1.5:
+    # Потолок 8M с буфером 16M пускает за 1 с до ~24 Мбит; ловим файлы без потолка (серия 1: 21 Мбит/с) — > 2× потолка.
+    if peak > PEAK_1S_MAX_MBPS:
         issues.append(f"пик потока {peak:.1f} Мбит/с за секунду")
     if a is None:
         issues.append("нет звука")

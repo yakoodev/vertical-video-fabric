@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
+
+import pytest
 
 from app import viewer_ep3 as E3
 
@@ -88,6 +92,24 @@ def test_onryo_is_the_approved_look_and_keeps_distance():
             p = pos(t)
             assert math.hypot(p[0], p[2]) >= 0.8, (t, p)
         t += 1 / 30
+
+
+PACKS_VTB = Path("D:/vvf-offload/vtubika/packs_vtb")
+
+
+@pytest.mark.skipif(not (PACKS_VTB / "packs.json").is_file(), reason="нет паков vtubika на этой машине")
+def test_every_sound_of_the_episode_is_in_the_pack_index(monkeypatch):
+    """Чистовая падала бы после озвучки и рендера: riser-subtle.ogg лежал в папке, но не в индексе пака."""
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "motion_packs_dir", PACKS_VTB)
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+    import viewer_ep3 as T3
+
+    roll, script, beats, total = _beats()
+    ev = E3.ep3_scene(beats, total, roll, 1.6, 1.3)["events"]
+    hits = T3.hits_ep3(ev, [1.0, 2.0, 3.0, 4.0], total, [(1.0, 2.0), (1.5, 1.8), (2.0, 1.6), (2.5, 1.5), (3.0, 1.4)])
+    assert len(hits) > 20 and all(Path(p).is_file() for _, p, _, _ in hits)
 
 
 def test_sneak_keys_smooth_and_stop_on_crunch():

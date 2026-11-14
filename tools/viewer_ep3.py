@@ -123,7 +123,8 @@ def hits_ep3(events: dict, glitch_times: list[float], total: float, steps: list[
             ("sub", pack("freesound/bass-drop.ogg"), ev["reveal"], slow(0.52, 300)),
             ("tick", pack("kenney-interface/switch_002.ogg"), ev["flick"] + 0.04, slow(0.8)),
             ("tick", pack("kenney-interface/switch_003.ogg"), ev["flick"] + 0.19, slow(0.8)),
-            ("riser", pack("freesound/riser-subtle.ogg"), ev["wide"] - 0.2, slow(0.7, 2200)),
+            # riser.ogg, как в серии 2: riser-subtle.ogg лежит в папке, но не в индексе пака (packs.json) — pack() его не видит
+            ("riser", pack("freesound/riser.ogg"), ev["wide"] - 0.2, slow(0.7, 2200)),
             ("beep", pack("kenney-interface/error_004.ogg"), ev["self0"] + 0.4, ""),
             ("chime_soft", pack("freesound/triangle.ogg"), ev["choice"] + 0.15, slow(0.84) + ",atrim=0:0.8,afade=t=out:st=0.5:d=0.3")]
     for i, g in enumerate(glitch_times):
