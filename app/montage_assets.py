@@ -314,6 +314,12 @@ def normalize_inserts(raw: Any) -> list[dict]:
         crop = normalize_crop(item.get("crop"))
         if crop:
             entry["crop"] = crop  # окно вставки: вшитые поля мема срезаны, подрезка под кадр клипа
+        if item.get("parts") is not None:
+            from app.meme_trim import normalize_parts
+
+            parts = normalize_parts(item.get("parts"))
+            if parts:
+                entry["parts"] = parts  # только удар мема: куски файла без пауз (app/meme_trim.py, кэш склеек)
         reason = item.get("reason")
         if isinstance(reason, str) and reason.strip():
             entry["reason"] = reason.strip()[:200]
@@ -377,6 +383,12 @@ def build_inserts_args(
     for ins in usable:
         kind = ins["asset"]["kind"]
         path = ins["asset"]["file_path"]
+        if ins.get("parts") and kind == "video":
+            # Только удар мема (куски без пауз) — склейка из кэша длиной окна; файл библиотеки не меняется.
+            from app.meme_trim import trimmed_file
+
+            path = str(trimmed_file(path, ins["parts"], ins["len"] + PICTURE_TAIL_SEC,
+                                    has_audio=bool(ins["asset"].get("has_audio"))))
         # Картинку читаем чуть дольше окна: последний кадр картинки 25 к/с стоит раньше конца окна,
         # и overlay (eof_action=pass) отдавал последний кадр окна клипу. Конец показа держит enable,
         # звук — atrim по len.

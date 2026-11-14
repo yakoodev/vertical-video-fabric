@@ -64,7 +64,7 @@ def h_place_video_meme(ctx: ToolContext, args: dict) -> dict:
     elif mode == "full" and meme.get("file_path"):
         # Вшитые чёрные поля мема прочь, подрезка под кадр клипа до 45 %, дальше — размытая копия (app/meme_frame.py).
         from app.formats import settings_render_format
-        from app.meme_edit import meme_framing
+        from app.meme_edit_blocks import meme_framing
         from app.tool_core import _current_render
 
         frame = meme_framing(meme["file_path"], settings_render_format(_current_render(ctx)))

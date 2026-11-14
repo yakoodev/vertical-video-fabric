@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 UPLOAD_SOURCE_TYPE = "clip_upload"
@@ -41,6 +42,51 @@ def create_plan(store: Any, source: dict, title: str, description: str = "", pro
     if project_id is not None:
         assign_plan_project(store, int(plan["id"]), int(project_id))
     return store.get_clip_plan(int(plan["id"]))
+
+
+def register_source_file(store: Any, source_path: Path, safe_name: str, size: int, metadata: Any, title: str,
+                         description: str = "", project_id: int | None = None) -> dict:
+    """Готовый файл, уже лежащий в папке исходников, — клип: скрытый источник ``clip_upload`` (нетронутая копия),
+    копия файла выходом клипа (status succeeded), план (``create_plan``). Ответ — запись клипа."""
+    import shutil
+    from uuid import uuid4
+
+    from app.settings import settings
+
+    source = store.create_source(
+        UPLOAD_SOURCE_TYPE, source_path, original_filename=safe_name, size_bytes=size,
+        duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height, fps=metadata.fps,
+        metadata={"standalone_clip": True}, status="ready",
+    )
+    clip_path = settings.clip_dir / f"{uuid4().hex}-{safe_name}"
+    clip_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source_path, clip_path)
+    name = str(title or "").strip() or Path(safe_name).stem
+    plan = create_plan(store, source, name, str(description or "").strip(), project_id)
+    clip = store.create_clip(source["id"], clip_plan_id=int(plan["id"]), title=name, description=str(description or "").strip())
+    return store.finish_clip_render(clip["id"], status="succeeded", output_path=clip_path, preview_path=clip_path,
+                                    duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height,
+                                    size_bytes=size)
+
+
+def register_file_clip(store: Any, path: Path, title: str, description: str = "", project_id: int | None = None) -> dict:
+    """Готовый ролик с диска (собранный сервисом, напр. мем-эдит app/meme_edit_job.py) — обычным клипом, как
+    загруженный файл: его видно в клипах и можно скачать. Файл переносится в папку исходников. Ответ —
+    ``{clip_id, clip_plan_id, path}``."""
+    import shutil
+    from uuid import uuid4
+
+    from app.ingest import probe_media
+    from app.settings import settings
+
+    path = Path(path)
+    safe_name = path.name
+    source_path = settings.source_dir / f"{uuid4().hex}-{safe_name}"
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(path), source_path)
+    clip = register_source_file(store, source_path, safe_name, source_path.stat().st_size, probe_media(source_path),
+                                title, description, project_id)
+    return {"clip_id": int(clip["id"]), "clip_plan_id": int(clip["clip_plan_id"]), "path": str(clip["output_path"])}
 
 
 def is_upload_plan(store: Any, clip_plan_id: int) -> bool:

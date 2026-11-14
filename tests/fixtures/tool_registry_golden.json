@@ -1465,8 +1465,8 @@
 {
 "name": "meme_edit",
 "title": "Собираю мем-эдит",
-"description": "7f73466c4d8aafab",
-"parameters": "84718973f5dc67bc",
+"description": "267cbd6ef74910ae",
+"parameters": "5fc121bdd1238465",
 "mutating": true,
 "scope": "global",
 "module": null,

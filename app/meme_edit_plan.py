@@ -1,422 +1,445 @@
-"""Мем-эдит: раскладка по времени (чистые функции, без базы и медиа — их проверяют тесты).
+"""Мем-эдит: раскладка ролика по долям музыки (чистые функции — их проверяют тесты).
 
-Из событий игры (app/meme_edit_events.py), сетки долей музыки и библиотеки видеомемов собирается список **окон**
-исходника — что из записи попадёт в ролик, по порядку:
+Из боёв (app/meme_edit_fights.py, по порядку ролика) и мемов (app/meme_edit_memes.py) собираются **блоки** — по
+одному на бой; блок — отдельный клип сервиса (куски + вставки мемов), потом блоки склеиваются с одной музыкальной
+подложкой (app/meme_edit_concat.py). Что одобрил владелец (пилот 2, v4):
 
-* ``chop`` — рубленый кусочек геймплея 1–3 доли (0.45–1.6 с) перед моментом: «разгон» эдита;
-* ``hit`` — сам момент: событие (нок, килл, смерть) ровно на долю — окно начинается за целое число долей до него;
-* ``voice`` — реакция в микрофон: окно длиннее (фразу слышно целиком, с субтитрами);
-* ``meme`` — слот под врезку видеомема: геймплей под ним не виден (вставка во весь кадр), длина — мем, округлённый
-  до доли, так что склейка обратно в игру тоже в долю.
+* **всё в долю:** готовый ролик идёт по сетке долей трека ``t = k·period`` от 0 (музыка стартует с сильной доли);
+  конец каждого куска сдвигается на ближайшую долю (≤ полдоли раньше или позже), но не режет слово и начало
+  стрельбы — тогда позже (до 4 долей). Начало куска не двигается никогда (начало боя остаётся). Слот мема — целое
+  число долей, поэтому и возврат в игру в долю;
+* **мем сразу после сетапа:** кусок режется в конце реплики, мем закрывает кадр, под ним — невидимый «наполнитель»
+  (продолжение записи, звук игры и микрофона там глушится), после мема бой продолжается с того же места;
+* **переходы** на каждом стыке блоков и на каждом вырезе мёртвого времени: зум-панч, глитч, вжух, RGB-сдвиг, тряска —
+  по кругу, два одинаковых подряд не бывает; на стыке актов — белая вспышка;
+* **музыка короче ролика** — повтор с начала рабочей части на границе такта; шов — на стыке блоков (там переход),
+  поэтому блок перед швом кончается ровно на такт.
 
-Все окна — целое число долей (кроме подрезанных у краёв записи), поэтому каждая склейка готового ролика ложится на
-долю музыки, если музыка стартует с сильной доли (app/meme_edit.py ставит ``music_start_sec`` так).
-
-Дальше окна превращаются в куски клипа и вырезы (``to_pieces``): соседние окна — один кусок исходника, промежутки —
-``render.cuts``. Шкалы: source (исходник), clip (куски подряд, до вырезов; переходов нет), final (готовый ролик).
+Шкалы: source (исходник), clip (блок: куски подряд, вырезов и наплывов нет), final (весь ролик = начало блока + clip).
 """
 
 from __future__ import annotations
 
 import math
-import random
-from dataclasses import dataclass, field
 from typing import Any
 
-from app.clip_spec import MAX_PIECES  # один предел кусков на весь сервис
+from app.clip_spec import MAX_PIECES  # noqa: F401 - один предел кусков на весь сервис (клип-блок)
+from app.meme_edit_fights import Fight
+from app.meme_edit_memes import Pick
 
-KIND_WEIGHT = {"win": 1.0, "squad_wipe": 0.95, "kill": 0.85, "knock": 0.75, "death": 0.7, "teammate_fail": 0.65,
-               "reaction": 0.6, "max_level": 0.5, "ult": 0.45, "level_up": 0.4, "shot_burst": 0.25}
-# Событие → теги видеомема (search_video_memes): первый тег главный.
-KIND_TAGS = {
-    "kill": ("победа", "хвастовство", "шок", "уважение", "вау"),
-    "knock": ("шок", "победа", "вау", "хвастовство"),
-    "squad_wipe": ("победа", "хвастовство", "уважение", "вау", "шок"),
-    "win": ("победа", "радость", "хвастовство", "уважение"),
-    "death": ("фейл", "грусть", "злость", "кринж"),
-    "teammate_fail": ("тиммейт", "фейл", "кринж", "непонимание"),
-    "reaction": ("смех", "радость", "крик", "шок"),
-    "level_up": ("вау", "радость", "уважение"),
-    "max_level": ("вау", "уважение", "радость"),
-    "ult": ("вау", "шок"),
-    "shot_burst": ("шок", "вау"),
-}
-NEGATIVE_KINDS = ("death", "teammate_fail")
-# Мультяшные слова (стиль «мульт-жёлтый»): геймерский сленг, коротко, как в рефе («Джампнул», «Видели?», «Рокет»).
-KIND_WORDS = {
-    "kill": ("Минус один", "Убрал", "Изи", "Чисто"),
-    "knock": ("Нокнул", "Есть!", "Попал", "Лёг"),
-    "squad_wipe": ("Вайп", "Минус сквад", "Все легли"),
-    "win": ("Чемпион", "Топ-1", "Взяли"),
-    "death": ("Ну всё", "Помянем", "Обидно"),
-    "teammate_fail": ("Тиммейт…", "Спасибо"),
-    "reaction": ("Видели?", "Ахах"),
-    "level_up": ("Ап!",),
-    "max_level": ("Макс",),
-    "ult": ("Ульта!",),
-    "shot_burst": ("Тра-та-та",),
-}
-BIG_KINDS = ("win", "squad_wipe", "kill", "knock")
-CHOP_BEATS = (2, 2, 3, 1, 2, 3, 4)
-CHOP_MIN_SEC, CHOP_MAX_SEC = 0.45, 1.6
-LEAD_SPAN_SEC = 10.0  # откуда берём рубку перед моментом
-MOMENT_SEP_SEC = 5.0
-EST_MOMENT_SEC = 7.0
-MAX_MOMENTS = 10  # моментов с мемом в одном авто-эдите (вставок в клипе до app/montage_assets.MAX_INSERTS)
-MEME_MAX_SEC = 4.0  # полнокадровая врезка мема — до 4 с (app/video_memes.MEME_FULL_MAX_SEC)
-MEME_SOFT_SEC = 3.0  # реф: 0.7–3 с; длиннее — ниже в выборе
-WORD_MIN_SEC = 0.9
-NO_TEXT_BEFORE_SEC = 2.5  # в начале эдита текста нет (как в рефе)
-MAX_PIECE_SEC = 180.0
-MIN_PIECE_SEC = 1.5
-MIN_CUT_SEC = 0.08
-DEFAULT_PERIOD = 0.5  # 120 BPM, если у музыки не нашлось пульса
-MIN_CHOP_START_SEC = 5.0  # начало записи (загрузка, лобби, «стоим у двери») рубкой не берём
-MIN_MOTION = 0.25  # доля «движения» (90-й перцентиль записи = 1): ниже — статичный кадр, рубку туда не ставим
+FPS = 30.0
+MIN_PIECE = 1.5          # минимум куска сервиса
+SPLIT_MIN = 1.9          # кусок у мема короче — расширяется в вырезанное время
+MAX_NUDGE_BEATS = 4      # конец куска позже не больше чем на столько долей
+TRANSITIONS = ("zoompunch", "glitch", "whip", "rgb_split", "shake")
+ACT_EVERY = 3            # горизонталь: акт — столько блоков, на стыке актов — вспышка
+NO_TEXT_BEFORE_SEC = 2.5
+WORD_EVERY_SEC = 80.0    # жёлтое слово-цитата не чаще
+SEAM_MARGIN_SEC = 6.0
 
 
-def _always(_t: float) -> float:
-    return 1.0
+def frame(t: float) -> float:
+    return round(round(float(t) * FPS) / FPS, 4)
 
 
-@dataclass
-class Context:
-    """Что известно о картинке записи (app/meme_edit_visual.py): движение по времени, серый экран смерти/зрителя."""
-    motion: Any = _always
-    avoid: list[tuple[float, float]] = field(default_factory=list)
-    min_start: float = MIN_CHOP_START_SEC
+def meme_beats(length: float, period: float, min_sec: float = 0.0) -> int:
+    """Слот мема в долях: не короче удара (хвост ≤ 0.12 с можно срезать — там тишина) и не короче ``min_sec``."""
+    n = max(2, math.ceil(max(0.0, length - 0.12) / period - 1e-6))
+    while n * period < min_sec - 1e-6:
+        n += 1
+    return n
 
 
-@dataclass
-class Window:
-    start: float  # секунды исходника
-    end: float
-    role: str  # chop | hit | voice | meme
-    event: dict | None = None
-    meme: dict | None = None
-    insert_sec: float = 0.0
-    big: bool = False
-    word: str = ""
-    clip_start: float = 0.0  # заполняет to_pieces
-    final_start: float = 0.0
-
-    @property
-    def length(self) -> float:
-        return round(self.end - self.start, 3)
+# --------------------------------------------------------------------------- #
+# Куски боя с местами под мемы
+# --------------------------------------------------------------------------- #
 
 
-@dataclass
-class Timeline:
-    windows: list[Window] = field(default_factory=list)
-    period: float = DEFAULT_PERIOD
-    warnings: list[str] = field(default_factory=list)
+def split_at_memes(pieces: list[list[float]], picks: list[Pick], duration: float) -> list[dict]:
+    """Куски боя ``[{a, b, pick}]``: кусок режется в точке мема (``pick`` — мем после куска). Точка мема в вырезанном
+    мёртвом времени — мем в конце предыдущего куска; после конца боя — в конце боя. Кусок у мема короче SPLIT_MIN
+    расширяется в вырезанное время (сначала вперёд), пересекшиеся куски склеиваются."""
+    segs = [{"a": float(a), "b": float(b), "pick": None} for a, b in pieces]
+    for pick in sorted(picks, key=lambda p: p.cand.t):
+        m = float(pick.cand.t)
+        idx = next((i for i, s in enumerate(segs) if s["a"] - 0.05 <= m <= s["b"] + 0.05), None)
+        if idx is None:
+            before = [i for i, s in enumerate(segs) if s["b"] <= m]
+            idx = before[-1] if before else 0
+            m = segs[idx]["b"]
+        s = segs[idx]
+        m = min(max(m, s["a"]), s["b"])
+        if s["b"] - m < 0.05:
+            if s["pick"] is None:
+                s["pick"] = pick
+            continue
+        if m - s["a"] < 0.05:
+            if idx > 0 and segs[idx - 1]["pick"] is None:
+                segs[idx - 1]["pick"] = pick
+            continue
+        segs[idx:idx + 1] = [{"a": s["a"], "b": m, "pick": pick}, {"a": m, "b": s["b"], "pick": s["pick"]}]
+    # короткие куски — расширить в вырезанное время
+    i = 0
+    while i < len(segs):
+        s = segs[i]
+        if s["b"] - s["a"] >= SPLIT_MIN:
+            i += 1
+            continue
+        if s["pick"] is None or i == len(segs) - 1:
+            want = s["a"] + SPLIT_MIN
+            if want <= duration - 0.05:
+                s["b"] = max(s["b"], want)
+            else:
+                s["a"] = max(0.0, min(s["a"], s["b"] - SPLIT_MIN))
+        else:
+            s["a"] = max(0.0, s["b"] - SPLIT_MIN)
+        # пересёкся с соседом — склейка
+        if i + 1 < len(segs) and segs[i + 1]["a"] < s["b"] - 1e-6 and s["pick"] is None:
+            nxt = segs.pop(i + 1)
+            s["b"], s["pick"] = max(s["b"], nxt["b"]), nxt["pick"]
+            continue
+        if i > 0 and segs[i - 1]["b"] > s["a"] + 1e-6 and segs[i - 1]["pick"] is None:
+            prev = segs.pop(i - 1)
+            s["a"] = min(prev["a"], s["a"])
+            i -= 1
+            continue
+        i += 1
+    return segs
 
-    @property
-    def total(self) -> float:
-        return round(sum(w.length for w in self.windows), 3)
+
+# --------------------------------------------------------------------------- #
+# Доли
+# --------------------------------------------------------------------------- #
 
 
-def weight(event: dict) -> float:
-    return KIND_WEIGHT.get(event.get("kind"), 0.3) * (0.5 + 0.5 * float(event.get("score", 0.5)))
+def _cuts_word(nz: float, b: float, words: list[dict], shots: list[list[float]]) -> bool:
+    """Конец куска ``nz`` (вместо ``b``) режет слово, срезает начало слова или начало стрельбы?"""
+    for w in words:
+        ws, we = float(w["start"]), float(w["end"])
+        if ws < nz < we - 0.03:
+            return True
+        if nz < b and nz - 0.02 <= ws < b:
+            return True
+    if nz < b and any(nz - 0.3 <= float(s[0]) < b for s in shots):
+        return True
+    return False
 
 
-def _beats(sec: float, period: float, lo: int = 1) -> int:
-    return max(lo, int(round(sec / period)))
+def snap_end(a: float, b: float, t_out: float, period: float, *, words: list[dict], shots: list[list[float]],
+             duration: float, bar_after: int | None = None, limit: float | None = None,
+             strict: bool = False) -> tuple[float, int] | None:
+    """Конец куска ``[a, b]``, идущего в ролике с ``t_out``, на долю. Ответ — (новый конец в source, номер доли).
 
+    Ближайшая доля, если сдвиг ≤ полдоли и он не режет слово/стрельбу; иначе позже (до MAX_NUDGE_BEATS долей).
+    ``bar_after`` — после куска ещё столько долей (мем), и всё вместе должно кончиться на такт (шов музыки).
+    ``limit`` — дальше конец не уходит (там начинается следующий кусок: кадры не повторяются). ``strict`` — нет
+    доли, которая не режет слово, — None (вызывающий попробует шире)."""
+    hi = min(duration - 0.05, limit if limit is not None else duration)
+    end_out = t_out + (b - a)
+    k = round(end_out / period)
+    cand = list(range(k - (1 if k * period > end_out else 0), k + MAX_NUDGE_BEATS + 1))
+    cand.sort(key=lambda c: (abs(c * period - end_out) > period / 2 + 1e-6, c * period < end_out - 1e-6,
+                             abs(c * period - end_out)))
+    if bar_after is not None:
+        span = range(k - 4, k + 5)
+        cand = sorted((c for c in span if (c + bar_after) % 4 == 0),
+                      key=lambda c: (c * period < end_out - 1e-6, abs(c * period - end_out)))
 
-def meme_score(meme: dict, kind: str) -> float:
-    """Насколько мем подходит событию: поиск видеомемов (app/video_memes.score) по тегам события, главный тег весомее;
-    длиннее ``MEME_SOFT_SEC`` — ниже."""
-    from app.video_memes import score
+    def nz_of(c: int) -> float:
+        return round(a + frame(c * period) - frame(t_out), 4)
 
-    tags = KIND_TAGS.get(kind) or KIND_TAGS["shot_burst"]
-    total = sum(score(meme, tag) * (1.0 if i == 0 else 0.45) for i, tag in enumerate(tags))
-    if float(meme.get("duration_sec") or 0) > MEME_SOFT_SEC:
-        total *= 0.6
-    return total
-
-
-def pick_meme(library: list[dict], kind: str, used: set[int], rng: random.Random) -> dict | None:
-    """Мем под событие: не повторяется, одобренный (библиотеку фильтрует вызывающий), из трёх лучших — по жребию."""
-    scored = [(meme_score(m, kind), m) for m in library
-              if int(m["meme_id"]) not in used and 0.3 <= float(m.get("duration_sec") or 0) <= MEME_MAX_SEC]
-    scored = [pair for pair in scored if pair[0] > 0]
-    if not scored:
+    for c in cand:
+        nz = nz_of(c)
+        if nz - a < MIN_PIECE - 1e-6 or nz > hi + 1e-6:
+            continue
+        if not _cuts_word(nz, b, words, shots):
+            return nz, c
+    if strict:
         return None
-    scored.sort(key=lambda p: (-p[0], int(p[1]["meme_id"])))
-    top = scored[:3]
-    best = top[0][0]
-    top = [p for p in top if p[0] >= best * 0.7]
-    return rng.choice(top)[1] if len(top) > 1 else top[0][1]
+    for c in cand:  # всё режет слово — берём ближайшую позднюю, что влезает в запись
+        nz = nz_of(c)
+        if nz - a >= MIN_PIECE - 1e-6 and nz <= hi + 1e-6:
+            return nz, c
+    c = max(k, math.ceil((t_out + MIN_PIECE) / period))
+    while c > 0 and nz_of(c) > hi + 1e-6 and nz_of(c - 1) - a >= MIN_PIECE - 1e-6:
+        c -= 1
+    return nz_of(c), c
 
 
-def choose_moments(events: list[dict], count: int, sep: float = MOMENT_SEP_SEC) -> list[dict]:
-    """Главные события (не просто выстрелы), сильные первыми, не ближе ``sep`` друг к другу; потом — по времени.
-    Не хватает — добор самыми сильными выстрелами (запись без детектора событий)."""
-    pool = [e for e in events if e["kind"] != "shot_burst"]
-    if len(pool) < count:  # главных событий мало — добираем самыми сильными выстрелами
-        shots = sorted((e for e in events if e["kind"] == "shot_burst"), key=lambda e: -float(e.get("score", 0)))
-        pool += [e for e in shots if float(e.get("score", 0)) >= 0.5 or not pool][: count - len(pool) + 2]
-    picked: list[dict] = []
-    for ev in sorted(pool, key=lambda e: (-weight(e), e["t"])):
-        if all(abs(ev["t"] - p["t"]) >= sep for p in picked):
-            picked.append(ev)
-        if len(picked) >= count:
-            break
-    return sorted(picked, key=lambda e: e["t"])
+def _words_in(words: list[dict], a: float, z: float) -> list[dict]:
+    return [w for w in words if float(w["start"]) >= a - 1e-3 and float(w["end"]) <= z + 0.06]
 
 
-def _inside(t: float, spans: list[tuple[float, float]]) -> bool:
-    return any(a - 1e-6 <= t <= b + 1e-6 for a, b in spans)
-
-
-def _lead_chops(events: list[dict], lo: float, hi: float, count: int, period: float,
-                rng: random.Random, ctx: "Context | None" = None) -> list[Window]:
-    """Рубка перед моментом: кусочки по 1–4 доли в [lo, hi], по времени, без нахлёста. Кандидаты — удары и сетка
-    каждые 0.5 с; не раньше ``ctx.min_start`` (заставка, лобби), не на сером экране смерти (``ctx.avoid``), без
-    кадров без движения (дверь, пустой коридор: ``ctx.motion`` ниже ``MIN_MOTION``)."""
-    ctx = ctx or Context()
-    lo = max(lo, ctx.min_start)
-    if count <= 0 or hi - lo < CHOP_MIN_SEC:
-        return []
-
-    def ok(t: float) -> bool:
-        return not _inside(t, ctx.avoid) and ctx.motion(t) >= MIN_MOTION
-
-    hits = sorted((e for e in events if lo + 0.2 <= e["t"] <= hi - 0.2 and ok(e["t"])),
-                  key=lambda e: -weight(e) * (0.5 + ctx.motion(e["t"])))
-    grid = [lo + 0.3 + k * 0.5 for k in range(int(max(0.0, hi - lo - 0.6) / 0.5) + 1)]
-    grid = sorted((t for t in grid if ok(t)), key=lambda t: -ctx.motion(t))
-    chosen: list[float] = []
-    for t in [e["t"] for e in hits] + grid:  # сначала удары, потом самое подвижное из окна
-        if all(abs(t - c) >= 1.2 for c in chosen):
-            chosen.append(t)
-        if len(chosen) >= count:
-            break
-    out: list[Window] = []
-    cursor = lo
-    for t in sorted(chosen):
-        beats = rng.choice(CHOP_BEATS)
-        length = beats * period
-        while length > CHOP_MAX_SEC and beats > 1:
-            beats -= 1
-            length = beats * period
-        if length < CHOP_MIN_SEC:
-            beats = _beats(CHOP_MIN_SEC, period)
-            length = beats * period
-        start = max(cursor, t - 0.4 * length)
-        end = start + length
-        if end > hi:
-            start, end = hi - length, hi
-        if start < cursor - 1e-6 or end - start < CHOP_MIN_SEC - 1e-6 or _inside(start, ctx.avoid) \
-                or _inside(end, ctx.avoid):
-            continue
-        ev = next((e for e in events if start <= e["t"] <= end), None)
-        out.append(Window(round(start, 3), round(end, 3), "chop", event=ev))
-        cursor = end
-    return out
-
-
-def build_timeline(events: list[dict], *, duration: float, period: float, target_sec: float,
-                   library: list[dict], seed: int = 0, chops_per_moment: int = 3,
-                   moments: int | None = None, words: int = 3, ctx: Context | None = None) -> Timeline:
-    """Окна эдита по событиям. ``moments`` — сколько моментов (нет — по длине ``target_sec``)."""
-    period = float(period) if period and period > 0.2 else DEFAULT_PERIOD
-    rng = random.Random(seed)
-    count = moments or max(2, min(MAX_MOMENTS, int(round(target_sec / EST_MOMENT_SEC))))
-    ctx = ctx or Context()
-    # На сером экране смерти нет ни килла, ни нока: там только сама смерть и голос.
-    usable = [e for e in events if e["kind"] in ("death", "reaction") or not _inside(e["t"], ctx.avoid)]
-    chosen = choose_moments(usable, count)
-    timeline = Timeline(period=period)
-    if not chosen:
-        timeline.warnings.append("в записи не нашлось ни одного события — эдит не из чего собрать")
-        return timeline
-    big = max(chosen, key=weight)
-    word_moments = _word_moments(chosen, words, rng)
-    used: set[int] = set()
-    cursor = 0.0
-    for ev in chosen:
-        e = float(ev["t"])
-        kind = ev["kind"]
-        voice = kind == "reaction"
-        pre = _beats(0.5 if voice else 0.9, period)
-        post_sec = 2.4 if voice else (1.6 if ev is big else 0.6)
-        if id(ev) in word_moments:
-            post_sec = max(post_sec, WORD_MIN_SEC)
-        post = max(1, int(math.ceil(post_sec / period - 0.2)))
-        hs, he = e - pre * period, min(duration, e + post * period)
-        if hs < cursor:
-            room = int((e - cursor) // period)
-            if room < 1:
-                timeline.warnings.append(f"момент {e:.1f} с пропущен: вплотную к прошлому")
-                continue
-            hs = e - room * period
-        lead = _lead_chops(events, max(cursor, hs - LEAD_SPAN_SEC), hs, chops_per_moment, period, rng, ctx)
-        timeline.windows.extend(lead)
-        hit = Window(round(hs, 3), round(he, 3), "voice" if voice else "hit", event=ev, big=ev is big,
-                     word=_word_for(kind, rng, timeline) if id(ev) in word_moments else "")
-        timeline.windows.append(hit)
-        cursor = hit.end
-        meme = pick_meme(library, kind, used, rng)
-        if meme is None:
-            timeline.warnings.append(f"к событию {kind} на {e:.1f} с нет подходящего одобренного видеомема")
-            continue
-        dur = min(float(meme["duration_sec"]), MEME_MAX_SEC)
-        slot_beats = max(1, int(math.ceil(dur / period - 0.25)))
-        slot = slot_beats * period
-        if cursor + slot > duration:
-            slot = duration - cursor
-        if slot < 0.5:
-            continue
-        used.add(int(meme["meme_id"]))
-        timeline.windows.append(Window(round(cursor, 3), round(cursor + slot, 3), "meme", event=ev, meme=meme,
-                                       insert_sec=round(min(dur, slot), 2)))
-        cursor = round(cursor + slot, 3)
-    return timeline
-
-
-def _word_moments(chosen: list[dict], words: int, rng: random.Random) -> set[int]:
-    if words <= 0:
-        return set()
-    pool = chosen[1:] if len(chosen) > 2 else list(chosen)  # первый момент — заставка без текста
-    ranked = sorted(pool, key=lambda e: (-weight(e), e["t"]))[: max(words + 1, 2)]
-    rng.shuffle(ranked)
-    return {id(e) for e in ranked[:words]}
-
-
-def _word_for(kind: str, rng: random.Random, timeline: Timeline) -> str:
-    taken = {w.word for w in timeline.windows if w.word}
-    options = [w for w in KIND_WORDS.get(kind, KIND_WORDS["shot_burst"]) if w not in taken]
-    return rng.choice(options) if options else ""
-
-
-def plan_timeline(events: list[dict], *, duration: float, period: float, target_sec: float, library: list[dict],
-                  seed: int = 0, words: int = 3, ctx: Context | None = None) -> Timeline:
-    """Подбор числа моментов и рубки под длину ``target_sec`` (±15 %): лишние моменты — прочь (слабые первыми),
-    не хватает — больше рубки и моментов, пока есть события."""
-    target = float(target_sec)
-    best: Timeline | None = None
-    moments = max(2, min(MAX_MOMENTS, int(round(target / EST_MOMENT_SEC))))
-    chops = 3
-    for _ in range(10):
-        timeline = build_timeline(events, duration=duration, period=period, target_sec=target, library=library,
-                                  seed=seed, chops_per_moment=chops, moments=moments, words=words, ctx=ctx)
-        if best is None or abs(timeline.total - target) < abs(best.total - target):
-            best = timeline
-        if target * 0.85 <= timeline.total <= target * 1.15 or not timeline.windows:
-            break
-        if timeline.total > target * 1.15:
-            if chops > 2:
-                chops -= 1
-            elif moments > 2:
-                moments -= 1
-            else:
-                break
-        else:
-            if chops < 5:
-                chops += 1
-            elif moments < MAX_MOMENTS:
-                moments += 1
-            else:
-                break
-    assert best is not None
-    if best.windows and best.total < target * 0.7:
-        best.warnings.append(f"эдит вышел {best.total:.0f} с при цели {target:.0f} с: в записи мало событий")
-    return best
-
-
-# --------------------------------------------------------------------------- #
-# Куски и вырезы
-# --------------------------------------------------------------------------- #
-
-
-def to_pieces(timeline: Timeline, duration: float, max_gap: float = 25.0) -> tuple[list[dict], list[dict]]:
-    """Окна → куски исходника (до MAX_PIECES, каждый 1.5–180 с) и вырезы ``render.cuts`` (шкала clip) между окнами.
-    Заполняет ``clip_start``/``final_start`` у окон."""
-    windows = timeline.windows
-    if not windows:
-        return [], []
-    groups = _group(windows, max_gap)
-    while len(groups) > MAX_PIECES:
-        max_gap *= 1.6
-        groups = _group(windows, max_gap)
-        if max_gap > MAX_PIECE_SEC:
-            raise ValueError(f"окна эдита не укладываются в {MAX_PIECES} кусков — сократите длину")
+def lay_block(fight: Fight, picks: list[Pick], punch_len: dict[int, float], *, t0: float, period: float,
+              duration: float, owner_words: list[dict], team_words: list[dict], shots: list[list[float]],
+              seam_after: bool = False) -> dict:
+    """Один бой → блок: куски клипа (с наплывом-наполнителем под мемами), вставки мемов, слова в шкале clip, все
+    стыки на долях. ``t0`` — начало блока в ролике (на доле)."""
+    words = sorted(owner_words + team_words, key=lambda w: float(w["start"]))
+    segs = split_at_memes(fight.pieces, picks, duration)
+    t = frame(t0)
+    k_beat = round(t0 / period)
     pieces: list[dict] = []
-    cuts: list[dict] = []
-    clip_offset = final_offset = 0.0
-    for gi, group in enumerate(groups, start=1):
-        start, end = group[0].start, group[-1].end
-        if end - start < MIN_PIECE_SEC:
-            end = min(duration, start + MIN_PIECE_SEC)
-            if end - start < MIN_PIECE_SEC:
-                start = max(0.0, end - MIN_PIECE_SEC)
-        prev_end = start
-        for w in group:
-            gap = w.start - prev_end
-            if gap >= MIN_CUT_SEC:
-                cuts.append({"start": round(clip_offset + prev_end - start, 3),
-                             "end": round(clip_offset + w.start - start, 3)})
-            elif gap > 1e-6:  # совсем узкий промежуток не вырезаем — окно начинается чуть раньше
-                w.start = prev_end
-            w.clip_start = round(clip_offset + w.start - start, 3)
-            w.final_start = round(final_offset, 3)
-            final_offset += w.length
-            prev_end = w.end
-        tail = end - prev_end
-        if tail >= MIN_CUT_SEC:
-            cuts.append({"start": round(clip_offset + prev_end - start, 3), "end": round(clip_offset + end - start, 3)})
-        pieces.append({"start_sec": round(start, 3), "end_sec": round(end, 3), "title": f"Мем-эдит — {gi}"})
-        clip_offset += end - start
-    return pieces, cuts
-
-
-def _group(windows: list[Window], max_gap: float) -> list[list[Window]]:
-    groups: list[list[Window]] = []
-    for w in windows:
-        if groups and w.start - groups[-1][-1].end <= max_gap and w.end - groups[-1][0].start <= MAX_PIECE_SEC:
-            groups[-1].append(w)
+    visible: list[dict] = []
+    inserts: list[dict] = []
+    prev_pick = False
+    for i, s in enumerate(segs):
+        pick: Pick | None = s["pick"]
+        last = i == len(segs) - 1
+        if prev_pick and visible:
+            # после мема бой идёт ровно с того кадра, где его закрыл мем (кадры не повторяются)
+            s["a"] = max(s["a"], visible[-1]["z"])
+            if s["b"] - s["a"] < MIN_PIECE:
+                fits = s["a"] + MIN_PIECE <= duration - 0.05
+                if fits and (last or segs[i + 1]["a"] >= s["a"] + MIN_PIECE):
+                    s["b"] = s["a"] + MIN_PIECE
+                else:
+                    prev_pick = False
+                    continue  # остаток боя целиком ушёл в сдвиг конца в долю
+        limit = None
+        if pick is None and not last and segs[i + 1]["a"] > s["b"] + 1e-6:
+            limit = segs[i + 1]["a"]
+        nb = 0
+        if pick is not None:
+            # наполнитель встык нельзя (конец записи) — слот не короче минимума куска
+            room = duration - 0.05 - s["b"]
+            need = punch_len.get(int(pick.meme["meme_id"]), 1.8)
+            nb = meme_beats(need, period, 0.0 if room >= need + period * 2 else MIN_PIECE)
+        bar = nb if (seam_after and last) else None
+        snapped = None
+        if pick is not None:  # мем сразу после реплики: конец куска сдвигается не дальше чем на ~0.45 с
+            # голоса тиммейтов тут не держат: под мемом звук игры всё равно молчит
+            snapped = snap_end(s["a"], s["b"], t, period, words=owner_words, shots=shots, duration=duration,
+                               bar_after=bar, limit=s["b"] + 0.45, strict=True)
+        z, k_end = snapped or snap_end(s["a"], s["b"], t, period, words=words, shots=shots, duration=duration,
+                                       bar_after=bar, limit=limit)
+        if z > duration - 0.05 + 1e-6:  # у конца записи доли позже нет — последняя доля до конца файла
+            k_end = math.floor((frame(t) + duration - 0.05 - s["a"]) / period + 1e-9)
+            z = round(s["a"] + frame(k_end * period) - frame(t), 4)
+            if z - s["a"] < MIN_PIECE - 1e-6:
+                if visible:  # хвост короче куска — без него (кадр перед ним — мем или конец боя)
+                    prev_pick = False
+                    continue
+        prev_pick = pick is not None
+        clip_in = round(t - frame(t0), 4)
+        visible.append({"a": round(s["a"], 4), "z": z, "clip_in": clip_in})
+        t = frame(k_end * period)
+        piece = {"start_sec": round(s["a"], 4), "end_sec": z, "title": f"{fight.key}: бой"}
+        if pick is not None:
+            slot = round(frame((k_end + nb) * period) - t, 4)
+            at = round(t - frame(t0), 4)
+            if z + slot <= duration - 0.05:
+                piece["end_sec"] = round(z + slot, 4)  # наполнитель встык: один кусок (под мемом не видно)
+                pieces.append(piece)
+            else:
+                pieces.append(piece)
+                fa = round(max(0.0, z - slot - 0.1), 4)
+                pieces.append({"start_sec": fa, "end_sec": round(fa + slot, 4), "title": f"{fight.key}: под мемом"})
+            line_start = pick.cand.line_start
+            inserts.append({"meme_id": int(pick.meme["meme_id"]), "asset_id": int(pick.meme["asset_id"]),
+                            "title": pick.meme.get("title") or "", "at": at, "slot": slot, "kind": pick.cand.kind,
+                            "after_line": pick.cand.text[:120], "echo": pick.echo, "fit": pick.fit,
+                            "line_start": None if line_start is None else _to_clip(visible, line_start)})
+            t = frame(t + slot)
         else:
-            groups.append([w])
-    return groups
+            pieces.append(piece)
+    total = round(t - frame(t0), 4)
+    clip_words = []
+    for v in visible:
+        for w in _words_in(owner_words, v["a"], v["z"]):
+            clip_words.append(_clip_word(w, v, "A"))
+        for w in _words_in(team_words, v["a"], v["z"]):
+            clip_words.append(_clip_word(w, v, "B"))
+    clip_words.sort(key=lambda w: (w["start"], w["speaker"]))
+    return {"key": fight.key, "source_id": fight.source_id, "fight": fight.brief(), "pieces": pieces,
+            "visible": visible, "inserts": inserts, "words": clip_words, "total": total,
+            "final_at": round(frame(t0), 4), "seam_after": bool(seam_after), "k_start": k_beat,
+            "events": [{"t": _to_clip(visible, float(e["t"])), "kind": e["kind"]} for e in fight.events
+                       if _to_clip(visible, float(e["t"])) is not None]}
 
 
-def source_to_clip(timeline: Timeline, t: float) -> float | None:
-    """Секунда исходника → шкала clip (только внутри окон эдита)."""
-    for w in timeline.windows:
-        if w.start - 1e-6 <= t <= w.end + 1e-6:
-            return round(w.clip_start + (t - w.start), 3)
+def _clip_word(w: dict, v: dict, speaker: str) -> dict:
+    a = round(v["clip_in"] + float(w["start"]) - v["a"], 3)
+    b = round(v["clip_in"] + float(w["end"]) - v["a"], 3)
+    return {"word": str(w["word"]).strip(), "start": a, "end": max(b, round(a + 0.06, 3)), "speaker": speaker}
+
+
+def _to_clip(visible: list[dict], t: float) -> float | None:
+    for v in visible:
+        if v["a"] - 1e-3 <= t <= v["z"] + 1e-3:
+            return round(v["clip_in"] + t - v["a"], 3)
     return None
 
 
-def final_to_clip(timeline: Timeline, f: float) -> float:
-    """Секунда готового ролика → шкала clip (до вырезов)."""
-    for w in timeline.windows:
-        if f < w.final_start + w.length - 1e-6:
-            return round(w.clip_start + max(0.0, f - w.final_start), 3)
-    last = timeline.windows[-1]
-    return round(last.clip_start + last.length, 3)
+# --------------------------------------------------------------------------- #
+# Весь ролик
+# --------------------------------------------------------------------------- #
 
 
-def clip_span(timeline: Timeline, final_from: float, final_to: float) -> tuple[float, float]:
-    """Отрезок готового ролика → начало и конец в шкале clip (вырезы внутри рендер уберёт сам)."""
-    return final_to_clip(timeline, final_from), final_to_clip(timeline, max(final_from + 0.1, final_to) - 1e-4)
+def estimate(fight: Fight, picks: list[Pick], punch_len: dict[int, float], period: float) -> float:
+    return fight.length + sum(meme_beats(punch_len.get(int(p.meme["meme_id"]), 1.8), period) * period for p in picks)
 
 
-def summary(timeline: Timeline) -> list[dict]:
-    """Окна для ответа: что, откуда, где в готовом ролике."""
-    out = []
-    for w in timeline.windows:
-        item: dict[str, Any] = {"role": w.role, "source": [w.start, w.end], "final": round(w.final_start, 2),
-                                "sec": w.length}
-        if w.event:
-            item["event"] = {"t": w.event["t"], "kind": w.event["kind"]}
-        if w.meme:
-            item["meme"] = {"meme_id": w.meme["meme_id"], "title": w.meme.get("title"), "sec": w.insert_sec}
-        if w.word:
-            item["word"] = w.word
-        if w.big:
-            item["big"] = True
-        out.append(item)
+def plan_seams(lengths: list[float], usable_sec: float | None) -> list[int]:
+    """Где шов музыки: номера блоков, после которых трек начинается снова (рабочая часть короче ролика)."""
+    if not usable_sec or sum(lengths) <= usable_sec - 1.0:
+        return []
+    seams, seg_start, acc = [], 0.0, 0.0
+    for i, length in enumerate(lengths[:-1]):
+        acc += length
+        if acc + lengths[i + 1] - seg_start > usable_sec - SEAM_MARGIN_SEC:
+            seams.append(i)
+            seg_start = acc
+    return seams
+
+
+def transition_kinds(count: int, flash: set[int]) -> list[str]:
+    """Виды переходов по кругу TRANSITIONS, на местах ``flash`` — вспышка; два одинаковых подряд — никогда."""
+    out: list[str] = []
+    k = 0
+    for i in range(count):
+        if i in flash and (not out or out[-1] != "flash"):
+            out.append("flash")
+            continue
+        kind = TRANSITIONS[k % len(TRANSITIONS)]
+        if out and kind == out[-1]:
+            k += 1
+            kind = TRANSITIONS[k % len(TRANSITIONS)]
+        out.append(kind)
+        k += 1
     return out
+
+
+def plan_reel(fights: list[Fight], picks: list[Pick], punch_len: dict[int, float], *, period: float,
+              usable_sec: float | None, durations: dict[int, float], words: dict[int, tuple[list, list]],
+              shots: dict[int, list], vertical: bool = False) -> dict:
+    """Блоки ролика по порядку ``fights``: доли, мемы, слова, переходы, эффекты, швы музыки."""
+    by_fight: dict[str, list[Pick]] = {}
+    for p in picks:
+        by_fight.setdefault(p.cand.fight.key, []).append(p)
+    lengths = [estimate(f, by_fight.get(f.key, []), punch_len, period) for f in fights]
+    seams = set(plan_seams(lengths, usable_sec))
+    blocks: list[dict] = []
+    t = 0.0
+    for i, f in enumerate(fights):
+        owner, team = words.get(f.source_id, ([], []))
+        block = lay_block(f, by_fight.get(f.key, []), punch_len, t0=t, period=period,
+                          duration=durations[f.source_id], owner_words=owner, team_words=team,
+                          shots=shots.get(f.source_id, []), seam_after=i in seams)
+        blocks.append(block)
+        t = block["final_at"] + block["total"]
+    total = round(t, 4)
+    # переходы: стык блоков (в начале входящего блока) и вырезы мёртвого времени внутри блока
+    spots: list[tuple[int, float, str]] = []
+    for bi, b in enumerate(blocks):
+        if bi > 0:
+            spots.append((bi, 0.0, "join"))
+        after_meme = {round(ins["at"] + ins["slot"], 3) for ins in b["inserts"]}
+        for j in range(1, len(b["visible"])):
+            v0, v1 = b["visible"][j - 1], b["visible"][j]
+            if round(v1["clip_in"], 3) in after_meme or abs(v1["a"] - v0["z"]) <= 0.05:
+                continue
+            spots.append((bi, v1["clip_in"], "cut"))
+    flash = {n for n, (bi, _t, where) in enumerate(spots)
+             if where == "join" and (vertical or bi % ACT_EVERY == 0 or blocks[bi - 1]["seam_after"])}
+    kinds = transition_kinds(len(spots), flash)
+    for b in blocks:
+        b["transitions"] = []
+    for (bi, at, where), kind in zip(spots, kinds):
+        b = blocks[bi]
+        near = any(w["start"] - 0.35 < at < w["end"] + 0.1 for w in b["words"])
+        b["transitions"].append({"t": round(at, 4), "where": where, "kind": kind, "speech_near": near,
+                                 "final": round(b["final_at"] + at, 3)})
+    for b in blocks:
+        b["flash_in"] = any(tr["kind"] == "flash" and tr["where"] == "join" for tr in b["transitions"])
+        b["fx"] = block_fx(b)
+    words_layers = yellow_words(blocks, total)
+    for b in blocks:
+        b["yellow"] = words_layers.get(b["key"], [])
+    seam_times = [round(blocks[i]["final_at"] + blocks[i]["total"], 4) for i in sorted(seams)]
+    return {"blocks": blocks, "total": total, "period": period, "seams": seam_times,
+            "memes": [p.brief() for p in picks]}
+
+
+def block_fx(block: dict) -> list[dict]:
+    """Лёгкий зум 1.15× на плашки НОКАУТ / УНИЧТОЖЕНИЕ ОТРЯДА (не ближе 2.5 с друг к другу), на «ВЫ ЧЕМПИОН» —
+    синий негатив и удар басом. Не на кадрах, закрытых мемом."""
+    out: list[dict] = []
+    last = -10.0
+    covered = [(ins["at"], ins["at"] + ins["slot"]) for ins in block["inserts"]]
+    for e in block["events"]:
+        t = float(e["t"])
+        if t is None or any(a - 0.4 <= t <= b for a, b in covered) or t > block["total"] - 0.5:
+            continue
+        if e["kind"] == "win":
+            out += [{"type": "negate", "t": t}, {"type": "bass", "t": t}, {"type": "zoom", "t": t, "zoom": 1.15}]
+            last = t
+        elif e["kind"] in ("knock", "squad_wipe") and t - last >= 2.5:
+            out.append({"type": "zoom", "t": t, "zoom": 1.2 if e["kind"] == "squad_wipe" else 1.15})
+            last = t
+    return out
+
+
+def yellow_words(blocks: list[dict], total: float) -> dict[str, list[dict]]:
+    """Жёлтые слова — цитата игрока перед самыми точными мемами (эхо или лучший смысл): 1–3 последних слова реплики,
+    не чаще WORD_EVERY_SEC, не в первые 2.5 с ролика; только где реплика видна целиком."""
+    budget = max(1, int(total // WORD_EVERY_SEC))
+    cands = []
+    for b in blocks:
+        for ins in b["inserts"]:
+            if not ins["after_line"] or ins["line_start"] is None:
+                continue
+            cands.append((len(ins["echo"]) * 10 + ins["fit"], b, ins))
+    cands.sort(key=lambda c: -c[0])
+    out: dict[str, list[dict]] = {}
+    used: list[float] = []
+    for _score, b, ins in cands:
+        if len(used) >= budget:
+            break
+        start = float(ins["line_start"])
+        final = b["final_at"] + start
+        if final < NO_TEXT_BEFORE_SEC or any(abs(final - u) < WORD_EVERY_SEC / 2 for u in used):
+            continue
+        from app.profanity import classify_token
+
+        tail = [w for w in ins["after_line"].split() if w.strip(",.!?…-") and not classify_token(w)][-3:]
+        text = " ".join(tail).strip(",. ").upper()
+        while len(text) > 18 and len(tail) > 1:
+            tail = tail[1:]
+            text = " ".join(tail).strip(",. ").upper()
+        if not text:
+            continue
+        end = ins["at"] - 0.02
+        if end - start < 0.5:
+            start = max(0.0, end - 0.8)
+        out.setdefault(b["key"], []).append({"text": text, "start": round(start, 3), "end": round(end, 3)})
+        used.append(final)
+    return out
+
+
+def music_segments(total: float, seams: list[float], song_start: float, period: float,
+                   usable_sec: float | None = None) -> list[dict]:
+    """Подложка: ``[{t, pos, len}]`` — с ``t`` ролика играет трек с ``pos`` (сильная доля рабочей части). Первый
+    отрезок — с начала рабочей части; следующие — с фразы на 8 или 16 тактов дальше (если влезают до затухания),
+    чтобы повтор не звучал одинаково. ``pos`` — всегда начало такта."""
+    bar = 4 * period
+    cuts = [0.0, *[s for s in seams if 0 < s < total], total]
+    out = []
+    for j, (a, b) in enumerate(zip(cuts, cuts[1:])):
+        pos = song_start
+        if j and usable_sec:
+            room = max(0.0, usable_sec - (b - a))
+            pos = song_start + min(8 * bar * (1 + (j - 1) % 2), math.floor(room / bar + 1e-9) * bar)
+        out.append({"t": round(a, 4), "pos": round(pos, 4), "len": round(b - a, 4)})
+    return out
+
+
+def summary(plan: dict) -> dict[str, Any]:
+    return {"total": plan["total"], "period": plan["period"], "seams": plan["seams"],
+            "blocks": [{"key": b["key"], "final_at": b["final_at"], "total": b["total"],
+                        "pieces": [[p["start_sec"], p["end_sec"]] for p in b["pieces"]],
+                        "memes": [{"at": i["at"], "slot": i["slot"], "meme_id": i["meme_id"], "title": i["title"],
+                                   "after": i["after_line"][:60]} for i in b["inserts"]],
+                        "transitions": [(tr["kind"], tr["final"]) for tr in b["transitions"]],
+                        "yellow": [y["text"] for y in b.get("yellow", [])]} for b in plan["blocks"]],
+            "memes": plan["memes"]}

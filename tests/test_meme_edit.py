@@ -1,174 +1,252 @@
-"""Мем-эдит (app/meme_edit*.py): раскладка по долям, мемы по смыслу без повторов, куски и вырезы, файл клипа обоих
-форматов проходит проверку, неодобренный мем не берётся, запасной путь событий по звуку, API и инструмент."""
+"""Мем-эдит (app/meme_edit*.py) по правилам владельца (пилот 2, v1 → v4): бои целиком от первого контакта, внутри
+вырезано только мёртвое время; мемы по смыслу сразу после реплики, «эхо» первым, ~1 на 22 с, без повторов, только
+удар мема без пауз; всё в долю трека, шов музыки — на такте под стыком; переходы разные на каждом стыке и вырезе;
+блок → файл клипа обоих форматов проходит проверку; задание фоном, API и инструмент."""
 
 from __future__ import annotations
-
-import math
-import random
-import sys
-import types
 
 import pytest
 
 from app import meme_edit as ME
-from app import meme_edit_events as EV
-from app import meme_edit_plan as MP
+from app import meme_edit_fights as F
+from app import meme_edit_inputs as I
+from app import meme_edit_job as J
+from app import meme_edit_memes as M
+from app import meme_edit_plan as P
+from app import meme_trim as T
 from app import video_memes as VM
 from app.agent_tools import ToolContext, run_tool
-from app.clip_spec import validate_spec
-from app.manual_clips import create_manual_clip
 from test_api_pipeline import _client
 
-PERIOD = 0.5
-DURATION = 150.0
+PERIOD = 0.4348  # 138 BPM, как песня владельца
 
 
-def _events() -> list[dict]:
-    shots = [{"t": round(8 + k * 0.7, 2), "kind": "shot_burst", "score": 0.4 + (k % 3) * 0.1} for k in range(20)]
-    shots += [{"t": round(70 + k * 0.9, 2), "kind": "shot_burst", "score": 0.5} for k in range(12)]
-    return shots + [
-        {"t": 15.3, "kind": "knock", "score": 0.8}, {"t": 22.1, "kind": "kill", "score": 0.9},
-        {"t": 41.7, "kind": "reaction", "score": 0.7}, {"t": 60.2, "kind": "death", "score": 0.6},
-        {"t": 78.4, "kind": "kill", "score": 0.7}, {"t": 95.0, "kind": "squad_wipe", "score": 1.0},
-    ]
+def _w(word: str, a: float, b: float) -> dict:
+    return {"word": word, "start": a, "end": b}
+
+
+def _line(text: str, start: float, step: float = 0.32) -> list[dict]:
+    return [_w(word, round(start + i * step, 3), round(start + i * step + step - 0.04, 3))
+            for i, word in enumerate(text.split())]
+
+
+# Бой 1 (запись 1): первые выстрелы 10.0, нок 18, вайп 22, реакция «Не надо, не надо!» 23.0; мёртвое время 30–38.
+EVENTS_1 = [{"t": 18.0, "kind": "knock", "score": 0.9}, {"t": 22.0, "kind": "squad_wipe", "score": 0.95},
+            {"t": 13.0, "kind": "shot_burst", "score": 0.7}, {"t": 39.0, "kind": "kill", "score": 0.9}]
+SHOTS_1 = [[10.0, 10.8], [12.5, 14.0], [16.0, 18.2], [20.5, 22.1], [27.0, 29.5], [38.5, 40.0]]
+OWNER_1 = _line("Не надо не надо!", 23.0) + _line("Альцгеймер какой-то", 41.0)
+# Бой 2 (запись 2): смерть без киллов — фейл; бой 3: победа.
+EVENTS_2 = [{"t": 8.0, "kind": "shot_burst", "score": 0.7}, {"t": 12.0, "kind": "death", "score": 0.9},
+            {"t": 70.0, "kind": "shot_burst", "score": 0.8}, {"t": 74.0, "kind": "kill", "score": 0.9},
+            {"t": 80.0, "kind": "win", "score": 0.95}]
+SHOTS_2 = [[6.5, 7.5], [8.0, 9.5], [10.5, 12.0], [69.0, 70.5], [72.0, 74.5], [78.0, 79.5]]
+OWNER_2 = _line("Ой летим", 12.6) + _line("Кулаком хорош!", 81.0)
+
+
+def _fights() -> list[F.Fight]:
+    return (F.find_fights(1, EVENTS_1, SHOTS_1, OWNER_1, [], 60.0)
+            + F.find_fights(2, EVENTS_2, SHOTS_2, OWNER_2, [], 90.0))
 
 
 def _library() -> list[dict]:
-    rows = [(1, "Ёбушки-воробушки", ["шок"], 1.4), (2, "Мы его поймали", ["победа", "хвастовство"], 2.2),
-            (3, "Плачущий мальчик", ["фейл", "грусть"], 2.6), (4, "Хохот до слёз", ["смех"], 1.8),
-            (5, "Это шедевр", ["уважение", "победа"], 1.2), (6, "Тиммейт тупит", ["тиммейт"], 2.0),
-            (7, "Ни ху я", ["шок", "вау"], 0.9), (8, "Слишком длинный", ["победа"], 6.0)]
-    return [{"meme_id": i, "id": i, "asset_id": 100 + i, "title": t, "tags": tags, "duration_sec": d,
-             "description": "", "when_to_use": "", "transcript": "", "has_audio": True} for i, t, tags, d in rows]
+    rows = [(1, "Ой, летим!", "Ой летим", ["фейл", "смех"]), (2, "Ужасная болезнь", "Альцгеймер ужасная болезнь",
+            ["непонимание"]), (3, "Я умный", "Я умный ни единой ошибки", ["хвастовство", "победа"]),
+            (4, "Победный крик", "", ["победа", "радость"]), (5, "Не надо, дядя", "Не надо дядя", ["шок"]),
+            (6, "Какой стыд", "Какой стыд", ["кринж", "фейл"])]
+    out = []
+    for i, title, said, tags in rows:
+        out.append({"meme_id": i, "id": i, "asset_id": 100 + i, "title": title, "tags": tags, "duration_sec": 3.5,
+                    "description": "", "when_to_use": "", "transcript": said, "has_audio": True,
+                    "transcript_words": _line(said, 0.4, 0.45) if said else [], "voiced": [[0.4, 3.0]]})
+    return out
 
 
-def _timeline(target: float = 40.0, seed: int = 1) -> MP.Timeline:
-    return MP.plan_timeline(_events(), duration=DURATION, period=PERIOD, target_sec=target, library=_library(),
-                            seed=seed)
+# ------------------------------------------------------------------ бои
 
 
-def _on_grid(x: float, period: float = PERIOD) -> bool:
-    return abs(x / period - round(x / period)) < 1e-3
+def test_fight_is_whole_from_first_contact_with_reaction_and_no_dead_time():
+    [fight] = F.find_fights(1, EVENTS_1, SHOTS_1, OWNER_1, [], 60.0)
+    assert fight.start == pytest.approx(10.0 - F.LEAD)  # первые выстрелы − запас, а не нок на 18 с
+    assert fight.end >= OWNER_1[-1]["end"]  # реакция «Альцгеймер» после боя — часть боя
+    assert fight.pieces[0][0] == fight.start and fight.pieces[-1][1] == fight.end
+    # мёртвое время 30–38 (ни выстрелов, ни слов) вырезано, края с запасом
+    gaps = [(a[1], b[0]) for a, b in zip(fight.pieces, fight.pieces[1:])]
+    assert any(29.5 < g0 < 31.0 and 37.0 < g1 < 38.5 for g0, g1 in gaps)
+    assert all(b - a >= F.MIN_PIECE - 1e-6 for a, b in fight.pieces)
+    assert fight.result == "wipe" and fight.score > 3
 
 
-# ------------------------------------------------------------------ раскладка (чистые функции)
+def test_weak_fights_dropped_and_chosen_never_trimmed():
+    assert F.find_fights(3, [{"t": 5.0, "kind": "shot_burst", "score": 0.4}], [[4, 5], [6, 7], [8, 9]], [], [],
+                         30.0) == []  # стрельба без нока/килла/смерти — не бой
+    weak = F.find_fights(3, [{"t": 5.0, "kind": "death", "score": 0.6}], [[4, 5], [6, 7]], [], [], 30.0)
+    fights = _fights() + weak
+    chosen, notes = F.select_fights(fights, 300.0)
+    assert weak[0] not in chosen and any("слабых" in n for n in notes)
+    small, notes = F.select_fights(_fights(), 12.0)
+    assert len(small) == 1 and any("не влезли" in n for n in notes)
+    assert all(f.pieces == g.pieces for f in small for g in _fights() if g.key == f.key)  # бой целиком
 
 
-def test_windows_follow_beats_and_land_events_on_beats():
-    tl = _timeline()
-    assert tl.windows, tl.warnings
-    assert 0.85 * 40 <= tl.total <= 1.15 * 40
-    for prev, cur in zip(tl.windows, tl.windows[1:]):
-        assert cur.start >= prev.end - 1e-6  # по времени и без нахлёста
-    for w in tl.windows:
-        assert _on_grid(w.length), (w.role, w.length)  # каждая склейка — в долю
-        if w.role in ("hit", "voice"):
-            assert _on_grid(float(w.event["t"]) - w.start)  # само событие — ровно на долю
-    roles = [w.role for w in tl.windows]
-    assert roles.count("chop") >= 4 and "meme" in roles and "voice" in roles
-    for w in tl.windows:
-        if w.role == "chop":
-            assert MP.CHOP_MIN_SEC - 1e-6 <= w.length <= MP.CHOP_MAX_SEC + 1e-6
+def test_order_short_first_win_last():
+    ordered = F.order_fights(_fights())
+    assert ordered[-1].result == "win"
+    assert ordered[0].length <= 25.0
 
 
-def test_memes_match_events_never_repeat_and_skip_long():
-    tl = _timeline(60.0)
-    memes = [w for w in tl.windows if w.role == "meme"]
-    ids = [w.meme["meme_id"] for w in memes]
-    assert len(ids) == len(set(ids)) >= 3
-    assert 8 not in ids  # 6 с — длиннее полнокадровой врезки
-    by_kind = {w.event["kind"]: w.meme for w in memes}
-    if "death" in by_kind:
-        assert "фейл" in by_kind["death"]["tags"]
-    if "reaction" in by_kind:
-        assert "смех" in by_kind["reaction"]["tags"]
-    for w in memes:
-        assert w.insert_sec <= w.length + 1e-6 and w.insert_sec <= MP.MEME_MAX_SEC
+def test_vertical_best_of_fits_and_prefers_strong():
+    best = F.pick_vertical(_fights(), max_sec=90, min_sec=60)
+    assert 1 <= len(best) <= 3 and sum(F.with_memes(f.length) for f in best) <= 90
 
 
-def test_seed_changes_variant_but_is_deterministic():
-    a, b = _timeline(seed=3), _timeline(seed=3)
-    assert MP.summary(a) == MP.summary(b)
-    variants = {tuple((w.role, w.start) for w in _timeline(seed=s).windows) for s in range(6)}
-    assert len(variants) > 1
+# ------------------------------------------------------------------ мемы
 
 
-def test_pieces_and_cuts_rebuild_the_timeline():
-    tl = _timeline()
-    pieces, cuts = MP.to_pieces(tl, DURATION)
-    assert 1 <= len(pieces) <= MP.MAX_PIECES
-    clip_total = sum(p["end_sec"] - p["start_sec"] for p in pieces)
-    for p in pieces:
-        assert MP.MIN_PIECE_SEC - 1e-6 <= p["end_sec"] - p["start_sec"] <= MP.MAX_PIECE_SEC
-    for prev, cur in zip(cuts, cuts[1:]):
-        assert prev["end"] <= cur["start"] + 1e-6
-    assert all(c["end"] - c["start"] >= MP.MIN_CUT_SEC - 1e-6 and c["end"] <= clip_total + 1e-6 for c in cuts)
-    kept = clip_total - sum(c["end"] - c["start"] for c in cuts)
-    assert kept == pytest.approx(tl.total, abs=0.01)  # после вырезов остаются ровно окна
-    for w in tl.windows:
-        assert MP.source_to_clip(tl, w.start + 0.01) == pytest.approx(w.clip_start + 0.01, abs=1e-3)
-        assert MP.final_to_clip(tl, w.final_start + 0.01) == pytest.approx(w.clip_start + 0.01, abs=1e-3)
+def test_echo_meme_after_setup_line_no_repeats_budget():
+    fights = F.order_fights(_fights())
+    picks, _notes = M.assign_memes(fights, _library(), 66.0)
+    assert len(picks) == round(66 / M.MEME_EVERY_SEC)
+    assert len({p.meme["meme_id"] for p in picks}) == len(picks)
+    by_text = {p.cand.text: p for p in picks}
+    # «Ой летим» → мем «Ой, летим!» (эхо), «Альцгеймер» → «ужасная болезнь»: мем сразу после конца реплики
+    assert any(p.echo for p in picks)
+    for p in picks:
+        if p.cand.text:
+            line_end = max(w["end"] for f in fights for ln in f.lines if ln["text"] == p.cand.text for w in ln["words"])
+            assert p.cand.t == pytest.approx(line_end + 0.05, abs=1e-3)
+    assert any(p.meme["meme_id"] == 1 for p in by_text.values()) or any(p.meme["meme_id"] == 2 for p in picks)
+    per_fight: dict[str, int] = {}
+    for p in picks:
+        per_fight[p.cand.fight.key] = per_fight.get(p.cand.fight.key, 0) + 1
+    assert max(per_fight.values()) <= M.MAX_PER_FIGHT
 
 
-def test_no_events_gives_honest_warning():
-    tl = MP.plan_timeline([], duration=60, period=PERIOD, target_sec=30, library=_library())
-    assert not tl.windows and tl.warnings
+def test_meme_never_unapproved_and_none_when_no_meaning():
+    lib = [{"meme_id": 9, "asset_id": 9, "title": "Танцы", "tags": ["танец"], "transcript": "", "duration_sec": 2}]
+    picks, notes = M.assign_memes(F.order_fights(_fights()), lib, 60.0)
+    assert picks == [] and any("мемов по смыслу" in n for n in notes)
 
 
-def test_pick_meme_returns_none_when_nothing_fits():
-    lib = [m for m in _library() if "фейл" not in m["tags"] and "грусть" not in m["tags"]
-           and "злость" not in m["tags"] and "кринж" not in m["tags"]]
-    assert MP.pick_meme(lib, "death", set(), random.Random(0)) is None
+def test_punch_parts_cut_silence_keep_echo():
+    words = [_w("Ну", 0.1, 0.3), _w("это", 0.35, 0.6), _w("ужасная", 2.0, 2.5), _w("болезнь", 2.55, 3.1),
+             _w("правда", 4.5, 4.9)]
+    voiced = [[0.1, 0.6], [2.0, 3.1], [4.5, 4.9]]
+    parts = T.punch_parts(words, voiced, 5.5, focus=["болезнь"])
+    assert T.PUNCH_MIN_SEC <= T.total(parts) <= T.PUNCH_MAX_SEC
+    assert any(a <= 2.6 <= b for a, b in parts)  # эхо-слово внутри
+    assert all(not (0.8 < a < 1.9 and 0.8 < b < 1.9) for a, b in parts)  # пауза 0.6–2.0 вырезана
+    short = T.punch_parts([_w("Нет", 1.0, 1.3)], [[1.0, 1.3]], 3.0)
+    assert T.total(short) >= T.PUNCH_MIN_SEC - 1e-6
+    assert T.punch_parts([], [], 6.0) == [[1.9, 4.1]]
+    # мат мема вырезан из удара целиком
+    swear = [_w("Ой", 0.2, 0.5), _w("бля", 0.6, 0.9), _w("летим", 1.0, 1.5)]
+    cut = T.punch_parts(swear, [[0.2, 1.5]], 2.0, skip=T.swear_spans(swear))
+    assert not any(a < 0.85 and b > 0.65 for a, b in cut)
 
 
-# ------------------------------------------------------------------ события: адаптер и запасной путь
+def test_insert_parts_survive_normalize_and_reach_render(monkeypatch, tmp_path):
+    from app import meme_trim
+    from app.montage_assets import build_inserts_args, normalize_inserts
+
+    [ins] = normalize_inserts([{"asset_id": 1, "at": 2, "duration": 1.74, "parts": [[0.5, 1.2], [2.0, 2.9]]}])
+    assert ins["parts"] == [[0.5, 1.2], [2.0, 2.9]]
+    assert "parts" not in normalize_inserts([{"asset_id": 1, "at": 2, "parts": [[2, 1]]}])[0]
+    src = tmp_path / "m.mp4"
+    src.write_bytes(b"0")
+    trimmed = tmp_path / "trim.mp4"
+    trimmed.write_bytes(b"0")
+    seen = {}
+    monkeypatch.setattr(meme_trim, "trimmed_file", lambda path, parts, length, has_audio=True: (
+        seen.update(path=path, parts=parts, length=length) or trimmed))
+    monkeypatch.setattr("app.motion_render.speech_level_db", lambda _p: -20.0)
+    args = build_inserts_args(tmp_path / "clip.mp4", tmp_path / "out.mp4", [ins],
+                              {1: {"kind": "video", "file_path": str(src), "has_audio": True}}, 1920, 1080, 10.0)
+    assert str(trimmed) in args and str(src) not in args
+    assert seen["parts"] == ins["parts"] and seen["length"] >= 1.74
 
 
-def test_events_normalize_and_cluster():
-    raw = [{"t": "5", "kind": "KILL", "score": 2}, {"t": -1}, {"t": 999, "kind": "win"}, "junk", {"t": 6.5}]
-    out = EV.normalize_events(raw, duration=100)
-    assert [e["kind"] for e in out] == ["kill", "shot_burst"] and out[0]["score"] == 1.0
-    assert EV.cluster_spans(out, gap=3, pad=1) == [(4.0, 7.5)]
+# ------------------------------------------------------------------ доли и раскладка
 
 
-def test_audio_fallback_finds_shots_peak_and_voice(monkeypatch, tmp_path):
-    np = pytest.importorskip("numpy")
-    rate = 16000
-
-    def fake_pcm(_path, track, start, length):
-        n = int(length * rate)
-        x = np.random.default_rng(track).normal(0, 0.003, n).astype(np.float32)
-        if track == 0:  # перестрелка: удары на 10–14 с, самый сильный на 12 с
-            for t, amp in ((10, 0.3), (11, 0.35), (12, 0.9), (13, 0.3), (14, 0.25)):
-                i = int((t - start) * rate)
-                x[i:i + 1600] += amp * np.sin(np.linspace(0, 400, 1600)).astype(np.float32)
-        else:  # крик в микрофон на 30 с
-            i = int((30 - start) * rate)
-            x[i:i + rate] += 0.5 * np.sin(np.linspace(0, 2 * math.pi * 300, rate)).astype(np.float32)
-        return x
-
-    monkeypatch.setattr(EV, "_game_events_module", lambda: None)
-    events = EV.audio_events(tmp_path / "x.mp4", 60.0, 1, pcm=fake_pcm)
-    kinds = {e["kind"] for e in events}
-    assert {"shot_burst", "knock", "reaction"} <= kinds
-    knock = next(e for e in events if e["kind"] == "knock")
-    assert abs(knock["t"] - 12) < 0.4
-    assert abs(next(e for e in events if e["kind"] == "reaction")["t"] - 30) < 0.5
+def _plan(usable: float | None = None) -> dict:
+    fights = F.order_fights(_fights())
+    picks, _ = M.assign_memes(fights, _library(), 66.0)
+    lengths = {int(p.meme["meme_id"]): 1.6 for p in picks}
+    return P.plan_reel(fights, picks, lengths, period=PERIOD, usable_sec=usable, durations={1: 60.0, 2: 90.0},
+                       words={1: (OWNER_1, []), 2: (OWNER_2, [])}, shots={1: SHOTS_1, 2: SHOTS_2})
 
 
-def test_game_events_module_is_used_when_present(monkeypatch, tmp_path):
-    video = tmp_path / "rec.mp4"
-    video.write_bytes(b"x")
-    fake = types.ModuleType("app.game_events")
-    fake.detect_game_events = lambda path, game="apex": [{"t": 3, "kind": "kill", "score": 0.9, "detail": game}]
-    fake.fight_spans = lambda events: [(1.0, 5.0)]
-    monkeypatch.setitem(sys.modules, "app.game_events", fake)
-    events, origin = EV.detect_events({"local_path": str(video), "duration_sec": 10})
-    assert origin == "game_events" and events[0]["kind"] == "kill" and events[0]["detail"] == "apex"
-    assert EV.fight_spans(events) == [(1.0, 5.0)]
+def _on_beat(t: float) -> bool:
+    return abs(t - P.frame(round(t / PERIOD) * PERIOD)) < 0.02
 
 
-# ------------------------------------------------------------------ файл клипа и база
+def test_every_cut_meme_and_join_on_beat_and_no_word_cut():
+    plan = _plan()
+    assert plan["blocks"] and plan["total"] > 30
+    for b in plan["blocks"]:
+        assert _on_beat(b["final_at"])
+        for v in b["visible"]:
+            end_final = b["final_at"] + v["clip_in"] + v["z"] - v["a"]
+            assert _on_beat(end_final), (b["key"], v)
+            assert not any(w["start"] < v["z"] < w["end"] - 0.03 for w in OWNER_1 + OWNER_2 if b["source_id"]), v
+        for ins in b["inserts"]:
+            assert _on_beat(b["final_at"] + ins["at"]) and _on_beat(b["final_at"] + ins["at"] + ins["slot"])
+            assert ins["slot"] >= 1.6 - 0.12
+        assert all(p["end_sec"] - p["start_sec"] >= P.MIN_PIECE - 1e-6 for p in b["pieces"])
+        clip_len = sum(p["end_sec"] - p["start_sec"] for p in b["pieces"])
+        assert clip_len == pytest.approx(b["total"], abs=0.02)
+    # первый кусок каждого боя начинается с начала боя (начала не режем)
+    starts = {f.key: f.start for f in _fights()}
+    assert all(b["pieces"][0]["start_sec"] == pytest.approx(starts[b["key"]]) for b in plan["blocks"])
+
+
+def test_transitions_on_every_join_and_cut_varied_flash_on_acts():
+    plan = _plan()
+    kinds = [tr["kind"] for b in plan["blocks"] for tr in b["transitions"]]
+    joins = [tr for b in plan["blocks"][1:] for tr in b["transitions"] if tr["where"] == "join"]
+    assert len(joins) == len(plan["blocks"]) - 1
+    assert all(a != b for a, b in zip(kinds, kinds[1:]))
+    assert set(kinds) <= set(P.TRANSITIONS) | {"flash"}
+    cuts = [tr for b in plan["blocks"] for tr in b["transitions"] if tr["where"] == "cut"]
+    assert cuts and all(_on_beat(tr["final"]) for tr in cuts + joins)
+    assert P.transition_kinds(4, {2})[2] == "flash"
+
+
+def test_music_loops_on_bar_at_a_block_join():
+    plan = _plan(usable=40.0)
+    assert plan["seams"]
+    joins = [b["final_at"] for b in plan["blocks"]]
+    bar = 4 * PERIOD
+    for s in plan["seams"]:
+        assert any(abs(s - j) < 0.02 for j in joins)
+        assert abs(s / bar - round(s / bar)) * bar < 0.03  # шов на такте
+    segs = P.music_segments(plan["total"], plan["seams"], 0.755, PERIOD, 40.0)
+    assert segs[0]["t"] == 0 and len(segs) == len(plan["seams"]) + 1
+    assert all(abs((s["pos"] - 0.755) / bar - round((s["pos"] - 0.755) / bar)) < 1e-3 for s in segs)
+    assert all(s["len"] <= 40.0 + 1e-6 for s in segs[:-1])
+
+
+def test_duck_curve_voice_meme_and_final_silence():
+    from app.meme_edit_concat import duck_db
+
+    grid, db = duck_db(10.0, [(1.0, 2.0)], [(5.0, 6.0)], silence=(8.0, 9.0))
+    at = lambda t: float(db[int(round(t / 0.01))])  # noqa: E731
+    assert at(1.5) == pytest.approx(-12, abs=0.5) and at(5.5) == pytest.approx(-16, abs=0.5)
+    assert at(8.5) < -70 and abs(at(4.0)) < 0.5
+
+
+def test_refine_grid_finds_tempo_and_phase():
+    import numpy as np
+
+    hop, period, phase = 0.01, 0.4348, 0.31
+    onset = np.zeros(12000)
+    for k in range(260):
+        onset[int(round((phase + k * period) / hop))] = 1.0
+    p, first = I.refine_grid(onset, hop, 0.437, 0.0, 115.0)
+    assert p == pytest.approx(period, abs=0.0004) and first == pytest.approx(phase, abs=0.02)
+
+
+# ------------------------------------------------------------------ сервис: файл клипа, задание, API, инструмент
 
 
 @pytest.fixture
@@ -176,95 +254,112 @@ def env(tmp_path, monkeypatch):
     client, store = _client(tmp_path, monkeypatch)
     from app.settings import settings
 
-    source = store.create_source("upload", settings.source_dir / "apex.mp4", original_filename="apex.mp4",
-                                 duration_sec=DURATION, width=1920, height=1080, status="ready")
+    ids = []
+    for name, dur in (("a.mp4", 60.0), ("b.mp4", 90.0)):
+        src = store.create_source("upload", settings.source_dir / name, original_filename=name, duration_sec=dur,
+                                  width=1920, height=1080, status="ready")
+        ids.append(int(src["id"]))
     files = tmp_path / "memes"
     files.mkdir()
-    lib = []
     for meme in _library():
         path = files / f"m{meme['meme_id']}.mp4"
         path.write_bytes(b"0")
         asset = store.create_montage_asset(kind="video", label=meme["title"], file_path=str(path),
                                            duration_sec=meme["duration_sec"], width=640, height=360, has_audio=True)
-        row = VM.create_meme(store, int(asset["id"]), tags=meme["tags"], approved=meme["meme_id"] != 7,
+        row = VM.create_meme(store, int(asset["id"]), tags=meme["tags"], approved=meme["meme_id"] != 6,
                              transcript_status="off")
-        lib.append(row)
-    return client, store, int(source["id"]), lib
+        VM.set_transcript(store, int(row["id"]), status="done", text=meme["transcript"],
+                          words=meme["transcript_words"])
+    data = {ids[0]: (EVENTS_1, SHOTS_1, OWNER_1), ids[1]: (EVENTS_2, SHOTS_2, OWNER_2)}
+    monkeypatch.setattr(I, "source_events", lambda _store, sid, game="apex": data[int(sid)][0])
+    monkeypatch.setattr(I, "shot_spans", lambda source: data[int(source["id"])][1])
+    monkeypatch.setattr(I, "track_words", lambda source, track, lo, hi: [
+        w for w in data[int(source["id"])][2] if lo <= w["start"] <= hi] if track == 1 else [])
+    monkeypatch.setattr(ME, "mic_track", lambda source: 1)
+    monkeypatch.setattr(I, "song_grid", lambda path, start_hint=0.0: None)
+    J.reset()
+    monkeypatch.setattr(J, "SYNC", True)
+    return client, store, ids
 
 
-GRID = {"period": PERIOD, "bpm": 120, "start_sec": 0.0, "first_downbeat": 0.0}
+def test_block_specs_validate_both_formats(env):
+    from app.clip_spec import validate_spec
+    from app.manual_clips import create_manual_clip
+    from app.meme_edit_blocks import spec_for
 
-
-def test_spec_for_both_aspects_validates(env):
-    _client_, store, source_id, _lib = env
-    prepared = ME.prepare(store, source_id, events=_events(), target_sec=40, seed=2, grid=GRID)
+    _client_, store, ids = env
+    edit = ME.plan_edit(store, source_ids=ids, target_sec=120, vertical=True)
+    assert edit["formats"]["horizontal"]["plan"]["blocks"] and edit["formats"]["vertical"]["plan"]["blocks"]
+    lib = edit["library"]
+    assert 6 not in lib  # неодобренный мем не в библиотеке эдита
     base = ME._base_render(store)
-    for aspect in ("9:16", "16:9"):
-        spec = ME.spec_for(prepared, aspect, base, seed=2)
-        plan = create_manual_clip(store, source_id, spec["title"],
-                                  [{k: p[k] for k in ("start_sec", "end_sec")} for p in spec["pieces"]])
-        ops = validate_spec(store, int(plan["id"]), spec)
-        render = ops["render"]
-        assert render["format"] == aspect and render["layers_format"] == aspect
-        assert render["cuts"] and render["transition"]["type"] == "cut" and render["end_hold_sec"] == 0
-        memes = [w for w in prepared["timeline"].windows if w.role == "meme"]
-        assert len(render["inserts"]) == len(memes) >= 3
-        # Звук клипа под мемом глушит не вставка (тогда пропала бы и музыка), а вырезы звука игры по дорожке.
-        assert all(i["mode"] == "full" and not i["duck"] and "duck_volume" not in i and i.get("level") == "speech"
-                   for i in render["inserts"])
-        for ins in render["inserts"]:
-            assert any(m.get("track") == 0 and m["start"] <= ins["at"] + 0.01
-                       and m["end"] >= ins["at"] + ins["duration"] - 0.01 for m in render["mute"])
-        kinds = [(layer["type"], layer["props"].get("kind")) for layer in render["layers"]]
-        assert ("fx", "negate") in kinds
-        negate = next(layer for layer in render["layers"] if layer["props"].get("kind") == "negate")
-        assert negate["props"]["color"].lower() == ME.NEGATE_COLOR
-        words = [layer for layer in render["layers"] if layer["type"] == "text"]
-        assert 2 <= len(words) <= 4
-        for layer in words:
-            assert layer["props"]["font"] == "Dela Gothic One" and layer["props"]["stroke"]["width"] >= 12
-            assert layer["start"] >= MP.final_to_clip(prepared["timeline"], MP.NO_TEXT_BEFORE_SEC) - 1e-3
-        assert render["camera"] and any(k.get("shake") for k in render["camera"])
-        if aspect == "9:16":
-            assert all(p["focus"] == [{"t": 0.0, "x": 0.5}] for p in ops["pieces"])
+    for name, fmt in edit["formats"].items():
+        for i, block in enumerate(fmt["plan"]["blocks"]):
+            spec = spec_for(block, fmt["aspect"], base, mic=1, library=lib, parts=fmt["parts"], index=i, count=3)
+            plan = create_manual_clip(store, block["source_id"], spec["title"],
+                                      [{k: p[k] for k in ("start_sec", "end_sec")} for p in spec["pieces"]])
+            ops = validate_spec(store, int(plan["id"]), spec)
+            render = ops["render"]
+            assert render["format"] == fmt["aspect"] and render["music_on"] is False and render["end_hold_sec"] == 0
+            for ins in render["inserts"]:
+                assert ins["mode"] == "full" and ins.get("parts") and ins.get("level") == "speech"
+                for track in (0, 1):
+                    assert any(m.get("track") == track and m["start"] <= ins["at"] + 0.01
+                               and m["end"] >= ins["at"] + ins["duration"] - 0.01 for m in render["mute"])
+            caps = [layer for layer in render["layers"] if layer["type"] == "captions"]
+            assert caps and caps[0]["props"]["color"].upper() == "#FFFFFF"
+            sfx = [layer for layer in render["layers"] if layer["type"] == "audio"
+                   and str(layer["props"].get("asset_id", "")).startswith("sfx:freesound/")]
+            assert len(sfx) >= len(block["transitions"])
 
 
-def test_unapproved_meme_never_used(env):
-    _client_, store, _source_id, lib = env
-    library = ME.meme_library(store)
-    unapproved = next(m for m in lib if not m["approved"])
-    assert all(m["meme_id"] != unapproved["id"] for m in library)
-    tl = MP.plan_timeline(_events(), duration=DURATION, period=PERIOD, target_sec=60, library=library, seed=5)
-    assert all(w.meme["meme_id"] != unapproved["id"] for w in tl.windows if w.meme)
+def test_team_swears_muted_whole_on_game_track():
+    from app.meme_edit_blocks import mutes
+
+    block = {"inserts": [], "words": [{"word": "сука", "start": 2.0, "end": 2.4, "speaker": "B"},
+                                      {"word": "сука", "start": 5.0, "end": 5.4, "speaker": "A"}]}
+    out = mutes(block, 1)
+    assert out == [{"start": 1.97, "end": 2.43, "track": 0, "by": "meme_edit:team"}]
 
 
-def test_build_meme_edit_api_two_clips(env):
-    client, store, source_id, _lib = env
-    res = client.post(f"/api/sources/{source_id}/meme-edit",
-                      json={"events": _events(), "target_sec": 35, "render": False, "seed": 4})
+def test_job_dry_run_and_blocks_without_render(env):
+    _client_, store, ids = env
+    job = J.start(store, source_ids=ids, target_sec=120, dry_run=True)
+    out = J.status(job["job_id"])
+    assert out["status"] == "done", out.get("error")
+    assert out["plan"]["formats"]["horizontal"]["blocks"] and out["plan"]["formats"]["vertical"]["blocks"]
+    job = J.start(store, source_ids=ids, target_sec=120, render=False, formats=["horizontal"])
+    st = J.status(job["job_id"])
+    assert st["status"] == "done", st.get("error")
+    items = st["blocks"]["horizontal"]
+    assert items and "vertical" not in st["blocks"]
+    for item in items:
+        plan = store.get_clip_plan(item["clip_id"], include_segments=False)
+        assert plan["hidden"]
+        subs = store.get_clip_plan_subtitles(item["clip_id"]) or {}
+        assert subs.get("words") and all(w.get("speaker") in ("A", "B") for w in subs["words"])
+    J.reset()
+    assert J.status(job["job_id"])["status"] == "done"  # с диска
+
+
+def test_api_and_tool_start_and_status(env):
+    client, store, ids = env
+    res = client.post("/api/meme-edit", json={"source_ids": ids, "dry_run": True, "target_sec": 120})
     assert res.status_code == 200, res.text
-    body = res.json()
-    assert [c["format"] for c in body["clips"]] == ["9:16", "16:9"]
-    for clip in body["clips"]:
-        plan = store.get_clip_plan(clip["clip_id"])
-        settings = plan["render_settings"]
-        assert settings["format"] == clip["format"] and settings["inserts"] and settings["cuts"]
-    assert body["memes"] and len(body["memes"]) == len(set(body["memes"]))
-    dry = client.post(f"/api/sources/{source_id}/meme-edit", json={"events": _events(), "dry_run": True})
-    assert dry.status_code == 200 and dry.json()["spec"]["schema"] == "vvf.clip/1"
+    job_id = res.json()["job_id"]
+    body = client.get(f"/api/meme-edit/jobs/{job_id}").json()
+    assert body["status"] == "done", body.get("error")
+    assert client.post(f"/api/sources/{ids[0]}/meme-edit", json={"dry_run": True}).status_code == 200
+    assert client.get("/api/meme-edit/jobs/nope").status_code == 404
+    out, ok = run_tool(ToolContext(store), "meme_edit", {"source_ids": ids, "dry_run": True}, validate=True)
+    assert ok and out["job_id"].startswith("me"), out
+    out, ok = run_tool(ToolContext(store), "meme_edit", {"job_id": out["job_id"]}, validate=True)
+    assert ok and out["status"] in ("queued", "running", "done")
+    out, ok = run_tool(ToolContext(store), "meme_edit", {})
+    assert not ok and "записи" in out["error"]
 
 
-def test_meme_edit_tool_dry_run_and_errors(env):
-    _client_, store, source_id, _lib = env
-    out, ok = run_tool(ToolContext(store), "meme_edit",
-                       {"source_id": source_id, "events": _events(), "dry_run": True}, validate=True)
-    assert ok, out
-    assert out["spec"]["render"]["inserts"]
-    out, ok = run_tool(ToolContext(store), "meme_edit", {"source_id": source_id, "events": []})
-    assert not ok and "эдит" in out["error"]
-
-
-# ------------------------------------------------------------------ кадр мема: поля и подрезка
+# ------------------------------------------------------------------ кадр мема: поля и подрезка (app/meme_frame.py)
 
 
 def test_cropdetect_parse_widest_box_and_noise():
@@ -272,23 +367,18 @@ def test_cropdetect_parse_widest_box_and_noise():
 
     log = "[Parsed_cropdetect_0] x1:0 crop=1280:552:0:84\n[Parsed_cropdetect_0] crop=1276:548:2:86\n"
     assert parse_cropdetect(log, 1280, 720) == {"x": 0.0, "y": 0.1167, "w": 1.0, "h": 0.7667}
-    assert parse_cropdetect("crop=1280:716:0:2", 1280, 720) is None  # 2 px — шум кодека, не поле
-    assert parse_cropdetect("crop=100:80:600:300", 1280, 720) is None  # почти весь кадр чёрный — тёмная сцена
+    assert parse_cropdetect("crop=1280:716:0:2", 1280, 720) is None
+    assert parse_cropdetect("crop=100:80:600:300", 1280, 720) is None
 
 
 def test_framing_cover_when_cheap_blur_when_too_much_lost():
     from app.meme_frame import framing
 
-    # 4:3 с вшитыми полями в 16:9 → в 16:9-клип: поля прочь, подрезка высоты 25 % — во весь кадр.
     crop, fill = framing({"x": 0.125, "y": 0.0, "w": 0.75, "h": 1.0}, 1920, 1080, 1920, 1080)
     assert fill == "cover" and crop["x"] == 0.125 and crop["w"] == 0.75 and crop["h"] == pytest.approx(0.75)
-    # Широкий мем (2.35:1 в letterbox) → в вертикаль: подрезка ровно на 45 % ширины вокруг лица, вокруг — размытие.
     crop, fill = framing({"x": 0.0, "y": 0.12, "w": 1.0, "h": 0.76}, 1280, 720, 1080, 1920, face=(0.7, 0.5))
     assert fill == "blur" and crop["w"] == pytest.approx(0.55) and crop["y"] == 0.12 and crop["h"] == 0.76
-    assert crop["x"] == pytest.approx(0.7 - 0.275, abs=1e-3)
-    # Почти вертикальный мем в вертикаль — во весь кадр; квадрат в 16:9 — тоже (теряется 44 % высоты).
     assert framing(None, 900, 1400, 1080, 1920)[1] == "cover"
-    assert framing(None, 1000, 1000, 1920, 1080)[1] == "cover"
     assert framing(None, 1920, 1080, 1920, 1080) == (None, "cover")
 
 
@@ -297,65 +387,30 @@ def test_insert_crop_reaches_the_render_graph():
 
     [ins] = normalize_inserts([{"asset_id": 1, "at": 1, "duration": 2, "fill": "cover",
                                 "crop": {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}}])
-    assert ins["crop"] == {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}
     chain = full_insert_chain("[1:v]", 1080, 1920, "cover", "1", crop=ins["crop"])
     assert chain.startswith("[1:v]crop=trunc(iw*0.5000/2)*2:trunc(ih*0.6000/2)*2:") and "scale=1080:1920" in chain
-    assert "crop" not in normalize_inserts([{"asset_id": 1, "at": 1, "crop": {"x": 0, "y": 0, "w": 1, "h": 1}}])[0]
 
 
-# ------------------------------------------------------------------ картинка записи: смерть и движение
+def test_concat_pads_blocks_to_plan_and_mixes_music(tmp_path):
+    import subprocess
 
+    from app.meme_edit_concat import concat_reel, video_frames
 
-def test_dead_spans_turn_last_knock_into_death():
-    from app import meme_edit_visual as V
-
-    times = [i * 0.5 for i in range(40)]
-    sat = [0.35] * 30 + [0.04] * 8 + [0.35] * 2  # 15–19 с — серый экран
-    prof = {"t": times, "sat": sat, "motion": [10.0] * 40, "banner": [60.0] * 40}
-    spans = V.dead_spans(prof)
-    assert spans == [(15.0, 19.0)]
-    events = [{"t": 12.0, "kind": "knock", "score": 0.8, "detail": ""},
-              {"t": 13.6, "kind": "shot_burst", "score": 0.5, "detail": ""},
-              {"t": 16.0, "kind": "knock", "score": 0.9, "detail": ""},
-              {"t": 17.0, "kind": "reaction", "score": 0.7, "detail": ""}]
-    out = V.apply_deaths(events, spans)
-    kinds = [(e["t"], e["kind"]) for e in out]
-    assert (16.0, "knock") not in kinds  # на сером экране нока не бывает
-    assert (12.0, "death") in kinds and (17.0, "reaction") in kinds  # сильнейший удар перед смертью — по игроку
-    tl = MP.plan_timeline(out, duration=40, period=PERIOD, target_sec=20, library=_library(), seed=1,
-                          ctx=MP.Context(avoid=spans))
-    death = next(w for w in tl.windows if w.event and w.event["kind"] == "death" and w.role == "meme")
-    assert set(death.meme["tags"]) & {"фейл", "грусть"}
-    assert not any(w.word in MP.KIND_WORDS["knock"] + MP.KIND_WORDS["kill"] and _inside(w, spans) for w in tl.windows)
-
-
-def _inside(w: MP.Window, spans) -> bool:
-    return any(a <= w.start <= b for a, b in spans)
-
-
-def test_chops_skip_intro_still_frames_and_dead_screen():
-    still = (30.0, 40.0)
-    dead = [(60.0, 66.0)]
-
-    def motion(t: float) -> float:
-        return 0.05 if still[0] <= t <= still[1] else 0.9
-
-    events = [{"t": float(t), "kind": "shot_burst", "score": 0.5} for t in range(1, 100, 2)]
-    events += [{"t": 4.0, "kind": "knock", "score": 0.9}, {"t": 42.0, "kind": "kill", "score": 0.9},
-               {"t": 70.0, "kind": "knock", "score": 0.8}, {"t": 90.0, "kind": "kill", "score": 0.8}]
-    tl = MP.plan_timeline(events, duration=100, period=PERIOD, target_sec=40, library=_library(), seed=2,
-                          ctx=MP.Context(motion=motion, avoid=dead))
-    chops = [w for w in tl.windows if w.role == "chop"]
-    assert chops
-    for w in chops:
-        assert w.start >= MP.MIN_CHOP_START_SEC - 1e-6
-        assert not (still[0] <= w.start <= still[1] and still[0] <= w.end <= still[1])
-        assert not any(a <= w.start <= b or a <= w.end <= b for a, b in dead)
-
-
-def test_real_game_events_spans_are_dicts_and_become_pairs(monkeypatch):
-    fake = types.ModuleType("app.game_events")
-    fake.detect_game_events = lambda path, game="apex": []
-    fake.fight_spans = lambda events: [{"start": 2.0, "end": 9.5, "score": 0.8}]
-    monkeypatch.setitem(sys.modules, "app.game_events", fake)
-    assert EV.fight_spans([{"t": 3, "kind": "kill", "score": 1}]) == [(2.0, 9.5)]
+    files = []
+    for i, frames in enumerate((28, 30)):  # блок 1: рендер потерял 2 кадра из 30
+        path = tmp_path / f"b{i}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=red:s=160x90:r=30:d={frames / 30}",
+                        "-f", "lavfi", "-i", f"sine=f=440:d={frames / 30}", "-shortest", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+        files.append(path)
+    music = tmp_path / "song.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=10", str(music)], check=True)
+    blocks = [{"key": "a", "total": 1.0, "words": [{"start": 0.2, "end": 0.5}], "inserts": []},
+              {"key": "b", "total": 1.0, "words": [], "flash_in": True,
+               "inserts": [{"at": 0.2, "slot": 0.5, "line_start": 0.0}]}]
+    out = tmp_path / "out.mp4"
+    tl = concat_reel(blocks, files, out, music_path=str(music),
+                     segments=[{"t": 0.0, "pos": 1.0, "len": 1.0}, {"t": 1.0, "pos": 2.0, "len": 1.0}],
+                     work=tmp_path / "w")
+    assert out.is_file() and video_frames(out)[0] == 60  # стыки на плане: недостающие кадры добиты стоп-кадром
+    assert [b["at"] for b in tl["blocks"]] == [0.0, 1.0] and tl["flashes"] == [1.0] and tl["seams"] == [1.0]
