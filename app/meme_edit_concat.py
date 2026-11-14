@@ -93,8 +93,11 @@ def concat_reel(blocks: list[dict], files: list[Path], out: Path, *, music_path:
     for b, path in zip(blocks, files):
         n, rate = video_frames(path)
         fps = fps or rate
-        segs.append({"block": b, "path": path, "frames": n, "at": round(t, 4), "len": n / rate})
-        t += n / rate
+        # длина блока — по плану (кадры на долях): рендер мог потерять кадр-другой в хвосте — стоп-кадр добивает,
+        # иначе к концу ролика стыки уезжают с долей музыки
+        want = int(round(float(b.get("total") or n / fps) * fps)) or n
+        segs.append({"block": b, "path": path, "frames": want, "rendered": n, "at": round(t, 4), "len": want / fps})
+        t += want / fps
     total = t
     say("звук блоков")
     parts = []
@@ -165,8 +168,6 @@ def concat_reel(blocks: list[dict], files: list[Path], out: Path, *, music_path:
     js = json.loads(r.stderr[r.stderr.rindex("{"):r.stderr.rindex("}") + 1])
     ln = (f"loudnorm=I=-14:TP=-1.5:LRA=11:measured_I={js['input_i']}:measured_TP={js['input_tp']}:"
           f"measured_LRA={js['input_lra']}:measured_thresh={js['input_thresh']}:offset={js['target_offset']}:linear=true")
-    lst = work / "list.txt"
-    lst.write_text("".join(f"file '{Path(s['path']).as_posix()}'\n" for s in segs), encoding="utf-8")
     rate = fps or 30.0
     boxes = []
     for fl in flash_at:
@@ -174,10 +175,19 @@ def concat_reel(blocks: list[dict], files: list[Path], out: Path, *, music_path:
             a = fl + k2 / rate
             boxes.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=white@{alpha}:t=fill:"
                          f"enable='between(t,{a - 0.001:.4f},{a + 1 / rate - 0.002:.4f})'")
-    vf = ",".join([f"setpts=N/{rate:g}/TB", f"fps={rate:g}"] + boxes)
+    graph = []
+    for i, sg in enumerate(segs):
+        pad = max(0, sg["frames"] - sg["rendered"]) + 1
+        graph.append(f"[{i}:v]fps={rate:g},setpts=N/{rate:g}/TB,tpad=stop_mode=clone:stop={pad},"
+                     f"trim=end_frame={sg['frames']},setpts=N/{rate:g}/TB,format=yuv420p[v{i}]")
+    graph.append("".join(f"[v{i}]" for i in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0[vc]")
+    graph.append("[vc]" + (",".join(boxes) if boxes else "null") + "[v]")
+    inputs: list[str] = []
+    for sg in segs:
+        inputs += ["-i", str(sg["path"])]
     say("картинка")
-    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(lst), "-i", str(raw),
-          "-map", "0:v:0", "-map", "1:a:0", "-vf", vf, "-af", ln + ",aresample=48000",
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-i", str(raw), "-filter_complex", ";".join(graph),
+          "-map", "[v]", "-map", f"{len(segs)}:a:0", "-af", ln + ",aresample=48000",
           "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", f"{rate:g}",
           "-c:a", "aac", "-b:a", "256k", "-ar", "48000", "-movflags", "+faststart", "-shortest", str(out)])
     raw.unlink(missing_ok=True)

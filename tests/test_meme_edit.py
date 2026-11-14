@@ -389,3 +389,28 @@ def test_insert_crop_reaches_the_render_graph():
                                 "crop": {"x": 0.1, "y": 0.2, "w": 0.5, "h": 0.6}}])
     chain = full_insert_chain("[1:v]", 1080, 1920, "cover", "1", crop=ins["crop"])
     assert chain.startswith("[1:v]crop=trunc(iw*0.5000/2)*2:trunc(ih*0.6000/2)*2:") and "scale=1080:1920" in chain
+
+
+def test_concat_pads_blocks_to_plan_and_mixes_music(tmp_path):
+    import subprocess
+
+    from app.meme_edit_concat import concat_reel, video_frames
+
+    files = []
+    for i, frames in enumerate((28, 30)):  # блок 1: рендер потерял 2 кадра из 30
+        path = tmp_path / f"b{i}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c=red:s=160x90:r=30:d={frames / 30}",
+                        "-f", "lavfi", "-i", f"sine=f=440:d={frames / 30}", "-shortest", "-c:v", "libx264",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", str(path)], check=True)
+        files.append(path)
+    music = tmp_path / "song.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=f=220:d=10", str(music)], check=True)
+    blocks = [{"key": "a", "total": 1.0, "words": [{"start": 0.2, "end": 0.5}], "inserts": []},
+              {"key": "b", "total": 1.0, "words": [], "flash_in": True,
+               "inserts": [{"at": 0.2, "slot": 0.5, "line_start": 0.0}]}]
+    out = tmp_path / "out.mp4"
+    tl = concat_reel(blocks, files, out, music_path=str(music),
+                     segments=[{"t": 0.0, "pos": 1.0, "len": 1.0}, {"t": 1.0, "pos": 2.0, "len": 1.0}],
+                     work=tmp_path / "w")
+    assert out.is_file() and video_frames(out)[0] == 60  # стыки на плане: недостающие кадры добиты стоп-кадром
+    assert [b["at"] for b in tl["blocks"]] == [0.0, 1.0] and tl["flashes"] == [1.0] and tl["seams"] == [1.0]
