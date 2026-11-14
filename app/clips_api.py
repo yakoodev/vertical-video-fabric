@@ -358,33 +358,7 @@ def build_clips_router(
         except ValueError as exc:
             source_path.unlink(missing_ok=True)
             raise ValueError(f"uploaded clip is not a readable video: {exc}") from exc
-        source = get_store().create_source(
-            "clip_upload",
-            source_path,
-            original_filename=safe_name,
-            size_bytes=size,
-            duration_sec=metadata.duration_sec,
-            width=metadata.width,
-            height=metadata.height,
-            fps=metadata.fps,
-            metadata={"standalone_clip": True},
-            status="ready",
-        )
-        clip_path = settings.clip_dir / f"{uuid4().hex}-{safe_name}"
-        clip_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source_path, clip_path)
-        name = title.strip() or Path(safe_name).stem
-        plan = clip_upload.create_plan(get_store(), source, name, description.strip(), project_id)
-        clip = get_store().create_clip(source["id"], clip_plan_id=int(plan["id"]), title=name, description=description.strip())
-        return get_store().finish_clip_render(
-            clip["id"],
-            status="succeeded",
-            output_path=clip_path,
-            preview_path=clip_path,
-            duration_sec=metadata.duration_sec,
-            width=metadata.width,
-            height=metadata.height,
-            size_bytes=size,
-        )
+        return clip_upload.register_source_file(get_store(), source_path, safe_name, size, metadata, title,
+                                                description, project_id)
 
     return router

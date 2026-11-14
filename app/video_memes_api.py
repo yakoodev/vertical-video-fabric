@@ -60,17 +60,17 @@ class MemePlaceRequest(BaseModel):
 
 
 class MemeEditRequest(BaseModel):
-    """Мем-эдит записи (app/meme_edit.py): два клипа 9:16 и 16:9 из одного монтажа."""
+    """Мем-эдит (app/meme_edit.py): лучшие бои записей под музыку, мемы после реплик — фоном, итог — готовые ролики."""
+    source_ids: list[int] | None = Field(default=None, description="записи эдита (по порядку); нет — записи проекта")
+    project_id: int | None = Field(default=None, description="проект: его горизонтальные записи игры")
     music_track_id: int | None = Field(default=None, description="трек фона (list_music); нет — ближе к 128 BPM")
     music_asset_id: int | None = Field(default=None, description="или звук из «Файлов для монтажа»")
-    target_sec: float = Field(default=40.0, ge=15, le=90)
-    aspects: list[str] = Field(default_factory=lambda: ["9:16", "16:9"])
-    events: list[dict] | None = Field(default=None, description="свои события [{t, kind, score?}] (секунды исходника)")
-    seed: int = 0
-    words: int = Field(default=3, ge=0, le=4)
-    subtitles: bool = True
-    render: bool = True
-    dry_run: bool = Field(default=False, description="только план (файл клипа), без клипов")
+    target_sec: float = Field(default=300.0, ge=30, le=600, description="горизонталь: длина до, с")
+    vertical_sec: float = Field(default=90.0, ge=60, le=180, description="вертикаль «лучшее»: длина до, с")
+    formats: list[Literal["horizontal", "vertical"]] = Field(default_factory=lambda: ["horizontal", "vertical"])
+    teammates: bool = Field(default=True, description="субтитры и мат тиммейтов (звук игры)")
+    render: bool = Field(default=True, description="false — только клипы-блоки, без рендера и склейки")
+    dry_run: bool = Field(default=False, description="только план (бои, мемы, доли), без клипов")
 
 
 def _public(meme: dict) -> dict:
@@ -217,25 +217,47 @@ def build_video_memes_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"deleted": True}
 
-    @router.post("/api/sources/{source_id}/meme-edit", tags=["Video memes"],
-                 summary="Мем-эдит игры: геймплей по долям музыки + врезки видеомемов, два клипа 9:16 и 16:9")
-    def api_meme_edit(source_id: int, payload: MemeEditRequest, request: Request, _auth: auth_dep) -> dict:
-        from app.meme_edit import build_meme_edit, plan_meme_edit
+    def _start_meme_edit(request: Request, payload: MemeEditRequest, source_ids: list[int] | None) -> dict:
+        from app import meme_edit_job as J
         from app.stream_questions_api import refuse_agent_montage
 
-        refuse_agent_montage(request, get_store(), source_id)
-        options = dict(music_track_id=payload.music_track_id, music_asset_id=payload.music_asset_id,
-                       target_sec=payload.target_sec, events=payload.events, seed=payload.seed,
-                       words=payload.words, subtitles=payload.subtitles)
+        for sid in source_ids or []:
+            refuse_agent_montage(request, get_store(), sid)
         try:
-            if payload.dry_run:
-                return {"dry_run": True,
-                        "spec": plan_meme_edit(get_store(), source_id, aspect=(payload.aspects or ["9:16"])[0],
-                                               **options)}
-            return build_meme_edit(get_store(), source_id, aspects=payload.aspects, render=payload.render, **options)
+            return J.start(get_store(), source_ids=source_ids, project_id=payload.project_id,
+                           music_track_id=payload.music_track_id, music_asset_id=payload.music_asset_id,
+                           target_sec=payload.target_sec, vertical_sec=payload.vertical_sec,
+                           formats=list(payload.formats), teammates=payload.teammates, render=payload.render,
+                           dry_run=payload.dry_run)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/api/meme-edit", tags=["Video memes"],
+                 summary="Мем-эдит игры фоном: лучшие бои записей под музыку, мемы после реплик → готовые ролики")
+    def api_meme_edit(payload: MemeEditRequest, request: Request, _auth: auth_dep) -> dict:
+        return _start_meme_edit(request, payload, payload.source_ids)
+
+    @router.post("/api/sources/{source_id}/meme-edit", tags=["Video memes"],
+                 summary="Мем-эдит одной записи (то же, что /api/meme-edit с source_ids [id])")
+    def api_source_meme_edit(source_id: int, payload: MemeEditRequest, request: Request, _auth: auth_dep) -> dict:
+        return _start_meme_edit(request, payload, [source_id])
+
+    @router.get("/api/meme-edit/jobs", tags=["Video memes"], summary="Последние задания мем-эдита")
+    def api_meme_edit_jobs(_auth: auth_dep) -> dict:
+        from app import meme_edit_job as J
+
+        return {"jobs": J.list_jobs()}
+
+    @router.get("/api/meme-edit/jobs/{job_id}", tags=["Video memes"],
+                summary="Статус мем-эдита: стадия, прогресс, план, итог (клипы готовых роликов)")
+    def api_meme_edit_job(job_id: str, _auth: auth_dep) -> dict:
+        from app import meme_edit_job as J
+
+        try:
+            return J.status(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     return router
