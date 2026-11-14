@@ -326,5 +326,6 @@ export const FX_TITLES: Record<string, string> = {
   datamosh_lite: "Глитч: датамош",
   pixel_sort_lite: "Глитч: штрихи пикселей",
   grayscale: "Ч/б",
+  negate: "Негатив",
   backdrop: "Фон под плашками",
 };

@@ -1904,6 +1904,23 @@ test("fx grayscale: ч/б на отрезке — насыщенность 0 п�
   assert.equal(E.FX_DEFAULTS.grayscale.intensity, 1);
 });
 
+test("fx negate: негатив на отрезке (как ffmpeg negate), полунегатив при 0.5, синий оттенок color; слои выше чистые", () => {
+  const top = { ...textLayer(), id: "top", type: "shape", track: 3, x: 0.5, y: 0.2, props: { kind: "rect", w: 300, h: 200, fill: "#00ff00" } };
+  const under = { ...textLayer(), id: "under", type: "shape", track: 0, x: 0.5, y: 0.6, props: { kind: "ellipse", w: 500, h: 500, fill: "#ff00ff" } };
+  const neg = (over = {}) => ({ ...textLayer(), id: "neg", type: "fx", track: 1, start: 10.5, end: 12, props: { kind: "negate", ...over } });
+  const at = (d, x, y) => [...d.slice((y * 540 + x) * 4, (y * 540 + x) * 4 + 3)];
+  const full = pixels([under, neg(), top], 11, {}, gradientBase);
+  const [r, g, b] = at(full, 270, 576);
+  assert.ok(r <= 3 && g >= 252 && b <= 3, `пурпурный → зелёный: ${[r, g, b]}`);
+  assert.deepEqual(at(full, 270, 192), [0, 255, 0], "слой выше по дорожке — без негатива");
+  const half = at(pixels([under, neg({ intensity: 0.5 }), top], 11, {}, gradientBase), 270, 576);
+  assert.ok(half.every((v) => v > 100 && v < 156), `intensity 0.5 — середина: ${half}`);
+  const [tr, tg, tb] = at(pixels([under, neg({ color: "#6fa8ff" }), top], 11, {}, gradientBase), 270, 576);
+  assert.ok(tr <= 3 && tb <= 3 && tg > 150 && tg < 185, `оттенок умножением: ${[tr, tg, tb]}`);
+  assert.ok(same(pixels([under, neg(), top], 12.5, {}, gradientBase), pixels([under, top], 12.5, {}, gradientBase)), "после end цвет вернулся");
+  assert.equal(E.FX_DEFAULTS.negate.intensity, 1);
+});
+
 test("fx grayscale не красит субтитры и плашку: они над ч/б, прочее — по дорожкам (QA 02.11, клип 895)", () => {
   const words = [{ t0: 0.5, t1: 1.5, w: "ОБОСРАЛАСЬ" }];
   const caps = { id: "c", type: "captions", track: 0, start: 0, end: 3, x: 0.5, y: 0.5,

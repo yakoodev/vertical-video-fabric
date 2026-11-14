@@ -69,6 +69,9 @@ FX_KINDS = ("vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain
             "rgb_split", "tear", "datamosh_lite", "pixel_sort_lite",
             # Ч/б на отрезке (панчлайн): насыщенность → 0 с силой intensity, сила по времени — ключи scale.
             "grayscale",
+            # Негатив на отрезке (мем «запретная зона»): цвета кадра инвертированы с силой intensity, color — оттенок
+            # поверх негатива (#6fa8ff — синий; нет — чистый негатив).
+            "negate",
             # Фон под плашками (плоская тема): всё ниже размыто (size — радиус, опорн. px) и притушено
             # (intensity, color); субтитры и плашка канала остаются резкими поверх.
             "backdrop")
@@ -79,6 +82,7 @@ FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", 
               "rgb_shift": "rgb_split", "tearing": "tear", "datamosh": "datamosh_lite", "pixel_sort": "pixel_sort_lite",
               "pixelsort": "pixel_sort_lite", "bw": "grayscale", "b/w": "grayscale", "mono": "grayscale",
               "monochrome": "grayscale", "black_white": "grayscale", "desaturate": "grayscale",
+              "invert": "negate", "inverted": "negate", "negative": "negate", "inverse": "negate",
               "blur": "backdrop", "backdrop_blur": "backdrop", "dim": "backdrop", "frosted": "backdrop"}
 # Сколько эффектов кадра одновременно — уже каша (предупреждение агенту, не ошибка).
 FX_MAX_AT_ONCE = 2

@@ -156,7 +156,7 @@ export function visibleLayers(layers: Layer[], t: number): Layer[] {
   );
 }
 
-/** Слои, которые ч/б не красит: субтитры (подсветка слова остаётся жёлтой) и плашка канала. */
+/** Слои, которые ч/б и негатив не красят: субтитры (подсветка слова остаётся жёлтой) и плашка канала. */
 const ABOVE_GRAYSCALE = new Set<Layer["type"]>(["captions", "nameplate"]);
 
 /**
@@ -169,7 +169,7 @@ export function liftOverGrayscale(visible: Layer[]): Layer[] {
   let last = -1;
   visible.forEach((layer, i) => {
     const kind = layer.type === "fx" && !layer.behind ? (layer as FxLayer).props?.kind : null;
-    if (kind === "grayscale" || kind === "backdrop") last = i;
+    if (kind === "grayscale" || kind === "negate" || kind === "backdrop") last = i;
   });
   if (last < 0) return visible;
   const lifted = visible.slice(0, last).filter((l) => ABOVE_GRAYSCALE.has(l.type) && !l.behind);

@@ -534,6 +534,8 @@ export type FxKind =
   | "pixel_sort_lite"
   // Ч/б на отрезке (панчлайн): насыщенность кадра → 0 с силой intensity.
   | "grayscale"
+  // Негатив на отрезке: цвета инвертированы с силой intensity; color — оттенок поверх негатива (синий — «запретная зона»).
+  | "negate"
   // Фон под плашками: всё ниже по дорожкам размыто (size — радиус, опорн. px) и притушено (intensity, color).
   | "backdrop";
 
@@ -545,7 +547,7 @@ export type FxProps = {
   speed?: number;
   /** Наложение; "auto" (нет) — своё у вида: зерно overlay, пятна screen, вспышка add… */
   blend?: BlendMode | "auto";
-  /** Цвет вспышки (flash_frame), #ffffff. */
+  /** Цвет вспышки (flash_frame), #ffffff; оттенок негатива (negate), нет — чистый негатив. */
   color?: string;
   /** Краски пятен света (light_leak), до 4; нет — тёплые. */
   colors?: string[];
