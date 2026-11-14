@@ -43,7 +43,7 @@ def tools() -> list:
             "макс. уровень, очереди выстрелов (звук игры), реакции в микрофон (крик, смех?), засветы кадра — "
             "[{t, kind, score 0..1, detail}] в секундах исходника — и перестрелки fights [{start, end, score}]. "
             "Куда резать мем-монтаж: бой целиком — fights, мем-реакцию — на knock/kill/death/reaction. Первый вызов "
-            "сканирует запись ФОНОМ (~10 с на минуту видео): не готово — status \"running\" и retry_after_sec, зови "
+            "сканирует запись ФОНОМ (~6 с на минуту видео): не готово — status \"running\" и retry_after_sec, зови "
             "тот же вызов ещё раз. Потом кэш. kinds — только эти виды; from_sec/to_sec — окно; min_score — порог. "
             "/ Gameplay events (knocks, kills, deaths, wins, gunfire, mic reactions) + fight spans.",
             _obj({**SOURCE_ARGS, "from_sec": {"type": "number"}, "to_sec": {"type": "number"},
