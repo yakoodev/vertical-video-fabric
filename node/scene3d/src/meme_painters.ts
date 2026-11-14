@@ -194,4 +194,110 @@ export const MEME_PAINTERS: Record<string, (g: G, W: number, H: number, t: numbe
     }
     g.globalAlpha = 1;
   },
+
+  arena(g, W, H, t, p) {
+    // Серия 6: «рейтинг моделей» — строки с именами и полосками очков, полоски дёргаются, места меняются.
+    const s = W / 1280;
+    g.fillStyle = "#14151f";
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = "#ffd23f";
+    g.font = FONT(900, 64 * s);
+    g.textBaseline = "middle";
+    g.fillText(String(p.title ?? "РЕЙТИНГ МОДЕЛЕЙ"), 50 * s, 70 * s);
+    g.fillStyle = "#8b8fa8";
+    g.font = FONT(700, 30 * s);
+    g.fillText(String(p.sub ?? "кто умнее · обновлено только что"), 52 * s, 125 * s);
+    const rows: { name: string; color: string; score: number }[] = p.rows || [];
+    // Порядок «плавает»: очки качаются, сортировка по текущим очкам.
+    const cur = rows.map((r, i) => ({ ...r, v: r.score + Math.sin(t * (1.3 + i * 0.37) + i * 2.1) * (p.wobble ?? 22) }));
+    cur.sort((a, b) => b.v - a.v);
+    const top = 175 * s, rh = (H - top - 30 * s) / Math.max(1, cur.length);
+    const max = Math.max(...cur.map((r) => r.v), 1);
+    cur.forEach((r, i) => {
+      const y = top + i * rh;
+      g.fillStyle = i % 2 ? "#1b1d2a" : "#202336";
+      g.fillRect(30 * s, y + 4 * s, W - 60 * s, rh - 8 * s);
+      g.fillStyle = "#e8e6f0";
+      g.font = FONT(900, rh * 0.42);
+      g.fillText(`${i + 1}`, 52 * s, y + rh / 2);
+      g.fillStyle = r.color;
+      rr(g, 110 * s, y + rh * 0.25, rh * 0.5, rh * 0.5, 8 * s);
+      g.fill();
+      g.fillStyle = "#e8e6f0";
+      g.font = FONT(800, rh * 0.36);
+      g.fillText(r.name, 110 * s + rh * 0.7, y + rh / 2);
+      const bx = 520 * s, bw = (W - bx - 170 * s) * (r.v / max);
+      g.fillStyle = r.color;
+      rr(g, bx, y + rh * 0.3, Math.max(8 * s, bw), rh * 0.4, 10 * s);
+      g.fill();
+      g.fillStyle = "#c0caf5";
+      g.font = FONT(800, rh * 0.32);
+      g.fillText(String(Math.round(r.v * 10)), bx + bw + 16 * s, y + rh / 2);
+    });
+    g.textBaseline = "alphabetic";
+  },
+
+  wall_text(g, W, H, t, p) {
+    // Серия 6: «стена текста» на 30 страниц — строки мелкого текста, счётчик страниц, тонкий ползунок.
+    // ``keys: [{t, page}]`` — какая страница на экране (дробная — прокрутка внутри), ``pages`` — всего.
+    const s = W / 1280;
+    const pages = Number(p.pages ?? 30);
+    const keys: { t: number; page: number }[] = p.keys || [{ t: 0, page: 1 }];
+    let page = keys[0].page;
+    for (let i = 0; i < keys.length; i++) {
+      const a = keys[i], b = keys[i + 1];
+      if (t >= a.t) page = a.page;
+      if (b && t >= a.t && t < b.t) page = a.page + (b.page - a.page) * ((t - a.t) / (b.t - a.t));
+    }
+    page = Math.max(1, Math.min(pages, page));
+    g.fillStyle = p.bg || "#fbfaf6";
+    g.fillRect(0, 0, W, H);
+    // Шапка: «Ответ», счётчик.
+    g.fillStyle = "#ececf2";
+    g.fillRect(0, 0, W, 96 * s);
+    g.fillStyle = "#2b1c20";
+    g.font = FONT(900, 46 * s);
+    g.textBaseline = "middle";
+    g.fillText(String(p.title ?? "Ответ"), 40 * s, 50 * s);
+    // Счётчик — по центру шапки: в вертикальном кадре крупным планом видна середина экрана.
+    const label = `стр. ${Math.floor(page)} / ${pages}`;
+    g.font = FONT(900, 50 * s);
+    const lw = g.measureText(label).width;
+    const lx = p.counterX !== undefined ? Number(p.counterX) * W : W / 2;
+    g.fillStyle = "#d8342c";
+    rr(g, lx - lw / 2 - 25 * s, 14 * s, lw + 50 * s, 68 * s, 16 * s);
+    g.fill();
+    g.fillStyle = "#ffffff";
+    g.fillText(label, lx - lw / 2, 50 * s);
+    // Строки: прокрутка по дробной части страницы; каждая страница — свой «абзацный» рисунок.
+    const lh = 34 * s, top = 120 * s;
+    const perPage = 40;
+    const off = (page - 1) * perPage * lh;
+    const first = Math.floor(off / lh);
+    for (let i = first; i < first + Math.ceil((H - top) / lh) + 1; i++) {
+      const y = top + i * lh - off;
+      if (y < top - lh) continue;
+      const par = i % 9 === 0;
+      const len = par ? 0.3 + hash(i) * 0.2 : 0.62 + hash(i * 3) * 0.3;
+      g.fillStyle = par ? "rgba(40,36,60,0.75)" : "rgba(70,66,86,0.42)";
+      // Строка — «слова» полосками с пробелами.
+      let x = 40 * s;
+      const end = 40 * s + (W - 120 * s) * len;
+      let k = 0;
+      while (x < end) {
+        const ww = (40 + hash(i * 31 + k) * 120) * s;
+        rr(g, x, y + lh * 0.3, Math.min(ww, end - x), lh * (par ? 0.5 : 0.38), 4 * s);
+        g.fill();
+        x += ww + 14 * s;
+        k++;
+      }
+    }
+    // Ползунок прокрутки: крошечный — страниц много.
+    g.fillStyle = "#d9d8e2";
+    g.fillRect(W - 22 * s, top, 12 * s, H - top - 10 * s);
+    g.fillStyle = "#8a879c";
+    const th = Math.max(14 * s, (H - top) / pages);
+    g.fillRect(W - 22 * s, top + ((page - 1) / pages) * (H - top - th), 12 * s, th);
+    g.textBaseline = "alphabetic";
+  },
 };

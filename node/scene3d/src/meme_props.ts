@@ -18,6 +18,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { PANEL_PAINTERS } from "./desk_ui.ts";
 import type { Prop } from "./props.ts";
+import { DUEL_PROPS } from "./meme_props_duel.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, ...extra });
@@ -516,4 +517,6 @@ export const MEME_PROPS: Record<string, (p: Record<string, any>) => Prop> = {
   zzz,
   mochi_user: mochiUser,
   paper_sheet: paperSheet,
+  // Серия 6 «Сравнение»: карточки VS, часы, документы, искры, флаги (meme_props_duel.ts).
+  ...DUEL_PROPS,
 };

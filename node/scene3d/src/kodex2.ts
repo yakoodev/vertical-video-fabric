@@ -25,6 +25,8 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { blockMat, buildCritter, CP, CRITTER_EXPR, NUB_POSES, paintCritterFace, setNub, type CritterFace } from "./critter.ts";
 import { rng, sampleKeys, sampleNumber, type Key } from "./timeline.ts";
 import type { Character } from "./character.ts";
+import { addGear, type GearSpec } from "./meme_gear.ts";
+import { addDeco, bodyGradient } from "./meme_family.ts";
 
 export interface Kodex2Spec {
   id: string;
@@ -40,6 +42,17 @@ export interface Kodex2Spec {
   voice?: { fps?: number; start?: number; values?: number[]; gain?: number };
   stepFps?: number;
   seed?: number;
+  /** Доспехи и меч (meme_gear.ts), как у critter. */
+  gear?: GearSpec;
+  /** F/G: свой тон вместо кремового/серого — другие ИИ той же породы (серия 6): {body, shade, eye}. */
+  tone?: { body?: string; shade?: string; eye?: string };
+  /** F/G: градиент корпуса снизу вверх [низ, верх] (вершинные цвета). */
+  gradient?: string[];
+  /** F/G: деталь-примета: sparkle (звёздочка на антенне), fin (плавник и хвост кита), moon (полумесяц на антенне),
+   * crutches (костыли под ручками), bandage (пластырь на макушке); можно списком. */
+  deco?: string | string[];
+  /** Цвет детали (по умолчанию — свой у каждой). */
+  decoColor?: string;
 }
 
 const D2R = Math.PI / 180;
@@ -248,6 +261,10 @@ interface Rig {
   tex: THREE.CanvasTexture;
   paint: FacePaint;
   height: number;
+  /** Пропорции корпуса (для снаряжения); нет — CP. */
+  dims?: typeof CP;
+  /** Анимация детали-приметы (звёздочка крутится, костыли). */
+  tick?: (t: number) => void;
 }
 
 /** A и B — корпус зверька (buildCritter) с другими пропорциями и деталями. */
@@ -585,11 +602,13 @@ const TONES: Record<string, { body: string; shade: string }> = {
  * той же системы эмоций), но всё сильно скруглено — силуэт мягкий, почти «таблетка»; светлый тон, без гарнитуры,
  * бирка «Кодекс» в углу морды, как у Клода «Claude».
  */
-function softRig(variant: "f" | "g", S: number, badge: string): Rig {
-  const tone = TONES[variant];
+function softRig(variant: "f" | "g", S: number, badge: string, spec: Kodex2Spec = {} as Kodex2Spec): Rig {
+  const tone = { ...TONES[variant], ...(spec.tone || {}) };
   const dims = { radius: 0.25, legRad: 0.05, armRad: 0.075 };
   const parts = buildCritter(S, tone.body, tone.shade, dims, 0);
   const P = { ...CP, ...dims };
+  if (spec.gradient?.length === 2) bodyGradient(parts.body, spec.gradient[0], spec.gradient[1]);
+  const deco = spec.deco ? addDeco(parts.squash, S, P, Array.isArray(spec.deco) ? spec.deco : [spec.deco], spec.decoColor) : null;
   const root = new THREE.Group();
   const hopG = new THREE.Group();
   root.add(hopG);
@@ -602,10 +621,10 @@ function softRig(variant: "f" | "g", S: number, badge: string): Rig {
   const paint: FacePaint = (g, W, H, expr, blink, talk, look, t) => {
     const name = CRITTER_EXPR[expr] ? expr : SOFT_EXPR[expr] || "neutral";
     const f = { ...(paintCatBase as any), ...(CRITTER_EXPR[name] || {}) } as CritterFace;
-    paintCritterFace(g, W, H, parts.faceU, f, look, blink, talk, t, { eye: "#2a2226", cheeks: "#ffa9a0" }, P as typeof CP);
+    paintCritterFace(g, W, H, parts.faceU, f, look, blink, talk, t, { eye: tone.eye || "#2a2226", cheeks: "#ffa9a0" }, P as typeof CP);
   };
   return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: parts.faceCanvas, tex: parts.faceTex, paint,
-    height: (P.legH + P.bodyH) * S };
+    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update };
 }
 
 export function createKodex2(spec: Kodex2Spec): Character {
@@ -613,8 +632,9 @@ export function createKodex2(spec: Kodex2Spec): Character {
   const S = spec.width ?? 0.27;
   const badge = spec.badge ?? "Кодекс";
   const rig = variant === "c" ? capsuleRig(S, badge) : variant === "d" ? knotBodyRig(S, badge) : variant === "e" ? knotHeadRig(S, badge)
-    : variant === "f" || variant === "g" ? softRig(variant, S, badge) : blockRig(variant, S, badge);
+    : variant === "f" || variant === "g" ? softRig(variant, S, badge, spec) : blockRig(variant, S, badge);
   const { root, hopG, lean, squash, arms } = rig;
+  const gear = spec.gear ? addGear(squash, arms, S, rig.dims || CP, spec.gear) : null;
   root.name = `kodex2:${spec.id}`;
   const p = spec.position || [0, 0, 0];
   root.position.set(p[0], p[1], p[2]);
@@ -725,6 +745,8 @@ export function createKodex2(spec: Kodex2Spec): Character {
       const side = 1 / Math.sqrt(Math.max(0.3, sq));
       squash.scale.set(side, sq, side);
       for (const a of arms) setNub(a, arm(t, a.side > 0 ? "armL" : "armR", a.side > 0 ? "mug" : "rest"), S, t0, v * 10);
+      gear?.update(t, (fld, d) => num(t, fld, d));
+      rig.tick?.(t0);
       root.updateMatrixWorld(true);
       root.getWorldQuaternion(tmpQ2);
       // Кружка — в левой ручке (holdL: mug | none), карандаш — в правой (holdR: pencil | none).

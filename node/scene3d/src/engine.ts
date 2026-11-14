@@ -638,6 +638,13 @@ class Engine {
     }
     o.node.position.set(pos[0], pos[1], pos[2]);
     o.node.rotation.set(rot[0] * D2R, rot[1] * D2R, rot[2] * D2R);
+    // Ключ scale (число или [x, y, z]) — вещь сжимается/растёт («краткая выжимка» уменьшается).
+    const scl = s.keys && s.keys.length ? sampleKeys<number | number[]>(s.keys, t, "scale", (a, b, k) => (Array.isArray(a)
+      ? a.map((v, i) => v + ((Array.isArray(b) ? b[i] : b) - v) * k) : a + ((b as number) - a) * k)) : undefined;
+    if (scl !== undefined) {
+      const v = Array.isArray(scl) ? scl : [scl, scl, scl];
+      o.node.scale.set(Math.max(1e-4, v[0]), Math.max(1e-4, v[1]), Math.max(1e-4, v[2]));
+    }
     // Тряска (удар): смещение и наклон внутреннего узла, затухающие.
     o.inner.position.set(0, 0, 0);
     o.inner.rotation.set(0, 0, 0);
