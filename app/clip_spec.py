@@ -38,7 +38,10 @@ from app.video_crop import FIT_MIN_W, fit_problem, normalize_fit
 _MISSING = object()  # ключа нет в файле — поле куска не трогаем
 
 SCHEMA_ID = "vvf.clip/1"
-MAX_PIECES = 12
+# Кусков в клипе. Было 12 — ручному мем-эдиту на 50 с (рубка геймплея + врезки) понадобилось 13+.
+# Рендер режет каждый кусок своим ffmpeg и склеивает concat/xfade — граф растёт линейно, 40 проверено
+# тестом (tests/test_piece_limit.py).
+MAX_PIECES = 40
 MAX_TITLE = 100
 MAX_DESCRIPTION = 2000
 MAX_NOTES = 4000

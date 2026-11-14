@@ -20,7 +20,7 @@ import json
 from typing import Any, Callable
 
 from app.ai.gemini import GeminiClient, _extract_response_text
-from app.clip_spec import SpecError, export_spec, validate_spec
+from app.clip_spec import MAX_PIECES, SpecError, export_spec, validate_spec
 from app.settings import settings
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC
 from app.transitions import SFX_KINDS, TRANSITIONS
@@ -54,7 +54,7 @@ RULES = f"""\
    клип почти как есть.
 
 Ограничения (иначе правка не пройдёт проверку):
-- каждый кусок {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с, не больше 12 кусков;
+- каждый кусок {MIN_SEGMENT_DURATION_SEC}–{MAX_SEGMENT_DURATION_SEC} с, не больше {MAX_PIECES} кусков;
 - куски берутся только из переданных окон реплик (исходный кусок ± {CONTEXT_PAD_SEC:.0f} с);
 - source_piece — номер исходного куска (с 0), из которого взят новый кусок.
 - transition.type: одно из {", ".join(TRANSITIONS)}; sfx: одно из {", ".join(SFX_KINDS)}.

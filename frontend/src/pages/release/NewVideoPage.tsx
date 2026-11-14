@@ -184,7 +184,7 @@ function TopForm({ projectId }: { projectId: number }) {
   const build = useMutation({
     mutationFn: () => releasesApi.top(source as number, { plan_ids: shown, title: title.trim(), countdown }),
     onSuccess: (r) => {
-      toast.success(`ТОП из ${r.clips} клипов, ${Math.round(r.duration)} с` + (r.skipped.length ? `, не влезло ${r.skipped.length} (предел 12 кусков)` : ""));
+      toast.success(`ТОП из ${r.clips} клипов, ${Math.round(r.duration)} с` + (r.skipped.length ? `, не влезло ${r.skipped.length} (предел 40 кусков)` : ""));
       qc.invalidateQueries({ queryKey: navKeys.all });
       navigate(clipPath(r.clip_plan_id));
     },
