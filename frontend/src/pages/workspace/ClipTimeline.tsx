@@ -9,6 +9,7 @@ import { FX_LABEL, joinShift, keyDbAt, maxShift, setJoinShift, type AudioEdit, t
 import type { Background, CameraKey, Layer } from "@/motion";
 import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
 import { BackdropStrip, canvasLabel } from "@/pages/workspace/canvasClip";
+import { MEME_DRAG_TYPE } from "@/pages/workspace/editor/useVideoMemePlace";
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), hi);
 const SNAP_PX = 7;
@@ -18,6 +19,7 @@ const MIN_INSERT = 0.3;
 const MIN_LAYER = 0.1;
 /** Заглушённый отрезок короче — не отрезок, а случайный клик по дорожке. */
 const MIN_MUTE = 0.1;
+const INSERT_MODE_LABEL: Record<string, string> = { full: "во весь кадр", pip: "окошко", sound: "звук" };
 /** Слой, брошенный из библиотеки на дорожку графики (JSON в dataTransfer). */
 export const LAYER_DND = "application/x-vvf-layers";
 
@@ -122,6 +124,7 @@ export function ClipTimeline({
   onInsertsChange,
   onSubLinesChange,
   onDropAsset,
+  onDropVideoMeme,
   onSplitAt,
   onDeleteSelected,
   sourceId,
@@ -150,6 +153,8 @@ export function ClipTimeline({
   onInsertsChange: (next: MontageInsert[]) => void;
   onSubLinesChange: (next: SubtitleLine[]) => void;
   onDropAsset: (assetId: number, atClipSec: number) => void;
+  /** Брошен видеомем из «Мемы → Видео-реакции» ({id, mode} в MEME_DRAG_TYPE): ставит сервер (place_video_meme). */
+  onDropVideoMeme?: (memeId: number, mode: "full" | "pip", atClipSec: number) => void;
   /** Разрезать кусок под курсором надвое. */
   onSplitAt: (clipSec: number) => void;
   /** Удалить выбранный блок (кусок, строку субтитров или вставку). */
@@ -749,7 +754,7 @@ export function ClipTimeline({
               className="ctl-track ctl-track--ins"
               onPointerDown={(e) => e.target === e.currentTarget && onSeekClip(xToClip(e.clientX))}
               onDragOver={(e) => {
-                if (e.dataTransfer.types.includes("application/x-asset-id")) {
+                if (e.dataTransfer.types.includes("application/x-asset-id") || e.dataTransfer.types.includes(MEME_DRAG_TYPE)) {
                   e.preventDefault();
                   setDropX(xToClip(e.clientX) * pps);
                 }
@@ -758,8 +763,19 @@ export function ClipTimeline({
               onDrop={(e) => {
                 e.preventDefault();
                 setDropX(null);
+                const at = Number(xToClip(e.clientX).toFixed(2));
+                const meme = e.dataTransfer.getData(MEME_DRAG_TYPE);
+                if (meme && onDropVideoMeme) {
+                  try {
+                    const { id: memeId, mode } = JSON.parse(meme) as { id: number; mode: "full" | "pip" };
+                    if (memeId) onDropVideoMeme(memeId, mode === "pip" ? "pip" : "full", at);
+                  } catch {
+                    /* чужой перенос — не наш */
+                  }
+                  return;
+                }
                 const id = Number(e.dataTransfer.getData("application/x-asset-id"));
-                if (id) onDropAsset(id, Number(xToClip(e.clientX).toFixed(2)));
+                if (id) onDropAsset(id, at);
               }}
             >
               {inserts.map((ins, i) => {
@@ -773,11 +789,22 @@ export function ClipTimeline({
                     onPointerDown={(e) =>
                       startDrag(e, { kind: "insert", index: i, mode: "move", a: ins.at, b: ins.at + ins.duration })
                     }
-                    title={`${asset?.label ?? "файл"} · ${ins.mode}${ins.reason ? ` · ${ins.reason}` : ""}`}
+                    title={`${asset?.label ?? "файл"} · ${INSERT_MODE_LABEL[ins.mode] ?? ins.mode}${
+                      ins.duck && ins.duck_volume === 0 ? " · звук клипа выключен" : ""
+                    }${ins.reason ? ` · ${ins.reason}` : ""}`}
                   >
                     <span className="ctl-grip" data-resize="start" />
                     {asset && (asset.kind === "image" || asset.kind === "gif") ? (
                       <img className="ctl-ins-thumb" src={asset.url} alt="" />
+                    ) : asset?.kind === "video" ? (
+                      // Кадр видео (видеомем) — превью сервера; нет кадра — значок, как раньше.
+                      <img
+                        className="ctl-ins-thumb is-video"
+                        src={`${asset.url}/thumb`}
+                        alt=""
+                        loading="lazy"
+                        onError={(ev) => (ev.currentTarget.style.display = "none")}
+                      />
                     ) : (
                       <span className="ctl-ins-ico">{asset?.kind === "audio" ? "♪" : "▶"}</span>
                     )}

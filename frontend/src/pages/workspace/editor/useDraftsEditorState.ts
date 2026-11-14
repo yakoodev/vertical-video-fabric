@@ -20,6 +20,7 @@ import { useClipActions } from "@/pages/workspace/editor/useClipActions";
 import { useVideoSource } from "@/pages/workspace/editor/useVideoSource";
 import { useLayerPreviewData } from "@/pages/workspace/editor/useLayerPreviewData";
 import { useEditorPanels } from "@/pages/workspace/editor/useEditorPanels";
+import { useVideoMemePlace } from "@/pages/workspace/editor/useVideoMemePlace";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -237,6 +238,8 @@ export function useDraftsEditorState(sourceId: string) {
     bannerOn, bannerId, musicOn, setMusicOn, trackId, setTrackId, setMusicStartSec, mirror, transition,
     setSettingsNonce, bannerHeightPct, bannerPosPct, subPosPct, selected,
   });
+  // Видеомем руками: «Мемы → Видео-реакции» (на плейхед) и перетаскивание на дорожку «Вставки».
+  const videoMemePlace = useVideoMemePlace({ sourceId, activePlan, flushSettings, setSettingsNonce, setTlSelected });
   // The preset list accumulates user-saved dupes; show each label once so the
   // picker isn't flooded with identical entries.
   const uniquePresets = useMemo(() => {
@@ -282,6 +285,7 @@ export function useDraftsEditorState(sourceId: string) {
     ...previewPlayer,
     ...previewLoops,
     ...clipActions,
+    ...videoMemePlace,
     ...videoSource,
     ...layerPreviewData,
     ...editorPanels,
