@@ -1070,8 +1070,8 @@
 {
 "name": "add_insert",
 "title": "Вставляю мем",
-"description": "5c5aba78d2ca5d83",
-"parameters": "c7d768df6bb6d90b",
+"description": "ed8e70463decbf4c",
+"parameters": "bc79a2581b8ac0bc",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -1428,6 +1428,39 @@
 "cost": [
 "cpu"
 ]
+},
+{
+"name": "search_video_memes",
+"title": "Ищу видеомем",
+"description": "cdd13a2d3126e511",
+"parameters": "ae7de6820dd7ea58",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_search_video_memes",
+"label": true
+},
+{
+"name": "place_video_meme",
+"title": "Вставляю видеомем",
+"description": "a9701f0959baa33a",
+"parameters": "80b6a7179cebbd25",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_place_video_meme",
+"label": true
+},
+{
+"name": "describe_video_meme",
+"title": "Описываю видеомем",
+"description": "59dc084b79aac4df",
+"parameters": "a25222fdab31848f",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_describe_video_meme",
+"label": true
 }
 ],
 "discovery": [
