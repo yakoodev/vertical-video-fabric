@@ -203,7 +203,11 @@ bearer_token_env_var = "VVF_TOKEN"
   `auto_trim` — срезать тишину и чёрное по краям, по умолчанию да), `POST /api/video-memes/from-url`
   (`{url, start?, end?}`; без `end` — 8 с от `start`; тот же yt-dlp и прокси, что у источников), `PATCH`/`DELETE
   /api/video-memes/{id}` (удаление уносит файл), `POST /api/video-memes/{id}/transcribe` — расшифровать заново.
-  Мем длиннее 8 с не принимается — подрежь `trim_start`/`trim_end`.
+  Мем длиннее 8 с не принимается — подрежь `trim_start`/`trim_end`. `approved` в `PATCH` по токену агента — 403:
+  одобряет только владелец. `POST /api/clip-plans/{id}/video-memes/place {meme_id, at, mode: full|pip, game_audio?,
+  duration?, scale?, x?, y?, fill?}` — тот же `place_video_meme`, один шаг отмены (так ставит редактор).
+* **Редактор:** «Мемы → Видео-реакции» — поиск, теги, длина, режим «Врезка» (full) / «Окно» (pip); карточку тащат на
+  дорожку «Вставки» или жмут «На плейхед». Превью глушит звук клипа под врезкой и приглушает под окошком, как рендер.
 
 ### Смотреть монтаж: рендер 480p во время показа
 

@@ -223,6 +223,56 @@ def test_agent_search_place_and_unapproved_refusal(env, monkeypatch):
     assert any("обрезан" in w for w in out.get("warnings", []))
 
 
+
+def test_editor_place_endpoint_full_pip_undo_and_owner_only_approve(env, monkeypatch):
+    """Редактор: POST /api/clip-plans/{id}/video-memes/place — тот же place_video_meme, один шаг отмены;
+    неодобренный не встаёт; одобрить может только владелец (агент по токену — 403)."""
+    _require_ffmpeg()
+    from test_clip_spec import _setup
+
+    client, store, _source, plan, _a, _b = _setup(env[3] / "spec", monkeypatch)
+    monkeypatch.setattr(ING, "TRANSCRIBE", lambda p: {"text": "вау", "language": "ru", "words": []})
+    monkeypatch.setattr(ING, "_spawn", lambda target, name: target())
+    meme = _upload(client, _meme_video(env[3] / "wow.mp4"), title="Вау", tags="шок")
+    url = f"/api/clip-plans/{plan['id']}/video-memes/place"
+
+    res = client.post(url, json={"meme_id": meme["id"], "at": 1.0})
+    assert res.status_code == 400 and "не одобрил" in res.json()["detail"]
+
+    agent = {"Authorization": "Bearer agent-token"}
+    res = client.patch(f"/api/video-memes/{meme['id']}", json={"approved": True}, headers=agent)
+    assert res.status_code == 403 and VM.get_meme(store, meme["id"])["approved"] is False
+    res = client.patch(f"/api/video-memes/{meme['id']}", json={"tags": ["шок", "вау"]}, headers=agent)
+    assert res.status_code == 200  # описание и теги агенту можно, одобрение — нет
+    assert client.patch(f"/api/video-memes/{meme['id']}", json={"approved": True}).json()["approved"] is True
+
+    res = client.get("/api/video-memes", params={"q": "вау", "approved": "true", "max_sec": 3})
+    assert [m["id"] for m in res.json()["memes"]] == [meme["id"]]
+
+    res = client.post(url, json={"meme_id": meme["id"], "at": 1.0, "mode": "full"})
+    assert res.status_code == 200, res.text
+    out = res.json()
+    full = out["inserts"][0]
+    assert full["asset_id"] == meme["asset_id"] and full["mode"] == "full"
+    assert full["duck"] is True and full["duck_volume"] == 0.0 and full["level"] == "speech"
+    assert out["meme"]["game_audio"] == "cut"
+
+    res = client.post(url, json={"meme_id": meme["id"], "at": 3.0, "mode": "pip", "scale": 0.45})
+    assert res.status_code == 200, res.text
+    pip = res.json()["inserts"][1]
+    assert pip["mode"] == "pip" and pip["duck_volume"] == 0.2 and pip["scale"] <= 0.45 + 1e-6
+    saved = store.get_clip_plan(plan["id"], include_segments=False)["render_settings"]["inserts"]
+    assert [i["mode"] for i in saved] == ["full", "pip"]
+
+    undo = client.post(f"/api/clip-plans/{plan['id']}/undo")
+    assert undo.status_code == 200, undo.text
+    saved = store.get_clip_plan(plan["id"], include_segments=False)["render_settings"]["inserts"]
+    assert [i["mode"] for i in saved] == ["full"]  # окошко снято одним шагом
+
+    assert client.post(url, json={"meme_id": 99999, "at": 1.0}).status_code == 400
+    assert client.post("/api/clip-plans/99999/video-memes/place", json={"meme_id": meme["id"], "at": 1}).status_code == 404
+    assert client.post(url, json={"meme_id": meme["id"], "at": 1.0, "mode": "sound"}).status_code == 422
+
 def test_full_cut_in_replaces_picture_and_cuts_clip_audio(tmp_path):
     _require_ffmpeg()
     clip = tmp_path / "clip.mp4"

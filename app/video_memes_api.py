@@ -1,18 +1,20 @@
 """Ручки «Видеомемов» (app/video_memes.py): список и поиск, загрузка файла и по ссылке, правка, одобрение,
-повторная расшифровка, удаление. Файл мема отдаёт ``/media/montage-assets/{asset_id}`` (это «Файл для монтажа»).
+повторная расшифровка, удаление, врезка в клип из редактора. Файл мема отдаёт ``/media/montage-assets/{asset_id}``
+(это «Файл для монтажа»). Одобряет только владелец: запрос агента по токену с ``approved`` — 403.
 
 Роутер собирается функцией, как ``app/montage_assets_api.py``."""
 
 # Без from __future__ import annotations: FastAPI читает аннотации вида _auth: auth_dep при объявлении.
 from pathlib import Path
-from typing import Annotated, Any, Callable
+from typing import Annotated, Any, Callable, Literal
 from uuid import uuid4
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from app import video_memes as VM
 from app.api_common import _payload_data
+from app.auth import is_agent_request
 
 MAX_MEME_UPLOAD_BYTES = 200 * 1024 * 1024
 
@@ -41,6 +43,20 @@ class MemePatch(BaseModel):
     source_url: str | None = Field(default=None, max_length=2000)
     license_note: str | None = Field(default=None, max_length=300)
     approved: bool | None = None
+
+
+class MemePlaceRequest(BaseModel):
+    """Врезка из редактора — тем же инструментом, что у агентов (place_video_meme, app/video_meme_tools.py)."""
+    meme_id: int
+    at: float = Field(ge=0, description="секунда клипа (шкала clip)")
+    mode: Literal["full", "pip"] = Field(default="full", description="full — врезка во весь кадр, pip — окошко")
+    game_audio: Literal["cut", "duck", "keep"] | None = Field(
+        default=None, description="звук клипа: cut (выключен, по умолчанию у full), duck (приглушён, у pip), keep")
+    duration: float | None = Field(default=None, gt=0, le=VM.MAX_MEME_SEC)
+    scale: float | None = Field(default=None, ge=0.1, le=1.0, description="pip: ширина окошка в долях кадра")
+    x: float | None = Field(default=None, ge=0, le=1)
+    y: float | None = Field(default=None, ge=0, le=1)
+    fill: Literal["blur", "cover", "black"] | None = None
 
 
 def _public(meme: dict) -> dict:
@@ -133,7 +149,10 @@ def build_video_memes_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
 
     @router.patch("/api/video-memes/{meme_id}", tags=["Video memes"],
                   summary="Описание, когда вставлять, теги, расшифровка, люди, лицензия, одобрение")
-    def api_patch_video_meme(meme_id: int, payload: MemePatch, _auth: auth_dep) -> dict:
+    def api_patch_video_meme(meme_id: int, payload: MemePatch, request: Request, _auth: auth_dep) -> dict:
+        if payload.approved is not None and is_agent_request(request):
+            # «Неодобренный мем ИИ не ставит никогда» держится, только если одобрить может один владелец.
+            raise HTTPException(status_code=403, detail="одобряет мем только владелец на странице «Видеомемы»")
         try:
             return _public(VM.update_meme(get_store(), meme_id, **_payload_data(payload, exclude_none=True)))
         except KeyError as exc:
@@ -152,6 +171,29 @@ def build_video_memes_router(auth_dep: Any, get_store: Callable[[], Any]) -> API
             return _public(VM.get_meme(get_store(), meme_id))
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post("/api/clip-plans/{clip_plan_id}/video-memes/place", tags=["Video memes"],
+                 summary="Врезать видеомем в клип: во весь кадр со своим звуком или окошком (один шаг отмены)")
+    def api_place_video_meme(clip_plan_id: int, payload: MemePlaceRequest, request: Request, _auth: auth_dep) -> dict:
+        """Кнопка и перетаскивание в редакторе: place_video_meme → ``render.inserts`` (как у агента), снимок для ↩."""
+        from app import agent_tools
+        from app.clip_history import snapshot as snapshot_clip
+        from app.stream_questions_api import refuse_agent_clip_montage
+
+        store = get_store()
+        try:
+            store.get_clip_plan(clip_plan_id, include_segments=False)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        refuse_agent_clip_montage(request, store, clip_plan_id)
+        ctx = agent_tools.ToolContext(
+            store=store, clip_plan_id=clip_plan_id,
+            on_first_change=lambda: snapshot_clip(store, clip_plan_id, "видеомем"),
+        )
+        result, ok = agent_tools.run_tool(ctx, "place_video_meme", _payload_data(payload, exclude_none=True))
+        if not ok:
+            raise HTTPException(status_code=400, detail=str(result.get("error") or "видеомем не встал"))
+        return result
 
     @router.delete("/api/video-memes/{meme_id}", tags=["Video memes"], summary="Удалить видеомем вместе с файлом")
     def api_delete_video_meme(meme_id: int, _auth: auth_dep) -> dict:
