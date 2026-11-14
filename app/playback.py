@@ -328,7 +328,9 @@ def playback_plan(store: Any, clip_plan_id: int) -> dict:
             "label": asset.get("label") or "",
             "mode": "sound" if kind == "audio" else ins.get("mode"),
             "has_audio": bool(asset.get("has_audio")) or kind == "audio",
-            "duck_volume": DUCK_VOLUME if ins.get("duck") and ins.get("mode") == "full" else None,
+            # Как в рендере (app/montage_assets.build_inserts_args): своя глубина у видеомема (0 — звук клипа выключен).
+            "duck_volume": (ins.get("duck_volume", DUCK_VOLUME)
+                            if ins.get("duck") and (ins.get("mode") == "full" or "duck_volume" in ins) else None),
         })
 
     # ---- субтитры, баннер, лук

@@ -727,6 +727,10 @@ class Database:
             from app.canvas_projects import migrate_canvas_projects
 
             migrate_canvas_projects(conn)
+            # «Видеомемы» (app/video_memes.py): строка мема поверх «Файла для монтажа».
+            from app.video_memes import ensure_schema as ensure_video_memes
+
+            ensure_video_memes(conn)
 
     def _ensure_column(
         self,

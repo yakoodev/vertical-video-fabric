@@ -122,6 +122,7 @@ export const SECTIONS: Record<string, Section> = {
       { key: "shared", label: "Общие", to: "/files" },
       { key: "project", label: "По проектам", to: "/files?tab=project" },
       { key: "all", label: "Все файлы", to: "/files?tab=all" },
+      { key: "memes", label: "Видеомемы", to: "/files?tab=memes" },
     ],
   },
   settings: {

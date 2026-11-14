@@ -316,6 +316,11 @@ from app.montage_assets_api import build_montage_assets_router  # noqa: E402
 
 app.include_router(build_montage_assets_router(AuthDep, lambda: store, lambda: describe_asset))
 
+# «Видеомемы»: короткие реакции с расшифровкой для мем-монтажа (app/video_memes.py).
+from app.video_memes_api import build_video_memes_router  # noqa: E402
+
+app.include_router(build_video_memes_router(AuthDep, lambda: store))
+
 # Моушн-слои: схема, проверка, кадр с камерой и слоями (app/motion_api.py).
 from app.motion_api import build_motion_router  # noqa: E402
 

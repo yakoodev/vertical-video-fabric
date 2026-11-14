@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import re
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -97,12 +99,11 @@ def _download(url: str, template: Path, start: float, end: float):
                       needs_ffmpeg=True)
 
 
-def import_video_from_url(store, url: str, start: object, end: object, label: str = "",
-                          project_id: int | None = None) -> dict:
-    """Скачать отрезок ролика по ссылке и завести «Файл для монтажа» (video, со звуком)."""
-    from app.montage_assets import assets_dir, probe_asset
-    from app.render import _run_ffmpeg
-
+@contextmanager
+def fetched_section(url: str, start: object, end: object) -> Iterator[tuple[Path, str, float, float]]:
+    """Скачать отрезок ``start..end`` ролика по ссылке во временную папку: ``(файл, название ролика, a, b)``.
+    Папка убирается на выходе из ``with``. ValueError — ссылка не http(s), отрезок не тот или не скачалось.
+    Общее у файла для монтажа (``import_video_from_url``) и видеомема (app/video_meme_ingest.py)."""
     url = (url or "").strip()
     if urlsplit(url).scheme not in ("http", "https"):
         raise ValueError("нужна ссылка http(s) на ролик")
@@ -115,16 +116,28 @@ def import_video_from_url(store, url: str, start: object, end: object, label: st
         files = sorted(f for f in work.glob("dl.*") if not f.name.endswith((".part", ".ytdl", ".temp")))
         output = proc.stdout or proc.stderr or ""
         if proc.returncode != 0 or not files:
-            tail = [line for line in output.splitlines() if "ERROR" in line] or \
-                   [line for line in output.splitlines() if line.strip()][-2:]
+            tail = [line for line in output.splitlines() if "ERROR" in line] or                    [line for line in output.splitlines() if line.strip()][-2:]
             hint = routes.hint("YouTube" if is_youtube_url(url) else "")
             raise ValueError("не удалось скачать отрезок: " + (f"{hint} — " if hint else "")
                              + (" ".join(tail)[:300] or "yt-dlp ничего не скачал"))
         title = next((line.split(TITLE_MARK, 1)[1].strip() for line in output.splitlines() if TITLE_MARK in line), "")
+        yield files[0], title, a, b
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def import_video_from_url(store, url: str, start: object, end: object, label: str = "",
+                          project_id: int | None = None) -> dict:
+    """Скачать отрезок ролика по ссылке и завести «Файл для монтажа» (video, со звуком)."""
+    from app.montage_assets import assets_dir, probe_asset
+    from app.render import _run_ffmpeg
+
+    url = (url or "").strip()
+    with fetched_section(url, start, end) as (file, title, a, b):
         name = f"{_slug(label or title or 'video')}-{a:.0f}-{b:.0f}.mp4"
         dest = assets_dir() / f"{uuid4().hex}-{name}"
         try:
-            _run_ffmpeg(normalize_args(files[0], dest, b - a), timeout=900)
+            _run_ffmpeg(normalize_args(file, dest, b - a), timeout=900)
         except Exception as exc:  # noqa: BLE001
             dest.unlink(missing_ok=True)
             raise ValueError(f"скачанный отрезок не перекодировался: {str(exc)[:200]}") from exc
@@ -144,5 +157,3 @@ def import_video_from_url(store, url: str, start: object, end: object, label: st
             project_id=project_id,
             **meta,
         )
-    finally:
-        shutil.rmtree(work, ignore_errors=True)

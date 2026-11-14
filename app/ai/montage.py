@@ -237,7 +237,12 @@ def build_context(store: Any, clip_plan_id: int) -> tuple[dict, dict]:
     library = []
     if hasattr(store, "list_montage_assets"):
         # Только общие файлы и файлы проекта клипа (app/asset_scope.py): library_ids отсеют всё остальное.
-        for a in visible_assets(store, clip_project(store, clip_plan_id))[:MAX_LIBRARY]:
+        # Неодобренные видеомемы ИИ не видит (app/video_memes.py); у одобренных в описании — когда и что сказано.
+        from app.video_memes import unapproved_asset_ids
+
+        hidden = unapproved_asset_ids(store) if hasattr(store, "db") else set()
+        usable = [a for a in visible_assets(store, clip_project(store, clip_plan_id)) if int(a["id"]) not in hidden]
+        for a in usable[:MAX_LIBRARY]:
             library.append(
                 {
                     "asset_id": a["id"],

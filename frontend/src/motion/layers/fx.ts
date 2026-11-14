@@ -30,6 +30,7 @@ export const FX_KINDS: FxKind[] = [
   "datamosh_lite",
   "pixel_sort_lite",
   "grayscale",
+  "negate",
   "backdrop",
 ];
 
@@ -46,6 +47,7 @@ export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }
   datamosh_lite: { intensity: 0.6, blend: "normal" },
   pixel_sort_lite: { intensity: 0.6, blend: "normal" },
   grayscale: { intensity: 1, blend: "normal" },
+  negate: { intensity: 1, blend: "normal" },
   backdrop: { intensity: 0.45, blend: "normal" },
 };
 
@@ -355,6 +357,31 @@ function grayscale({ ctx, env, fx, alpha }: FxCtx): void {
   ctx.drawImage(src(b.chan.canvas), 0, 0, env.width, env.height);
 }
 
+const WHITE = new Set(["#fff", "#ffffff", "white", "#ffffffff"]);
+
+function negate({ ctx, env, fx, alpha }: FxCtx): void {
+  // Негатив на отрезке (мем «запретная зона»): копия кадра → «difference» с белым (|1 − c| = 1 − c — то же,
+  // что ffmpeg negate) → оттенок color умножением (если задан не белый: #6fa8ff — синий) → обратно по альфе
+  // копии → поверх кадра с альфой intensity (0.5 — полунегатив). Сила по времени — ключи scale слоя.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const c = b.chan.ctx;
+  reset(c, b.w, b.h);
+  c.drawImage(src(b.frame.canvas), 0, 0);
+  c.globalCompositeOperation = "difference";
+  c.fillStyle = "#ffffff";
+  c.fillRect(0, 0, b.w, b.h);
+  if (!WHITE.has(fx.color.trim().toLowerCase())) {
+    c.globalCompositeOperation = "multiply";
+    c.fillStyle = fx.color;
+    c.fillRect(0, 0, b.w, b.h);
+  }
+  c.globalCompositeOperation = "destination-in";
+  c.drawImage(src(b.frame.canvas), 0, 0);
+  ctx.globalAlpha = clamp01(alpha * fx.intensity);
+  ctx.drawImage(src(b.chan.canvas), 0, 0, env.width, env.height);
+}
+
 /* ---------- фон под плашками (плоская тема) ---------- */
 
 const smallByEnv = new WeakMap<RenderEnv, { w: number; h: number; buf: Buf }>();
@@ -601,6 +628,7 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   datamosh_lite: datamoshLite,
   pixel_sort_lite: pixelSortLite,
   grayscale,
+  negate,
   backdrop,
 };
 

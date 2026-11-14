@@ -284,7 +284,9 @@ props по типу:
          colors (light_leak), size (зерно/строки) — эффект кадра во весь кадр поверх видео и слоёв НИЖЕ по track
          (титры выше по track — чистые); in/out только fade; ≤ {motion.FX_MAX_AT_ONCE} разом, 1–2 на ролик.
          grayscale — ч/б на отрезке (панчлайн 1–2 с): intensity 1 — полностью ч/б, 0.5 — полуцвет; плавно —
-         in/out fade 0.2 или ключи scale (0→1→0); после end цвет возвращается сам
+         in/out fade 0.2 или ключи scale (0→1→0); после end цвет возвращается сам.
+         negate — негатив на отрезке (мем-врезка «запретная зона», шок, «что-то не так»): intensity 1 — полный
+         негатив; color — оттенок поверх негатива (#6fa8ff — синий «запретная зона»; нет — чистый); 0.3–1.5 с
   audio: asset_id ИЛИ "sfx:<pack>/<file>", fadeIn, fadeOut, offset, duck (не рисуется); mode:
          effect (по умолчанию, эффект: громкие места сервис ставит под голос клипа, volume 0..{motion.EFFECT_MAX_VOLUME:g} — только тише) |
          track (дорожка: песня/звук ролика — без автоподгонки, volume 0..2 × gain_db {motion.TRACK_MIN_GAIN_DB:g}..+{motion.TRACK_MAX_GAIN_DB:g};

@@ -242,10 +242,20 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     foreign = _foreign_asset_problem(ctx, asset["id"])
     if foreign:
         raise ToolError(foreign)
+    from app.video_memes import meme_for_asset, MEME_FULL_MAX_SEC
+
+    meme = meme_for_asset(ctx.store, asset["id"])
+    if meme and not meme["approved"]:
+        # Неодобренный видеомем ИИ не ставит никогда (app/video_memes.py): одобряет владелец в «Видеомемах».
+        raise ToolError(f"видеомем #{meme['id']} «{meme['title']}» владелец ещё не одобрил — ставить нельзя. "
+                        "Возьми одобренный (search_video_memes) или попроси владельца одобрить этот")
     mode = args.get("mode") or ("sound" if asset["kind"] == "audio" else "pip")
     if mode not in MODES:
         raise ToolError(f"mode: одно из {', '.join(MODES)}")
-    if mode == "full" and (_num(args.get("duration"), 1.5) or 1.5) > FULL_INSERT_MAX_SEC + 1e-6:
+    if meme and mode == "full" and (_num(args.get("duration"), 1.5) or 1.5) > MEME_FULL_MAX_SEC + 1e-6:
+        raise ToolError(f"врезка видеомема во весь кадр — не дольше {MEME_FULL_MAX_SEC:g} с; дольше — mode pip")
+    if (not meme and mode == "full"
+            and (_num(args.get("duration"), 1.5) or 1.5) > FULL_INSERT_MAX_SEC + 1e-6):
         raise ToolError(f"вставка на весь кадр (mode full) — не дольше {FULL_INSERT_MAX_SEC:g} с: голос идёт под ней, "
                         "а зритель ждёт героя; дольше — mode pip (окошко)")
     render = _current_render(ctx)
@@ -259,8 +269,8 @@ def h_add_insert(ctx: ToolContext, args: dict) -> dict:
     if args.get("at") is None:
         raise ToolError("нужно at (секунды клипа) или at_word")
     people = people_gate(ctx, asset)  # реальный человек при запрете — отказ до записи
-    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill")
-             if args.get(k) is not None}
+    entry = {k: args[k] for k in ("at", "duration", "x", "y", "scale", "volume", "duck", "reason", "fill",
+                                  "duck_volume", "level") if args.get(k) is not None}
     entry.update(asset_id=asset["id"], mode=mode)
     note = _fit_pip_insert(render, entry, asset, _clock(ctx)) if mode == "pip" else None
     fresh = _save_render(ctx, {**render, "inserts": normalize_inserts([*inserts, entry])})

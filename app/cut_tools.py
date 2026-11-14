@@ -281,7 +281,9 @@ def tools() -> list[Tool]:
             "видны в view_frame и contact_sheet (первые кадры гифки). Окошко само встаёт между хуком и "
             "субтитрами. mode full другой пропорции (горизонтальная гифка) — вокруг размытая копия вставки "
             "(fill blur, по умолчанию), cover — обрезать во весь кадр, black — чёрные поля. Один файл дважды — "
-            "предупреждение. / Insert.",
+            "предупреждение. duck_volume 0..1 — насколько тише звук клипа под вставкой (0 — выключен), level "
+            "speech — звук вставки вровень с голосом. Реакции-видеомемы проще ставить place_video_meme "
+            "(search_video_memes). / Insert.",
             _obj({"asset_id": {"type": "integer"}, "at": {"type": "number"}, "duration": {"type": "number"},
                   "mode": {"type": "string", "enum": ["pip", "full", "sound"]}, "x": {"type": "number"},
                   "y": {"type": "number"}, "scale": {"type": "number"}, "volume": {"type": "number"},
@@ -290,7 +292,9 @@ def tools() -> list[Tool]:
                            "description": ("mode full: чем заполнить кадр вокруг вставки другой пропорции; clip — "
                                            "размытый кадр клипа (по умолчанию у прозрачных гифок/PNG)")},
                   "at_word": _AT_WORD_SCHEMA,
-                  "word_offset": {"type": "number"}}, ["asset_id"]),
+                  "word_offset": {"type": "number"},
+                  "duck": {"type": "boolean"}, "duck_volume": {"type": "number", "minimum": 0, "maximum": 1},
+                  "level": {"type": "string", "enum": ["speech"]}}, ["asset_id"]),
             h_add_insert, mutating=True,
             label=lambda a: (f"Вставляю мем #{a.get('asset_id')} на слово" if a.get("at_word") is not None
                              else f"Вставляю мем #{a.get('asset_id')} на {(_num(a.get('at'), 0.0) or 0.0):.1f} с"),
