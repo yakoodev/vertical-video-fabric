@@ -52,13 +52,47 @@ GAP_MIN_PHRASE_SEC = 0.6
 GAP_MIN_PHRASE_WORDS = 2
 
 
+# Вставка, под которой звук клипа «выключен»: duck_volume не громче этого (game_audio: cut — 0).
+GAP_MUTED_DUCK = 0.05
+
+
+def _muted_spans(plan: dict) -> list[tuple[float, float]]:
+    """Окна клипа (шкала clip), где звука клипа нет: вставки-картинки (full/pip) с приглушением
+    до нуля — видеомем с ``game_audio: cut``. Речь под ними не слышна, субтитров там не ждём."""
+    from app.montage_assets import normalize_inserts
+
+    spans = []
+    for ins in normalize_inserts((plan.get("render_settings") or {}).get("inserts")):
+        # Как build_inserts_args: приглушение — у full всегда при duck, у pip — только со своим duck_volume.
+        if ins.get("mode") not in ("full", "pip") or not ins.get("duck") or "duck_volume" not in ins:
+            continue
+        if float(ins["duck_volume"]) <= GAP_MUTED_DUCK:
+            spans.append((float(ins["at"]), float(ins["at"]) + float(ins["duration"])))
+    return sorted(spans)
+
+
+def _uncovered(lo: float, hi: float, spans: list[tuple[float, float]]) -> float:
+    """Сколько секунд отрезка ``[lo, hi]`` не закрыто окнами ``spans``."""
+    left, cursor = 0.0, lo
+    for a, b in spans:
+        if b <= cursor or a >= hi:
+            continue
+        left += max(0.0, a - cursor)
+        cursor = max(cursor, b)
+        if cursor >= hi:
+            break
+    return left + max(0.0, hi - cursor)
+
+
 def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
     """Куски клипа, где в исходнике есть речь, а в субтитрах клипа — ни слова.
 
     Так бывает, когда куски поменяли после распознавания: субтитры остались от
     старого набора, и у части клипа текста нет (владелец: «у второго клипа
     субтитров почему то нет»). Короткие фразы (< 0.6 с на куске или < 2 слов —
-    смех, междометие) речью не считаются.
+    смех, междометие) речью не считаются. Не считается и речь под вставкой, которая
+    выключает звук клипа (полнокадровый видеомем с ``game_audio: cut``): кусок, закрытый
+    такой вставкой, — не дыра (ручной мем-эдит: ложное «на кусках N речь есть»).
     """
     payload = store.get_clip_plan_subtitles(plan["id"]) or {}
     words = payload.get("words") or []
@@ -66,6 +100,7 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         cues = store.get_source_transcript(int(plan["source_id"])) or []
     except Exception:  # noqa: BLE001 - нет транскрипта — судим только по субтитрам
         cues = []
+    muted = _muted_spans(plan)
     gaps, offset = [], 0.0
     for index, piece in enumerate(pieces):
         length = _piece_len(piece)
@@ -73,15 +108,31 @@ def subtitle_gaps(store: Any, plan: dict, pieces: list[dict]) -> list[int]:
         offset = hi
         if length < 2.0 or any(lo <= float(w["start"]) < hi for w in words):
             continue
+        # Где кусок на шкале clip (там живут вставки); без clip_start — куски встык.
+        clip_lo = float(piece["clip_start"]) if piece.get("clip_start") is not None else lo
+        src_lo, src_hi = float(piece["source_start"]), float(piece["source_end"])
+        rate = length / (src_hi - src_lo) if src_hi > src_lo else 1.0  # секунды клипа на секунду исходника
+
+        def to_clip(t: float) -> float:
+            local = (t - src_lo) * rate
+            return clip_lo + (length - local if piece.get("reverse") else local)
+
+        if muted and _uncovered(clip_lo, clip_lo + length, muted) < 2.0:
+            continue  # кусок почти целиком под вставкой без звука клипа
         phrases: list[tuple[float, float, int]] = []
         for c in cues:
-            a = max(float(c.get("start", 0)), float(piece["source_start"]))
-            b = min(float(c.get("end", 0)), float(piece["source_end"]))
+            a = max(float(c.get("start", 0)), src_lo)
+            b = min(float(c.get("end", 0)), src_hi)
             count = len(str(c.get("text") or "").split())
             if is_phantom_text(c.get("text")):
                 continue  # «Субтитры сделал DimaTorzok» на тишине — не речь
-            if b - a >= GAP_MIN_PHRASE_SEC and count >= GAP_MIN_PHRASE_WORDS:
-                phrases.append((a, b, count))
+            if b - a < GAP_MIN_PHRASE_SEC or count < GAP_MIN_PHRASE_WORDS:
+                continue
+            if muted:
+                ca, cb = sorted((to_clip(a), to_clip(b)))
+                if _uncovered(ca, cb, muted) < GAP_MIN_PHRASE_SEC:
+                    continue  # фраза звучит под вставкой, которая выключила звук клипа
+            phrases.append((a, b, count))
         if sum(n for _a, _b, n in phrases) >= 3:
             # Фраза расшифровки на тишине дорожки речи — галлюцинация распознавания, не речь.
             phrases = [p for p, heard in zip(phrases, _phrases_heard(store, plan, piece, phrases)) if heard]
