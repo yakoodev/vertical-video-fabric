@@ -192,11 +192,15 @@ def h_search_pack(_ctx: ToolContext, args: dict) -> dict:
 
 def h_list_assets(ctx: ToolContext, args: dict) -> dict:
     from app.asset_scope import visible_assets
+    from app.video_memes import unapproved_asset_ids
 
     query = str(args.get("q") or "").strip().lower()
     project_id = _assets_project(ctx, args)
+    hidden = unapproved_asset_ids(ctx.store)  # неодобренные видеомемы ИИ не ставит — и не показываем
     out = []
     for asset in visible_assets(ctx.store, project_id):
+        if int(asset["id"]) in hidden:
+            continue
         hay = " ".join(str(asset.get(k) or "") for k in ("label", "description", "tags")).lower()
         if query and not all(word in hay for word in query.split()):
             continue

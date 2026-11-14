@@ -13,7 +13,10 @@ timeline:
 * ``sound`` — audio only (a sting, a laugh track, a «bruh»).
 
 Video/GIF/audio inserts bring their sound in at ``volume``; ``duck`` lowers the
-clip's own audio under a full-screen meme so the punchline lands. The pass runs
+clip's own audio under a full-screen meme so the punchline lands; ``duck_volume`` (0..1) — how low: 0 cuts the
+clip's sound for the insert (a video-meme cut-in, app/video_memes.py), and set explicitly it ducks under a ``pip``
+window too. ``level: "speech"`` levels the insert's sound to the clip's voice instead of «a quieter effect» (a
+reaction that speaks). The pass runs
 once on the rendered file (after subtitles and music), so it works the same for
 single-piece clips, montages, batch renders and the auto pipeline.
 """
@@ -31,10 +34,13 @@ from app.settings import settings
 
 KINDS = ("image", "gif", "video", "audio")
 MODES = ("full", "pip", "sound")
-MAX_INSERTS = 6
+# Мем-монтаж игры (врезки видеомемов каждые 4–6 с, app/video_memes.py) — до 12 вставок на клип.
+MAX_INSERTS = 12
 MAX_INSERT_SEC = 8.0
 MIN_INSERT_SEC = 0.3
 DUCK_VOLUME = 0.2
+LEVELS = ("speech",)  # громкость вставки вровень с голосом клипа (видеомем говорит), а не «эффект под голосом»
+SPEECH_TARGET_DB = -14.0  # «голос», когда своего звука у клипа нет
 PIP_WIDTH = 0.82  # доля ширины кадра — ширина вставки по умолчанию
 PIP_TOP = 0.14  # of the frame height
 # Где стоит вставка: центр в долях кадра плюс ширина в долях ширины. Раньше
@@ -151,10 +157,22 @@ def full_insert_chain(src: str, width: int, height: int, fill: str | None, tag: 
 
 
 def _insert_volume(ins: dict, speech_db: float | None = None) -> float:
-    """Звук вставки — как звуки-слои: тише голоса клипа (motion_render.effect_volume) × volume ≤ 1."""
-    from app.motion_render import effect_volume
+    """Звук вставки — как звуки-слои: тише голоса клипа (motion_render.effect_volume) × volume ≤ 1.
+    ``level: speech`` — вровень с голосом клипа (громкие места вставки = громкие места клипа), пик не выше
+    EFFECT_PEAK_DB: реакция-видеомем говорит вместо клипа, а не звучит эффектом под ним."""
+    from app.motion_render import audio_levels, EFFECT_PEAK_DB, effect_volume
 
-    return effect_volume(str(ins["asset"]["file_path"]), ins.get("volume", 1.0), speech_db)
+    path = str(ins["asset"]["file_path"])
+    if ins.get("level") == "speech":
+        user = _num_or_none(ins.get("volume"))
+        user = 1.0 if user is None else max(0.0, min(2.0, user))
+        levels = audio_levels(path)
+        if not levels:
+            return user
+        rms, peak = levels
+        target = speech_db if speech_db is not None else SPEECH_TARGET_DB
+        return user * 10 ** (max(-40.0, min(12.0, target - rms, EFFECT_PEAK_DB - peak)) / 20)
+    return effect_volume(path, ins.get("volume", 1.0), speech_db)
 
 def assets_dir() -> Path:
     path = settings.data_dir / "montage_assets"
@@ -214,6 +232,16 @@ def _fraction(value: Any, default: float) -> float:
     return min(1.0, max(0.0, number))
 
 
+def _num_or_none(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number else None
+
+
 def normalize_inserts(raw: Any) -> list[dict]:
     """Coerce stored/requested inserts into a safe list (junk entries dropped)."""
     out: list[dict] = []
@@ -244,6 +272,11 @@ def normalize_inserts(raw: Any) -> list[dict]:
                 min(MAX_INSERT_SCALE, max(MIN_INSERT_SCALE, _fraction(item.get("scale"), PIP_WIDTH))), 4
             ),
         }
+        duck_volume = _num_or_none(item.get("duck_volume"))
+        if duck_volume is not None:
+            entry["duck_volume"] = round(min(1.0, max(0.0, duck_volume)), 2)  # 0 — звук клипа выключен
+        if item.get("level") in LEVELS:
+            entry["level"] = item["level"]
         if item.get("fill") in FULL_FILLS and item.get("fill") != DEFAULT_FULL_FILL:
             entry["fill"] = item["fill"]  # чем заполнить кадр вокруг полнокадровой вставки (по умолчанию — размытие)
         reason = item.get("reason")
@@ -344,8 +377,8 @@ def build_inserts_args(
                 f"enable='between(t,{at:.3f},{end:.3f})'[v{n}]"
             )
             v_last = f"[v{n}]"
-            if mode == "full" and ins.get("duck"):
-                ducks.append(f"between(t,{at:.3f},{end:.3f})")
+            if ins.get("duck") and (mode == "full" or "duck_volume" in ins):
+                ducks.append((f"between(t,{at:.3f},{end:.3f})", float(ins.get("duck_volume", DUCK_VOLUME))))
         if not video_only and (kind == "audio" or ins["asset"].get("has_audio")):
             delay = int(round(at * 1000))
             graph.append(
@@ -357,8 +390,10 @@ def build_inserts_args(
 
     if clip_has_audio and not video_only:
         base = "[0:a]aresample=48000"
-        if ducks:
-            base += f",volume=enable='{'+'.join(ducks)}':volume={DUCK_VOLUME}"
+        # Своя глубина у каждой вставки (0 — звук клипа выключен на врезку видеомема); одинаковые — одним фильтром.
+        for level in sorted({vol for _span, vol in ducks}):
+            spans = "+".join(span for span, vol in ducks if vol == level)
+            base += f",volume=enable='{spans}':volume={level:g}"
         graph.append(base + "[a0]")
         audio_parts.insert(0, "[a0]")
     if len(audio_parts) > 1:

@@ -346,7 +346,8 @@ MODULES: list[Module] = [
         cost=("network",), cost_note="скачивание гигабайтов, прокси",
         tools=("add_source_from_url", "add_video_from_url", "add_music_from_url", "add_sound_from_url"),
         routes=("POST /api/sources/download", "POST /api/sources/{id}/redownload", "/api/downloads*", "POST /api/smotvibe/options",
-                "POST /api/montage-assets/video-from-url", "POST /api/audio-tracks/from-url"),
+                "POST /api/montage-assets/video-from-url", "POST /api/audio-tracks/from-url",
+                "POST /api/video-memes/from-url"),
         ui=("ссылка в окне «Создать»",),
     ),
     Module(
@@ -474,6 +475,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "list_fonts", "upload_font", "search_emoji", "list_packs", "search_pack", "list_assets",
     "upload_image", "upload_video", "add_video_from_source", "freeze_frame", "set_backdrop", "add_insert",
     "remove_insert", "auto_edit", "set_transition", "list_brands", "apply_brand", "set_nameplate",
+    # видеомемы: поиск реакции, врезка в клип, описание (app/video_meme_tools.py)
+    "search_video_memes", "place_video_meme", "describe_video_meme",
     # субтитры (стиль и правка; распознавание — модуль transcription)
     "list_subtitle_styles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "emphasize_words",
     # цвет кусков и такт музыки
