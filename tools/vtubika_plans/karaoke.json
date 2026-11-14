@@ -1,0 +1,301 @@
+{
+  "id": "karaoke",
+  "title": "Караоке при свечах",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "will",
+    "paid_ok": true
+  },
+  "voices_extra": [
+    {
+      "id": "lilya1", "after": 2, "dt": 0.3, "who": "hero",
+      "text": "Ладно, ладно! В субботу — караоке. Довольны?",
+      "caption": "— Ладно, ладно! В субботу — караоке. Довольны?",
+      "color": "#ff8ab0", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "varya1", "after": 3, "dt": 0.35, "who": "varya_av",
+      "text": "Караоке при свечах? Ни текста, ни сайлиума? Набери на Витубике «караоке»!",
+      "caption": "Варя: Караоке при свечах? Ни текста, ни сайлиума? Набери на Витубике «караоке»!",
+      "color": "#a8f07a", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "lilya2", "after": 7, "dt": 0.6, "who": "hero",
+      "text": "Ещё одну? Ладно… ещё одну.",
+      "caption": "— Ещё одну? Ладно… ещё одну.",
+      "color": "#ff8ab0", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "varya2", "after": 8, "dt": 0.5, "who": "varya_av",
+      "text": "В пятницу — дуэтом?",
+      "caption": "Варя: В пятницу — дуэтом?",
+      "color": "#a8f07a", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "lilya3", "after": 8, "dt": 2.45, "who": "hero",
+      "text": "Только если ты первая.",
+      "caption": "— Только если ты первая.",
+      "color": "#ff8ab0", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    }
+  ],
+  "script": "серия 9 «Караоке при свечах» (сценарий D:/vvf-offload/vtubika/story9_karaoke/script_v1.md): Лиля (каст lilya: тёмная эльфийка, белые волосы, острые уши, красные глаза) стримит хорроры шёпотом при свечах; чат весь вечер пишет «спой» — она обещает караоке в субботу; в войс залетает подруга Варя (каст varya: миниатюрная, каштановое каре), которая поёт на стримах по пятницам: «Ни текста, ни сайлиума? Набери на витУбике «караоке»!»; на сайте — настоящий поиск «karaoke» (6 товаров); Лиля берёт два товара すやみや — интерактивный сайлиум с управлением мышью (650 ₽) и лайтстики зала LightSticks Concert (650 ₽) — настоящие страницы и кадры превью; суббота: свет погашен, строка песни внизу (свои слова), у модели в руке машет розовый сайлиум, зал машет палочками, 312 → 1 240 зрителей, «Ещё одну?»; в личке Варя зовёт дуэтом. Голоса: рассказчик Will, Лиля Jessica, Варя Lily. Крючок — одно огромное «СПОЙ?!» на кадре 0.",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {"word": "Спой?!", "until": 1.45, "y": 0.13, "size": 210, "accent": "#ff5cb0"},
+  "vrm": {
+    "heroine": "lilya",
+    "arkit": false,
+    "tail_wide": false,
+    "props_models": {"keyboard": "keyboard/mech_tkl_dark", "mouse": "mouse/black"},
+    "monitor": {"eggs": {"sticker": "eggs/doge_sticker.png", "photo": "eggs/this_is_fine.jpg", "critter": true}},
+    "avatars": ["lilya_av", "varya_av"],
+    "positions": {"lilya_av": -0.29, "varya_av": 0.29},
+    "avatar_size": [1200, 667]
+  },
+  "music": {"file": "lofi-beat.mp3", "under_db": 6.0},
+  "tail": 5.4,
+  "pace": {"tempo_cap": 1.0, "tempo": 1.0, "lead": 0.2},
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1770,
+    "partner": {"text": "Пару для дуэта ищи в Коллабике", "logo": "assets/brand/collabika/collabika-full.png", "y": 1468,
+                "logo_h": 150},
+    "duration": 4.2,
+    "music_fade": 4.0
+  },
+  "presets3d": {
+    "room": {"name": "cozy_desk"},
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": ["bloom", "dust_motes", {"name": "depth_of_field", "amount": 2}, "film_grain"]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {"keyColor": "#f0e6ff", "keyPower": 1.9, "fill": "#7a4a8a", "fillPower": 0.9}
+  },
+  "site_shots": {
+    "dir": "D:/vvf-offload/vtubika/story9_karaoke/site",
+    "catalog": {"file": "catalog_karaoke.png", "from": 1000, "scroll": 300, "tap": [288, 520]},
+    "product": {"file": "product_saylium.png", "scroll": 230, "tap": [195, 1200]},
+    "sets": {
+      "sticks": {"catalog": {"file": "catalog_karaoke.png", "from": 300, "scroll": 300, "tap": [100, 870]},
+                 "product": {"file": "product_sticks.png", "from": 250, "scroll": 300, "tap": [195, 1200]}}
+    }
+  },
+  "screen": {
+    "uptime": 3100,
+    "title": "хоррор при свечах · тсс",
+    "camBg": ["#160f22", "#08060e"],
+    "viewers": [{"t": 0.0, "value": 312, "label": "312 зрителей"}],
+    "chat": [
+      {"t": 0.0, "user": "tikhiy_uzhas", "color": "#c9a0ff", "text": "тсс… он за дверью"},
+      {"t": 0.0, "user": "svecha_77", "color": "#ffb07e", "text": "мне страшно"}
+    ]
+  },
+  "highlight": {
+    "хорроры:": "#c9a0ff",
+    "шёпотом,": "#c9a0ff",
+    "свечах,": "#ffb07e",
+    "одно": "#ff5cb0",
+    "Варя": "#a8f07a",
+    "войс": "#a8f07a",
+    "пятницу.": "#ffd35c",
+    "сцену:": "#ff8a4c",
+    "караоке-комнату,": "#6fd3ff",
+    "микрофоны,": "#6fd3ff",
+    "сайлиумы.": "#ff5cb0",
+    "сайлиум,": "#ff5cb0",
+    "мышкой,": "#ff5cb0",
+    "палочки": "#ff9ad6",
+    "Суббота.": "#ffd35c",
+    "текст": "#ff5cb0",
+    "песни": "#ff5cb0",
+    "шептал,": "#c9a0ff",
+    "машет": "#ff5cb0",
+    "палочками.": "#ff5cb0",
+    "личке": "#a8f07a"
+  },
+  "sentences": [
+    {
+      "text": "Лиля стримит хорроры: шёпотом, при свечах, и чат её за это обожает.",
+      "pause_after": 0.3,
+      "show": ["кадр 0 (обложка): лицо Лили крупно — испуг, глаза круглые, смотрит в монитор; сверху огромное «СПОЙ?!»",
+               "на «хорроры» — её эфир на мониторе: модель Лили по грудь на фоне склепа со свечами, 312 зрителей, чат «тсс», «мне страшно»",
+               "на «чат» — чат крупно"],
+      "shots": [{"cam": "face_close", "fov": 7.0, "push": 0.08},
+                {"cam": "monitor", "at": "хорроры:", "dt": -0.15, "push": 0.1,
+                 "flow": {"kind": "reveal_from", "shape": "rect", "dur": 0.6, "y": 0.42, "w": 360, "h": 220, "radius": 36,
+                          "edge": "#ff5cb0", "edgeWidth": 8}},
+                {"cam": "chat", "at": "чат", "dt": -0.1, "push": 0.12}],
+      "do": [
+        {"screen": "stream", "dt": -0.3},
+        {"avatar": "live", "dt": -0.3},
+        {"scene": {"bg": {"seq": {"pattern": "/site/media/crypt/f_{:03d}.jpg", "from": 1, "count": 48}, "fps": 12}}, "dt": -0.3},
+        {"act": "Sit_Loop"},
+        {"face": "shock", "dt": -0.3},
+        {"at": "хорроры:", "face": "tired", "dt": -0.15},
+        {"at": "шёпотом,", "chat": {"user": "tikhiy_uzhas", "color": "#c9a0ff", "text": "тсс"}},
+        {"at": "свечах,", "chat": {"user": "kot_v_sklepe", "color": "#9dff7e", "text": "лиля, не уходи туда"}},
+        {"at": "обожает.", "dt": 0.05, "chat": {"user": "svecha_77", "color": "#ffb07e", "text": "лучший шёпот в твиче"}}
+      ],
+      "vrm": [{"look": "monitor", "dur": 1.6, "dt": -0.8},
+              {"av": "track", "who": "lilya_av", "dt": -0.8},
+              {"av_show": ["lilya_av"], "dt": -0.8},
+              {"av_cam": "solo_bust", "dt": -0.8}]
+    },
+    {
+      "text": "Но сегодня весь чат пишет одно и то же.",
+      "pause_after": 4.3,
+      "show": ["чат крупно: «СПОЙ», «спой!!!», «караоке когда», «СПОЙ» крупным",
+               "реплика Лили (Jessica): «Ладно, ладно! В субботу — караоке. Довольны?» — лицо крупно, рот по её голосу; чат «ДААА»"],
+      "shots": [{"cam": "chat", "push": 0.14},
+                {"cam": "face", "at": "end", "dt": 0.1, "push": 0.08}],
+      "do": [
+        {"at": "сегодня", "chat": {"user": "svecha_77", "color": "#ffb07e", "text": "спой"}},
+        {"at": "чат", "chat": {"user": "kot_v_sklepe", "color": "#9dff7e", "text": "СПОЙ!!!"}},
+        {"at": "пишет", "chat": {"user": "nochnaya_mysh", "color": "#7ee0ff", "text": "караоке когда?"}},
+        {"at": "одно", "chat": {"user": "tikhiy_uzhas", "color": "#c9a0ff", "text": "СПОЙ", "big": true}},
+        {"face": "wide"},
+        {"at": "end", "face": "happy", "dt": 0.2},
+        {"at": "end", "dt": 3.3, "chat": {"user": "svecha_77", "color": "#ffb07e", "text": "ДААААА"}}
+      ],
+      "vrm": [{"at": "end", "look": "webcam", "dur": 3.4, "dt": 0.1}]
+    },
+    {
+      "text": "И тут к ней в войс залетает Варя — она поёт на стримах каждую пятницу.",
+      "pause_after": 6.4,
+      "show": ["через плечо: на эфире рядом с Лилей появляется Варя, плашка «ЛИЛЯ × ВАРЯ · в войсе», чат «ВАРЯ!!!»",
+               "реплика Вари (Lily): «Караоке при свечах? Ни текста, ни сайлиума? Набери на Витубике «караоке»!» — Варя говорит на мониторе"],
+      "shots": [{"cam": "ots", "push": 0.08},
+                {"cam": "monitor", "at": "Варя", "dt": -0.1, "push": 0.1},
+                {"cam": "monitor_close", "at": "end", "dt": 0.15, "push": 0.12}],
+      "do": [
+        {"at": "войс", "dt": -0.1, "sfx": "notify"},
+        {"at": "войс", "dt": -0.1,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/crypt/f_{:03d}.jpg", "from": 1, "count": 48}, "fps": 12},
+                   "plate": {"names": [{"text": "ЛИЛЯ", "color": "#ff8ab0"}, {"text": "ВАРЯ", "color": "#a8f07a"}], "sub": "в войсе", "t0": 0.2, "top": true}}},
+        {"at": "Варя", "chat": {"user": "kot_v_sklepe", "color": "#9dff7e", "text": "ВАРЯ!!!"}},
+        {"at": "пятницу.", "chat": {"user": "nochnaya_mysh", "color": "#7ee0ff", "text": "варя, научи её"}},
+        {"face": "happy"}
+      ],
+      "vrm": [{"at": "войс", "av_show": ["lilya_av", "varya_av"], "dt": -0.6},
+              {"at": "войс", "av_cam": "two_bust", "dt": -0.6},
+              {"at": "войс", "av": "idle", "who": "varya_av", "dt": -0.6},
+              {"at": "войс", "av_face": "smile", "who": "varya_av", "dt": -0.6},
+              {"at": "end", "av_talk": 4.8, "who": "varya_av", "face": "smile", "dt": 0.4},
+              {"at": "войс", "look": "monitor", "dur": 3.0}]
+    },
+    {
+      "text": "Поиск выдаёт целую сцену: караоке-комнату, микрофоны, сайлиумы.",
+      "pause_after": 0.3,
+      "show": ["телефон: настоящая страница поиска «karaoke» на vtubika.store — караоке-комната и микрофоны, листается вверх к сайлиуму, палец на «Сайлиум»"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"phone": {"screen": "shop", "store": {"title": "Интерактивный Live2D-лайтстик Сайлиум", "price": "650 ₽"},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35, "to_next": true}, "dt": -0.15, "span": 1},
+        {"face": "happy"}
+      ],
+      "vrm": [{"av_show": ["lilya_av"], "dt": -0.2},
+              {"av_cam": "solo_bust", "dt": -0.2}]
+    },
+    {
+      "text": "Лиля берёт сайлиум, который машет за мышкой, и палочки для зала. По шестьсот пятьдесят.",
+      "pause_after": 0.35,
+      "show": ["страница товара すやみや «Интерактивный Live2D-лайтстик Сайлиум с управлением мышью», 650 ₽",
+               "на «палочки» — страница すやみや LightSticks Concert, 650 ₽"],
+      "do": [
+        {"site_step": "product", "dt": -0.35},
+        {"at": "палочки", "site_step": "tap", "dt": 0.4, "quiet": true},
+        {"at": "палочки", "phone": {"screen": "shop", "siteSet": "sticks", "store": {"title": "LightSticks Concert", "price": "650 ₽"},
+                                    "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.1, "until": "end", "dt_end": 0.3},
+        {"at": "палочки", "site_step": "product", "dt": -0.7, "quiet": true},
+        {"at": "end", "site_step": "tap", "dt": 3.0, "quiet": true}
+      ]
+    },
+    {
+      "text": "Суббота. Свет погашен, текст песни — внизу экрана.",
+      "pause_after": 5.2,
+      "show": ["общий план комнаты в полумраке (суббота)",
+               "на «Свет» — руки на клавиатуре: Лиля настраивает эфир",
+               "на «текст» — эфир «КАРАОКЕ ПРИ СВЕЧАХ»: внизу строка песни (свои слова) заливается розовым по слогам, у модели в руке машет розовый сайлиум すやみや; модель поёт",
+               "пауза — песня: эфир крупно, потом через плечо, Лиля качает головой в такт"],
+      "shots": [{"cam": "wide", "push": 0.1},
+                {"cam": "face", "at": "Свет", "dt": -0.1, "push": 0.08},
+                {"cam": "monitor", "at": "текст", "dt": -0.1, "zoom": 1.04, "push": 0.12,
+                 "flow": {"kind": "reveal_from", "shape": "circle", "dur": 0.6, "y": 0.42, "w": 160, "h": 160, "edge": "#ff5cb0", "edgeWidth": 10}},
+                {"cam": "ots", "at": "end", "dt": 2.2, "push": 0.08}],
+      "do": [
+        {"at": "Свет", "act": "Typing_Loop", "dt": -0.1},
+        {"at": "текст", "act": "Sit_Loop", "dt": -0.25},
+        {"at": "текст", "title": "КАРАОКЕ ПРИ СВЕЧАХ", "dt": -0.15},
+        {"at": "текст", "viewers": 486, "label": "486 зрителей", "dt": -0.15},
+        {"at": "текст", "dt": -0.15,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/crypt/f_{:03d}.jpg", "from": 1, "count": 48}, "fps": 12},
+                   "front": [{"seq": {"pattern": "/site/media/sticks_violet/f_{:03d}.png", "from": 1, "count": 29}, "fps": 30,
+                              "x": 0.5, "y": 0.87, "w": 1.04, "t0": 9.25},
+                             {"seq": {"pattern": "/site/media/lyrics/f_{:03d}.png", "from": 1, "count": 220}, "fps": 10,
+                              "x": 0.46, "y": 0.7, "w": 0.48, "t0": 0.0},
+                             {"seq": {"pattern": "/site/media/saylium_pink/f_{:03d}.png", "from": 1, "count": 78}, "fps": 30,
+                              "x": 0.82, "y": 0.8, "w": 0.2, "t0": 0.25, "shadow": false,
+                              "keys": [{"t": 0.3, "rot": -6}, {"t": 1.2, "rot": 8}, {"t": 2.1, "rot": -6}, {"t": 3.0, "rot": 8},
+                                       {"t": 3.9, "rot": -6}, {"t": 4.8, "rot": 8}, {"t": 5.7, "rot": -6}, {"t": 6.6, "rot": 8},
+                                       {"t": 7.5, "rot": -6}, {"t": 8.4, "rot": 8}, {"t": 9.3, "rot": -6}, {"t": 10.2, "rot": 8},
+                                       {"t": 11.1, "rot": -6}, {"t": 12.0, "rot": 8}, {"t": 12.9, "rot": -6}, {"t": 13.8, "rot": 8}]}]}},
+        {"at": "end", "dt": 0.6, "chat": {"user": "kot_v_sklepe", "color": "#9dff7e", "text": "ОНА ПОЁТ"}},
+        {"at": "end", "dt": 1.6, "chat": {"user": "svecha_77", "color": "#ffb07e", "text": "я плачу"}},
+        {"at": "end", "dt": 2.6, "viewers": 760, "label": "760 зрителей"},
+        {"at": "end", "dt": 2.8, "chat": {"user": "nochnaya_mysh", "color": "#7ee0ff", "text": "склеп поёт"}},
+        {"at": "end", "dt": 3.9, "chat": {"user": "tikhiy_uzhas", "color": "#c9a0ff", "text": "голос мурашки"}},
+        {"face": "happy"}
+      ],
+      "vrm": [{"at": "end", "av_talk": 4.9, "who": "lilya_av", "face": "smile", "dt": 0.2},
+              {"at": "end", "nod": 4, "amp": 7, "dt": 0.4},
+              {"at": "текст", "look": "monitor", "dur": 7.0}]
+    },
+    {
+      "text": "Чат, который полгода шептал, теперь машет палочками.",
+      "pause_after": 4.1,
+      "show": ["чат крупно: «ЕЩЁ», «ЛИЛЯ ПОЁТ» крупным",
+               "на «машет» — эфир: внизу машут палочки зала すやみや, сайлиум в руке, 1 240 зрителей; крики и аплодисменты",
+               "реплика Лили: «Ещё одну? Ладно… ещё одну.» — лицо, улыбается, рот по её голосу"],
+      "shots": [{"cam": "chat", "push": 0.12},
+                {"cam": "monitor", "at": "машет", "dt": -0.1, "zoom": 1.06, "push": 0.1},
+                {"cam": "smile", "at": "end", "dt": 0.2, "push": 0.08}],
+      "do": [
+        {"at": "Чат", "chat": {"user": "svecha_77", "color": "#ffb07e", "text": "ЛИЛЯ ПОЁТ", "big": true}},
+        {"at": "полгода", "chat": {"user": "kot_v_sklepe", "color": "#9dff7e", "text": "ЕЩЁ!!!"}},
+        {"at": "шептал,", "chat": {"user": "nochnaya_mysh", "color": "#7ee0ff", "text": "кто резал лук"}},
+        {"at": "машет", "viewers": 1240, "label": "1 240 зрителей", "dt": -0.1},
+        {"at": "машет", "sfx": "cheer", "dt": -0.2},
+        {"at": "end", "sfx": "applause", "dt": 2.0},
+        {"at": "end", "dt": 0.3, "chat": {"user": "tikhiy_uzhas", "color": "#c9a0ff", "text": "ЕЩЁ ОДНУ"}},
+        {"at": "end", "face": "laugh", "dt": 0.1},
+        {"at": "end", "face": "happy", "dt": 1.6}
+      ],
+      "vrm": [{"at": "end", "look": "webcam", "dur": 3.0, "dt": 0.1}]
+    },
+    {
+      "text": "А в личке — Варя.",
+      "pause_after": 0.1,
+      "show": ["телефон: личка с Варей — «В пятницу — дуэтом?» → «Только если ты первая)»",
+               "реплика Лили — крупно, хитрая улыбка, рот по её голосу"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}},
+                {"cam": "smile", "at": "end", "dt": 2.35, "push": 0.08}],
+      "do": [
+        {"phone": {"screen": "dm", "dm": {"title": "Варя", "letter": "В", "color": "#8ac46a", "status": "в сети", "clock": "02:13", "msgs": []},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.15, "until": "end", "dt_end": 2.3},
+        {"at": "end", "dt": 0.5, "dm": {"text": "В пятницу — дуэтом?", "time": "02:13"}},
+        {"at": "end", "dt": 2.1, "dm": {"me": true, "text": "Только если ты первая)", "time": "02:13"}},
+        {"face": "happy"},
+        {"at": "end", "dt": 2.3, "face": "happy"}
+      ]
+    }
+  ]
+}

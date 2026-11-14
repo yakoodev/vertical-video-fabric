@@ -481,7 +481,7 @@ def mix(plan: dict, video: Path, narration: Path, sfx: list[dict], total: float,
             notes.append(f"нет звука {key}")
             continue
         assets[asset_key(key)] = str(path)
-        layers.append({"id": f"sfx{n}", "type": "audio", "start": s["t"], "end": round(min(total, s["t"] + 2.5), 3),
+        layers.append({"id": f"sfx{n}", "type": "audio", "start": s["t"], "end": round(min(total, s["t"] + float(s.get("dur") or 2.5)), 3),
                        "props": {"asset_id": key, "volume": s["volume"], "mode": "effect"}})
     for n, ln in enumerate(lines or []):
         # Реплика другого голоса — дорожкой на уровне рассказчика (+ gain_db реплики: «из коридора» чуть тише).
