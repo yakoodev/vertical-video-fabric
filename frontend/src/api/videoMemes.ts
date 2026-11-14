@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import { type MontageInsert } from "@/api/types";
 
 /** «Видеомемы» (app/video_memes.py): короткая реакция + что значит, когда вставлять, что сказано. */
 export interface VideoMeme {
@@ -38,6 +39,27 @@ export interface VideoMemeFilter {
   q?: string;
   tag?: string;
   approved?: boolean;
+  /** Не длиннее, с. */
+  maxSec?: number;
+}
+
+/** Врезка из редактора: full — во весь кадр со своим звуком (звук клипа выключен), pip — окошко (приглушён). */
+export interface VideoMemePlace {
+  meme_id: number;
+  at: number;
+  mode: "full" | "pip";
+  game_audio?: "cut" | "duck" | "keep";
+  duration?: number;
+  scale?: number;
+  x?: number;
+  y?: number;
+}
+
+export interface VideoMemePlaced {
+  ok: boolean;
+  inserts: MontageInsert[];
+  meme: { meme_id: number; title: string; duration: number; mode: "full" | "pip"; game_audio: string };
+  warnings?: string[];
 }
 
 export interface VideoMemeUpload {
@@ -55,6 +77,7 @@ export const videoMemesApi = {
     if (f.q?.trim()) q.set("q", f.q.trim());
     if (f.tag) q.set("tag", f.tag);
     if (f.approved !== undefined) q.set("approved", String(f.approved));
+    if (f.maxSec) q.set("max_sec", String(f.maxSec));
     const s = q.toString();
     return api.get<{ memes: VideoMeme[]; suggested_tags: string[] }>(`/api/video-memes${s ? `?${s}` : ""}`);
   },
@@ -80,5 +103,8 @@ export const videoMemesApi = {
     }),
   update: (id: number, patch: VideoMemePatch) => api.patch<VideoMeme>(`/api/video-memes/${id}`, patch),
   transcribe: (id: number) => api.post<VideoMeme>(`/api/video-memes/${id}/transcribe`, {}),
+  /** POST /api/clip-plans/{id}/video-memes/place — тот же place_video_meme, что у агента; один шаг отмены. */
+  place: (planId: number, body: VideoMemePlace) =>
+    api.post<VideoMemePlaced>(`/api/clip-plans/${planId}/video-memes/place`, body),
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/video-memes/${id}`),
 };

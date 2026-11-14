@@ -125,6 +125,7 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
       x: ins.x ?? INSERT_GEOM.x,
       y: ins.y ?? INSERT_GEOM.y,
       scale: ins.scale ?? INSERT_GEOM.scale,
+      fill: ins.fill,
       el,
     };
   });

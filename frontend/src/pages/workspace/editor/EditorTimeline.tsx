@@ -11,7 +11,7 @@ export function EditorTimeline({ session }: { session: DraftsEditorSession }) {
     setPlanFlag, activePlan, tlSelected, setTlSelected, subLines, setSubLines, setSelectedSeg, inserts, setInserts,
     layers, setLayers, camera, setCamera, backdrop, mute, setMute, audioEdit, setAudioEdit, aspect, snapMode,
     setSnapMode, source, isCanvas, seekClipTime, splitAtClip, deleteSelected, dropLayersAt, selectOnTimeline,
-    planDur,
+    planDur, placeVideoMeme,
   } = session;
   return (
     <div className="panel editor-timeline ed-bottom">
@@ -90,6 +90,7 @@ export function EditorTimeline({ session }: { session: DraftsEditorSession }) {
             subLinesRef.current = next;
             if (activePlan) void clipPlansApi.saveSubtitles(activePlan.id, next).catch(() => undefined);
           }}
+          onDropVideoMeme={(memeId, mode, at) => placeVideoMeme(memeId, mode, at)}
           onDropAsset={(assetId, at) => {
             const asset = assetsQuery.data?.find((a) => a.id === assetId);
             setInserts((prev) => [

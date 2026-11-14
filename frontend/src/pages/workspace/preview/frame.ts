@@ -142,6 +142,8 @@ export type InsertPreview = {
   y: number;
   scale: number;
   el: HTMLImageElement | HTMLVideoElement | HTMLAudioElement | null;
+  /** Чем заполнить кадр вокруг полнокадровой вставки (render: blur по умолчанию, cover, black, clip). */
+  fill?: string;
 };
 
 /** Значения по умолчанию должны совпадать с бэкендом (montage_assets.py). */
@@ -196,6 +198,11 @@ export function drawInserts(
       } else if (!m.paused) {
         m.pause();
       }
+      // На паузе (скраб, шаг кадра) видео-вставка стоит на своём кадре, а не на том, где её оставили.
+      if (on && !playing && media instanceof HTMLVideoElement && !m.seeking) {
+        const want = Math.max(0, (t ?? 0) - ins.at);
+        if (Math.abs(m.currentTime - want) > 0.08) m.currentTime = want;
+      }
     }
     if (!on) continue;
     if (ins.mode === "sound" || media instanceof HTMLAudioElement || !media) {
@@ -211,11 +218,22 @@ export function drawInserts(
     const h = media instanceof HTMLVideoElement ? media.videoHeight : (media as HTMLImageElement).naturalHeight;
     if (!w || !h) continue;
     const { dx, dy, dw, dh } = insertBox(ins, cv, w, h);
-    if (ins.mode === "full") {
+    if (ins.mode === "full" && ins.fill !== "clip") {
+      // Как рендер (montage_assets.full_insert_chain): вокруг другой пропорции — размытая копия (blur), cover —
+      // вставка обрезана во весь кадр, black — поля. Прозрачная (clip) — поверх кадра клипа.
       ctx.fillStyle = "#000";
       ctx.fillRect(0, 0, cv.width, cv.height);
+      if (ins.fill !== "black") {
+        const k = Math.max(cv.width / w, cv.height / h);
+        const cw = w * k;
+        const ch = h * k;
+        ctx.save();
+        if (ins.fill !== "cover") ctx.filter = `blur(${Math.round(cv.width / 30)}px) brightness(0.8)`;
+        ctx.drawImage(media as CanvasImageSource, (cv.width - cw) / 2, (cv.height - ch) / 2, cw, ch);
+        ctx.restore();
+      }
     }
-    ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
+    if (!(ins.mode === "full" && ins.fill === "cover")) ctx.drawImage(media as CanvasImageSource, dx, dy, dw, dh);
     if (ins.mode === "pip" && !playing && handles) {
       // На паузе показываем рамку, уголки и подпись: за картинку вставку двигают,
       // за правый нижний угол — растягивают.

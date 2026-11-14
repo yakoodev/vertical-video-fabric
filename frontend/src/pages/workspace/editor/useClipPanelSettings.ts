@@ -12,6 +12,7 @@ import { DEFAULT_BACKDROP, normalizeBackdrop, type Backdrop } from "@/pages/work
 import { type JumpCut } from "@/api/cuts";
 import { type MuteSpan } from "@/api/mute";
 import { type GainSpan } from "@/api/gain";
+import { insertDucks } from "@/pages/workspace/preview/insertDucks";
 import { compactAudio, type AudioEdit } from "@/api/audioEdit";
 import { useClipRevision } from "@/pages/workspace/preview/MontagePlayer";
 import { type Selection } from "@/pages/workspace/ClipTimeline";
@@ -68,13 +69,15 @@ export function useClipPanelSettings({
   const [freezes, setFreezes] = useState<FreezeFrame[]>([]);
   const cutsRef = useRef<JumpCut[]>([]);
   cutsRef.current = cuts;
+  // Превью глушит звук клипа и под врезками видеомемов (duck_volume 0), как рендер; окошко — тише (gain ниже).
+  const insertDuck = insertDucks(inserts);
   const muteRef = useRef<MuteSpan[]>([]);
-  muteRef.current = mute;
+  muteRef.current = insertDuck.mute.length ? [...mute, ...insertDuck.mute] : mute;
   // 🔊 Громкость звука исходника на отрезках (render.gain): поднять тихий кусок, приглушить
   // громкий; агент ставит её инструментом set_source_gain.
   const [gain, setGain] = useState<GainSpan[]>([]);
   const gainRef = useRef<GainSpan[]>([]);
-  gainRef.current = gain;
+  gainRef.current = insertDuck.gain.length ? [...gain, ...insertDuck.gain] : gain;
   // 🎚 Звуковой монтаж (render.audio, app/audio_edit.py): J/L на стыках тянут на дорожке «Звук»,
   // ключи громкости, ducking, провалы музыки и эффекты ставит агент — панель их показывает и хранит.
   const [audioEdit, setAudioEdit] = useState<AudioEdit>({});

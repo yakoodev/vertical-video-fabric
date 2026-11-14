@@ -55,7 +55,7 @@ export const LIB_TABS: { key: LibTab; icon: string; label: string; hint: string;
   { key: "text", icon: "T", label: "Текст", hint: "Стили текста и фигуры: стрелки, обводки, плашки" },
   { key: "stickers", icon: "✳", label: "Стикеры", hint: "Паки стикеров: искры, дым, вспышки, значки" },
   { key: "sounds", icon: "♪", label: "Звуки", hint: "Звуковые эффекты: whoosh, boom, pop, ding…" },
-  { key: "memes", icon: "🐸", label: "Мемы", hint: "Шаблоны мемов и картинки из ваших файлов" },
+  { key: "memes", icon: "🐸", label: "Мемы", hint: "Видеомемы-реакции (врезка или окно) и картинки-мемы" },
   { key: "generate", icon: "✨", label: "Создать", hint: "Сгенерировать картинку ИИ или найти в интернете", modules: ["asset_ai", "web_images"] },
   { key: "pages", icon: "🌐", label: "Страницы", hint: "Снимки сайтов: снять по ссылке, поправить словами, поставить на таймлайн", modules: ["web_pages"] },
   { key: "media", icon: "🖼", label: "Вставки", hint: "Файлы для монтажа как вставки (видео-мемы, звуки)" },

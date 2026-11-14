@@ -8,6 +8,7 @@ import { PagesPanel } from "@/pages/workspace/motion/PagesPanel";
 import { formatDuration } from "@/components/ui";
 import { clipTimeOf, LIB_TABS } from "@/pages/workspace/editor/editorHelpers";
 import { CropFrame } from "@/pages/workspace/editor/CropFrame";
+import { MemesTab } from "@/pages/workspace/editor/VideoMemePicker";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
 
 /** Левая часть редактора: вкладки и библиотека. Исходник с рамкой живёт здесь всегда, из него рисуется превью. */
@@ -19,7 +20,7 @@ export function EditorLibrary({ session }: { session: DraftsEditorSession }) {
     setTlSelected, mediaSrc, activePlanId, subsOn, bannerOn, mirror, setInserts, layers, setLayers, camera, layout,
     backdrop, aspect, layersFmt, watchOpen, setAiMontageOpen, setSettingsNonce, setAiGoal, showZones,
     bannerHeightPct, bannerPosPct, subPosPct, moduleOn, source, isCanvas, clipTimeNow, insertsPreview, clipDuration,
-    addLayers, addAtCursor, railPlans, planDur, planThumb,
+    addLayers, addAtCursor, railPlans, planDur, planThumb, placeVideoMeme, placingMeme, clipNow,
   } = session;
   return (
     <>
@@ -186,7 +187,14 @@ export function EditorLibrary({ session }: { session: DraftsEditorSession }) {
         ) : null}
         {libTab === "stickers" ? <StickersPanel onAdd={addAtCursor} /> : null}
         {libTab === "sounds" ? <SoundsPanel onAdd={addAtCursor} clipDuration={clipDuration} /> : null}
-        {libTab === "memes" ? <MemesPanel onAdd={addAtCursor} assets={pickableAssets} clipId={activePlanId} /> : null}
+        {libTab === "memes" ? (
+          <MemesTab
+            onPlace={(memeId, mode) => placeVideoMeme(memeId, mode, clipNow())}
+            placing={placingMeme}
+            disabled={!activePlan}
+            images={<MemesPanel onAdd={addAtCursor} assets={pickableAssets} clipId={activePlanId} />}
+          />
+        ) : null}
         {libTab === "generate" && libTabs.some((t) => t.key === "generate") ? <GeneratePanel onAdd={addAtCursor} /> : null}
         {libTab === "pages" && libTabs.some((t) => t.key === "pages") ? <PagesPanel onAdd={addAtCursor} clipId={activePlanId} /> : null}
         {libTab === "media" ? (

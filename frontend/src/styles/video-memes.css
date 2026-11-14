@@ -33,3 +33,47 @@
   .vmeme-url { grid-template-columns: 1fr 1fr; }
   .vmeme-url .input:first-child, .vmeme-url .btn { grid-column: 1 / -1; }
 }
+
+/* ---------- «Мемы → Видео-реакции» в библиотеке студии (pages/workspace/editor/VideoMemePicker.tsx) ---------- */
+.vmp-kind { margin-bottom: 2px; }
+.vmp-modes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.vmp-mode {
+  display: grid; gap: 1px; padding: 6px 8px; text-align: left; font: inherit; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); color: var(--text-dim);
+}
+.vmp-mode strong { font-size: 12.5px; color: var(--text); }
+.vmp-mode span { font-size: 10.5px; }
+.vmp-mode.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+.lib-row .vmp-len { flex: 0 0 82px; height: 34px; font-size: 12px; }
+.vmp-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.vmp-card {
+  display: grid; gap: 4px; align-content: start; padding: 5px; min-width: 0;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); cursor: grab;
+}
+.vmp-card:hover { border-color: var(--accent); }
+.vmp-card.is-hearing { border-color: var(--success); }
+.vmp-card.is-off { cursor: default; }
+.vmp-card.is-off .vmp-media video { filter: grayscale(1) brightness(0.6); }
+.vmp-card.is-off .vmp-title, .vmp-card.is-off .vmp-said { opacity: 0.6; }
+.vmp-card.is-off:hover { border-color: var(--border); }
+.vmp-media {
+  position: relative; display: block; width: 100%; aspect-ratio: 1; padding: 0; border: 0; border-radius: 7px;
+  overflow: hidden; background: #0b0915; cursor: pointer;
+}
+.vmp-media video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+.vmp-dur, .vmp-sound, .vmp-off {
+  position: absolute; font-size: 10.5px; line-height: 1; padding: 3px 5px; border-radius: 6px;
+  background: rgba(8, 9, 15, 0.8); color: #fff;
+}
+.vmp-dur { right: 4px; bottom: 4px; }
+.vmp-sound { left: 4px; bottom: 4px; }
+.vmp-off { left: 4px; top: 4px; background: rgba(120, 120, 130, 0.92); font-weight: 600; }
+.vmp-title { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vmp-said {
+  font-size: 11px; line-height: 1.25; color: var(--text-dim); min-height: 2.5em;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.vmp-put { width: 100%; justify-content: center; }
+.vmp-empty { font-size: 12px; margin: 4px 0; }
+/* Видеомем на дорожке «Вставки»: кадр мема во всю высоту блока. */
+.ctl-ins-thumb.is-video { object-fit: cover; }
