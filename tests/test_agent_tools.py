@@ -273,6 +273,38 @@ def test_subtitle_gaps_ignore_short_laugh():
     assert subtitle_gaps(Store(), plan, pieces) == [0]
 
 
+def test_subtitle_gaps_skip_speech_under_meme_that_cuts_game_audio():
+    """Ручной мем-эдит: кусок целиком под полнокадровым видеомемом с game_audio cut (duck_volume 0) —
+    речи игры там не слышно, «на кусках N речь есть, а субтитров нет» — ложная тревога.
+    Мем с приглушением (не до нуля) или закрывший кусок не целиком — дыра остаётся."""
+    from app.agent_tools import subtitle_gaps
+
+    class Store:
+        def get_clip_plan_subtitles(self, _id):
+            return {"words": [{"word": "ага", "start": 1.0, "end": 1.4}]}
+
+        def get_source_transcript(self, _id):
+            return [{"start": 200.5, "end": 203.5, "text": "тут стример что-то говорит"}]
+
+    # Куски встык на шкале clip: 0–5 (со словами), 5–9 (речь в исходнике 200.5–203.5 → clip 5.5–8.5).
+    pieces = [{"source_start": 100, "source_end": 105, "clip_start": 0.0, "clip_end": 5.0, "length": 5.0},
+              {"source_start": 200, "source_end": 204, "clip_start": 5.0, "clip_end": 9.0, "length": 4.0}]
+
+    def plan(*inserts):
+        return {"id": 1, "source_id": 5, "render_settings": {"inserts": list(inserts)}}
+
+    cut = {"asset_id": 3, "at": 5.0, "duration": 4.0, "mode": "full", "duck": True, "duck_volume": 0}
+    assert subtitle_gaps(Store(), plan(), pieces) == [1]
+    assert subtitle_gaps(Store(), plan(cut), pieces) == []
+    # Звук игры только приглушён — речь слышна, дыра.
+    assert subtitle_gaps(Store(), plan({**cut, "duck_volume": 0.2}), pieces) == [1]
+    assert subtitle_gaps(Store(), plan({**cut, "duck": False}), pieces) == [1]
+    # Мем закрыл только начало куска (5–6.5), а речь идёт до 8.5 — дыра.
+    assert subtitle_gaps(Store(), plan({**cut, "duration": 1.5}), pieces) == [1]
+    # Два мема подряд закрывают всю фразу — не дыра.
+    assert subtitle_gaps(Store(), plan({**cut, "duration": 2.0}, {**cut, "at": 7.0, "duration": 2.0}), pieces) == []
+
+
 def test_add_image_from_url_drops_off_topic_picture(monkeypatch):
     """Агент скачал картинку мимо запроса — она удаляется, агент получает ошибку и берёт другую."""
     from app.agent_tools import ToolContext, run_tool

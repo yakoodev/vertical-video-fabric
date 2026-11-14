@@ -112,7 +112,8 @@ class FinishRender:
         """
         from app.montage_assets import build_inserts_args
 
-        inserts, assets = self._final_inserts(plan, cut_plan)
+        fps = self._clip_fps(clip)
+        inserts, assets = self._final_inserts(plan, cut_plan, fps)
         path = Path(clip.get("output_path") or "")
         if not inserts or not path.exists():
             return clip
@@ -121,7 +122,8 @@ class FinishRender:
             has_audio = _has_audio_stream(path)
             tmp = path.with_name(path.stem + ".inserts" + path.suffix)
             args = build_inserts_args(
-                path, tmp, inserts, assets, meta.width, meta.height, meta.duration_sec, clip_has_audio=has_audio
+                path, tmp, inserts, assets, meta.width, meta.height, meta.duration_sec, clip_has_audio=has_audio,
+                fps=fps,
             )
             if args is None:
                 return clip
@@ -133,12 +135,37 @@ class FinishRender:
         except Exception as exc:  # noqa: BLE001 - inserts are an extra, never lose the clip
             return self._note_clip_error(clip["id"], f"вставки не наложены: {str(exc)[:200]}")
 
-    def _final_inserts(self, plan: dict, cut_plan=None) -> tuple[list[dict], dict]:
-        """Вставки клипа в секундах готового ролика и их файлы."""
+    def _clip_fps(self, clip: dict) -> float:
+        """Частота кадров рендера клипа (его пресет); не прочитать — 30."""
+        try:
+            return float(self._preset(clip.get("ffmpeg_preset_id")).get("fps") or 30)
+        except Exception:  # noqa: BLE001 - пресет удалён / заглушка в тестах
+            return 30.0
+
+    def _frame_grid(self, plan: dict, cut_plan=None, fps: float = 30.0):
+        """План → отрендеренный файл: части режутся целыми кадрами (app/timebase.FrameGrid); None — сдвига нет."""
+        from app.timebase import FrameGrid
+
+        if cut_plan is not None:
+            parts, jumps = cut_plan.parts, cut_plan.jump_joins
+        else:
+            parts, jumps = plan.get("segments") or [], None
+        grid = FrameGrid(parts, (plan.get("render_settings") or {}).get("transition"), jumps, fps)
+        return grid if grid else None
+
+    def _final_inserts(self, plan: dict, cut_plan=None, fps: float = 30.0) -> tuple[list[dict], dict]:
+        """Вставки клипа в секундах готового ролика и их файлы.
+
+        Порядок перевода: вырезы → сетка кадров частей (вставка на стыке кусков встаёт ровно на
+        отрендеренный стык, без кадра геймплея по краю) → стоп-кадры."""
+        from app.freeze import ChainMap, chain
         from app.montage_assets import normalize_inserts
 
         inserts = normalize_inserts((plan.get("render_settings") or {}).get("inserts"))
-        mapper = self._final_mapper(plan, cut_plan)
+        cut = self._finished_cut_mapper(plan, cut_plan) if cut_plan is not None else None
+        grid = self._frame_grid(plan, cut_plan, fps) if inserts else None
+        first = ChainMap(cut, grid) if cut is not None and grid is not None else (cut or grid)
+        mapper = chain(first, self._freezes(plan))
         if mapper is not None and inserts:
             from app.cuts import remap_inserts
 

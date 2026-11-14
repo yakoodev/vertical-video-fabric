@@ -7,6 +7,7 @@ from pathlib import Path
 from app.render_exec import _json_dict, _seconds
 from app.render_filters import _audio_filter, _audio_map, _filter_complex, _retimed
 from app.render_loudness import FINAL_AUDIO_BITRATE
+from app.timebase import part_frames
 
 
 def build_ffmpeg_render_args(
@@ -62,7 +63,8 @@ def build_ffmpeg_render_args(
             # Ровно столько кадров, сколько в куске: иначе fps-фильтр добавляет кадр
             # на каждый кусок, и при 18 вырезах картинка уезжала от звука на 0.57 с.
             "-frames:v",
-            str(max(1, int(out_duration * fps + 0.5))),
+            # Та же формула, что у app/timebase.FrameGrid: по ней вставки встают на стыки кусков.
+            str(part_frames(out_duration, fps)),
             "-shortest",
             "-movflags",
             "+faststart",

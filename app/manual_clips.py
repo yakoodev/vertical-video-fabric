@@ -13,9 +13,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+from app.clip_spec import MAX_PIECES  # noqa: F401 - один предел на весь сервис
 from app.settings import settings
-
-MAX_PIECES = 12
 # Сколько ждать готовую расшифровку в одном запросе. Агент-монтажёр: первый вызов
 # get_source_transcript держал HTTP ~2.5 мин, и соединение рвалось («Remote end closed
 # connection»), хотя распознавание шло дальше. Дольше этого — ответ «распознаю,

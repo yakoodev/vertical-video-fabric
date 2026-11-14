@@ -98,7 +98,7 @@ export function useClipActions({
     onSuccess: async (r) => {
       toast.success(
         `Компиляция из ${r.clips} клипов, ${Math.round(r.duration)} с` +
-          (r.skipped.length ? ` · не влезло ${r.skipped.length} (лимит 12 кусков)` : ""),
+          (r.skipped.length ? ` · не влезло ${r.skipped.length} (лимит 40 кусков)` : ""),
       );
       await qc.invalidateQueries({ queryKey: qk.source(sourceId) });
       openEditor(r.clip_plan_id);

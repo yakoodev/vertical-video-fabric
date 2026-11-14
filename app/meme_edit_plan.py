@@ -23,6 +23,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.clip_spec import MAX_PIECES  # один предел кусков на весь сервис
+
 KIND_WEIGHT = {"win": 1.0, "squad_wipe": 0.95, "kill": 0.85, "knock": 0.75, "death": 0.7, "teammate_fail": 0.65,
                "reaction": 0.6, "max_level": 0.5, "ult": 0.45, "level_up": 0.4, "shot_burst": 0.25}
 # Событие → теги видеомема (search_video_memes): первый тег главный.
@@ -67,7 +69,6 @@ WORD_MIN_SEC = 0.9
 NO_TEXT_BEFORE_SEC = 2.5  # в начале эдита текста нет (как в рефе)
 MAX_PIECE_SEC = 180.0
 MIN_PIECE_SEC = 1.5
-MAX_PIECES = 12
 MIN_CUT_SEC = 0.08
 DEFAULT_PERIOD = 0.5  # 120 BPM, если у музыки не нашлось пульса
 MIN_CHOP_START_SEC = 5.0  # начало записи (загрузка, лобби, «стоим у двери») рубкой не берём
@@ -331,7 +332,7 @@ def plan_timeline(events: list[dict], *, duration: float, period: float, target_
 
 
 def to_pieces(timeline: Timeline, duration: float, max_gap: float = 25.0) -> tuple[list[dict], list[dict]]:
-    """Окна → куски исходника (до 12, каждый 1.5–180 с) и вырезы ``render.cuts`` (шкала clip) между окнами.
+    """Окна → куски исходника (до MAX_PIECES, каждый 1.5–180 с) и вырезы ``render.cuts`` (шкала clip) между окнами.
     Заполняет ``clip_start``/``final_start`` у окон."""
     windows = timeline.windows
     if not windows:
@@ -341,7 +342,7 @@ def to_pieces(timeline: Timeline, duration: float, max_gap: float = 25.0) -> tup
         max_gap *= 1.6
         groups = _group(windows, max_gap)
         if max_gap > MAX_PIECE_SEC:
-            raise ValueError("окна эдита не укладываются в 12 кусков — сократите длину")
+            raise ValueError(f"окна эдита не укладываются в {MAX_PIECES} кусков — сократите длину")
     pieces: list[dict] = []
     cuts: list[dict] = []
     clip_offset = final_offset = 0.0

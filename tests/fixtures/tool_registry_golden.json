@@ -1539,7 +1539,7 @@
 {
 "name": "create_clip",
 "title": "Создаю клип",
-"description": "03052e1ef59e75fd",
+"description": "acb83265ec1b5ee8",
 "parameters": "dfca3c1759ef8a32",
 "mutating": false,
 "scope": "global",

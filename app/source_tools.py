@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from app.clip_spec import MAX_PIECES
 from app.dubbing import voice_notes_text
 from app.subtitle_tools import h_tts_preview
 from app.tool_core import (
@@ -524,7 +525,7 @@ DISCOVERY_TOOLS = [
         "Порядок: посмотри стрим, задай вопросы (add_stream_questions), дождись ответов (list_stream_answers), потом режь: "
         "пока ответов нет, откажет и назовёт открытые вопросы. "
         "Новый клип из кусков видео-источника: source_id (id из list_projects), title, pieces [{start_sec, end_sec, title?}] "
-        "(каждый 1.5–180 с, до 12; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
+        f"(каждый 1.5–180 с, до {MAX_PIECES}; короткий кусок 1.5–3 с — кадр под широкий баннер/титр; source_start/source_end — тоже можно). Клип сразу с пресетом рендера по "
         "умолчанию (preset_id числом). Вернёт clip_id — дальше обычные инструменты клипа. / Create a clip from timecodes.",
         _obj({**SOURCE_ARGS, "title": {"type": "string"}, "description": {"type": "string"},
               "pieces": {"type": "array", "items": _obj({"start_sec": {"type": "number"}, "end_sec": {"type": "number"},

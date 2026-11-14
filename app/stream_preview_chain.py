@@ -157,7 +157,8 @@ def _encoder_args(recipe: dict, first_frame: int, frames: int, chunk_frames: lis
     if inserts:
         assets = {int(k): v for k, v in (recipe.get("insert_assets") or {}).items()}
         ins_args = build_inserts_args(Path("pipe:0"), Path("x.mp4"), inserts, assets, W, H, recipe["total_frames"] / fps,
-                                      clip_has_audio=False, video_only=True, base_label=f"[{cur}]", first_input=next_input)
+                                      clip_has_audio=False, video_only=True, base_label=f"[{cur}]", first_input=next_input,
+                                      fps=fps)
         if ins_args:
             i_first = ins_args.index("-i") + 2  # первый -i — сам клип
             i_fc = ins_args.index("-filter_complex")

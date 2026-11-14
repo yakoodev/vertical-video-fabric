@@ -361,7 +361,7 @@ def _make_recorder(store: Any, work: Path, cancel: threading.Event, source_overr
             self.ass = str(ass)
 
         def _apply_inserts(self, clip: dict, plan: dict, cut_plan: Any = None) -> dict:
-            inserts, assets = self._final_inserts(plan, cut_plan)
+            inserts, assets = self._final_inserts(plan, cut_plan, self._clip_fps(clip))
             self.inserts = (inserts, assets) if inserts else None
             return super()._apply_inserts(clip, plan, cut_plan)
 
