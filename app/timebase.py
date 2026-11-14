@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import bisect
+import math
 from typing import Any
 
 SCALES = {
@@ -38,6 +39,68 @@ SCALES = {
 def scale_note(name: str) -> str:
     """``"clip"`` → «clip: секунды клипа ДО вырезов…» — подпись шкалы в ответе инструмента."""
     return f"{name}: {SCALES[name]}"
+
+
+def frame_at(t: float, fps: float) -> int:
+    """Секунда → номер ближайшего кадра на сетке ``fps`` (половина — вверх, с запасом на
+    погрешность float: 15.0333…·30 = 450.99999 — это кадр 451). Одна функция на длины частей
+    рендера (``part_frames``) и на края вставок (``app/montage_assets.build_inserts_args``):
+    иначе вставка «на стыке» кусков открывала кадр спрятанного под ней геймплея."""
+    return int(math.floor(float(t) * float(fps) + 0.5 + 1e-6))
+
+
+def part_frames(length: float, fps: float) -> int:
+    """Сколько кадров в отрендеренной части длиной ``length`` с (``-frames:v``, app/render_args.py)."""
+    return max(1, frame_at(length, fps))
+
+
+class FrameGrid:
+    """Время готового ролика по плану → время в отрендеренном файле.
+
+    Рендер режет каждую часть (кусок или под-кусок после вырезов) целым числом кадров
+    (``part_frames``), а план считает точные секунды. За 13 кусков разница копится до 1–2
+    кадров, и полнокадровая вставка, поставленная ровно на стык по плану, открывала по краю
+    кадр-другой спрятанного под ней геймплея. Перевод: момент части ``k`` сдвигается на
+    ``(кадры частей до k)/fps − (точные секунды частей до k)``. Момент ближе полукадра до
+    начала части относится к ней (вставка «на стыке» с округлённым ``at`` — на стык).
+    Интерфейс — как у ``app/cuts.CutMap`` (``m(t)``, ``clamp``, ``range``, ``duration``);
+    пустой (``bool`` — False), если ни одна часть не сдвинута."""
+
+    def __init__(self, parts: list[dict], transition: Any = None, jump_joins: list[bool] | None = None,
+                 fps: float = 30.0):
+        from app.cuts_map import _Joins
+        from app.piece_speed import seg_length
+
+        self.fps = float(fps or 30.0)
+        joins = _Joins(list(parts or []), transition, jump_joins)
+        self.starts = list(joins.final_starts)
+        self.delta: list[float] = []
+        rendered = 0.0
+        for part, plain in zip(parts or [], joins.plain_starts):
+            self.delta.append(rendered - plain)
+            rendered += part_frames(seg_length(part), self.fps) / self.fps
+
+    def __bool__(self) -> bool:
+        return any(abs(d) > 1e-9 for d in self.delta)
+
+    def __call__(self, t: float) -> float:
+        if not self.starts:
+            return float(t)
+        k = max(0, bisect.bisect_right(self.starts, float(t) + 0.5 / self.fps) - 1)
+        return max(0.0, float(t) + self.delta[k])
+
+    def clamp(self, t: float) -> float:
+        return self(t)
+
+    def inside(self, t: float) -> bool:
+        return False
+
+    def range(self, start: float, end: float, min_len: float = 1e-6) -> tuple[float, float] | None:
+        a, b = self(start), self(end)
+        return None if b - a < min_len else (a, b)
+
+    def duration(self, total: float) -> float:
+        return max(0.0, self(total))
 
 
 class ClipClock:

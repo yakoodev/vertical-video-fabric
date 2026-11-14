@@ -52,6 +52,7 @@ MAX_INSERT_SCALE = 1.0
 # Сколько высоты кадра вставке разрешено занять: очень высокая картинка иначе
 # вылезет за кадр целиком.
 INSERT_MAX_HEIGHT = 0.9
+PICTURE_TAIL_SEC = 0.15  # картинка вставки читается на столько дольше окна (см. build_inserts_args)
 
 
 
@@ -334,12 +335,22 @@ def build_inserts_args(
     video_only: bool = False,
     base_label: str = "[0:v]",
     first_input: int = 1,
+    fps: float = 30.0,
 ) -> list[str] | None:
     """ffmpeg command overlaying the inserts on the clip, or None if nothing applies.
 
     ``video_only`` — только картинка (предпросмотр-трансляция, app/stream_preview.py: звук у неё свой проход),
-    ``base_label``/``first_input`` — откуда брать кадр и с какого номера входа идут файлы вставок."""
+    ``base_label``/``first_input`` — откуда брать кадр и с какого номера входа идут файлы вставок.
+
+    Края вставки — на сетке кадров ``fps``: вставка занимает кадры ``frame_at(at)`` … ``frame_at(end) − 1``
+    (та же функция, что режет части рендера, app/timebase.py), окно ``enable`` — с запасом в полкадра.
+    Раньше ``between(t, at, end)`` по секундам с тремя знаками терял первый кадр (15.067 > 452/30) и
+    брал лишний последний, и врезка «на стыке» открывала кадр спрятанного геймплея."""
     from app.motion_render import speech_level_db
+    from app.timebase import frame_at
+
+    rate = float(fps or 30.0)
+    half = 0.5 / rate
 
     speech_db = speech_level_db(clip_path) if clip_has_audio and not video_only else None
     usable = []
@@ -349,14 +360,16 @@ def build_inserts_args(
             continue
         if ins["at"] >= duration - 0.05:
             continue
-        end = min(duration, ins["at"] + ins["duration"])
+        f0 = frame_at(ins["at"], rate)
+        f1 = max(f0 + 1, frame_at(min(duration, ins["at"] + ins["duration"]), rate))
+        at, end = f0 / rate, f1 / rate
         kind = asset["kind"]
         mode = "sound" if kind == "audio" else ins["mode"]
         if mode == "sound" and not (kind == "audio" or asset.get("has_audio")):
             continue  # a silent picture has nothing to play as a sound
         if video_only and (mode == "sound" or kind == "audio"):
             continue
-        usable.append({**ins, "end": end, "len": end - ins["at"], "mode": mode, "asset": asset})
+        usable.append({**ins, "at": at, "end": end, "len": end - at, "mode": mode, "asset": asset})
     if not usable:
         return None
 
@@ -364,12 +377,16 @@ def build_inserts_args(
     for ins in usable:
         kind = ins["asset"]["kind"]
         path = ins["asset"]["file_path"]
+        # Картинку читаем чуть дольше окна: последний кадр картинки 25 к/с стоит раньше конца окна,
+        # и overlay (eof_action=pass) отдавал последний кадр окна клипу. Конец показа держит enable,
+        # звук — atrim по len.
+        pic = f"{ins['len'] + PICTURE_TAIL_SEC:.3f}"
         if kind == "image":
-            args += ["-loop", "1", "-t", f"{ins['len']:.3f}", "-i", path]
+            args += ["-loop", "1", "-t", pic, "-i", path]
         elif kind == "gif":
-            args += ["-ignore_loop", "0", "-t", f"{ins['len']:.3f}", "-i", path]
+            args += ["-ignore_loop", "0", "-t", pic, "-i", path]
         elif kind == "video":
-            args += ["-stream_loop", "-1", "-t", f"{ins['len']:.3f}", "-i", path]
+            args += ["-stream_loop", "-1", "-t", pic, "-i", path]
         else:
             args += ["-t", f"{ins['len']:.3f}", "-i", path]
 
@@ -379,6 +396,8 @@ def build_inserts_args(
     ducks: list[str] = []
     for n, ins in enumerate(usable, start=first_input):
         at, end, mode = ins["at"], ins["end"], ins["mode"]
+        # Картинка — кадры f0…f1−1: окно и начало потока вставки на полкадра раньше их краёв.
+        v_at, v_end = at - half, end - half
         kind = ins["asset"]["kind"]
         if mode in ("full", "pip") and kind != "audio":
             if mode == "full":
@@ -390,11 +409,11 @@ def build_inserts_args(
                                           crop=ins.get("crop"))
                 graph.append(
                     f"{chain},format=yuva420p,"
-                    f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
+                    f"setpts=PTS-STARTPTS+{max(0.0, v_at):.3f}/TB[ov{n}]"
                 )
                 if fill == ALPHA_FILL:
                     graph.append(f"{v_last}split=2[bm{n}][bs{n}];[bs{n}]{CLIP_BLUR}[bb{n}];"
-                                 f"[bm{n}][bb{n}]overlay=enable='between(t,{at:.3f},{end:.3f})'[bg{n}]")
+                                 f"[bm{n}][bb{n}]overlay=enable='between(t,{v_at:.3f},{v_end:.3f})'[bg{n}]")
                     v_last = f"[bg{n}]"
             else:
                 # Вставка шириной scale от кадра, высота по пропорциям картинки;
@@ -405,11 +424,11 @@ def build_inserts_args(
                 graph.append(
                     f"[{n}:v]scale={box_w}:{box_h}:force_original_aspect_ratio=decrease,"
                     f"scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuva420p,"
-                    f"setpts=PTS-STARTPTS+{at:.3f}/TB[ov{n}]"
+                    f"setpts=PTS-STARTPTS+{max(0.0, v_at):.3f}/TB[ov{n}]"
                 )
             graph.append(
                 f"{v_last}[ov{n}]overlay=x={x}:y={y}:eof_action=pass:"
-                f"enable='between(t,{at:.3f},{end:.3f})'[v{n}]"
+                f"enable='between(t,{v_at:.3f},{v_end:.3f})'[v{n}]"
             )
             v_last = f"[v{n}]"
             if ins.get("duck") and (mode == "full" or "duck_volume" in ins):
