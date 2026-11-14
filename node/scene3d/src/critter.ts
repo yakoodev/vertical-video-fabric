@@ -24,6 +24,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import { ease, rng, sampleKeys, sampleNumber, type Key } from "./timeline.ts";
 import type { Character } from "./character.ts";
 import type { Prop } from "./props.ts";
+import { addGear, type GearSpec } from "./meme_gear.ts";
 
 export interface CritterLook {
   body?: string;
@@ -61,6 +62,8 @@ export interface CritterSpec {
   seed?: number;
   /** false — моргать только по ``blinks``. */
   autoBlink?: boolean;
+  /** Доспехи и меч (meme_gear.ts): шлем, нагрудник с именем, наплечники, меч — поза меча ключом ``swing``. */
+  gear?: GearSpec;
 }
 
 /** Ручки-обрубки: [поднять в сторону°, махнуть вперёд°, выдвинуть 0..1, покачивание 0..1]. */
@@ -561,6 +564,7 @@ export function createCritter(spec: CritterSpec): Character {
   }
 
   if (look.badge) addBadge(squash, S, look.badge);
+  const gear = spec.gear ? addGear(squash, arms, S, CP, spec.gear) : null;
 
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
@@ -680,6 +684,7 @@ export function createCritter(spec: CritterSpec): Character {
         }
         setNub(a, n, S, t0, raise);
       }
+      gear?.update(t, (fld, d) => num(t, fld, d));
       const f = drawFace(t, v);
       if (f.tint > 0.01) {
         const k = Math.min(1, f.tint) * (0.75 + 0.25 * Math.sin(t0 * 12));
