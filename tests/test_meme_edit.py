@@ -351,3 +351,11 @@ def test_chops_skip_intro_still_frames_and_dead_screen():
         assert w.start >= MP.MIN_CHOP_START_SEC - 1e-6
         assert not (still[0] <= w.start <= still[1] and still[0] <= w.end <= still[1])
         assert not any(a <= w.start <= b or a <= w.end <= b for a, b in dead)
+
+
+def test_real_game_events_spans_are_dicts_and_become_pairs(monkeypatch):
+    fake = types.ModuleType("app.game_events")
+    fake.detect_game_events = lambda path, game="apex": []
+    fake.fight_spans = lambda events: [{"start": 2.0, "end": 9.5, "score": 0.8}]
+    monkeypatch.setitem(sys.modules, "app.game_events", fake)
+    assert EV.fight_spans([{"t": 3, "kind": "kill", "score": 1}]) == [(2.0, 9.5)]

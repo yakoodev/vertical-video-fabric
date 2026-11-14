@@ -460,6 +460,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "list_projects", "list_clips", "get_shots", "create_clip", "create_canvas_clip",
     # смотреть клип и источник
     "get_clip", "get_transcript", "view_frame", "contact_sheet", "source_contact_sheet", "source_loudness",
+    # события геймплея записи игры (app/game_events_tools.py): нокауты, убийства, смерть, бои
+    "game_events",
     "export_timeline_package",
     "find_noises", "get_playbook", "list_modules", "lint_clip", "describe_tool",
     # рендер клипа заданием (app/render_tools.py): без него нечего сдавать

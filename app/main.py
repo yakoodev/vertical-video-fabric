@@ -360,6 +360,11 @@ from app.audio_mix_api import build_audio_mix_router  # noqa: E402
 
 app.include_router(build_audio_mix_router(AuthDep, lambda: store))
 
+# 🎮 События геймплея в записи игры (нокауты, убийства, смерть, победа, выстрелы, реакции) — app/game_events.py.
+from app.game_events_api import build_game_events_router  # noqa: E402
+
+app.include_router(build_game_events_router(AuthDep, lambda: store))
+
 
 app.include_router(agent_router)  # 💬 ИИ-монтажёр: чат редактора + MCP (/mcp), до SPA-ловушки
 

@@ -71,11 +71,21 @@ def cluster_spans(events: list[dict], gap: float = FIGHT_GAP_SEC, pad: float = F
 
 
 def _game_events_module() -> Any:
-    try:
-        from app import game_events  # noqa: PLC0415 - модуль другого агента, может отсутствовать
+    import importlib  # noqa: PLC0415
+
+    try:  # через import_module: подмена в sys.modules (тесты) видна, а атрибут пакета app — нет
+        game_events = importlib.import_module("app.game_events")
     except ImportError:
         return None
     return game_events if hasattr(game_events, "detect_game_events") else None
+
+
+def _span_pair(span: Any) -> tuple[float, float]:
+    """Схватка app.game_events — ``{start, end, score}``; старый контракт — пара ``(start, end)``."""
+    if isinstance(span, dict):
+        return float(span["start"]), float(span["end"])
+    a, b = span[0], span[1]
+    return float(a), float(b)
 
 
 def fight_spans(events: list[dict], duration: float | None = None) -> list[tuple[float, float]]:
@@ -83,7 +93,7 @@ def fight_spans(events: list[dict], duration: float | None = None) -> list[tuple
     module = _game_events_module()
     if module is not None and hasattr(module, "fight_spans"):
         try:
-            return [(float(a), float(b)) for a, b in module.fight_spans(events)]
+            return [_span_pair(span) for span in module.fight_spans(events)]
         except Exception as exc:  # noqa: BLE001 - чужой модуль не должен ронять эдит
             _log.warning("game_events.fight_spans failed: %s", exc)
     return cluster_spans(events, duration=duration)

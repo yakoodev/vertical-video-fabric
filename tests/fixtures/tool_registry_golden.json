@@ -1475,6 +1475,20 @@
 "cost": [
 "cpu"
 ]
+},
+{
+"name": "game_events",
+"title": "События геймплея",
+"description": "88814ce133201f6f",
+"parameters": "f6ec288910181a47",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_game_events",
+"label": true,
+"cost": [
+"cpu"
+]
 }
 ],
 "discovery": [

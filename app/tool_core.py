@@ -372,7 +372,7 @@ def _shared_warning(ctx: ToolContext, piece: dict) -> list[str]:
 # только по проекту); id, которого нет среди проектов, но есть среди источников, он по-прежнему читает как источник.
 SOURCE_ID_TOOLS = frozenset({
     "get_source_transcript", "get_shots", "create_clip", "source_contact_sheet", "source_loudness",
-    "chat_activity", "get_chat", "set_source_audio", "audio_map",
+    "chat_activity", "get_chat", "set_source_audio", "audio_map", "game_events",
 })
 SOURCE_ARGS = {
     "source_id": {"type": "integer", "description": "id видео-источника (поле id в list_projects)"},
