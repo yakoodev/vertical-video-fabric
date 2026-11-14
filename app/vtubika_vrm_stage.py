@@ -166,6 +166,10 @@ def _cast_avatar(hero: str, scale: float) -> dict[str, Any]:
 
 AVATARS["taya_av"] = _cast_avatar("taya", 0.97)
 AVATARS["asya_av"] = _cast_avatar("asya", 0.94)
+# Серия 9 «Караоке при свечах»: Лиля (тёмная эльфийка) на своём эфире и Варя (самая миниатюрная — масштаб больше,
+# чтобы головы двоих в войсе были на одной высоте).
+AVATARS["lilya_av"] = _cast_avatar("lilya", 0.91)
+AVATARS["varya_av"] = _cast_avatar("varya", 1.15)
 
 # Камеры сцены аватара (модель стоит в начале координат, рост ≈ 1.55 м): весь рост, по колено, по грудь, двое.
 AV_CAMS: dict[str, dict] = {

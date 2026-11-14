@@ -214,7 +214,8 @@ def build(plan: dict, words: list[dict], total: float, *, look: str | None = Non
 
     def add_sfx(name: str, t: float) -> None:
         ref, vol = U.SFX[name]
-        sfx.append({"t": round(max(0.0, t), 3), "ref": ref, "volume": vol, "name": name})
+        sfx.append({"t": round(max(0.0, t), 3), "ref": ref, "volume": vol, "name": name,
+                    **({"dur": U.SFX_DUR[name]} if name in U.SFX_DUR else {})})
 
     for n, s in enumerate(plan["sentences"]):
         st = times[n]
