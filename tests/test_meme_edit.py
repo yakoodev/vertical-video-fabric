@@ -136,6 +136,10 @@ def test_punch_parts_cut_silence_keep_echo():
     short = T.punch_parts([_w("Нет", 1.0, 1.3)], [[1.0, 1.3]], 3.0)
     assert T.total(short) >= T.PUNCH_MIN_SEC - 1e-6
     assert T.punch_parts([], [], 6.0) == [[1.9, 4.1]]
+    # мат мема вырезан из удара целиком
+    swear = [_w("Ой", 0.2, 0.5), _w("бля", 0.6, 0.9), _w("летим", 1.0, 1.5)]
+    cut = T.punch_parts(swear, [[0.2, 1.5]], 2.0, skip=T.swear_spans(swear))
+    assert not any(a < 0.85 and b > 0.65 for a, b in cut)
 
 
 def test_insert_parts_survive_normalize_and_reach_render(monkeypatch, tmp_path):

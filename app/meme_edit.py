@@ -139,13 +139,14 @@ def _music(store: Any, music_track_id: Any, music_asset_id: Any, notes: list[str
 
 def punch_lengths(picks: list[M.Pick]) -> tuple[dict[int, list], dict[int, float]]:
     """Удар каждого выбранного мема: куски (эхо-слово игрока — в середине выбора) и их длина."""
-    from app.meme_trim import punch_parts, total
+    from app.meme_trim import punch_parts, swear_spans, total
 
     parts: dict[int, list] = {}
     for p in picks:
         mid = int(p.meme["meme_id"])
-        parts[mid] = punch_parts(p.meme.get("transcript_words"), p.meme.get("voiced"),
-                                 float(p.meme.get("duration_sec") or 0), focus=p.echo or p.cand.text.split())
+        words = p.meme.get("transcript_words")
+        parts[mid] = punch_parts(words, p.meme.get("voiced"), float(p.meme.get("duration_sec") or 0),
+                                 focus=p.echo or p.cand.text.split(), skip=swear_spans(words))
     return parts, {mid: total(v) for mid, v in parts.items()}
 
 

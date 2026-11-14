@@ -132,15 +132,40 @@ def total(parts: list[list[float]]) -> float:
     return round(sum(b - a for a, b in parts), 3)
 
 
+def _subtract(spans: list[list[float]], holes: list[list[float]]) -> list[list[float]]:
+    out = [list(s) for s in spans]
+    for ha, hb in holes:
+        nxt: list[list[float]] = []
+        for a, b in out:
+            if hb <= a or ha >= b:
+                nxt.append([a, b])
+                continue
+            if ha - a > 0.04:
+                nxt.append([a, ha])
+            if b - hb > 0.04:
+                nxt.append([hb, b])
+        out = nxt
+    return out
+
+
+def swear_spans(words: list[dict] | None) -> list[list[float]]:
+    """Мат в словах мема (app/profanity): эти слова из удара вырезаются целиком."""
+    from app.profanity import find_profanity
+
+    return [[max(0.0, h["start"] - 0.03), h["end"] + 0.03] for h in find_profanity(list(words or []))]
+
+
 def punch_parts(words: list[dict] | None, voiced: list[list[float]] | None, duration: float,
-                focus: Any = (), max_sec: float = PUNCH_MAX_SEC, min_sec: float = PUNCH_MIN_SEC) -> list[list[float]]:
+                focus: Any = (), max_sec: float = PUNCH_MAX_SEC, min_sec: float = PUNCH_MIN_SEC,
+                skip: list[list[float]] | None = None) -> list[list[float]]:
     """Куски мема ``[[a, b], …]`` (секунды файла, по порядку) — его удар длиной ``min_sec``…``max_sec``.
 
     Основа — звучащие отрезки (``voiced``: громкость), уточнённые словами расшифровки (``words`` с временем): паузы
     длиннее 0.2 с вырезаны, вокруг звука запас 0.06 с. Всё звучащее короче ``max_sec`` — берётся целиком. Длиннее —
     берётся «эхо» (фраза со словом из ``focus`` — словом игрока, на которое мем отвечает) или, если эха нет,
     последняя фраза (панчлайн мема обычно в конце), и к ним добавляются соседние фразы, пока влезают. Звука нет —
-    середина файла длиной ``max_sec``. Короче ``min_sec`` после вырезов — паузы не вырезаются (кусок целиком)."""
+    середина файла длиной ``max_sec``. Короче ``min_sec`` после вырезов — паузы не вырезаются (кусок целиком).
+    ``skip`` — отрезки, которых в ударе быть не должно (мат мема, ``swear_spans``)."""
     duration = max(0.0, float(duration or 0.0))
     if duration <= 0:
         return []
@@ -153,6 +178,9 @@ def punch_parts(words: list[dict] | None, voiced: list[list[float]] | None, dura
         sound = _merge(speech + [s for s in sound if any(s[0] < b + 0.3 and s[1] > a - 0.3 for a, b in speech)],
                        GAP_CUT_SEC)
     sound = _clip(sound, 0.0, duration)
+    if skip:
+        sound = _subtract(sound, skip)
+        words = [w for w in words if not any(a < float(w["end"]) and float(w["start"]) < b for a, b in skip)]
     if not sound:
         mid = max(0.0, duration / 2 - max_sec / 2)
         return [[round(mid, 3), round(min(duration, mid + max_sec), 3)]]
