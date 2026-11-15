@@ -1301,8 +1301,8 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "ce7dd00b8ea11479",
-"parameters": "93fbee834d6991b1",
+"description": "bb5b15671275eec2",
+"parameters": "741112d481484077",
 "mutating": false,
 "scope": "clip",
 "module": null,
