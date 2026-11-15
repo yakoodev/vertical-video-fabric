@@ -659,12 +659,15 @@ def registry() -> dict[str, Tool]:
         from app.video_meme_tools import tools as video_meme_tools
         # Мем-эдит игры одним вызовом: рубка по долям + врезки видеомемов (app/meme_edit_tools.py).
         from app.meme_edit_tools import tools as meme_edit_tools
+        # Части длинного клипа для TikTok (≤ 58 с песни, стыки на долях, не посреди боя) — app/tiktok_parts_tools.py.
+        from app.tiktok_parts_tools import tools as tiktok_parts_tools
         # События геймплея записи игры (нокауты, убийства, смерть, бои) — app/game_events_tools.py.
         from app.game_events_tools import tools as game_events_tools
 
         _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools(), *lint_tools(),
                                                   *render_tools(), *webpage_tools(), *voice_tools(),
-                                                  *video_meme_tools(), *meme_edit_tools(), *game_events_tools()]}
+                                                  *video_meme_tools(), *meme_edit_tools(), *tiktok_parts_tools(),
+                                                  *game_events_tools()]}
     return _REGISTRY
 
 
