@@ -1,12 +1,36 @@
-"""Начальные промпты: можно ли обновить строку базы новым текстом (из ``app/db.py``)."""
+"""Начальные промпты: можно ли обновить строку базы новым текстом (из ``app/db.py``).
+
+Надёжный путь — отпечаток текста, который сид записал в прошлый раз (``seeded_hashes``, ключ
+``DEFAULT_PROMPT_HASHES_KEY`` в app_settings): строка с тем же текстом не тронута владельцем — её можно
+обновить; другой текст — правка владельца, её не трогаем никогда. Базы до этого ключа (первый запуск)
+решают по-старому: прежний текст по умолчанию (legacy) или отпечаток строк + время правки не позже сида.
+"""
 
 from __future__ import annotations
 
+import hashlib
 
-def _should_update_seeded_prompt(existing, legacy_prompt: str | None, seed_updated_at: str) -> bool:
+# app_settings: {"task|label": sha256 текста, который сид оставил в строке}.
+DEFAULT_PROMPT_HASHES_KEY = "default_prompt_presets_hashes"
+
+
+def prompt_hash(prompt: str | None) -> str:
+    return hashlib.sha256(str(prompt or "").strip().encode("utf-8")).hexdigest()
+
+
+def preset_key(task: str, label: str) -> str:
+    return f"{task}|{label}"
+
+
+def _should_update_seeded_prompt(existing, legacy_prompt: str | None, seed_updated_at: str,
+                                 seeded_hashes: dict | None = None) -> bool:
     current_prompt = str(existing["prompt"] or "").strip()
     if legacy_prompt and current_prompt == legacy_prompt:
         return True
+    recorded = (seeded_hashes or {}).get(preset_key(str(existing["task"]), str(existing["label"])))
+    if recorded:
+        # Сид знает, что он сюда писал: совпало — не тронуто; нет — правка владельца, даже со старыми строками.
+        return prompt_hash(current_prompt) == recorded
     if not seed_updated_at:
         return False
     updated_at = str(existing["updated_at"] or "")

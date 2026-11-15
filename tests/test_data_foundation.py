@@ -4,6 +4,7 @@ import pytest
 
 from app.crypto import CookieCipher
 from app.db import Database
+from app.db_prompt_fingerprints import DEFAULT_PROMPT_HASHES_KEY
 from app.default_prompts import ANIME_ANALYSIS_PROMPT, ANIME_SUBTITLE_PROMPT, DEFAULT_PROMPT_SEED_KEY, LEGACY_DEFAULT_PROMPTS
 from app.settings import settings
 from app.store import AppStore
@@ -120,6 +121,8 @@ def test_database_init_updates_only_unchanged_legacy_default_prompts(tmp_path):
     db = Database(tmp_path / "app.sqlite")
     db.init()
     db.execute("UPDATE app_settings SET value_json = ? WHERE key = ?", ('"20260611-anime-series-v1"', DEFAULT_PROMPT_SEED_KEY))
+    # База до отпечатков сида: решают legacy-текст и отпечаток строк + время.
+    db.execute("DELETE FROM app_settings WHERE key = ?", (DEFAULT_PROMPT_HASHES_KEY,))
     db.execute(
         "UPDATE prompt_presets SET prompt = ? WHERE task = ? AND label = ?",
         (LEGACY_DEFAULT_PROMPTS[("analysis", "Anime analysis")], "analysis", "Anime analysis"),
@@ -166,6 +169,33 @@ def test_database_init_updates_only_unchanged_legacy_default_prompts(tmp_path):
     assert anime_subtitles["prompt"] == ANIME_SUBTITLE_PROMPT
     assert series_subtitles["prompt"] == "custom subtitles prompt"
 
+
+
+def test_owner_edit_survives_restarts_and_new_defaults_reach_untouched_rows(tmp_path, monkeypatch):
+    """Сид помнит, что писал в строку: правка владельца со строками-отпечатками не затирается ни повторным
+    запуском, ни новой версией промптов, а нетронутый текст новую версию получает (16.11)."""
+    import app.db as db_module
+
+    db = Database(tmp_path / "app.sqlite")
+    db.init()
+    publishing = db.query_one("SELECT prompt FROM prompt_presets WHERE task = 'publishing'")["prompt"]
+    edited = publishing + "\nМой канал: всегда добавляй #апекс."
+    db.execute("UPDATE prompt_presets SET prompt = ?, updated_at = '2000-01-01 00:00:00' WHERE task = 'publishing'",
+               (edited,))
+    db.init()
+    db.init()
+    assert db.query_one("SELECT prompt FROM prompt_presets WHERE task = 'publishing'")["prompt"] == edited
+
+    presets = [dict(p) for p in db_module.DEFAULT_PROMPT_PRESETS]
+    for preset in presets:
+        preset["prompt"] = preset["prompt"] + "\n- new rule v-next"
+    monkeypatch.setattr(db_module, "DEFAULT_PROMPT_PRESETS", tuple(presets))
+    monkeypatch.setattr(db_module, "DEFAULT_PROMPT_SEED_VERSION", "test-next")
+    db.init()
+    rows = {(r["task"], r["label"]): r["prompt"] for r in db.query_all("SELECT task, label, prompt FROM prompt_presets")}
+    assert rows[("publishing", "Publishing metadata")] == edited
+    assert rows[("analysis", "Apex analysis")].endswith("- new rule v-next")
+    assert rows[("subtitle", "Series subtitles")].endswith("- new rule v-next")
 
 def test_pipeline_store_crud_and_segment_validation(tmp_path, monkeypatch):
     store = _store(tmp_path, monkeypatch)
