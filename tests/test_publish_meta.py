@@ -76,3 +76,29 @@ def test_generate_uses_preset_and_context():
     assert model == "m"
     assert "Без эмодзи." in text and "я удалю" in text
     assert payload["generationConfig"]["responseMimeType"] == "application/json"
+
+
+def test_rules_ban_cringe_and_give_the_movie_caption_format():
+    """Владелец 15.11: подписи без «кринжа», мувики в TikTok — «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ игра ⨯ трек · N/M»."""
+    from app.ai.publish_meta import BASE_RULES, rules_for_format
+
+    assert "зовут досмотреть" not in BASE_RULES
+    assert "вопросы-приманки" in BASE_RULES and "смотри до" in BASE_RULES
+    assert "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ <игра> ⨯ <трек> · N/M" in BASE_RULES
+    wide = rules_for_format("16:9")
+    assert "2–4 предложения, как у ролика YouTube" in wide and "#shorts, #стрим" not in wide
+
+
+def test_tiktok_variant_keeps_the_cross_separator_and_small_caps():
+    caption = "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ ᴀᴘᴇx ⨯ ʙᴜʀɴ ʏᴏᴜʀ ʟᴏᴄᴀʟ ᴘᴏʟɪᴛɪᴄɪᴀɴ · 1/3"
+    meta = parse_metadata(json.dumps({"title": "Апекс мувик", "description": "", "hashtags": ["#апекс"],
+                                      "tiktok": {"title": caption + " 🔥", "description": ""}}, ensure_ascii=False))
+    assert meta["platforms"]["tiktok"]["title"] == caption
+
+
+def test_context_names_the_clip_song():
+    store = FakeStore()
+    store.plan = {**store.plan, "render_settings": {"music_on": True, "track_id": 5}}
+    store.get_audio_track = lambda track_id: {"id": track_id, "label": "RUZLXN — BURN YOUR LOCAL POLITICIAN!"}
+    assert clip_context(store, store.clip)["music"] == "RUZLXN — BURN YOUR LOCAL POLITICIAN!"
+    assert "music" not in clip_context(FakeStore(), FakeStore().clip)

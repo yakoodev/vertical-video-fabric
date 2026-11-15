@@ -9,7 +9,12 @@ from pathlib import Path
 from functools import wraps
 from typing import Any, Callable, Iterable, Iterator
 
-from app.db_prompt_fingerprints import _should_update_seeded_prompt
+from app.db_prompt_fingerprints import (
+    DEFAULT_PROMPT_HASHES_KEY,
+    _should_update_seeded_prompt,
+    preset_key,
+    prompt_hash,
+)
 from app.default_prompts import (
     DEFAULT_PROMPT_PRESETS,
     DEFAULT_PROMPT_SEED_KEY,
@@ -775,6 +780,11 @@ class Database:
         ).fetchone()
         seed_is_current = bool(seed_row and _json_value(seed_row["value_json"]) == DEFAULT_PROMPT_SEED_VERSION)
         seed_updated_at = str(seed_row["updated_at"] or "") if seed_row else ""
+        hashes_row = conn.execute(
+            "SELECT value_json FROM app_settings WHERE key = ?", (DEFAULT_PROMPT_HASHES_KEY,)
+        ).fetchone()
+        seeded_hashes = _json_value(hashes_row["value_json"]) if hashes_row else None
+        seeded_hashes = seeded_hashes if isinstance(seeded_hashes, dict) else {}
 
         existing_rows = {
             (row["task"], row["label"]): row
@@ -793,7 +803,7 @@ class Database:
                 legacy_prompt = LEGACY_DEFAULT_PROMPTS.get(key)
                 if str(existing["prompt"] or "").strip() == str(preset["prompt"]).strip():
                     continue
-                if _should_update_seeded_prompt(existing, legacy_prompt, seed_updated_at):
+                if _should_update_seeded_prompt(existing, legacy_prompt, seed_updated_at, seeded_hashes):
                     conn.execute(
                         """
                         UPDATE prompt_presets
@@ -826,6 +836,20 @@ class Database:
             """,
             (DEFAULT_PROMPT_SEED_KEY, json.dumps(DEFAULT_PROMPT_SEED_VERSION)),
         )
+        # Что сид оставил в строках: следующий запуск отличит нетронутый текст от правки владельца без времени правки.
+        new_hashes = {preset_key(str(p["task"]), str(p["label"])): prompt_hash(str(p["prompt"])) for p in DEFAULT_PROMPT_PRESETS}
+        if new_hashes != seeded_hashes:
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value_json, encrypted)
+                VALUES (?, ?, 0)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    encrypted = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (DEFAULT_PROMPT_HASHES_KEY, json.dumps(new_hashes, ensure_ascii=False, sort_keys=True)),
+            )
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
