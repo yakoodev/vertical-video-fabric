@@ -85,6 +85,8 @@ def film_clips(film: str, path: str | Path, F: dict, exclude: list | None = None
                 "t_peak": round(f["peak"] / fps, 4), "motion": f["motion"], "peak_val": f["peak_val"],
                 "camera": f["camera"], "luma": f["luma"], "contrast": f["contrast"], "sat": f["sat"],
                 "cx": f["cx"], "score": sc,
+                # share of near-identical consecutive frames (holds, static shots) — reads as a freeze when slowed
+                "static_frac": round(float((F["pix_d"][wa + 1:wb] < 0.7).mean()) if wb - wa > 2 else 1.0, 3),
                 "dir_in": _dir(F, wa + 1, wa + 1 + k), "dir_out": _dir(F, wb - k, wb),
             })
     return out

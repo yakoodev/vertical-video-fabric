@@ -247,6 +247,9 @@ def clip_score(seg: dict, clip: dict, prev: dict | None, run_len: int, run_targe
     sc = 0.35 * clip.get("score", 0.3) + 0.30 * fit + 0.45 * ch
     if clip.get("energy", 0.5) < 0.2:      # near-static shots read as a freeze, worse when slowed down
         sc -= 0.45
+    sf = clip.get("static_frac", 0.0)
+    if sf > 0.25:                          # holds / frozen frames inside the clip
+        sc -= 1.2 * (sf - 0.25) / 0.75 + 0.3
     if seg["drop"]:
         sc += 0.6 * clip.get("impact", 0.0) + 0.2 * ch
     elif seg["accent"] >= 0.4 and seg["level"] >= 2:

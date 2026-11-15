@@ -282,3 +282,12 @@ def test_refscan_beat_and_accent_stats():
     onsets = [(t, 0.8) for t in np.arange(0.3, 20, 2.0)]
     acc = refscan.accent_alignment([t for t, _ in onsets], onsets, 20.0, levels=(0.5,))
     assert acc["0.5"]["real"] == 1.0 and acc["0.5"]["lift"] > 5
+
+
+def test_static_and_low_motion_clips_lose():
+    seg = {"i": 1, "t0": 0, "t1": 1.6, "dur": 1.6, "level": 0, "drop": False, "ta": 0, "accent": 0}
+    moving = clip("m", "A", 0)
+    held = dict(clip("h", "A", 0), static_frac=0.9)
+    still = clip("s", "A", 0, energy=0.1)
+    assert plan.clip_score(seg, moving, None, 0, 3) > plan.clip_score(seg, held, None, 0, 3) + 0.5
+    assert plan.clip_score(seg, moving, None, 0, 3) > plan.clip_score(seg, still, None, 0, 3)
