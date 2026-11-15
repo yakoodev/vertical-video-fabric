@@ -149,7 +149,7 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
     props = layer.get("props") or {}
     ltype = layer.get("type")
     refs: list[int | str] = []
-    if ltype == "image":
+    if ltype in ("image", "logo_reveal"):
         ref = _as_ref(props.get("asset_id")) or _as_ref(props.get("src"))
         if ref is not None:
             refs.append(ref)

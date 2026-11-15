@@ -296,8 +296,29 @@ def resolve_layer_assets(store: Any, layers: list[dict]) -> tuple[list[dict], di
                 break
             assets[key] = str(path)
         if ok:
-            kept.append(layer)
+            kept.append(_with_logo_strokes(layer, assets, notes))
     return kept, assets, notes
+
+
+def _with_logo_strokes(layer: dict, assets: dict[str, str], notes: list[str]) -> dict:
+    """Слою ``logo_reveal`` без мазков — мазки из его картинки (app/logo_vectorize.py, кэш по файлу):
+    рендер и кадр агента рисуют письмо кистью и без заранее сохранённых ``props.logo``."""
+    props = layer.get("props") or {}
+    if layer.get("type") != "logo_reveal" or props.get("logo"):
+        return layer
+    refs = layer_asset_refs(layer)
+    path = assets.get(asset_key(refs[0])) if refs else None
+    if not path:
+        return layer
+    from app.logo_vectorize import cached_vectorize
+    from app.settings import settings
+
+    try:
+        logo = cached_vectorize(path, settings.tmp_dir / "logo-vectors")
+    except (OSError, ValueError) as exc:
+        notes.append(f"слой {layer.get('id')}: мазки логотипа не извлечены ({exc}) — откроется слева направо")
+        return layer
+    return {**layer, "props": {**props, "logo": logo}}
 
 
 def _resolve_ref(store: Any, ref: int | str, layer_type: str) -> Path | None:

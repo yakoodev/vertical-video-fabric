@@ -27,6 +27,11 @@ export function collectImageRefs(layers: Layer[]): string[] {
         if (ref) out.add(String(ref));
         break;
       }
+      case "logo_reveal": {
+        const ref = layer.props.asset_id ?? layer.props.src;
+        if (ref !== undefined && ref !== null && ref !== "") out.add(String(ref));
+        break;
+      }
       case "emoji":
         if (layer.props.char) out.add(emojiRef(layer.props.char));
         break;

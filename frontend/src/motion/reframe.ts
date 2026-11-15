@@ -185,6 +185,16 @@ export function layerSize(layer: Obj, sizes: AssetSizes | null = null): [number,
     return [size, size];
   }
   if (kind === "image" || kind === "video") return pictureSize(layer, sizes);
+  if (kind === "logo_reveal") {
+    // Логотип: ширина w, высота по aspect мазков или пропорции картинки (как app/aspect.logo_reveal_size).
+    const w = num(props.w, 900);
+    let ratio = isObj(props.logo) ? num(props.logo.aspect, 0) : 0;
+    if (ratio <= 0) {
+      const natural = (sizes || {})[assetKey(props.asset_id || props.src)];
+      ratio = natural && natural[0] > 0 && natural[1] > 0 ? natural[1] / natural[0] : 0.4;
+    }
+    return [w, w * ratio];
+  }
   if (kind === "page") {
     // Страница: окно region (CSS px) шириной w, высота по его пропорции; без окна — экран 9:19.5 (как app/aspect.layer_size).
     const w = num(props.w, 560);

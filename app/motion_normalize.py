@@ -411,6 +411,9 @@ def _check_required(layer: dict, rep: _Report, where: str) -> None:
         rep(f"{where}.props.text", "пустой текст — слой ничего не покажет")
     elif ltype == "image" and props["asset_id"] is None and props["src"] is None:
         rep(f"{where}.props", "у картинки нужен asset_id (файл для монтажа) или src (emoji:… / sticker:…)")
+    elif ltype == "logo_reveal" and props["asset_id"] is None:
+        rep(f"{where}.props.asset_id", "у логотипа нужен asset_id — картинка логотипа из «Файлов для монтажа» "
+                                       "(PNG с прозрачностью или JPG на однотонном фоне)")
     elif ltype == "video" and props["asset_id"] is None:
         rep(f"{where}.props.asset_id", "у видео нужен asset_id — видео из «Файлов для монтажа» "
                                        "(upload_video / add_video_from_source)")

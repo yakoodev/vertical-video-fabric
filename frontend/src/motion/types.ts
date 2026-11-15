@@ -697,6 +697,59 @@ export type SceneProps = {
   scene: Record<string, unknown>;
 };
 
+/* ---------- логотип, который пишется кистью ---------- */
+
+/** Мазок логотипа: точки [x, y, r, …] в долях ширины картинки, g — буква (группа), closed — кольцо. */
+export type LogoStroke = { p: number[]; g?: number; closed?: boolean };
+
+/** Мазки логотипа (app/logo_vectorize.py): aspect — h/w картинки, dots — брызги [x, y, r, мазок, доля пути]. */
+export type LogoVector = { v?: number; aspect: number; spread?: number; pad?: number; strokes: LogoStroke[]; dots?: number[][]; coverage?: number };
+
+/**
+ * Логотип пишется кистью (layers/logoreveal.ts): картинка `asset_id`/`src` открывается вдоль мазков
+ * `logo` (их извлекает сервер), с брызгами, свечением `glow`, ударом `hit` и уходом `exit`.
+ */
+export type LogoRevealProps = {
+  asset_id?: string | number;
+  src?: string;
+  logo?: LogoVector | null;
+  /** Ширина логотипа, опорные px (высота — по aspect). */
+  w?: number;
+  /** За сколько секунд пишется весь логотип и с какой секунды слоя начинает. */
+  draw?: number;
+  delay?: number;
+  /** Свой порядок мазков (номера в logo.strokes); остальные — следом. */
+  order?: number[] | null;
+  /** Как открывается: brush — кистью по мазкам (по умолчанию), sweep — полоса света слева направо, ink — пятно чернил из центра. */
+  reveal?: "brush" | "sweep" | "ink";
+  /** Перекрасить буквы (null — свои цвета картинки). */
+  color?: string | null;
+  /** Цвет свечения (null — без него), размер ореола в опорных px и сила 0..3. */
+  glow?: string | null;
+  glowSize?: number;
+  glowStrength?: number;
+  /** Брызги чернил 0..1 и их цвет (нет — color или белый). */
+  splatter?: number;
+  splatterColor?: string | null;
+  /** Рваность кончика кисти 0..1. */
+  brush?: number;
+  /** Удар: at — секунда слоя (нет — конец письма), scale — рывок масштаба, flash — вспышка свечения, burst — россыпь капель, shake — тряска (опорные px). */
+  hit?: { at?: number; scale?: number; flash?: number; burst?: number; shake?: number } | null;
+  /** Уход в конце слоя: fade, wipe (стирание кистью), slash (росчерк и разлёт), scratch (царапины стирают); angle — наклон, градусы. */
+  exit?: { kind?: "none" | "fade" | "wipe" | "slash" | "scratch"; dur?: number; angle?: number } | null;
+  /**
+   * Кипение — рисованная анимация на двойках (layers/logoboil.ts): размах перерисовки, опорные px (0 — нет;
+   * 2–4 — как у владельца). sketch — пока пишется, это контур от руки на тёмной туши, потом рывок `burst`
+   * секунд (царапины, рваные полосы, смаз) в залитый логотип; живой логотип — петля из `loop` рисунков.
+   */
+  boil?: number;
+  sketch?: boolean;
+  burst?: number;
+  loop?: number;
+  scratches?: number;
+  seed?: number;
+};
+
 export type LayerPropsMap = {
   text: TextProps;
   shape: ShapeProps;
@@ -724,6 +777,8 @@ export type LayerPropsMap = {
   flow_diagram: FlowDiagramProps;
   /** Плоский интерфейс на токенах темы (flat/): чип, заголовок, хук, карточка с числом, полосы, чек-лист, окно… */
   ui: FlatUiProps;
+  /** Логотип пишется кистью (layers/logoreveal.ts). */
+  logo_reveal: LogoRevealProps;
   /** Перетекающий переход между сценами (flow.ts): сам не рисуется, ведёт группы слоёв A и B. */
   transition: TransitionProps;
 };
@@ -832,6 +887,7 @@ export type WaveformLayer = LayerOf<"waveform">;
 export type TileWallLayer = LayerOf<"tile_wall">;
 export type FlowDiagramLayer = LayerOf<"flow_diagram">;
 export type UiLayer = LayerOf<"ui">;
+export type LogoRevealLayer = LayerOf<"logo_reveal">;
 export type TransitionLayerOf = LayerOf<"transition">;
 
 export type Layer =
@@ -860,6 +916,7 @@ export type Layer =
   | TileWallLayer
   | FlowDiagramLayer
   | UiLayer
+  | LogoRevealLayer
   | TransitionLayerOf;
 
 /**
