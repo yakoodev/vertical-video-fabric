@@ -202,7 +202,9 @@ def tools() -> list[Tool]:
             "сами, субтитры куска растягиваются в 1/speed (у реверса скрыты). audio: tempo (по умолчанию у скорости — "
             "речь без смены тона), pitch (как плёнка: на слоу-мо ниже), mute (по умолчанию у реверса), reverse (звук "
             "задом, только с reverse). Повтор килла в слоу-мо — отдельный кусок того же момента (create_clip/"
-            "spec) со speed 0.5. speed 1 и reverse false — снять. / Piece playback speed and reverse.",
+            "spec) со speed 0.5. speed 1 и reverse false — снять. Не запрещает, но предупреждает (warnings) по правилам "
+            "владельца: медленнее 0.3 — почти стоп-кадр; у записи игры и мувика — вне 0.87–1.15× (рамп к моменту, "
+            "без стоп-кадров, под текст не замедлять). / Piece playback speed and reverse.",
             _obj({"piece": {"type": "integer"}, "speed": {"type": "number", "description": "0.25..4, 1 — как есть"},
                   "reverse": {"type": "boolean"},
                   "audio": {"type": "string", "enum": ["tempo", "pitch", "mute", "reverse"]}}, ["piece"]),

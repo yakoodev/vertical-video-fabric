@@ -234,3 +234,40 @@ def test_real_render_of_clip_with_slow_and_reversed_pieces(tmp_path, monkeypatch
     clip = service.render_clip_plan(single["id"], ffmpeg_preset_id=preset["id"])
     assert clip["status"] == "succeeded", clip.get("error")
     assert _probe(Path(clip["output_path"]))["video"] == pytest.approx(2.5, abs=0.15)
+
+
+# ------------------------------------------------------------------ правило скорости владельца (журнал 15.11)
+
+
+def test_speed_warnings_follow_owner_rule():
+    from app.cut_tools_pieces import speed_warnings
+
+    near = speed_warnings(0.25, None)
+    assert len(near) == 1 and "почти стоп-кадр" in near[0] and "freeze_frame" in near[0]
+    assert "ступеньками" in speed_warnings(0.4, None)[0]
+    assert speed_warnings(2.0, None) == [] and speed_warnings(0.8, None) == []
+    frag = speed_warnings(0.8, "apex")
+    assert len(frag) == 1 and "0.87–1.15" in frag[0] and "рамп" in frag[0] and "apex" in frag[0]
+    assert speed_warnings(1.5, "мувик") and speed_warnings(0.87, "apex") == speed_warnings(1.15, "apex") == []
+    assert speed_warnings(1.0, "apex") == []
+    both = speed_warnings(0.25, "apex")
+    assert len(both) == 2 and "почти стоп-кадр" in both[0] and "0.87–1.15" in both[1]
+
+
+def test_set_segment_speed_warns_on_game_clip_but_does_not_block(tmp_path, monkeypatch):
+    store, _service, plan, _preset = _two_pieces(tmp_path, monkeypatch)
+    ctx = _ctx(store, plan["id"])
+
+    out, ok = run_tool(ctx, "set_segment_speed", {"piece": 0, "speed": 0.8})
+    assert ok and "warnings" not in out  # разговорный клип: 0.8 — обычное замедление
+
+    store.update_source(plan["source_id"], metadata={"format": {"tags": {"title": "Apex Legends 2026-11-15"}}})
+    out, ok = run_tool(ctx, "set_segment_speed", {"piece": 0, "speed": 0.8})
+    assert ok and out["speed"] == 0.8, out  # не запрет: скорость сохранена
+    assert any("0.87–1.15" in w and "frag-movie" in w for w in out["warnings"])
+    out, ok = run_tool(ctx, "set_segment_speed", {"piece": 0, "speed": 1.1})
+    assert ok and "warnings" not in out
+    out, ok = run_tool(ctx, "set_segment_speed", {"piece": 1, "speed": 0.25})
+    assert ok and "почти стоп-кадр" in out["warnings"][0] and "0.87–1.15" in out["warnings"][1]
+    assert "длинное слоу-мо" in out["warnings"][2]  # прежнее предупреждение на месте
+    assert store.get_clip_plan(plan["id"])["render_settings"]["speed"][-1]["speed"] == 0.25

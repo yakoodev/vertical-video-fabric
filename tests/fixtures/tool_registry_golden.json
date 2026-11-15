@@ -1015,7 +1015,7 @@
 {
 "name": "set_segment_speed",
 "title": "Скорость куска",
-"description": "3061870a52e60862",
+"description": "e3dd0e9ca72abf23",
 "parameters": "c9ac385bbf4f9519",
 "mutating": true,
 "scope": "clip",

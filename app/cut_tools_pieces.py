@@ -124,6 +124,61 @@ def h_trim_piece(ctx: ToolContext, args: dict) -> dict:
 
 MAX_FIT_PIECE_SEC = 12.0
 
+# Правило владельца по скорости (журнал монтажа 15.11, плейбук frag-movie): мувик игры — 0.87–1.15×, рамп к
+# ключевому моменту; почти-стоп (слоу-мо до стоп-кадра под текст) он забраковал: «клип просто остановился».
+FRAG_SPEED_MIN, FRAG_SPEED_MAX = 0.87, 1.15
+NEAR_FREEZE_SPEED = 0.3
+FRAG_SPEED_RULE = ("правило владельца для мувиков игры (журнал монтажа 15.11, плейбук frag-movie): скорость "
+                   "0.87–1.15× — умный рамп к ключевому моменту (подход чуть быстрее, нок чуть медленнее); стрельбу "
+                   "резко не ускорять, стоп-кадров и почти-стопа нет, под текст не замедлять — пусть идёт как есть")
+NEAR_FREEZE_RULE = ("медленнее 0.3× — почти стоп-кадр: владелец забраковал «клип просто остановился» (журнал "
+                    "монтажа 15.11, мувик BURN v3). Замедляй умеренно (подход к моменту), а нужна пауза — "
+                    "осознанный freeze_frame; проверь рендер lint_clip(checks: [\"freezes\"])")
+# Не «фраг» само по себе: «фрагмент» в названии — не игра.
+FRAG_WORDS = ("мувик", "frag movie", "frag-movie", "fragmovie", "геймплей", "gameplay", "мем-эдит", "meme edit")
+
+
+def gaming_hint(ctx: ToolContext) -> str | None:
+    """Клип — запись игры или мувик? Что нашлось (для текста предупреждения) или None: игра от первого лица в
+    имени файла/тегах/названии (``first_person_hint``), слово «мувик»/«фраг» в названии клипа, события игры
+    в кэше (``game_events`` уже разбирал запись — только Apex)."""
+    try:
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        source = ctx.store.get_source(int(plan["source_id"]))
+    except (KeyError, TypeError, ValueError):
+        return None
+    from app.first_person import first_person_hint, source_texts
+
+    hint = first_person_hint(*source_texts(source, plan))
+    if hint:
+        return hint
+    title = f"{plan.get('title') or ''} {plan.get('description') or ''}".lower()
+    word = next((w for w in FRAG_WORDS if w in title), None)
+    if word:
+        return word
+    try:
+        from app.game_events_job import cached
+
+        if cached(ctx.store, int(source["id"])):
+            return "события игры"
+    except Exception:  # noqa: BLE001 - нет кэша/файла — не игра по этому признаку
+        pass
+    return None
+
+
+def speed_warnings(speed: float, game: str | None) -> list[str]:
+    """Предупреждения о скорости по правилам владельца (не запрет): почти-стоп всегда, вне 0.87–1.15× — у игры."""
+    out = []
+    if speed < NEAR_FREEZE_SPEED - 1e-9:
+        out.append(f"×{speed:g}: {NEAR_FREEZE_RULE}")
+    elif speed < 0.5:
+        out.append("медленнее 0.5 при 30 к/с — кадры повторяются, движение «ступеньками»; для слоу-мо лучше "
+                   "исходник 60 к/с")
+    if game and abs(speed - 1.0) > 1e-9 and not FRAG_SPEED_MIN - 1e-9 <= speed <= FRAG_SPEED_MAX + 1e-9:
+        out.append(f"×{speed:g} вне 0.87–1.15× для игры ({game}): {FRAG_SPEED_RULE}. Повтор килла в слоу-мо — "
+                   "только если владелец просил")
+    return out
+
 
 def h_set_segment_speed(ctx: ToolContext, args: dict) -> dict:
     """Скорость и реверс куска основы (app/piece_speed.py): slow-mo, ускорение, «перемотка»."""
@@ -174,10 +229,7 @@ def h_set_segment_speed(ctx: ToolContext, args: dict) -> dict:
                           "скрыты. Проверь view_frame/contact_sheet и рендер.")}
     if note:
         out["changes"] = [note]
-    warnings = []
-    if speed < 0.5:
-        warnings.append("медленнее 0.5 при 30 к/с — кадры повторяются, движение «ступеньками»; для слоу-мо лучше "
-                        "исходник 60 к/с")
+    warnings = speed_warnings(speed, gaming_hint(ctx))
     if reverse and normalize_audio(render.get("audio")).get("joins"):
         warnings.append("J/L на стыках с развёрнутым куском не работают — звук за краем к реверсу не относится")
     if describe(new_seg) and seg_length(new_seg) > 20:
