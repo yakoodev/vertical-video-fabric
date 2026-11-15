@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 DEFAULT_PROMPT_SEED_KEY = "default_prompt_presets_seeded"
-DEFAULT_PROMPT_SEED_VERSION = "20260920-prompts-v22"
+DEFAULT_PROMPT_SEED_VERSION = "20261116-prompts-v23"
 
 # Universal editing rules appended to EVERY analysis. These must be mode-neutral:
 # no recap mandate and no "reject action unless it explains the plot" — that
@@ -262,6 +262,20 @@ Default content context is Apex Legends gameplay. Preserve tactical meaning:
 legend names, weapons, damage, knocks, revives, rotations, third parties,
 ranked callouts, clutch attempts, squad communication, and fight pacing.
 
+Fight rules (owner feedback on gameplay edits):
+- A fight is one story. Start at the first damage dealt or taken (first shots
+  at a visible enemy), end after the last knock, kill, or squad wipe plus the
+  player's reaction. Keep every knock and kill of that fight inside, in order;
+  never return only the final kill or 1 to 2 kills out of a squad wipe.
+- Take a fight only if it has a substantial event: a knock or kill, big damage
+  (broken shield, hundreds of damage), a survived clutch, or a play with a
+  result. A few damage numbers that lead nowhere is not a moment.
+- Never use as moments or filler: ziplines, jumps, running, looting, reviving,
+  finishing an already knocked enemy, the camera looking at nothing.
+- Fights from the same recording go back to back in chronological order.
+- Keep meaningful or emotional squad voice lines inside the fight (callouts
+  that explain it, shouts, jokes); drop dead time between fights.
+
 For each clip, write a Russian title and Russian description for the combined
 final video. For each segment, explain in Russian why that exact range belongs
 in that clip.
@@ -489,6 +503,9 @@ Description rules:
 - Mention the key context if the clip is a montage or has multiple segments.
 - Avoid clickbait that misrepresents the scene.
 - Use Russian punctuation and compact wording.
+- Write like the channel author, not an ad: no hype clichés ("невероятно",
+  "ты не поверишь", "смотри до конца"), no questions that bait comments, no
+  calls to like or subscribe.
 """.strip()
 
 DEFAULT_SUBTITLE_PROMPT = """

@@ -41,12 +41,20 @@ BASE_RULES = """\
 Ты пишешь метаданные для публикации вертикального клипа (YouTube Shorts, TikTok, Instagram Reels).
 Язык — русский (как в клипе). Верни ТОЛЬКО JSON по схеме.
 - title: до 90 символов, конкретно про то, что происходит в клипе, цепляет, без капса и без вранья о содержании.
-- description: 1–3 коротких предложения, раскрывают момент и зовут досмотреть; без хэштегов внутри.
+- description: 1–3 коротких предложения по делу: что произошло в клипе; без хэштегов внутри.
 - hashtags: 5–10 штук, каждый начинается с #, без пробелов, строчными; сначала 2–4 по теме клипа, затем общие (#shorts, #стрим, #нарезка и т.п. по смыслу).
 - youtube: вариант для YouTube {title, description}: title до 90 символов со словами, по которым ищут; description 1–3 предложения.
 - tiktok: вариант для TikTok {title, description}: title — короткая разговорная подпись до 80 символов; description — одна фраза или пусто.
 - cover_hooks: 3 разных текста для обложки, 2–5 слов каждый: крупно читается, эмоция или интрига момента, без вранья и без хэштегов.
 - Без эмодзи. Не упоминай другие сервисы нарезки и чужие бренды.
+- Без «кринжа»: пиши как автор канала, а не реклама. Нельзя: штампы («невероятно», «ты не поверишь», «смотри до
+  конца», «эпично», «шок»), вопросы-приманки в комментарии («а ты бы смог?», «пиши в комментах»), призывы лайкать
+  и подписываться.
+- Игровой мувик или мем-эдит (нарезка боёв игры под песню — так сказано в названии или описании клипа):
+  tiktok.title — «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ <игра> ⨯ <трек> · N/M» маленькими капителями (пример: «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ ᴀᴘᴇx ⨯ ʙᴜʀɴ ʏᴏᴜʀ ʟᴏᴄᴀʟ
+  ᴘᴏʟɪᴛɪᴄɪᴀɴ · 1/3»): канал — ʏᴀᴋᴏᴏᴅᴇᴠ (другой — только если его задают правила канала), трек — из music
+  (нет — без трека), « · N/M» — только у части серии (номер части есть в названии клипа); tiktok.description —
+  пусто. hashtags таким роликам — 4–6 коротких: игра и жанр (#апекс #apexlegends #мувик), без общих #рек #fyp.
 """
 
 
@@ -63,7 +71,7 @@ def rules_for_format(fmt: str) -> str:
             "Ты пишешь метаданные для публикации ГОРИЗОНТАЛЬНОГО видео 16:9 на YouTube — это обычное видео, "
             "не Shorts/TikTok/Reels (если указания пресета ниже говорят про Shorts — формат клипа важнее)."
         )).replace(
-            "- description: 1–3 коротких предложения, раскрывают момент и зовут досмотреть; без хэштегов внутри.",
+            "- description: 1–3 коротких предложения по делу: что произошло в клипе; без хэштегов внутри.",
             "- description: 2–4 предложения, как у ролика YouTube: что произошло, контекст, зачем смотреть; "
             "без хэштегов внутри.",
         ).replace(
@@ -130,7 +138,7 @@ def clip_context(store: Any, clip: dict) -> dict[str, Any]:
                 if text:
                     lines.append(text)
     transcript = " ".join(lines)[:MAX_TRANSCRIPT_CHARS]
-    return {
+    out = {
         "moment_title": plan.get("title") or clip.get("title") or "",
         "moment_description": plan.get("description") or clip.get("description") or "",
         "category": plan.get("category") or "",
@@ -138,6 +146,21 @@ def clip_context(store: Any, clip: dict) -> dict[str, Any]:
         "duration_sec": round(float(clip.get("duration_sec") or 0), 1),
         "transcript": transcript,
     }
+    music = music_title(store, plan.get("render_settings") or {})
+    if music:
+        out["music"] = music
+    return out
+
+
+def music_title(store: Any, render: dict) -> str:
+    """Название песни клипа (set_music: music_on + track_id) — для подписи мувика; нет — ""."""
+    if not render.get("music_on") or not render.get("track_id"):
+        return ""
+    try:
+        track = store.get_audio_track(int(render["track_id"]))
+    except Exception:  # noqa: BLE001 - нет трека или хранилище без библиотеки: подпись без трека
+        return ""
+    return str(track.get("label") or "").strip()[:120]
 
 
 def project_context(store: Any, clip: dict) -> dict[str, Any]:
@@ -212,7 +235,7 @@ def strip_emoji(text: Any) -> str:
         cat = unicodedata.category(ch)
         if ch in "\n\t":
             out.append(" ")
-        elif cat[0] in "LNP" or ch == " " or ch in "+%№$€₽":
+        elif cat[0] in "LNP" or ch == " " or ch in "+%№$€₽⨯×":  # ⨯ — разделитель подписей мувиков владельца
             out.append(ch)
     return re.sub(r" {2,}", " ", "".join(out)).strip()
 
