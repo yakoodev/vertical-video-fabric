@@ -45,6 +45,7 @@ import { bubblesRenderer } from "./layers/bubbles";
 import { carouselRenderer } from "./layers/carousel";
 import { flowRenderer } from "./layers/flow";
 import { uiRenderer } from "./layers/flatui";
+import { logoRevealRenderer } from "./layers/logoreveal";
 import { tileWallRenderer } from "./layers/tilewall";
 import { waveformRenderer } from "./layers/waveform";
 import { textRenderer } from "./layers/text";
@@ -93,6 +94,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   tile_wall: tileWallRenderer as LayerRenderer,
   flow_diagram: flowRenderer as LayerRenderer,
   ui: uiRenderer as LayerRenderer,
+  logo_reveal: logoRevealRenderer as LayerRenderer,
 };
 
 const NO_WORDS: CaptionWord[] = [];

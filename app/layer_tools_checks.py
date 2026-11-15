@@ -94,6 +94,7 @@ def _layer_summary(layer: dict) -> str:
         "bubbles": lambda: f"облако пузырей ×{len(props.get('items') or [])}",
         "carousel": lambda: f"карусель ×{len(props.get('cards') or [])} «{_short((props.get('cards') or [{}])[0].get('title'))}»",
         "waveform": lambda: f"волна голоса {props.get('style') or 'bars'} ({props.get('source') or 'auto'})",
+        "logo_reveal": lambda: f"логотип кистью #{props.get('asset_id')} ({props.get('reveal') or 'brush'})",
         "tile_wall": lambda: f"стена плиток ×{len(props.get('images') or []) or 'свои'}",
         "flow_diagram": lambda: "схема " + " → ".join(_short(n.get("label")) for n in props.get("nodes") or []),
         "ui": lambda: f"плоский {props.get('component') or 'ui'} «{_short(props.get('title') or props.get('label') or props.get('text'))}»",

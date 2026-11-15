@@ -274,6 +274,8 @@ export function layerTitle(layer: Layer): string {
       return "Стена плиток";
     case "flow_diagram":
       return "Схема сделки";
+    case "logo_reveal":
+      return "Логотип кистью";
     case "ui": {
       const title = layer.props.title || layer.props.label || layer.props.text;
       const kind = { hook: "Хук", chip: "Чип", title: "Заголовок", stat: "Карточка с числом", bars: "Сравнение", counter: "Счётчик", checklist: "Чек-лист", toast: "Уведомление", window: "Окно" }[layer.props.component] ?? "Плоский UI";
@@ -309,6 +311,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   waveform: "≋",
   tile_wall: "▦",
   flow_diagram: "⇄",
+  logo_reveal: "✍",
   ui: "▣",
   transition: "⧉",
 };

@@ -185,6 +185,19 @@ AD_BOXES: dict[str, tuple[float, float, str]] = {
 }
 
 
+def logo_reveal_size(props: dict, sizes: dict | None = None) -> tuple[float, float]:
+    """Рамка логотипа ``logo_reveal``: ширина w, высота по aspect мазков или пропорции картинки (как reframe.ts)."""
+    from app.motion import asset_key
+
+    w = _num(props.get("w"), 900)
+    logo = props.get("logo") if isinstance(props.get("logo"), dict) else {}
+    ratio = _num(logo.get("aspect"), 0)
+    if ratio <= 0:
+        natural = (sizes or {}).get(asset_key(props.get("asset_id") or props.get("src")))
+        ratio = natural[1] / natural[0] if natural and natural[0] > 0 and natural[1] > 0 else 0.4
+    return w, w * ratio
+
+
 def ui_size(props: dict) -> tuple[float, float]:
     """Рамка плоского интерфейса (слой ``ui``, frontend/src/motion/flat): оценка по компоненту и числу пунктов —
     как ``uiSize`` в reframe.ts. Точный размер знает только движок со шрифтами."""
@@ -242,6 +255,8 @@ def layer_size(layer: dict, sizes: dict[str, tuple[int, int]] | None = None) -> 
         return size, size
     if kind in ("image", "video"):
         return _picture_size(layer, sizes)
+    if kind == "logo_reveal":
+        return logo_reveal_size(props, sizes)
     if kind == "page":
         # Страница: окно region (CSS px) шириной w, высота по его пропорции; без окна — экран 9:19.5
         # (как reframe.ts layerSize).

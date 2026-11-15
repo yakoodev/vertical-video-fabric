@@ -36,10 +36,15 @@ LAYER_TYPES = (
     "bubbles", "carousel", "waveform", "tile_wall", "flow_diagram",
     # Плоский интерфейс на токенах темы (frontend/src/motion/flat, layers/flatui.ts; app/motion_schema_flat.py).
     "ui",
+    # Логотип, который пишется кистью (frontend/src/motion/layers/logoreveal.ts, app/logo_vectorize.py).
+    "logo_reveal",
     # Перетекающий переход между сценами (app/motion_flow.py, frontend/src/motion/flow.ts): сам не рисуется.
     "transition",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t not in ("audio", "transition"))
+# logo_reveal: как открывается логотип и как уходит (LOGO_REVEALS / LOGO_EXITS в logoreveal.ts).
+LOGO_REVEALS = ("brush", "sweep", "ink")
+LOGO_EXITS = ("none", "fade", "wipe", "slash", "scratch")
 EASINGS = (
     "linear", "inQuad", "outQuad", "inOutQuad", "inCubic", "outCubic", "inOutCubic",
     "inBack", "outBack", "inOutBack", "outElastic", "outBounce", "step",

@@ -126,6 +126,8 @@ export { bubblesRenderer, bubbleLayout, bubblePoses, bubbleFocus, bubbleAppearAt
 export { carouselRenderer, carouselIndex, carouselOffset, carouselSwitches, CAROUSEL_MAX } from "./layers/carousel";
 export { waveformRenderer, waveHeights, waveTrack, fakeVoice, WAVE_STYLES, WAVE_SOURCES } from "./layers/waveform";
 export { tileWallRenderer, wallProject, wallShift, TILE_COLORS } from "./layers/tilewall";
+export { logoRevealRenderer, logoSchedule, strokeLength, strokeProgress, timeAtProgress, brushEase, pointAt, hitScaleAt, resolveLogo, LOGO_DEFAULTS, LOGO_EXITS, LOGO_REVEALS } from "./layers/logoreveal";
+export { BOIL_FPS, boilDrawing, boilHash } from "./layers/logoboil";
 export {
   FLOW_KINDS, FLOW_DIRECTIONS, FLOW_SHAPES, flowGroups, flowRegion, flowState, flowProgress, morphLayers, isTransition, groupable,
   type FlowKind, type FlowDirection, type FlowShape, type TransitionProps, type TransitionLayer, type FlowState, type GroupXf, type FlowMask,

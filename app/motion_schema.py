@@ -16,8 +16,9 @@ from app.motion_limits import (
     MAX_CAPTION_MARKS, CHAT_STYLES, MAX_CHAT_HIGHLIGHT_USERS, Z_NEAR_LIMIT, Z_FAR_LIMIT, ROT3D_LIMIT,
     CAMERA_Z_LIMIT, CAMERA_ROT_LIMIT, DEFAULT_FOV, FOV_RANGE, DEFAULT_BASE_Z, DEVICE_KINDS, DEFAULT_DEVICE_COLOR,
     VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, AUDIO_MODES, AUDIO_ROLES, TRACK_MIN_GAIN_DB, TRACK_MAX_GAIN_DB,
-    VOICE_THRESHOLD_DB, VOICE_HOLD_SEC, VOICE_ATTACK_SEC, VOICE_SHOUT_DB
+    VOICE_THRESHOLD_DB, VOICE_HOLD_SEC, VOICE_ATTACK_SEC, VOICE_SHOUT_DB, LOGO_REVEALS, LOGO_EXITS
 )
+from app.logo_vectorize import LogoVectorSpec
 from app.motion_fields import (
     Num, Text, Flag, Choice, Color, Colors, Paint, Obj, ListOf, AssetRef, Opt, StatusBar, OnOff, VoiceTrack,
     DbOrAuto, FxChain
@@ -410,6 +411,45 @@ PROPS["scene"] = {
     "h": Opt(Num(1920, 16, 4000, 1)),
     "clip": Opt(Flag(True)),
     "scene": SceneSpec(),
+}
+
+# Логотип пишется кистью (frontend/src/motion/layers/logoreveal.ts): картинка asset_id открывается вдоль
+# мазков logo (app/logo_vectorize.py; нет — рендер извлечёт их сам из файла), брызги, свечение glow,
+# удар hit (null — без удара), уход exit. Умолчания необязательных полей знает движок (LOGO_DEFAULTS).
+PROPS["logo_reveal"] = {
+    "asset_id": AssetRef(),
+    "logo": Opt(LogoVectorSpec()),
+    "w": Num(900, 20, 4000, 1),
+    "draw": Num(1.1, 0.1, 10, 3),
+    "delay": Opt(Num(0, 0, MAX_TIME_SEC, 3)),
+    "order": Opt(ListOf(Num(0, 0, 999, integer=True), 400)),
+    "reveal": Opt(Choice("brush", LOGO_REVEALS)),
+    "color": Opt(Color(None, nullable=True)),
+    "glow": Opt(Color("#ffffff", nullable=True)),
+    "glowSize": Opt(Num(26, 0, 200, 1)),
+    "glowStrength": Opt(Num(1, 0, 3, 3)),
+    "splatter": Opt(Num(0.5, 0, 1, 3)),
+    "splatterColor": Opt(Color(None, nullable=True)),
+    "brush": Opt(Num(0.6, 0, 1, 3)),
+    "hit": Opt(Obj({
+        "at": Opt(Num(1.1, 0, MAX_TIME_SEC, 3)),
+        "scale": Opt(Num(1.07, 1, 1.5, 3)),
+        "flash": Opt(Num(0.8, 0, 1, 3)),
+        "burst": Opt(Num(1, 0, 1, 3)),
+        "shake": Opt(Num(0, 0, 80, 1)),
+    }, nullable=True, default_on=True)),
+    "exit": Opt(Obj({
+        "kind": Choice("none", LOGO_EXITS),
+        "dur": Opt(Num(0.35, 0.05, 5, 3)),
+        "angle": Opt(Num(-16, -80, 80, 2)),
+    }, nullable=True)),
+    "seed": Opt(Num(7, 0, 999999, integer=True)),
+    # Кипение — рисованная анимация на двойках (layers/logoboil.ts): размах, эскиз контуром, рывок, петля.
+    "boil": Opt(Num(0, 0, 20, 2)),
+    "sketch": Opt(Flag(False)),
+    "burst": Opt(Num(0.3, 0, 2, 3)),
+    "loop": Opt(Num(6, 1, 48, integer=True)),
+    "scratches": Opt(Num(6, 0, 24, integer=True)),
 }
 
 PROPS.update(AD_PROPS)
