@@ -358,8 +358,9 @@ def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_mi
             continue
         acc.append((st, t))
     for t, st in song.get("kicks", []):
-        if t0 + 0.1 < t < t1 - 0.1 and level_at(t) >= 2 and st >= 0.35:
-            shakes.append({"t": t, "amp": 0.008 + 0.008 * st, "tau": 0.09, "seed": rng.uniform(0, 6.28)})
+        if t0 + 0.1 < t < t1 - 0.1 and level_at(t) >= 2 and st >= 0.3:
+            # A shakes ~31 % of frames in bursts of ~8 frames: kick-driven, decaying
+            shakes.append({"t": t, "amp": 0.012 + 0.01 * st, "tau": 0.13, "seed": rng.uniform(0, 6.28)})
             if st >= 0.6:
                 punches.append({"t": t, "amp": 0.03, "tau": 0.1})
     acc.sort(reverse=True)

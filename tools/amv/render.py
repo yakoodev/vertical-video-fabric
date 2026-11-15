@@ -86,7 +86,7 @@ def sample(frames: list[np.ndarray], pos: float, step: float, interp: FlowInterp
 
 
 def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H: int, fps: float = 30.0,
-           captions=None, sat: float = 1.18, afade: tuple[float, float] = (0.0, 0.5), progress: bool = True,
+           captions=None, sat: float = 1.0, afade: tuple[float, float] = (0.0, 0.5), progress: bool = True,
            crf: int = 18, vfade: tuple[float, float] = (0.0, 0.0)) -> dict:
     """boxes: {src_path: (x, y, w, h) content box}. Returns render log (frames per segment, source times)."""
     import cv2

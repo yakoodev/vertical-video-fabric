@@ -76,7 +76,7 @@ class Captions:
         self.cues = cues
         self.W, self.H, self.fps = W, H, fps
         self.tall = H > W
-        self.px = int((0.17 if self.tall else 0.14) * min(W, H) * (1.9 if self.tall else 1.0))
+        self.px = int(0.32 * W) if self.tall else int(0.30 * H)   # full-width words, as the reference
         self.font = ImageFont.truetype(str(FONT_DIR / FONT), self.px)
         self.kicks = [k[0] for k in (song or {}).get("kicks", []) if k[1] >= 0.35]
         self.cache: dict = {}
