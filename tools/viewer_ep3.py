@@ -133,12 +133,13 @@ def hits_ep3(events: dict, glitch_times: list[float], total: float, steps: list[
 
 
 def sheet_marks(total: float, step: float = 1.0) -> list[tuple[float, str]]:
-    """Лист: кадр в секунду (0.0 — обложка), последний — за кадр до конца."""
+    """Лист: кадр в секунду (0.0 — обложка), последний — за три кадра до конца."""
     marks, t = [], 0.0
     while t < total - 1e-6:
         marks.append((round(t, 2), ""))
         t += step
-    marks.append((round(total - 1 / 30, 3), "конец"))
+    # за 3 кадра до конца: на последнем кадре ffmpeg-поиск иногда не отдаёт картинку (лист падал)
+    marks.append((round(total - 3 / 30, 3), "конец"))
     return marks
 
 
