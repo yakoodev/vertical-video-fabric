@@ -10,7 +10,7 @@ from app.agent_api import mcp_handle
 from app.agent_tools import ToolContext, run_tool
 
 ROOT = Path(__file__).resolve().parent.parent
-NAMES = {"stream-shorts", "stream-horizontal", "meme-insert", "app-promo"}
+NAMES = {"stream-shorts", "stream-horizontal", "meme-insert", "app-promo", "meme-edit", "frag-movie"}
 # Инструменты, которых в этой ветке может не быть (делает другой агент) — плейбук ссылается условно.
 OPTIONAL_TOOLS = {"censor_profanity"}
 
@@ -74,6 +74,21 @@ def test_mcp_prompts_are_playbooks():
     missing = mcp_handle(None, {"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": {"name": "x"}})
     assert missing["error"]["code"] == -32602
     assert mcp_handle(None, {"jsonrpc": "2.0", "id": 5, "method": "resources/list"})["result"] == {"resources": []}
+
+
+def test_frag_movie_and_meme_edit_carry_the_montage_journal_rules():
+    """Журнал монтажа 14–16.11 (docs/montage-journal.md): правила владельца по мувикам и мем-эдитам — в плейбуках."""
+    movie = playbooks.get_playbook("frag-movie")["text"]
+    for must in ("первого урона", "уничтожения отряда", "подряд и по времени", "0.87–1.15×", "Fps каждой записи",
+                 "set_audio_joins", "−8…−10 дБ", "ВСЕ спетые строки", "только в паузах после киллов",
+                 "Без\n     белых вспышек", "≤ 58 с", "часть N/M", "20-секундные пробы", "≥ 0.6 с", "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯",
+                 "с телефона", "Никакой ИИ-музыки", "только на длинных версиях", "спрашивай прямо"):
+        assert must in movie, must
+    meme = playbooks.get_playbook("meme-edit")["text"]
+    for must in ("реплика → событие → мем", "~10–12 на 4 минуты", "удар 0.8–2 с", "≤ 58 с", "frag-movie"):
+        assert must in meme, must
+    autopilot = playbooks.get_playbook("autopilot")["text"]
+    assert "~0 просмотров" in autopilot and "≤ 58 с" in autopilot
 
 
 def test_vtuber_story_covers_qa_fixes():
