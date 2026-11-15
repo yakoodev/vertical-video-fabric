@@ -31,6 +31,7 @@ import { createCritter, critterHelper, type CritterSpec } from "./critter.ts";
 import { createKodex, type KodexSpec } from "./kodex.ts";
 import { createKodex2, type Kodex2Spec } from "./kodex2.ts";
 import { MEME_PROPS } from "./meme_props.ts";
+import { preloadEmoji } from "./meme_painters_rp.ts";
 import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
 const ASSET_BASE = "http://scene3d.local/packs/";
@@ -212,6 +213,8 @@ class Engine {
     this.spec = spec;
     // Шрифты интерфейса — до экранов и слоёв поверх кадра (их канвасы рисуются этими шрифтами).
     await loadUiFonts();
+    // Эмодзи twemoji для надписей мем-серий (чат, пузыри) — до сборки вещей: их канвасы рисуются сразу.
+    if ((spec.objects || []).some((o) => ["chat_panel", "chat_bubble", "alert_plate"].includes(String(o.primitive)))) await preloadEmoji();
     // Всё «случайное» внутри three (шум AO, uuid) — от засеянного ГПСЧ: одинаково в любом браузере и куске.
     Math.random = rng(20261102);
     const W = spec.width || 1080, H = spec.height || 1920;

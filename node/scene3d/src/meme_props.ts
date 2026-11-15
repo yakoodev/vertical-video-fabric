@@ -20,6 +20,7 @@ import { PANEL_PAINTERS } from "./desk_ui.ts";
 import type { Prop } from "./props.ts";
 import { DUEL_PROPS } from "./meme_props_duel.ts";
 import { CMT_PROPS } from "./meme_props_cmt.ts";
+import { RP_PROPS } from "./meme_props_rp.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, ...extra });
@@ -522,4 +523,5 @@ export const MEME_PROPS: Record<string, (p: Record<string, any>) => Prop> = {
   ...DUEL_PROPS,
   // Серия 7 «Комменты»: ноутбук, карточки комментов, «весь чат», медалька, доска, папки, шкала (meme_props_cmt.ts).
   ...CMT_PROPS,
+  ...RP_PROPS,
 };

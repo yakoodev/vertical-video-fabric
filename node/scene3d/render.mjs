@@ -116,7 +116,7 @@ const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json",
   ".glb": "model/gltf-binary", ".vrm": "model/gltf-binary", ".vrma": "model/gltf-binary", ".gltf": "model/gltf+json", ".bin": "application/octet-stream",
   ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp", ".ktx2": "image/ktx2",
-  ".ttf": "font/ttf", ".otf": "font/otf",
+  ".ttf": "font/ttf", ".otf": "font/otf", ".svg": "image/svg+xml",
 };
 
 /** Файл внутри каталога base или null (никаких «..», абсолютных путей и выхода по симлинку за каталог). */

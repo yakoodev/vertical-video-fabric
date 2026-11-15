@@ -25,6 +25,7 @@ import { ease, rng, sampleKeys, sampleNumber, type Key } from "./timeline.ts";
 import type { Character } from "./character.ts";
 import type { Prop } from "./props.ts";
 import { addGear, type GearSpec } from "./meme_gear.ts";
+import { addCostume, type CostumeSpec } from "./meme_costume.ts";
 
 export interface CritterLook {
   body?: string;
@@ -64,6 +65,8 @@ export interface CritterSpec {
   autoBlink?: boolean;
   /** Доспехи и меч (meme_gear.ts): шлем, нагрудник с именем, наплечники, меч — поза меча ключом ``swing``. */
   gear?: GearSpec;
+  /** Костюм (meme_costume.ts): фартук, ободок горничной, очки, бигуди. */
+  costume?: CostumeSpec;
 }
 
 /** Ручки-обрубки: [поднять в сторону°, махнуть вперёд°, выдвинуть 0..1, покачивание 0..1]. */
@@ -565,6 +568,7 @@ export function createCritter(spec: CritterSpec): Character {
 
   if (look.badge) addBadge(squash, S, look.badge);
   const gear = spec.gear ? addGear(squash, arms, S, CP, spec.gear) : null;
+  if (spec.costume) addCostume(squash, S, CP, spec.costume);
 
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
