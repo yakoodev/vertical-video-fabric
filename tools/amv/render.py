@@ -67,16 +67,12 @@ def sample(frames: list[np.ndarray], pos: float, step: float, interp: FlowInterp
     """Source image at fractional frame position pos; step = source frames per output frame."""
     n = len(frames)
     pos = min(max(pos, 0.0), n - 1.0)
-    if step > 1.3:   # fast: average the frames the output frame «sees» (velocity blur)
-        a, b = pos - step / 2, pos + step / 2
-        idx = np.arange(math.ceil(a), math.floor(b) + 1)
-        idx = idx[(idx >= 0) & (idx < n)]
-        if idx.size >= 2:
-            idx = idx[np.linspace(0, idx.size - 1, min(idx.size, 6)).round().astype(int)]
-            acc = np.zeros_like(frames[0], np.float32)
-            for i in idx:
-                acc += frames[int(i)]
-            return (acc / idx.size).astype(np.uint8)
+    if step > 1.8:   # fast: a light velocity blur — the centre frame plus its neighbours at half weight
+        i = int(round(pos))
+        lo, hi = max(0, i - 1), min(n - 1, i + 1)
+        if hi > lo:
+            acc = frames[i].astype(np.float32) * 2 + frames[lo] + frames[hi]
+            return (acc / 4).astype(np.uint8)
     i = int(math.floor(pos))
     f = pos - i
     if i >= n - 1 or f < 0.12:

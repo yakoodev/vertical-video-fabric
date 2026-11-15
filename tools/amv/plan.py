@@ -36,7 +36,7 @@ REFERENCE = {
 # (A: 1.4 / 2.4 / 2.1 / 1.8 cuts per bar; we cut on the strongest eighth-note slots instead of every beat)
 CUTS_PER_BAR = {0: 1, 1: 2, 2: 2, 3: 3}
 MIN_GAP_BEATS = {0: 2.0, 1: 1.0, 2: 1.0, 3: 0.5}
-ENERGY_TARGET = {0: 0.25, 1: 0.45, 2: 0.7, 3: 0.9}
+ENERGY_TARGET = {0: 0.45, 1: 0.55, 2: 0.7, 3: 0.9}   # calm bars still need visible motion
 
 
 def beat_level(song: dict) -> list[int]:
@@ -245,6 +245,8 @@ def clip_score(seg: dict, clip: dict, prev: dict | None, run_len: int, run_targe
     fit = 1.0 - abs(clip.get("energy", 0.5) - e_t)
     ch = character(clip)
     sc = 0.35 * clip.get("score", 0.3) + 0.30 * fit + 0.45 * ch
+    if clip.get("energy", 0.5) < 0.2:      # near-static shots read as a freeze, worse when slowed down
+        sc -= 0.45
     if seg["drop"]:
         sc += 0.6 * clip.get("impact", 0.0) + 0.2 * ch
     elif seg["accent"] >= 0.4 and seg["level"] >= 2:
