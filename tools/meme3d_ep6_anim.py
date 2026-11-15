@@ -3,7 +3,7 @@
     python tools/meme3d_ep6_anim.py D:/vvf-offload/memes/ep6 --preview 0.3,7.2,21.2     # кадры PNG без субтитров
     python tools/meme3d_ep6_anim.py D:/vvf-offload/memes/ep6                            # ролик + копия для TG + лист
 
-~40 планов за 44 с (склейки 0.45–1.9 с): Клод в камеру → карточки «Кодекс VS Клод», «Клод VS Гемини», «Видсик VS
+~40 планов за 44 с (склейки 0.45–1.9 с): Клод в камеру → карточки «Кодекс VS Клод», «Клод VS Гемини», «Дипсик VS
 Кими», «Квен…» (карточка падает, Квен на костылях) → «переспорить» — игрушечный замок, Клод и Кодекс в доспехах
 звенят мечами (искры на каждом ударе) → юзер листает «стену текста» на 30 страниц → краткая выжимка и выжимка выжимки
 (лист сжимается) → концовка: Клод и Кодекс сидят на книжках, часы на стене прокручивают 30 минут, у юзера всё ещё
@@ -315,7 +315,7 @@ def ending_chars() -> list[dict]:
 def objects() -> list[dict]:
     arena = {"title": "РЕЙТИНГ МОДЕЛЕЙ", "sub": "кто умнее · обновлено 3 сек назад", "wobble": 18,
              "rows": [{"name": "Кодекс", "color": "#b9c3d1", "score": 96}, {"name": "Клод", "color": E.COLORS["claude"], "score": 95},
-                      {"name": "Гемини", "color": E.COLORS["gemini"], "score": 94}, {"name": "Видсик", "color": E.COLORS["deepseek"], "score": 91},
+                      {"name": "Гемини", "color": E.COLORS["gemini"], "score": 94}, {"name": "Дипсик", "color": E.COLORS["deepseek"], "score": 91},
                       {"name": "Кими", "color": "#e9e9e6", "score": 89}, {"name": "Квен", "color": E.COLORS["qwen"], "score": 12}]}
     objs = E.room_objects(arena)
     C = E.COLORS
@@ -323,7 +323,7 @@ def objects() -> list[dict]:
             {"t": CARD_FALL + 0.55, "rotation": [-90, 0, 0], "ease": "outBounce"}]
     cards = [({"name": "Кодекс", "color": "#9eabbe"}, {"name": "Клод", "color": C["claude"]}, SH["vs1"]),
              ({"name": "Клод", "color": C["claude"]}, {"name": "Гемини", "color": C["gemini"]}, SH["vs2"]),
-             ({"name": "Видсик", "color": C["deepseek"]}, {"name": "Кими", "color": C["kimi"]}, SH["vs3"])]
+             ({"name": "Дипсик", "color": C["deepseek"]}, {"name": "Кими", "color": C["kimi"]}, SH["vs3"])]
     card_list = []
     for left, right, (a, b) in cards:
         card_list.append((left, right, (a, b), [{"t": a, "scale": 1.18}, {"t": a + 0.16, "scale": 1.0, "ease": "outBack"}]))
