@@ -91,7 +91,7 @@ def sample(frames: list[np.ndarray], pos: float, step: float, interp: FlowInterp
 
 def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H: int, fps: float = 30.0,
            captions=None, sat: float = 1.18, afade: tuple[float, float] = (0.0, 0.5), progress: bool = True,
-           crf: int = 18) -> dict:
+           crf: int = 18, vfade: tuple[float, float] = (0.0, 0.0)) -> dict:
     """boxes: {src_path: (x, y, w, h) content box}. Returns render log (frames per segment, source times)."""
     import cv2
     T0, T1 = plan["t0"], plan["t1"]
@@ -148,6 +148,13 @@ def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H
             img = fx.flash(img, fa, fc)
             if captions is not None:
                 img = captions.draw(img, t)
+            fade = 1.0
+            if vfade[0] > 0 and t - T0 < vfade[0]:
+                fade = (t - T0) / vfade[0]
+            if vfade[1] > 0 and T1 - t < vfade[1]:
+                fade = min(fade, (T1 - t) / vfade[1])
+            if fade < 1.0:
+                img = (img.astype(np.float32) * max(0.0, fade)).astype(np.uint8)
             enc.write(img)
         log.append({"seg": si, "frames": len(ts), "src": Path(src).name, "s0": round(s_list[0], 3),
                     "s1": round(s_list[-1], 3), "rate_min": round(min(r_list), 2), "rate_max": round(max(r_list), 2)})

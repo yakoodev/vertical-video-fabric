@@ -19,7 +19,21 @@ import numpy as np
 
 from . import fx
 
+# Measured on the reference edits (tools/amv/refscan.py; D:/vvf-offload/amv/analysis.md). The defaults below are
+# derived from these numbers: A = «Pump It | Multi Anime [AMV Contest Winner]», B = «JJK0 - Rockstar» (XENOZ).
+REFERENCE = {
+    "cuts_per_min": 75.3,            # A (B: 43.5)
+    "shot_len_median_s": 0.60,       # A; p10 0.32, p90 1.30 → mode 1–1.5 beats at 154 BPM
+    "cuts_on_beat": 0.39,            # A within 45 ms (chance 0.22); B on strong onsets 3.0× chance
+    "flashes_per_min": 21.6,         # A, 1–4 frames, 46 % single-frame
+    "shake_frame_frac": 0.31,        # A, bursts of ~8 frames
+    "ramp_ratio_median": 4.7,        # A in-shot speed ratio p90/p10 (B 8.9)
+    "dir_continuity": 0.56,          # A same-direction cuts (shuffled 0.43)
+    "typo_lead_frames": (1, 4),      # words land 1–4 frames before the vocal onset, on a cut
+}
+
 # cuts per bar by intensity level (0 calm … 3 peak) and the minimum spacing in beats
+# (A: 1.4 / 2.4 / 2.1 / 1.8 cuts per bar; we cut on the strongest eighth-note slots instead of every beat)
 CUTS_PER_BAR = {0: 1, 1: 2, 2: 2, 3: 3}
 MIN_GAP_BEATS = {0: 2.0, 1: 1.0, 2: 1.0, 3: 0.5}
 ENERGY_TARGET = {0: 0.25, 1: 0.45, 2: 0.7, 3: 0.9}
@@ -122,6 +136,8 @@ def make_segments(song: dict, t0: float, t1: float, cuts: list[dict]) -> list[di
     onsets = song.get("onsets", [])
     edges = [t0] + [c["t"] for c in cuts] + [t1]
     kinds = ["start"] + [c["kind"] for c in cuts]
+    if any(abs(d - t0) < 0.08 for d in song.get("drops", [])):
+        kinds[0] = "drop"          # a section that starts on a drop opens with the drop hit
     segs = []
     for i, (a, b) in enumerate(zip(edges[:-1], edges[1:])):
         mid = (a + b) / 2
@@ -307,7 +323,7 @@ def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int =
 PALETTE = [(255, 255, 255), (60, 200, 255), (255, 220, 120), (80, 80, 255), (255, 255, 255)]  # BGR
 
 
-def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_min: float = 20.0,
+def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_min: float = 20.0,  # ≈ REFERENCE
               seed: int = 3) -> dict:
     """Flashes, punches, shakes and whips (song times). Calm bars (level < 2) get almost nothing."""
     rng = random.Random(seed)

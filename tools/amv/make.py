@@ -42,6 +42,7 @@ def main(argv=None) -> int:
     ap.add_argument("--captions")
     ap.add_argument("--video")
     ap.add_argument("--fade", default="0,0.5", help="audio fade in,out seconds")
+    ap.add_argument("--vfade", default="0,0", help="video fade from/to black in,out seconds")
     a = ap.parse_args(argv)
     work = Path(a.work)
     work.mkdir(parents=True, exist_ok=True)
@@ -77,7 +78,8 @@ def main(argv=None) -> int:
             from . import captions
             caps = captions.Captions(_load(Path(a.captions)), W, H, a.fps, song=_load(work / "song.json"))
         fi, fo = (float(v) for v in a.fade.split(","))
-        log = render.render(p, boxes, a.song, a.out, W, H, fps=a.fps, captions=caps, afade=(fi, fo))
+        vi, vo = (float(v) for v in a.vfade.split(","))
+        log = render.render(p, boxes, a.song, a.out, W, H, fps=a.fps, captions=caps, afade=(fi, fo), vfade=(vi, vo))
         (work / f"render_{a.name}_{W}x{H}.json").write_text(json.dumps(log, indent=1), encoding="utf-8")
         print(f"wrote {a.out}: {log['frames']} frames")
     elif a.stage == "check":
