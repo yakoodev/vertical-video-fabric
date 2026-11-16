@@ -7,7 +7,8 @@ get_playbook — центр-кроп игры без лица и донат-ба
 1. последний успешный ``get_playbook(name)`` хода или имя плейбука в запросе — как у монтажёра;
 2. плейбук, закреплённый за перепиской (``chat_threads.playbook``: карточка «Мувик под песню», app/frag_movie.py) —
    «ок, делай полную» плейбука по словам не назовёт, а работа та же;
-3. иначе — по словам запроса: клип на песню → ``music-video``, мувик / фраг-мувик / бои под песню → ``frag-movie``,
+3. иначе — по словам запроса: AMV / аниме-клип / аниме-эдит → ``amv``, клип на песню → ``music-video``,
+   мувик / фраг-мувик / бои под песню → ``frag-movie``,
    нарезка стрима →
    ``stream-shorts``, реклама сайта/товара → ``ad-voiceover``, серия по комменту / эпизод → заметка ``SERIES_NOTE``
    (плейбука серии ещё нет).
@@ -27,6 +28,9 @@ _FRAG = re.compile(r"(мувик|фраг[- ]?мув|frag ?movie|нарезк\w*
 _MEMES = re.compile(r"(мем|meme)", re.I)
 # Клип на песню (пресет 13.11: картинки в 2.5D, большие слова на слогах) — не мувик из записей игры.
 _MUSIC_VIDEO = re.compile(r"(клип\w* (на|под) (сво\w+ )?песн|музыкальн\w* клип|music ?video)", re.I)
+# AMV: кадры аниме/фильма (один тайтл) под песню — плейбук amv (карточка «AMV», app/amv.py).
+_AMV = re.compile(r"(\bamv\b|\bамв\b|аниме[- ]?клип|аниме[- ]?эдит|anime ?(music ?video|edit)|эдит\w* (по )?аниме)",
+                  re.I)
 
 SERIES_NOTE = """
 ЗАДАНИЕ — СЕРИЯ (эпизод по комменту зрителя)
@@ -52,6 +56,8 @@ def pick(message: str, steps: list[dict] | None = None, pinned: str | None = Non
     if pinned:
         return str(pinned)
     text = str(message or "")
+    if _AMV.search(text):  # раньше «клипа на песню»: «аниме-клип под песню» — AMV из кадров тайтла, не картинки
+        return "amv"
     if _MUSIC_VIDEO.search(text):
         return "music-video"
     if _FRAG.search(text) and not _MEMES.search(text):

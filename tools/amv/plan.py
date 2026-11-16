@@ -169,6 +169,13 @@ def ramp_for(seg: dict, clip: dict | None = None, period: float = 0.4) -> dict:
     lv = seg["level"]
     motion = (clip or {}).get("energy", 0.5)
     t0, t1, ta = seg["t0"], seg["t1"], seg["ta"]
+    if seg.get("speed") is not None:
+        # the section planner (style.py) fixed the speed: native 1.0 in action, 0.4–0.6 on hero beats, a burst only
+        # on drops ("burst" = peak rate on the accent)
+        r = {"base": float(seg["speed"]), "peak": 0.0, "ta": ta, "w": 0.1}
+        if seg.get("burst"):
+            r["peak"] = float(seg["burst"])
+        return r
     if seg["drop"]:
         r = {"base": 0.42, "peak": 3.4, "ta": ta, "w": 0.11, "bursts": []}
         if seg["dur"] > 1.5 * period:
@@ -191,11 +198,17 @@ def ramp_for(seg: dict, clip: dict | None = None, period: float = 0.4) -> dict:
 def fit_ramp(seg: dict, clip: dict, ramp: dict, margin: float = 0.06) -> tuple[float, dict] | None:
     """Source in-point so that the clip's motion peak lands on the accent; shrinks the ramp if the clip is short.
 
-    Returns (src_in, ramp) or None if even a constant 0.5x does not fit."""
+    Returns (src_in, ramp) or None if even a constant 0.5x does not fit.
+
+    Optional segment keys (style.py): "tail" — seconds the shot must keep playing after the cut (a dissolve into the
+    next one), "min_rate" — slowest acceptable base rate (native-speed sections reject short clips instead of slowing
+    them down), "use_impacts" — anchor the clip's own impact (white-out, slash) on the accent instead of its motion
+    peak."""
     lo, hi = clip["t_in"] + margin, clip["t_out"] - margin
+    t_end = seg["t1"] + float(seg.get("tail") or 0.0)
     r = dict(ramp)
     for _ in range(6):
-        span = fx.rate_integral(seg["t0"], seg["t1"], r)
+        span = fx.rate_integral(seg["t0"], t_end, r)
         if span <= hi - lo:
             break
         if r.get("bursts"):
@@ -204,13 +217,24 @@ def fit_ramp(seg: dict, clip: dict, ramp: dict, margin: float = 0.06) -> tuple[f
             r["peak"] = max(0.0, r["peak"] * 0.7) if r["peak"] * 0.7 > r["base"] * 1.5 else 0.0
         else:
             r["base"] *= 0.8
-    span = fx.rate_integral(seg["t0"], seg["t1"], r)
-    if span > hi - lo or r["base"] < 0.38:
+    span = fx.rate_integral(seg["t0"], t_end, r)
+    if span > hi - lo or r["base"] < float(seg.get("min_rate") or 0.38) - 1e-9:
         return None
     to_peak = fx.rate_integral(seg["t0"], r["ta"], r)
-    s0 = clip.get("t_peak", (lo + hi) / 2) - to_peak
+    s0 = anchor_time(seg, clip, lo, hi) - to_peak
     s0 = min(max(s0, lo), hi - span)
     return round(float(s0), 4), r
+
+
+def anchor_time(seg: dict, clip: dict, lo: float, hi: float) -> float:
+    """Source time that lands on the segment accent: the clip's own impact nearest its motion peak when the segment
+    asks for impacts (and the clip has one inside), else the motion peak."""
+    peak = clip.get("t_peak", (lo + hi) / 2)
+    if seg.get("use_impacts"):
+        inside = [t for t in clip.get("impacts") or [] if lo <= t <= hi]
+        if inside:
+            return min(inside, key=lambda t: abs(t - peak))
+    return peak
 
 
 # ----------------------------------------------------------------------------- clip choice
@@ -285,13 +309,19 @@ def story_acts(story: list[dict] | None, t: float) -> list[str] | None:
 
 
 def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int = 7,
-                 near_s: float = 1.5, story: list[dict] | None = None, max_uses: int = 1) -> list[dict]:
+                 near_s: float = 1.5, story: list[dict] | None = None, max_uses: int = 1,
+                 hooks=None) -> list[dict]:
     """Greedy left-to-right choice. Each clip is used up to max_uses times — a reuse continues the scene after the
     frames already shown, never repeating them; jumping back to a part of a film shown within near_s seconds is
     penalized (no visible repeats). Returns segments with "clip" and "src_in"/"ramp" filled.
 
     story — song-time map of story acts: a segment only takes clips whose "act" is allowed there (the first act
-    listed is preferred), so the edit tells the parts of the story in order. If no tagged clip fits, any clip may."""
+    listed is preferred), so the edit tells the parts of the story in order. If no tagged clip fits, any clip may.
+
+    hooks (style.py) — the reference-priority planner: hooks.pool(seg, clips) narrows candidates per segment,
+    hooks.score(seg, clip, prev) adds to the score (colour runs, motifs, impacts, one-film climax), hooks.picked(seg,
+    clip, prev) follows the choice, hooks.relax(seg) gives a looser segment (slower allowed) when nothing fits.
+    A clip's "groups" (e.g. its shot) are owned by the first clip that uses them, like dup groups."""
     rng = random.Random(seed)
     used: dict = {}                      # clip id → times used; "dup:<id>" → the clip id that owns the group
     used_spans: dict[str, list[tuple[float, float]]] = {}
@@ -300,14 +330,20 @@ def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int =
     run_len, run_target = 0, rng.randint(2, 4)
     for seg in segs:
         allowed = story_acts(story, (seg["t0"] + seg["t1"]) / 2)
-        pool = [c for c in clips if c.get("act") in allowed] if allowed else clips
+        base = hooks.pool(seg, clips) if hooks is not None else clips
+        pool = [c for c in base if c.get("act") in allowed] if allowed else base
         best = None
-        for pass_ in (0, 1):
-            if best is not None or (pass_ == 1 and pool is clips):
-                break
-            cand = pool if pass_ == 0 else clips
-            best = _pick(seg, cand, used, used_spans, prev, run_len, run_target, period, near_s, rng, allowed,
-                         max_uses)
+        for attempt in (seg, hooks.relax(seg) if hooks is not None else None):
+            if attempt is None or best is not None:
+                continue
+            for pass_ in (0, 1):
+                if best is not None or (pass_ == 1 and pool is base):
+                    break
+                cand = pool if pass_ == 0 else base
+                best = _pick(attempt, cand, used, used_spans, prev, run_len, run_target, period, near_s, rng,
+                             allowed, max_uses, hooks)
+            if best is not None:
+                seg = attempt
         s = dict(seg)
         if allowed:
             s["acts"] = allowed
@@ -319,7 +355,11 @@ def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int =
         used[c["id"]] = used.get(c["id"], 0) + 1
         if c.get("dup"):                  # the same shot from another trailer counts as used too
             used.setdefault("dup:" + c["dup"], c["id"])
-        span = fx.rate_integral(seg["t0"], seg["t1"], ramp)
+        for g in c.get("groups") or ():
+            used.setdefault("grp:" + str(g), c["id"])
+        if hooks is not None:
+            hooks.picked(seg, c, prev)
+        span = fx.rate_integral(seg["t0"], seg["t1"] + float(seg.get("tail") or 0.0), ramp)
         used_spans.setdefault(c["src"], []).append((src_in, src_in + span))
         if prev is not None and same_scene(prev, c):
             run_len += 1
@@ -340,7 +380,7 @@ def continue_after(fit: tuple[float, dict], clip: dict, spans: list[tuple[float,
     """If the planned source span overlaps frames already shown, move it to just after them (the scene goes on
     from where its last use stopped). None if that no longer fits in the clip."""
     src_in, ramp = fit
-    span = fx.rate_integral(seg["t0"], seg["t1"], ramp)
+    span = fx.rate_integral(seg["t0"], seg["t1"] + float(seg.get("tail") or 0.0), ramp)
     hit = [b for a, b in spans if src_in < b + gap and src_in + span > a - gap]
     if not hit:
         return fit
@@ -350,11 +390,14 @@ def continue_after(fit: tuple[float, dict], clip: dict, spans: list[tuple[float,
     return round(s0, 4), ramp
 
 
-def _pick(seg, clips, used, used_spans, prev, run_len, run_target, period, near_s, rng, allowed, max_uses=1):
+def _pick(seg, clips, used, used_spans, prev, run_len, run_target, period, near_s, rng, allowed, max_uses=1,
+          hooks=None):
     best = None
     for c in clips:
         owner = used.get("dup:" + c["dup"]) if c.get("dup") else None
         if used.get(c["id"], 0) >= max_uses or (owner is not None and owner != c["id"]):
+            continue
+        if any(used.get("grp:" + str(g), c["id"]) != c["id"] for g in c.get("groups") or ()):
             continue
         r0 = ramp_for(seg, c, period)
         fit = fit_ramp(seg, c, r0)
@@ -366,6 +409,8 @@ def _pick(seg, clips, used, used_spans, prev, run_len, run_target, period, near_
             if fit is None:
                 continue
         sc = clip_score(seg, c, prev, run_len, run_target, period)
+        if hooks is not None:
+            sc += hooks.score(seg, c, prev)
         if allowed and c.get("act") == allowed[0]:
             sc += 0.3
         if prev is None or not same_scene(prev, c):      # jumping back to a scene shown earlier
@@ -480,9 +525,18 @@ def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_mi
 def build_plan(song: dict, clips: list[dict], t0: float, t1: float, seed: int = 7,
                forced: list[float] | None = None, story: list[dict] | None = None,
                cuts_per_bar: dict | None = None, min_gap_beats: dict | None = None, max_uses: int = 1,
-               **kw) -> dict:
+               style: str = "velocity", **kw) -> dict:
     """cuts_per_bar / min_gap_beats override CUTS_PER_BAR / MIN_GAP_BEATS — e.g. a fast song whose tracked «beat»
-    is the eighth-note pulse (188 BPM) needs about half the cuts per bar to keep shots readable."""
+    is the eighth-note pulse (188 BPM) needs about half the cuts per bar to keep shots readable.
+
+    style="velocity" — the round-1/2 edit (velocity ramps everywhere, synthetic flashes, shake, whips);
+    style="reference" — the reference priorities (style.py): sections story/action/climax with pacing contrast,
+    colour runs, native-speed action and slow-mo only on hero beats, the source's own impacts on accents, black
+    breaths before drops, a strobe burst on the final drop, restrained effects."""
+    if style == "reference":
+        from . import style as ref_style
+        return ref_style.build_plan(song, clips, t0, t1, seed=seed, forced=forced, story=story, max_uses=max_uses,
+                                    **{k: v for k, v in kw.items() if k in ref_style.PLAN_OPTIONS})
     cuts = cut_grid(song, t0, t1, forced=forced, cuts_per_bar=cuts_per_bar, min_gap_beats=min_gap_beats)
     segs = make_segments(song, t0, t1, cuts)
     segs = assign_clips(segs, clips, float(song["period"]), seed=seed, story=story, max_uses=max_uses)

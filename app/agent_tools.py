@@ -667,11 +667,14 @@ def registry() -> dict[str, Tool]:
         from app.lyrics_tools import tools as lyrics_tools
         # Слово на поверхности мира и след броска: трек плоскости и объекта — app/world_track_tools.py.
         from app.world_track_tools import tools as world_track_tools
+        # AMV: песня, сцены исходников, план по приоритетам референса, рендер в клип — app/amv_tools.py.
+        from app.amv_tools import tools as amv_tools
 
         _REGISTRY = {tool.name: tool for tool in [*_build_registry(), *audio_tools(), *cover_tools(), *lint_tools(),
                                                   *render_tools(), *webpage_tools(), *voice_tools(),
                                                   *video_meme_tools(), *meme_edit_tools(), *tiktok_parts_tools(),
-                                                  *game_events_tools(), *lyrics_tools(), *world_track_tools()]}
+                                                  *game_events_tools(), *lyrics_tools(), *world_track_tools(),
+                                                  *amv_tools()]}
     return _REGISTRY
 
 

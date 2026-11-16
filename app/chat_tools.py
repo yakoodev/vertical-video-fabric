@@ -104,6 +104,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "music_video": ("клип на песню владельца: разбор песни по слогам, план сцен, карточка на картинки, кадры, клип", (
         "music_video_create", "music_video_status", "music_video_plan", "music_video_continue", "list_music",
         "add_music_from_url")),
+    "amv": ("AMV: кадры одного аниме/фильма под песню — разбор песни, сцены исходников, план по референсу, рендер", (
+        "amv_analyze_song", "amv_index_sources", "amv_plan", "amv_render", "amv_status", "source_contact_sheet",
+        "list_music", "add_music_from_url")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
@@ -125,6 +128,7 @@ _PRELOAD = {
     "stories": ("истори", "рассказчик", "эпизод", "библиотек сцен", "актёр", "актер"),
     "music_video": ("клип на песню", "музыкальн клип", "музыкальный клип", "клип под песню", "music video",
                     "music_video"),
+    "amv": ("amv", "амв", "аниме-клип", "аниме клип", "аниме-эдит", "аниме эдит", "anime edit", "amv_"),
     "feed": ("лент", "запощ", "выложил", "выложено", "выложен", "сдай работ", "сдать работ", "вердикт"),
 }
 

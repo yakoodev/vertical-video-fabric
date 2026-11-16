@@ -85,12 +85,30 @@ def sample(frames: list[np.ndarray], pos: float, step: float, interp: FlowInterp
     return cv2.addWeighted(frames[i], 1 - f, frames[i + 1], f, 0)
 
 
+def black_factor(t: float, blacks: list[dict]) -> float:
+    """Brightness 0..1 at song time t from the plan's black holds: a fade to black over "fade" seconds from t0, then
+    black until t1 (the picture returns on the hit); fade 0 — a hard blink."""
+    f = 1.0
+    for b in blacks or []:
+        if b["t0"] <= t < b["t1"]:
+            fade = float(b.get("fade") or 0.0)
+            f = min(f, 0.0 if fade <= 0 else max(0.0, 1.0 - (t - b["t0"]) / fade))
+    return f
+
+
 def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H: int, fps: float = 30.0,
            captions=None, sat: float = 1.0, afade: tuple[float, float] = (0.0, 0.5), progress: bool = True,
            crf: int = 18, vfade: tuple[float, float] = (0.0, 0.0)) -> dict:
-    """boxes: {src_path: (x, y, w, h) content box}. Returns render log (frames per segment, source times)."""
+    """boxes: {src_path: (x, y, w, h) content box}. Returns render log (frames per segment, source times).
+
+    Reference-style plans (style.py) also carry: segment "xfade" (a dissolve from the previous shot, which keeps
+    playing for its "tail"), "blacks" (fade-to-black holds and blinks) and "vfade" (used when vfade is not given).
+    Native-speed frames (rate ≈ 1) are shown as drawn — no blending, so 2s/3s animation keeps its cadence."""
     import cv2
     T0, T1 = plan["t0"], plan["t1"]
+    if not any(vfade) and plan.get("vfade"):
+        vfade = tuple(float(v) for v in plan["vfade"])
+    blacks = plan.get("blacks") or []
     n_total = int(round((T1 - T0) * fps))
     enc = media.Encoder(out, W, H, fps, audio=song, a_t0=T0, a_dur=T1 - T0, crf=crf, afade=afade)
     log = []
@@ -98,21 +116,28 @@ def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H
     k = 0
     interp = FlowInterp()
     black = np.zeros((H, W, 3), np.uint8)
-    for si, seg in enumerate(plan["segments"]):
-        k_end = n_total if si == len(plan["segments"]) - 1 else int(round((seg["t1"] - T0) * fps))
+    carry: list[np.ndarray] = []          # the outgoing shot's frames under the next dissolve
+    segs = plan["segments"]
+    for si, seg in enumerate(segs):
+        k_end = n_total if si == len(segs) - 1 else int(round((seg["t1"] - T0) * fps))
         ts = [T0 + (kk + 0.5) / fps for kk in range(k, k_end)]
         if not ts:
             continue
+        nxt = segs[si + 1] if si + 1 < len(segs) else None
+        n_tail = int(round(float(nxt.get("xfade") or 0.0) * fps)) if nxt is not None and nxt.get("clip") else 0
+        n_tail = min(n_tail, max(0, n_total - k_end))
+        tail_ts = [T0 + (kk + 0.5) / fps for kk in range(k_end, k_end + n_tail)]
+        incoming, carry = carry, []
         if seg.get("clip") is None:
-            for _ in ts:
+            for t in ts:
                 enc.write(black)
             k = k_end
             continue
         src = seg["src"]
         info = media.probe(src)
         sfps = info["fps"] or 24.0
-        s_list = [fx.src_time(t, seg) for t in ts]
-        r_list = [fx.rate_at(t, seg["ramp"]) for t in ts]
+        s_list = [fx.src_time(t, seg) for t in ts + tail_ts]
+        r_list = [fx.rate_at(t, seg["ramp"]) for t in ts + tail_ts]
         f0 = max(0, int(math.floor(min(s_list) * sfps)) - 2)
         f1 = int(math.ceil(max(s_list) * sfps)) + 3
         box = tuple(boxes.get(src) or (0, 0, info["w"], info["h"]))
@@ -127,8 +152,12 @@ def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H
             continue
         lut = fx.grade_lut(fx.frame_stats(frames[len(frames) // 2]))
         interp.cache = {}
-        for t, s, r in zip(ts, s_list, r_list):
-            img = sample(frames, s * sfps - f0, r * sfps / fps, interp)
+        n_main = len(ts)
+        for j, (t, s, r) in enumerate(zip(ts + tail_ts, s_list, r_list)):
+            if abs(r - 1.0) <= 0.03:          # native speed: the drawn frame itself
+                img = frames[int(min(max(round(s * sfps - f0), 0), len(frames) - 1))]
+            else:
+                img = sample(frames, s * sfps - f0, r * sfps / fps, interp)
             img = cv2.LUT(img, lut)
             img = fx.saturate(img, sat)
             sc = fx.punch_scale(t, plan["punches"])
@@ -144,17 +173,23 @@ def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H
             img = fx.vignette(img, 0.32)
             fa, fc = fx.flash_alpha(t, plan["flashes"], fps)
             img = fx.flash(img, fa, fc)
+            if j >= n_main:                   # tail frame: kept for the next shot's dissolve
+                carry.append(img)
+                continue
+            if incoming and j < len(incoming):
+                a = (j + 0.5) / len(incoming)
+                img = cv2.addWeighted(incoming[j], 1.0 - a, img, a, 0)
             if captions is not None:
                 img = captions.draw(img, t)
-            fade = 1.0
+            fade = black_factor(t, blacks)
             if vfade[0] > 0 and t - T0 < vfade[0]:
-                fade = (t - T0) / vfade[0]
+                fade = min(fade, (t - T0) / vfade[0])
             if vfade[1] > 0 and T1 - t < vfade[1]:
                 fade = min(fade, (T1 - t) / vfade[1])
             if fade < 1.0:
                 img = (img.astype(np.float32) * max(0.0, fade)).astype(np.uint8)
             enc.write(img)
-        log.append({"seg": si, "frames": len(ts), "src": Path(src).name, "s0": round(s_list[0], 3),
+        log.append({"seg": si, "frames": len(ts), "tail": n_tail, "src": Path(src).name, "s0": round(s_list[0], 3),
                     "s1": round(s_list[-1], 3), "rate_min": round(min(r_list), 2), "rate_max": round(max(r_list), 2)})
         if progress and si % 10 == 0:
             print(f"  seg {si}/{len(plan['segments'])}  t={ts[0]:.1f}", flush=True)

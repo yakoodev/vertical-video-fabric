@@ -130,11 +130,33 @@ export interface FragMovieStart {
   caption_example: string;
 }
 
+/** AMV (app/amv.py): работа AMV и переписка чата проекта с плейбуком amv и первым заданием. */
+export interface AmvBody {
+  title: string;
+  source_ids: number[];
+  track_id?: number | null;
+  music_url?: string;
+  notes?: string;
+  aspect?: "9:16" | "16:9";
+  run_agent?: boolean;
+}
+
+export interface AmvStart {
+  amv_id: string;
+  thread_id: number;
+  to: string;
+  track_id: number;
+  track: string;
+  aspect: string;
+  started: boolean;
+}
+
 export const releasesApi = {
   get: (key: string) => api.get<ReleaseView>(`/api/releases/${key}`),
   promo: (projectId: number, body: { title: string; spec: PromoSpec }) =>
     api.post<{ clip_id: number; to: string; duration: number; notes: string[] }>(`/api/projects/${projectId}/promo`, body),
   fragMovie: (projectId: number, body: FragMovieBody) => api.post<FragMovieStart>(`/api/projects/${projectId}/frag-movie`, body),
+  amv: (projectId: number, body: AmvBody) => api.post<AmvStart>(`/api/projects/${projectId}/amv`, body),
   top: (sourceId: number, body: { plan_ids: number[]; title?: string; countdown?: boolean }) =>
     api.post<{ clip_plan_id: number; clips: number; skipped: number[]; duration: number }>(`/api/sources/${sourceId}/compilation`, body),
 };

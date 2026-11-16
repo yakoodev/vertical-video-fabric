@@ -119,8 +119,67 @@ def film_clips(film: str, path: str | Path, F: dict, exclude: list | None = None
                 "static_frac": round(float((F["pix_d"][wa + 1:wb] < 0.7).mean()) if wb - wa > 2 else 1.0, 3),
                 "dir_in": _dir(F, wa + 1, wa + 1 + k), "dir_out": _dir(F, wb - k, wb),
                 "act": act_at(acts, (wa + wb) / 2 / fps),
+                # the shot the window belongs to (windows of one long shot share it) and the source's own impacts —
+                # white-outs, light bursts, slash frames — the reference puts those on the accent instead of a flash
+                "shot": f"{film}:{s['a']}", "impacts": source_impacts(F, wa, wb),
             })
     return out
+
+
+def source_impacts(F: dict, a: int, b: int, white_share: float = 0.35, max_hold: int = 14) -> list[float]:
+    """Source times of in-source impacts inside frames [a, b): short luma spikes (shots.flash_frames) and the starts of
+    short white-outs (a large share of near-white pixels for <= max_hold frames). Merged closer than 0.25 s."""
+    fps = float(F["fps"])
+    t0 = float(F.get("t0", 0.0))
+    lo, hi = max(0, a), min(len(F["luma"]), b)
+    if hi - lo < 3:
+        return []
+    starts = [lo + i for i, _ in shots.flash_frames(np.asarray(F["luma"][lo:hi]))]
+    white = np.asarray(F["white"][lo:hi]) if "white" in F else np.zeros(hi - lo)
+    i = 1
+    while i < len(white):
+        if white[i] >= white_share and white[i - 1] < white_share:
+            k = i
+            while k < len(white) and white[k] >= white_share * 0.6:
+                k += 1
+            if k - i <= max_hold:
+                starts.append(lo + i)
+            i = k
+            continue
+        i += 1
+    out: list[float] = []
+    for f in sorted(starts):
+        t = round(t0 + f / fps, 4)
+        if not out or t - out[-1] >= 0.25:
+            out.append(t)
+    return out
+
+
+def colour_pass(clips: list[dict], boxes: dict, fps: float = 4.0, w: int = 48) -> list[dict]:
+    """Mean CIE Lab colour per clip ("lab": [L 0..100, a, b]) from ONE small decode per source (fps samples per
+    second inside the content box) — for the colour-ordered clip choice of the reference (runs of similar colour,
+    small steps cut to cut). Clips that already have "lab" are kept."""
+    import cv2
+    from . import media
+    by_src: dict[str, list[dict]] = {}
+    for c in clips:
+        if c.get("lab") is None:
+            by_src.setdefault(c["src"], []).append(c)
+    for src, items in by_src.items():
+        info = media.probe(src)
+        x, y, bw, bh = boxes.get(src) or (0, 0, info["w"], info["h"])
+        h = max(8, int(round(w * bh / max(1, bw) / 2)) * 2)
+        vf = f"crop={bw}:{bh}:{x}:{y}" if (bw, bh) != (info["w"], info["h"]) else ""
+        labs = [cv2.cvtColor(img.astype(np.float32) / 255.0, cv2.COLOR_BGR2Lab).reshape(-1, 3).mean(0)
+                for img in media.frames(src, w, h, fps=fps, vf_pre=vf)]
+        if not labs:
+            continue
+        L = np.array(labs, np.float32)
+        for c in items:
+            i0 = min(int(np.floor(c["t_in"] * fps)), len(L) - 1)
+            i1 = max(i0 + 1, min(len(L), int(np.ceil(c["t_out"] * fps))))
+            c["lab"] = [round(float(v), 1) for v in L[i0:i1].mean(0)]
+    return clips
 
 
 def best_window(profile: np.ndarray, frac: float, prior: float = 0.15) -> float:
@@ -296,7 +355,10 @@ def build(sources: list[dict], work: str | Path, progress: bool = True) -> list[
             o = old.get(c["id"])
             if o and "sharp" in o and "char" in o and "thumb" in o:
                 c.update({k: o[k] for k in ("sharp", "skin", "char", "faces", "cx_916", "cx_169", "thumb")})
+            if o and o.get("lab") is not None:
+                c["lab"] = o["lab"]
         focus_pass(cl, boxes)
+        colour_pass(cl, boxes)
         if progress:
             print(f"  {src['film']}: {len(cl)} clips", flush=True)
         clips += cl
@@ -339,13 +401,15 @@ def dup_groups(clips: list[dict], thresh: float = 0.9) -> list[dict]:
 def apply_overrides(clips: list[dict], ov: dict) -> list[dict]:
     """Hand curation after looking at the review sheets:
     {"ban": [clip ids], "ban_films": [films], "boost": {clip id: +score}, "act": {clip id: act},
-     "cx_916": {clip id: crop centre 0..1}, "cx_169": {...}, "face": [clip ids with a readable face]}.
+     "cx_916": {clip id: crop centre 0..1}, "cx_169": {...}, "face": [clip ids with a readable face],
+     "motif": {clip id: tag}} — motif tags (hand, coin, sword_draw, eyes, falling, sky, fire…) drive match cuts.
     A `face` clip counts as a character on screen (anime faces are not found by the photo-face detector)."""
     ban = set(ov.get("ban", []))
     ban_films = set(ov.get("ban_films", []))
     boost = ov.get("boost", {})
     acts = ov.get("act", {})
     face = set(ov.get("face", []))
+    motif = ov.get("motif", {})
     out = []
     for c in clips:
         if c["id"] in ban or c.get("film") in ban_films:
@@ -355,6 +419,8 @@ def apply_overrides(clips: list[dict], ov: dict) -> list[dict]:
             upd.update(score=round(min(1.3, c["score"] + float(boost[c["id"]])), 3), boosted=True)
         if c["id"] in acts:
             upd["act"] = acts[c["id"]]
+        if c["id"] in motif:
+            upd["motif"] = str(motif[c["id"]])
         if c["id"] in face:
             upd.update(face=True, char=max(c.get("char", 0.0), 0.9))
         for key in ("cx_916", "cx_169"):
