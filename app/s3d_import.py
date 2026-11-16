@@ -153,7 +153,8 @@ MEME_DESK = {"type": "room", "room": {"preset": "cozy_desk", "colors": {
 def ensure_meme_desk(store: Any, project_id: int) -> None:
     """Локация мем-пилота (комната-пресет с палитрой пилота) в библиотеку проекта, если её там нет."""
     if not any(i["slug"] == "meme_desk" for i in D.list_items(store, project_id, "location")):
-        D.save_item(store, project_id, "location", json.loads(json.dumps(MEME_DESK)), slug="meme_desk", name=MEME_DESK_NAME)
+        D.save_item(store, project_id, "location", json.loads(json.dumps(MEME_DESK)), slug="meme_desk",
+                    name=MEME_DESK_NAME)
 
 
 def demo_project(store: Any) -> int:
