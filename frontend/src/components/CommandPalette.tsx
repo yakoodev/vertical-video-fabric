@@ -83,6 +83,7 @@ export function CommandPalette({
             { id: "p-acc", group: "Разделы", label: "Аккаунты", icon: "users", run: go("/pubs?tab=accounts") },
           ]
         : []),
+      { id: "p-feed", group: "Разделы", label: "Лента", hint: "готовые работы и где выложено", keywords: "версии вердикт запощено выложено", icon: "feed", run: go("/feed") },
       { id: "p-ready", group: "Разделы", label: "Готовые ролики", keywords: "клипы", icon: "scissors", run: go("/pubs?tab=ready") },
       { id: "p-assets", group: "Разделы", label: "Общие файлы", keywords: "файлы для монтажа мемы звуки", icon: "file", run: go("/files") },
       { id: "p-all", group: "Разделы", label: "Все проекты и видео", icon: "folder", run: go("/projects") },

@@ -1,0 +1,430 @@
+/* «Лента» (pages/FeedPage.tsx): сначала телефон — одна колонка, крупные нажатия; шире — сетка карточек. */
+
+.feed-page,
+.feed-work {
+  max-width: 1200px;
+}
+
+.feed-filters {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.feed-chips {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.feed-chips .schip {
+  flex: none;
+}
+.feed-selects {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.feed-grid {
+  display: grid;
+  gap: 10px;
+}
+
+/* Карточка: обложка слева, сведения справа — читается и на узком экране. */
+.feed-card {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 12px;
+  align-items: stretch;
+  width: 100%;
+  padding: 10px;
+  text-align: left;
+  color: inherit;
+  font: inherit;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 42%), var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--inner-hi);
+  cursor: pointer;
+  transition: border-color 0.14s var(--ease), transform 0.14s var(--ease);
+}
+.feed-card:hover {
+  border-color: var(--border-strong);
+}
+.feed-card:active {
+  transform: translateY(1px);
+}
+.feed-cover {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  border-radius: var(--r-sm);
+  background: #000;
+  color: var(--text-faint);
+}
+.feed-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.feed-card-body {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+.feed-card-title {
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+.feed-card-meta {
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.feed-card-row,
+.feed-card-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.feed-card-foot {
+  margin-top: auto;
+}
+
+.feed-vname {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Статус версии. */
+.feed-st {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--surface-3);
+  color: var(--text-dim);
+}
+.feed-st--review {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.feed-st--accepted {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.feed-st--rejected {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.feed-flag {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  background: var(--info-soft);
+  color: var(--info);
+}
+
+/* Площадки: короткие значки и отметки с датой. */
+.feed-plats {
+  display: inline-flex;
+  gap: 4px;
+}
+.feed-plat {
+  --pc: var(--text-dim);
+  display: inline-grid;
+  place-items: center;
+  min-width: 24px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--pc);
+  border: 1px solid color-mix(in srgb, var(--pc) 45%, transparent);
+  background: color-mix(in srgb, var(--pc) 12%, transparent);
+}
+.feed-plat--tiktok {
+  --pc: #ff4f8b;
+}
+.feed-plat--youtube {
+  --pc: #ff5a4f;
+}
+.feed-plat--instagram {
+  --pc: #d58cff;
+}
+.feed-plat--vk {
+  --pc: #58b6ff;
+}
+
+/* Работа. */
+.feed-back {
+  margin-bottom: 12px;
+}
+.feed-work-head h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+.feed-work-head p {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+.feed-work-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.feed-ver {
+  margin-bottom: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--inner-hi);
+}
+.feed-ver.latest {
+  border-color: var(--border-strong);
+}
+.feed-ver-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 2px 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.feed-ver-head .feed-vname {
+  font-size: 14px;
+}
+.feed-ver-when {
+  font-size: 12px;
+}
+.feed-chev {
+  margin-left: auto;
+  transition: transform 0.15s var(--ease);
+}
+.feed-chev.open {
+  transform: rotate(180deg);
+}
+.feed-note {
+  margin: 8px 0 0;
+  font-size: 13.5px;
+  white-space: pre-line;
+}
+.feed-verdict {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.feed-judge {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0 12px;
+}
+.feed-judge-btns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.feed-judge-btns .btn.on {
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+.feed-judge-by {
+  font-size: 12px;
+}
+
+.feed-vars {
+  display: grid;
+  gap: 12px;
+}
+.feed-var {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--hairline);
+}
+.feed-player {
+  width: 100%;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  background: #000;
+}
+/* Вертикаль на телефоне — плеер слева узкой колонкой, сведения справа: три части TikTok не растягиваются на три экрана. */
+.feed-var--vertical {
+  grid-template-columns: minmax(110px, 40%) 1fr;
+  align-items: start;
+}
+.feed-var--vertical .feed-player {
+  aspect-ratio: 9 / 16;
+}
+.feed-var--horizontal .feed-player {
+  aspect-ratio: 16 / 9;
+}
+.feed-player video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+.feed-player-wait {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.feed-player-wait img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.35;
+}
+.feed-player-wait span,
+.feed-player-wait button {
+  position: relative;
+}
+
+.feed-var-body {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+}
+.feed-var-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+}
+.feed-var-head strong {
+  font-size: 14px;
+}
+.feed-dl {
+  justify-self: start;
+  min-height: 38px;
+}
+
+.feed-posts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.feed-post {
+  --pc: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 9px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pc);
+  background: color-mix(in srgb, var(--pc) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc) 40%, transparent);
+}
+.feed-post a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.feed-post > span:only-child,
+.feed-post > a:only-child {
+  padding-right: 5px;
+}
+.feed-post-x {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.feed-post-x:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.feed-mark {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.feed-mark-btn {
+  min-height: 34px;
+}
+.feed-mark-btn.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.feed-mark-form {
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 640px) {
+  .feed-grid {
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  }
+  .feed-filters {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .feed-selects {
+    grid-template-columns: 180px 150px;
+  }
+  .feed-mark-form {
+    grid-template-columns: 1fr auto;
+  }
+}
+
+@media (min-width: 900px) {
+  .feed-var {
+    grid-template-columns: minmax(0, 320px) 1fr;
+    align-items: start;
+  }
+  .feed-var--horizontal {
+    grid-template-columns: minmax(0, 480px) 1fr;
+  }
+  .feed-var--vertical {
+    grid-template-columns: 240px 1fr;
+  }
+}

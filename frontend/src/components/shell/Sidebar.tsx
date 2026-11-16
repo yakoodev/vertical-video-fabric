@@ -75,6 +75,10 @@ export function Sidebar({
         <span className="side-t">Входящие</span>
         {inbox ? <span className="side-badge">{inbox}</span> : null}
       </NavLink>
+      <NavLink to="/feed" className={link(isOn("feed"))} title="Лента: готовые работы, версии, где выложено">
+        <Icon name="feed" />
+        <span className="side-t">Лента</span>
+      </NavLink>
       <NavLink to="/pubs" className={link(isOn("pubs"))} title={on("publishing") ? "Публикации и аккаунты" : "Готовые ролики"}>
         <Icon name="users" />
         <span className="side-t">{on("publishing") ? "Публикации и аккаунты" : "Готовые ролики"}</span>

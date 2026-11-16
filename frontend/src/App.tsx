@@ -19,6 +19,7 @@ const ClipPage = lazyPage(() => import("@/pages/ClipPage"), "ClipPage");
 const NewVideoPage = lazyPage(() => import("@/pages/release/NewVideoPage"), "NewVideoPage");
 const ReleasePage = lazyPage(() => import("@/pages/release/ReleasePage"), "ReleasePage");
 const PubsPage = lazyPage(() => import("@/pages/PubsPage"), "PubsPage");
+const FeedPage = lazyPage(() => import("@/pages/FeedPage"), "FeedPage");
 const InboxPage = lazyPage(() => import("@/pages/InboxPage"), "InboxPage");
 const HelpPage = lazyPage(() => import("@/pages/HelpPage"), "HelpPage");
 const SettingsPage = lazyPage(() => import("@/pages/SettingsPage"), "SettingsPage");
@@ -85,6 +86,8 @@ export function App() {
 
         {/* Вне проектов. */}
         <Route path="inbox" element={<InboxPage />} />
+        {/* «Лента»: готовые работы — версии, вердикты, где выложено (app/feed.py). */}
+        <Route path="feed" element={<FeedPage />} />
         <Route path="pubs" element={<PubsPage />} />
         <Route path="pubs/:jobId" element={<RequireModule id="publishing"><PubsPage /></RequireModule>} />
         <Route path="files" element={<MontageAssetsPage />} />
