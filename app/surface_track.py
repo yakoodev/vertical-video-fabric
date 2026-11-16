@@ -50,10 +50,11 @@ REACQUIRE_MIN = 14
 OK_CONF = 0.5
 WEAK_CONF = 0.25
 CORRECT_MAX_PX = 6.0
+ECC_MIN_STD = 6.0  # разброс яркости (0..255) участка, с которым гладкую поверхность ещё ведёт ECC
 ECC_MIN = 0.9  # корреляция ECC, с которой гладкая поверхность считается найденной
 MIN_FLAT = 0.7  # доля точек окна, что ложатся одной гомографией по соседним кадрам
-LK_WIN = (21, 21)
-LK_LEVELS = 4
+LK_WIN = (25, 25)
+LK_LEVELS = 5  # 5 уровней: до ~60 px за кадр детекции (быстрый поворот на 30 fps)
 
 
 def _cv2():
@@ -143,6 +144,26 @@ def _mask_poly(shape: tuple[int, int], q: np.ndarray, shrink: float = 0.0) -> np
     return mask
 
 
+def static_mask(grays: Sequence[np.ndarray], samples: int = 9, still: float = 10.0) -> np.ndarray | None:
+    """Пиксели, что стоят на экране, пока камера едет: HUD игры (лента убийств, подсказки, прицел, счётчики).
+    Их углы — не поверхность: тянут плоскость к экрану. 255 — можно брать точки, 0 — HUD. Камера стоит — None."""
+    cv2 = _cv2()
+    if len(grays) < 4:
+        return None
+    idx = np.linspace(0, len(grays) - 1, min(samples, len(grays))).round().astype(int)
+    stack = np.stack([cv2.GaussianBlur(grays[i], (3, 3), 0).astype(np.int16) for i in idx])
+    span = stack.max(axis=0) - stack.min(axis=0)
+    moving = float((span > still).mean())
+    if moving < 0.35:
+        return None  # камера почти стоит — неподвижное тут и стена тоже
+    edges = cv2.Canny(grays[idx[len(idx) // 2]], 40, 120) > 0
+    # Края HUD сами «мигают» (под ними едет сцена) — берём края рядом со стоящими пикселями букв.
+    static = cv2.dilate((span <= still).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    hud = static & edges
+    hud = cv2.dilate(hud.astype(np.uint8) * 255, np.ones((9, 9), np.uint8))
+    return np.where(hud > 0, 0, 255).astype(np.uint8)
+
+
 def _features(gray: np.ndarray, mask: np.ndarray, n: int, min_dist: float) -> np.ndarray:
     cv2 = _cv2()
     pts = cv2.goodFeaturesToTrack(gray, maxCorners=n, qualityLevel=0.004, minDistance=min_dist, mask=mask,
@@ -203,7 +224,9 @@ def _confidence(inliers: int, total: int, err: float) -> float:
 class _PlaneRun:
     """Проход в одну сторону от кадра-семени. Хранит якорные точки (координаты в кадре-семени)."""
 
-    def __init__(self, seed_gray: np.ndarray, quad: np.ndarray, *, correct: bool = True, persp_cap: float | None = None):
+    def __init__(self, seed_gray: np.ndarray, quad: np.ndarray, *, correct: bool = True, persp_cap: float | None = None,
+                 allow: np.ndarray | None = None):
+        self.allow = allow  # маска «не HUD» (static_mask): точки только на сцене
         self.persp_cap = persp_cap
         cv2 = _cv2()
         self.cv2 = cv2
@@ -214,10 +237,17 @@ class _PlaneRun:
         side = math.sqrt(max(1.0, abs(_area(self.quad0))))
         self.min_dist = max(3.0, min(9.0, side / 18))
         mask = _mask_poly((self.h, self.w), self.quad0, shrink=0.04)
+        if allow is not None:
+            mask = cv2.bitwise_and(mask, allow)
         pts = _features(seed_gray, mask, MAX_POINTS, self.min_dist)
-        if len(pts) < MIN_POINTS:
+        # Гладкая поверхность с плавным рисунком (крашеный металл, штукатурка): углов мало, но перепадов хватает —
+        # ведём прямым выравниванием ECC (_reacquire_ecc). Совсем ровная заливка — отказ.
+        patch_std = float(seed_gray[mask > 0].std()) if mask.any() else 0.0
+        if len(pts) < MIN_POINTS and (patch_std < ECC_MIN_STD or len(pts) == 0 and patch_std < 2 * ECC_MIN_STD):
             raise ValueError(f"на поверхности мало фактуры: {len(pts)} точек (нужно {MIN_POINTS}+) — "
                              "выбери место с рисунком (камни, швы, надписи), не небо и не гладкую стену")
+        if len(pts) == 0:
+            pts = np.asarray(self.quad0.mean(axis=0, keepdims=True), np.float32)
         self.anchor = pts.astype(np.float64)  # координаты на плоскости (кадр-семя)
         self.cur = pts.astype(np.float32)
         self.n0 = len(pts)
@@ -239,6 +269,8 @@ class _PlaneRun:
             return
         q = self.quad()
         mask = _mask_poly((self.h, self.w), q, shrink=0.04)
+        if self.allow is not None:
+            mask = self.cv2.bitwise_and(mask, self.allow)
         for x, y in self.cur:
             self.cv2.circle(mask, (int(round(x)), int(round(y))), int(self.min_dist), 0, -1)
         new = _features(gray, mask, MAX_POINTS - len(self.cur), self.min_dist)
@@ -381,6 +413,8 @@ class _PlaneRun:
     def _reseed_points(self, gray: np.ndarray) -> None:
         q = self.quad()
         mask = _mask_poly((self.h, self.w), q, shrink=0.04)
+        if self.allow is not None:
+            mask = self.cv2.bitwise_and(mask, self.allow)
         new = _features(gray, mask, MAX_POINTS, self.min_dist)
         if len(new) < 4:
             self.anchor, self.cur = np.zeros((0, 2)), np.zeros((0, 2), np.float32)
@@ -535,10 +569,12 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
         raise ValueError("quad — выпуклый четырёхугольник заметного размера (углы по кругу)")
     out: dict[int, dict] = {seed_index: {"q": q0.astype(np.float64), "c": 1.0, "s": "ok", "e": 0.0}}
     rejects: dict[str, int] = {}
+    # HUD игры над поверхностью (подсказки, лента убийств) стоит на экране — точки с него не берём.
+    allow = static_mask(grays)
     for direction in (1, -1):
         # full (по умолчанию) — полная гомография от семени: перспектива стены меняется, как в кадре (владелец
         # 16.11: «перспективы нет» при урезанной); limited — подобие + перспектива ≤ PERSP_CAP (старое поведение).
-        run = _PlaneRun(grays[seed_index], q0, correct=correct,
+        run = _PlaneRun(grays[seed_index], q0, correct=correct, allow=allow,
                         persp_cap=None if perspective == "full" else P.PERSP_CAP)
         run.rejects = rejects
         lost_for = 0.0

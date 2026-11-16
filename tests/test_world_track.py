@@ -390,6 +390,32 @@ def test_track_plane_full_perspective_follows_homography():
     assert np.linalg.norm(last[2] - last[1]) < 0.95 * np.linalg.norm(last[3] - last[0])
 
 
+def test_static_mask_excludes_hud_over_moving_scene():
+    """HUD игры (надпись на экране) поверх едущей сцены — в маске 0, сцена — 255; камера стоит — маски нет."""
+    frames, _ = _plane_frames(12)
+    grays = []
+    for f in frames:
+        g = f["img"].copy()
+        cv2.putText(g, "ASSIST 100", (40, 300), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 3)
+        grays.append(g)
+    m = ST.static_mask(grays)
+    assert m is not None and (m[280:300, 45:200] == 0).mean() > 0.6 and (m[60:200, :] == 255).mean() > 0.95
+    assert ST.static_mask([grays[0]] * 8) is None
+
+
+def test_check_jitter_ignores_smooth_fast_acceleration():
+    """Быстрый, но гладкий разгон камеры (30 fps) — не дрожь; шум углов — дрожь."""
+    from app.surface_pose import check_surface
+
+    quads = [_sq(cx=40 + 6 * i + 0.8 * i * i) for i in range(16)]
+    smp = [{"t": i / 30, "s": "ok", "q": list((q / [400, 200]).reshape(-1))} for i, q in enumerate(quads)]
+    assert check_surface(smp, frame=(400, 200), out_width=400)["jitter_px"] < 0.2
+    rng = np.random.default_rng(1)
+    noisy = [{"t": i / 30, "s": "ok", "q": list(((q + rng.normal(0, 3, q.shape)) / [400, 200]).reshape(-1))}
+             for i, q in enumerate(quads)]
+    assert check_surface(noisy, frame=(400, 200), out_width=400)["jitter_px"] > 1.5
+
+
 def test_schema_blend_modes_for_tracked_text_and_trail():
     from app import motion
 
