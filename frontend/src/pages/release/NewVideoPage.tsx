@@ -26,7 +26,7 @@ import "@/styles/releases.css";
  * по прошлым роликам: настоящая сумма появится на карточке перед платным шагом. Без проекта можно только файл, ссылку и холст.
  */
 
-type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "canvas" | "top";
+type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "frag" | "canvas" | "top";
 type IconName = Parameters<typeof Icon>[0]["name"];
 type TypeCard = { key: TypeKey; title: string; text: string; price: string; icon: IconName; module?: string; paid?: boolean; project?: boolean };
 
@@ -37,6 +37,7 @@ const TYPES: TypeCard[] = [
   { key: "3d", title: "3D-серия", text: "Blender, рендер на этом компьютере. Сценарий, режиссура, озвучка, рендер.", price: "0 ₽, рендер минуты", icon: "layers", module: "stories", project: true },
   { key: "expl", title: "Объяснялка", text: "Маскот объясняет тему. Тема, сценарий, позы, озвучка.", price: "около 34 ₽", icon: "chat", module: "explainer", project: true },
   { key: "promo", title: "Промо приложения", text: "Телефон с записью экрана. Материалы, сборка.", price: "0 ₽", icon: "pad", module: "promo", project: true },
+  { key: "frag", title: "Мувик под песню", text: "Бои записей игры под песню, текст песни по слогам. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "bolt", module: "frag_movie", project: true },
   { key: "canvas", title: "Пустой холст", text: "Собрать руками. Сразу клип.", price: "0 ₽", icon: "image" },
   { key: "top", title: "ТОП-N", text: "Лучшие клипы одного видео подряд с номерами. Новый клип.", price: "0 ₽", icon: "star", module: "compilation", project: true },
 ];
@@ -95,6 +96,8 @@ export function NewVideoPage() {
     form = <div className="aiv"><AiVideoNew projectId={projectId} onCreated={(s) => opened(`${releasePath(`aiv-${s.id}`, true)}&sub=script`)} /></div>;
   } else if (current?.key === "promo" && projectId) {
     form = <PromoForm projectId={projectId} />;
+  } else if (current?.key === "frag" && projectId) {
+    form = <FragMovieForm projectId={projectId} />;
   } else if (current?.key === "top" && projectId) {
     form = <TopForm projectId={projectId} />;
   }
@@ -259,6 +262,137 @@ function TopForm({ projectId }: { projectId: number }) {
         </button>
       </div>
       <span className="muted">Клип ляжет в это видео и в список выпусков проекта. Сборка берёт куски из одной записи: ТОП из разных видео пока не умеет.</span>
+    </div>
+  );
+}
+
+/* ---------- Мувик под песню ---------- */
+
+const LYRIC_LANGS: { value: string; label: string }[] = [
+  { value: "", label: "язык сам" },
+  { value: "ru", label: "русский" },
+  { value: "en", label: "английский" },
+];
+
+/**
+ * Записи игры проекта + песня (из музыки, файлом или ссылкой) + текст песни (по желанию) → переписка чата проекта с
+ * плейбуком frag-movie и первым заданием (app/frag_movie.py). Как «Промо»: форма только запускает работу, дальше агент.
+ */
+function FragMovieForm({ projectId }: { projectId: number }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const videos = useQuery({ queryKey: navKeys.videos(projectId), queryFn: () => navApi.videos(projectId) });
+  const tracks = useQuery({ queryKey: ["audio-tracks"], queryFn: audioTracksApi.list, staleTime: 60_000 });
+  const list = useMemo(() => (videos.data?.videos ?? []).filter((v) => v.has_file), [videos.data]);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [title, setTitle] = useState("");
+  const [track, setTrack] = useState(0);
+  const [file, setFile] = useState<File | null>(null);
+  const [link, setLink] = useState("");
+  const [lyrics, setLyrics] = useState("");
+  const [lang, setLang] = useState("");
+  const [notes, setNotes] = useState("");
+  const toggle = (id: number) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+  const hasSong = Boolean(track || file || link.trim());
+  const ready = title.trim() && picked.length > 0 && hasSong;
+  const start = useMutation({
+    mutationFn: async () => {
+      let trackId: number | null = track || null;
+      if (!trackId && file) trackId = (await audioTracksApi.upload(file, file.name.replace(/\.[^.]+$/, ""))).id;
+      return releasesApi.fragMovie(projectId, {
+        title: title.trim(),
+        source_ids: picked,
+        track_id: trackId,
+        music_url: trackId ? "" : link.trim(),
+        lyrics: lyrics.trim(),
+        lang,
+        notes: notes.trim(),
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(r.started ? "Агент начал: хроника боёв, текст песни, две пробы" : "Переписка готова");
+      qc.invalidateQueries({ queryKey: ["audio-tracks"] });
+      navigate(r.to);
+    },
+    onError: (e) => toast.error(errText(e, "Мувик не запустился")),
+  });
+  if (videos.isLoading) return <Loading />;
+  if (!list.length) {
+    return <EmptyState icon="🎮" title="Нет записей игры" hint="Добавьте записи в проект карточкой «Ссылка или файл», потом возвращайтесь сюда." />;
+  }
+  return (
+    <div className="series-col">
+      <div className="series-row">
+        <label className="field">
+          <span>Название</span>
+          <input className="input" value={title} maxLength={100} placeholder="Stay Together" onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Песня из музыки</span>
+          <select className="input" value={track} onChange={(e) => setTrack(Number(e.target.value))}>
+            <option value={0}>не из музыки</option>
+            {(tracks.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!track ? (
+        <div className="series-row">
+          <label className="field">
+            <span>или файлом</span>
+            <input className="input" type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          </label>
+          <label className="field">
+            <span>или ссылкой</span>
+            <input className="input" value={link} disabled={Boolean(file)} placeholder="https://…" onChange={(e) => setLink(e.target.value)} />
+          </label>
+        </div>
+      ) : null}
+      <div className="li-cap">Записи игры: бои возьмутся из них, одна запись — подряд</div>
+      <ul className="nv-top">
+        {list.map((v) => (
+          <li key={v.id}>
+            <label className="aiv-check">
+              <input type="checkbox" checked={picked.includes(v.id)} onChange={() => toggle(v.id)} />
+              <span>{v.name}</span>
+              <small className="muted">{formatDuration(v.duration_sec)}</small>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <label className="field">
+        <span>Текст песни, по строке; [Припев] и пустые строки — не строки, «(x2)» — повтор. Нет — агент распознает сам</span>
+        <textarea className="input" rows={6} value={lyrics} onChange={(e) => setLyrics(e.target.value)} />
+      </label>
+      <div className="series-row">
+        <label className="field">
+          <span>Язык песни</span>
+          <select className="input" value={lang} onChange={(e) => setLang(e.target.value)}>
+            {LYRIC_LANGS.map((l) => (
+              <option key={l.value} value={l.value}>
+                {l.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Пожелания агенту</span>
+          <input className="input" value={notes} maxLength={600} placeholder="например, сначала клатч у R5" onChange={(e) => setNotes(e.target.value)} />
+        </label>
+      </div>
+      <div className="series-row">
+        <button className="btn primary sm" disabled={!ready || start.isPending} onClick={() => start.mutate()}>
+          {start.isPending ? "Запускаю…" : `Начать мувик из ${picked.length || "…"} записей`}
+        </button>
+        <span className="muted">
+          Откроется чат проекта: агент соберёт хронику боёв, выровняет текст песни и пришлёт две 20-секундные пробы. Части для TikTok по 58 с и подписи
+          «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ ᴀᴘᴇx ⨯ трек · N/M» — из настроек проекта.
+        </span>
+      </div>
     </div>
   );
 }

@@ -135,8 +135,31 @@ def _run(store: Any, render_id: str) -> None:
         return
     result = _brief_clip(clip) if isinstance(clip, dict) else {}
     ok = isinstance(clip, dict) and clip.get("status") == "succeeded"
+    if ok:
+        freezes = workflow_freeze_check(store, job["clip_id"])
+        if freezes is not None:
+            result["freezes"] = freezes
     _set(render_id, status="done" if ok else "failed", finished_at=_now(), result=result,
          error="" if ok else (result.get("error") or f"рендер вернул статус {result.get('render_status')}"))
+
+
+def workflow_freeze_check(store: Any, clip_id: int) -> dict | None:
+    """Работа проекта велит проверять застывшие куски сразу после рендера («Мувик под песню», app/frag_movie.py):
+    lint_clip(checks: ["freezes"]) по готовому файлу — в ответ render_status. Нет такой работы — None."""
+    try:
+        from app.frag_movie import plan_workflow
+
+        if not plan_workflow(store, int(clip_id)).get("freeze_check"):
+            return None
+        from app import quality_lint as Q
+
+        found = Q.lint_clip(store, int(clip_id), checks=["freezes"], media=True)
+    except Exception as exc:  # noqa: BLE001 - проверка — подсказка, рендер уже готов
+        return {"ok": None, "error": f"проверка застывших кусков не прошла: {str(exc)[:200]}"}
+    items = [f for f in found.get("findings") or [] if f.get("check") == "freezes"]
+    return {"ok": not any(f.get("severity") == "warn" for f in items), "count": len(items), "findings": items[:8],
+            "note": ("застывших кусков ≥ 0.6 с нет" if not items else
+                     "есть застывшие куски — поправь (скорость куска, пауза под текст, fps записи) и перерендерь")}
 
 
 def get(render_id: str) -> dict | None:

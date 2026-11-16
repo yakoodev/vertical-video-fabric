@@ -96,10 +96,28 @@ def _events(ctx: ToolContext, plan: dict, clock: Any, args: dict) -> tuple[list[
             f"бои — game_events записи ({len(merged)} в ролике)")
 
 
+def _workflow_texts(ctx: ToolContext, render: dict, result: dict, workflow: dict) -> str:
+    """Подписи частей по настройкам работы проекта (app/frag_movie.py): caption — «… ⨯ трек · N/M» + хэштеги."""
+    from app.frag_movie import caption_text
+
+    label = ""
+    if render.get("music_on") and render.get("track_id"):
+        try:
+            track = ctx.store.get_audio_track(int(render["track_id"]))
+            label = str(track.get("label") or track.get("original_filename") or "")
+        except (KeyError, TypeError, ValueError):
+            label = ""
+    count = int(result.get("count") or len(result.get("parts") or []))
+    for part in result.get("parts") or []:
+        part["caption"] = caption_text(workflow, label, int(part["index"]), count)
+    return "подписи частей (caption) — по настройкам проекта; владельцу — блоком для копирования"
+
+
 def h_plan_tiktok_parts(ctx: ToolContext, args: dict) -> dict:
     from app.clip_settings import normalize_render_settings
     from app.cut_tools_beats import _beat_grid
-    from app.tiktok_parts import MAX_SONG_SEC, MIN_PART_SEC, plan_parts
+    from app.frag_movie import plan_workflow
+    from app.tiktok_parts import BALANCE_WEIGHT, EQUAL_WEIGHT, LABEL_TEXT, MAX_SONG_SEC, MIN_PART_SEC, NEXT_TEXT,         plan_parts
     from app.tool_core import plan_clock
 
     plan = ctx.store.get_clip_plan(ctx.plan_id)
@@ -117,13 +135,24 @@ def h_plan_tiktok_parts(ctx: ToolContext, args: dict) -> dict:
     song, offset, breaks, song_note = _song_span(ctx.store, render, duration, args)
     events, events_note = _events(ctx, plan, clock, args)
     parts = args.get("parts")
+    # Настройки работы проекта («Мувик под песню»): предел песни, части одной длины, тексты «Часть N/M» — если
+    # агент не задал своё.
+    workflow = plan_workflow(ctx.store, ctx.plan_id)
+    preset = workflow.get("tiktok_parts") or {}
+    max_song = _num(args.get("max_song_sec"), _num(preset.get("max_song_sec"), MAX_SONG_SEC)) or MAX_SONG_SEC
+    equal = args.get("equal") if args.get("equal") is not None else bool(preset.get("equal"))
     try:
         result = plan_parts(duration, beats=beats, downbeats=downbeats, events=events, song=song, song_offset=offset,
-                            song_breaks=breaks, max_song_sec=_num(args.get("max_song_sec"), MAX_SONG_SEC) or MAX_SONG_SEC,
+                            song_breaks=breaks, max_song_sec=max_song,
                             min_part_sec=_num(args.get("min_part_sec"), MIN_PART_SEC) or MIN_PART_SEC,
-                            parts=int(parts) if parts not in (None, "") else None)
-    except (TypeError, ValueError) as exc:
+                            parts=int(parts) if parts not in (None, "") else None,
+                            label_text=str(preset.get("label") or LABEL_TEXT),
+                            next_text=str(preset.get("end_text") or NEXT_TEXT),
+                            balance_weight=EQUAL_WEIGHT if equal else BALANCE_WEIGHT)
+    except (TypeError, ValueError, KeyError, IndexError) as exc:
         raise ToolError(f"части не спланированы: {exc}") from exc
+    if workflow:
+        result["caption_note"] = _workflow_texts(ctx, render, result, workflow)
     result.update(ok=True, grid=grid, song_note=song_note, events_note=events_note,
                   note=("Только план — клип не изменён. Время — секунды ГОТОВОГО ролика (final); layers и end_text — "
                         "секунды части от её начала. Часть = отрезок готового ролика start..end: отдельный клип из "
@@ -146,11 +175,14 @@ def tools() -> list[Tool]:
             "Бои — events [{start, end}] (секунды готового ролика) или из game_events записи клипа. Ответ: parts "
             "[{index, label «часть N/M», start, end, duration, song {track_start, track_end, sec}, cut {at, kind}, "
             "end_text «Часть N+1 → в профиле», layers — титры части (add_layers в клипе части), caption_suffix "
-            "« · N/M»}], notes. / Plan TikTok parts (≤58 s of one song each, cuts on beats, never inside a fight).",
+            "« · N/M»; у проекта с работой «Мувик под песню» — caption: подпись части по настройкам проекта}], notes. "
+            "Настройки проекта (мувик) задают предел песни, тексты частей и equal; аргументы — сильнее. "
+            "/ Plan TikTok parts (≤58 s of one song each, cuts on beats, never inside a fight).",
             _obj({"max_song_sec": {"type": "number", "minimum": 10, "maximum": 60,
                                    "description": "песни в части не больше, с (58)"},
                   "min_part_sec": {"type": "number", "minimum": 1, "description": "часть не короче, с (15)"},
                   "parts": {"type": "integer", "minimum": 1, "description": "частей не меньше этого"},
+                  "equal": {"type": "boolean", "description": "части одной длины важнее лучшего стыка"},
                   "events": {"type": "array", "items": {"type": "object", "properties": {
                       "start": {"type": "number"}, "end": {"type": "number"}}},
                              "description": "бои/события — внутри них стыка нет (секунды готового ролика)"},

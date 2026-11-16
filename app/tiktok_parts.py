@@ -30,6 +30,7 @@ HOOK_LEAD_SEC = 1.5
 LABEL_SEC = 2.5
 END_TEXT_SEC = 2.0
 BALANCE_WEIGHT = 10.0  # штраф за отклонение длины части от средней: 10·(Δ/средняя)²
+EQUAL_WEIGHT = 400.0  # «части одной длины»: 5 % отклонения стоят дороже, чем доля вместо начала фразы
 COSTS = {"phrase": 0.0, "downbeat": 0.6, "beat": 1.5, "song_edge": 0.3, "gap": 4.0}
 HOOK_BONUS = 0.4
 LABEL_TEXT = "часть {n}/{m}"
@@ -117,12 +118,13 @@ def plan_parts(duration: float, *, beats: list[float], downbeats: list[float] | 
                phrase_every: int = PHRASE_EVERY, events: Any = None, song: tuple[float, float] | None = None,
                song_offset: float = 0.0, song_breaks: Iterable[float] = (), max_song_sec: float = MAX_SONG_SEC,
                min_part_sec: float = MIN_PART_SEC, parts: int | None = None, label_text: str = LABEL_TEXT,
-               next_text: str = NEXT_TEXT) -> dict:
+               next_text: str = NEXT_TEXT, balance_weight: float = BALANCE_WEIGHT) -> dict:
     """План частей ролика длиной ``duration`` (секунды готового ролика).
 
     ``song`` — (начало, конец) звучания песни в ролике (None — песни нет: части только по длине и боям);
     ``song_offset`` — секунда трека в начале ``song``; ``song_breaks`` — где трек начинается заново с начала (повтор).
-    ``beats``/``downbeats`` — доли в секундах ролика; ``events`` — бои ``[{start, end}]``.
+    ``beats``/``downbeats`` — доли в секундах ролика; ``events`` — бои ``[{start, end}]``; ``balance_weight`` — насколько
+    важнее равная длина частей, чем лучший стык (``EQUAL_WEIGHT`` — части одной длины, работа «Мувик под песню»).
     Ответ: ``{count, parts: [{index, label, start, end, duration, song, cut, layers, caption_suffix}], ...}``.
     ValueError — так нарезать нельзя (бой длиннее ``max_song_sec`` песни, нет стыка в просвете)."""
     duration = float(duration)
@@ -197,7 +199,7 @@ def plan_parts(duration: float, *, beats: list[float], downbeats: list[float] | 
                 if cost[k - 1][i] == inf:
                     continue
                 length = times[j] - times[i]
-                c = cost[k - 1][i] + BALANCE_WEIGHT * ((length - target) / target) ** 2 + nodes[j]["cost"]
+                c = cost[k - 1][i] + balance_weight * ((length - target) / target) ** 2 + nodes[j]["cost"]
                 if c < cost[k][j] - 1e-12:
                     cost[k][j], back[k][j] = c, i
     if cost[count][-1] == inf:

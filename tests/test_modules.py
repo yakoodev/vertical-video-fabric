@@ -182,7 +182,8 @@ def test_dependencies_cascade_with_confirmation(env):
     # Цепочка: series → autopilot и vod_watch.
     plan = modules.plan({"series": False}, store)
     assert set(plan["also_off"]) == {"autopilot", "vod_watch", "ai_video", "explainer", "stories", "series3d"}
-    assert modules.dependents("transcription") == ["voices", "censor"]
+    # «Мувик под песню» выравнивает текст песни Whisper'ом — без распознавания он не работает.
+    assert modules.dependents("transcription") == ["voices", "censor", "frag_movie"]
 
 
 def test_effective_state_respects_dependencies_even_without_cascade(env):

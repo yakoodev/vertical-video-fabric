@@ -2,7 +2,9 @@ from __future__ import annotations
 
 
 DEFAULT_PROMPT_SEED_KEY = "default_prompt_presets_seeded"
-DEFAULT_PROMPT_SEED_VERSION = "20261116-prompts-v23"
+# v24: пресет анализа «Фраг-мувик» (список боёв для мувика под песню, app/frag_movie.py) — новая строка; правки
+# владельца в остальных пресетах не трогаются (default_prompt_presets_hashes, app/db_prompt_fingerprints.py).
+DEFAULT_PROMPT_SEED_VERSION = "20261116-prompts-v24"
 
 # Universal editing rules appended to EVERY analysis. These must be mode-neutral:
 # no recap mandate and no "reject action unless it explains the plot" — that
@@ -83,9 +85,36 @@ def prompt_wants_recap(prompt: str | None) -> bool:
     return "episode story recap" in text or "main plot recap" in text
 
 
-def analysis_output_rules(prompt: str | None) -> str:
-    """Universal editing rules, plus recap rules only when the prompt wants one."""
+# Frag movie fight list (preset «Фраг-мувик»): one clip per fight, no 30-second floor — the
+# movie is assembled from whole fights later, a fight is as long as it lasts.
+FIGHT_LIST_OUTPUT_RULES = """
+Fight list contract (frag movie material, not finished shorts):
+- One clips[] item per fight. A fight is one story from the first damage dealt or
+  taken to the last knock, kill or squad wipe plus the player's short reaction.
+- A fight may be 6 to 90 seconds; there is no length floor and no 30-second
+  minimum. Never pad a fight with running, looting or menus to make it longer.
+- Inside a fight use ordered segments[] only to drop dead time (running between
+  cover, reviving, looting, finishing a knocked enemy, camera looking at nothing).
+  Every knock and kill of the fight stays inside, in order.
+- Never split one fight into two clips and never merge two separate fights into
+  one clip. Two fights closer than 5 seconds with the same enemy squad are one fight.
+- Return the fights in chronological order of the source.
+- Write all titles, descriptions and segment reasons in concise natural Russian.
+""".strip()
 
+
+def prompt_wants_fights(prompt: str | None) -> bool:
+    """Fight-list mode (frag movie material) — only for prompts that ask for it by name."""
+
+    return "frag movie fight list" in str(prompt or "").lower()
+
+
+def analysis_output_rules(prompt: str | None) -> str:
+    """Universal editing rules, plus recap rules only when the prompt wants one; fight-list prompts get
+    their own contract instead (no length floor: a fight lasts as long as it lasts)."""
+
+    if prompt_wants_fights(prompt):
+        return FIGHT_LIST_OUTPUT_RULES
     if prompt_wants_recap(prompt):
         return f"{UNIVERSAL_OUTPUT_RULES}\n\n{NARRATIVE_RECAP_RULES}"
     return UNIVERSAL_OUTPUT_RULES
@@ -94,6 +123,11 @@ def analysis_output_rules(prompt: str | None) -> str:
 def analysis_mode_instructions(prompt: str | None) -> str:
     """One-line clip-shape instruction matching the prompt's mode."""
 
+    if prompt_wants_fights(prompt):
+        return (
+            "Return every fight of the recording that has a substantial event, one clip per fight, in "
+            "chronological order (usually 3 to 15). Skip fights with only a few damage numbers and no result. "
+        )
     if prompt_wants_recap(prompt):
         return (
             "For episodic fiction, clips[0] must be an Episode Story Recap with 4 to 6 ordered "
@@ -689,6 +723,51 @@ explaining the whole joke.
 """.strip()
 
 
+FRAG_MOVIE_ANALYSIS_PROMPT = """
+Frag movie fight list. Analyze this gameplay recording (default: Apex Legends,
+the player's own POV with squad voice chat) and list the fights worth putting
+into a frag movie — a montage of fights cut to a song, without memes. The
+editor will assemble whole fights later, so return the raw fight stories, not
+finished shorts.
+
+What counts as a fight worth keeping (in this order of value):
+- A squad wipe: every knock and kill of that fight, start to finish, until
+  "squad eliminated" / the last enemy of the squad is down.
+- A clutch: the player survives or wins while outnumbered or low on health,
+  or rescues a fight the squad was losing.
+- Knocks and kills of live enemies, especially several in a row, a knock with
+  a sniper or a shotgun up close, a third party won.
+- Big damage with a result: a broken shield that leads to a knock, hundreds
+  of damage in one exchange.
+
+Fight boundaries:
+- Start at the first damage dealt or taken — the first shots at a visible
+  enemy. Do not start at the first knock: the setup of the fight is the story.
+- End after the last knock, kill or squad wipe of that fight plus 1 to 2
+  seconds of the player's reaction. A knock in smoke right after the first,
+  a re-knock, a second enemy, a third party joining — all the same fight.
+- Inside a fight drop only dead time: running between cover, looting,
+  reviving, healing for long, finishing an already knocked enemy, the camera
+  looking at nothing.
+
+Never use as moments or filler: ziplines, jumps, sliding and running with no
+enemy, looting, menus, the drop, spectating after death, shooting an already
+knocked enemy, damage that leads nowhere (a few numbers like 13 or 37 with no
+knock), the camera pointed at nothing.
+
+Voice: keep teammate and player voice lines inside a fight when they are
+meaningful (a callout that explains what happens: "one shot", "he's cracked",
+"two left") or emotional (a shout, a laugh, a curse after a clutch). In each
+segment reason say which line is there and at what second, so the editor can
+keep it audible over the music.
+
+For each fight write in Russian: a short title (what happened: «Уничтожение
+отряда у R5», «Клатч 1 против 3»), a description listing every knock and kill
+in order with timestamps, and for each segment why it belongs (first damage,
+knocks, reaction, meaningful voice line).
+""".strip()
+
+
 DEFAULT_PROMPT_PRESETS = (
     {
         "task": "analysis",
@@ -736,6 +815,12 @@ DEFAULT_PROMPT_PRESETS = (
         "task": "analysis",
         "label": "Юмор: смешные моменты",
         "prompt": COMEDY_MOMENTS_PROMPT,
+        "is_default": False,
+    },
+    {
+        "task": "analysis",
+        "label": "Фраг-мувик",
+        "prompt": FRAG_MOVIE_ANALYSIS_PROMPT,
         "is_default": False,
     },
     {

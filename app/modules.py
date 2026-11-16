@@ -305,6 +305,17 @@ MODULES: list[Module] = [
         routes=("POST /api/sources/{id}/compilation",),
     ),
     Module(
+        "frag_movie", "Мувик под песню", "montage",
+        "Фраг-мувик: бои записей игры под песню — карточка «Новое видео» запускает агента проекта с плейбуком "
+        "frag-movie; текст песни по слогам вокала (align_lyrics: demucs, если настроен DEMUCS_CMD, и Whisper) и слоем "
+        "строк в паузах между киллами (lyric_layers); части для TikTok и подписи — из настроек проекта.",
+        cost=("cpu", "ram"), cost_note="Whisper large-v3-turbo и demucs — минута-две CPU на песню",
+        depends=("transcription", "agent_chat"),
+        tools=("align_lyrics", "lyric_layers"),
+        routes=("POST /api/projects/{id}/frag-movie",),
+        ui=("карточка «Мувик под песню» в «Новом видео»",),
+    ),
+    Module(
         "promo", "Промо приложений", "montage",
         "Шаблон промо: телефон с записью экрана, подписи, музыка — одним вызовом build_app_promo.",
         cost=("cpu",), cost_note="рендер моушн-слоёв",

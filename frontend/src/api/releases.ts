@@ -108,10 +108,33 @@ export const releaseKeys = {
   one: (key: string) => ["release", key] as const,
 };
 
+/** «Мувик под песню» (app/frag_movie.py): переписка чата проекта с плейбуком frag-movie и первым заданием. */
+export interface FragMovieBody {
+  title: string;
+  source_ids: number[];
+  track_id?: number | null;
+  music_url?: string;
+  lyrics?: string;
+  lang?: string;
+  notes?: string;
+  run_agent?: boolean;
+}
+
+export interface FragMovieStart {
+  thread_id: number;
+  to: string;
+  track_id: number;
+  track: string;
+  lyrics: boolean;
+  started: boolean;
+  caption_example: string;
+}
+
 export const releasesApi = {
   get: (key: string) => api.get<ReleaseView>(`/api/releases/${key}`),
   promo: (projectId: number, body: { title: string; spec: PromoSpec }) =>
     api.post<{ clip_id: number; to: string; duration: number; notes: string[] }>(`/api/projects/${projectId}/promo`, body),
+  fragMovie: (projectId: number, body: FragMovieBody) => api.post<FragMovieStart>(`/api/projects/${projectId}/frag-movie`, body),
   top: (sourceId: number, body: { plan_ids: number[]; title?: string; countdown?: boolean }) =>
     api.post<{ clip_plan_id: number; clips: number; skipped: number[]; duration: number }>(`/api/sources/${sourceId}/compilation`, body),
 };
