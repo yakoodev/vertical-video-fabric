@@ -1,0 +1,112 @@
+{
+  "_about": "Готовые работы до «Ленты» → лента (tools/feed_backfill.py). Файлы копируются в import_dir_host, сервис видит их как import_dir_container и переносит в свою папку ленты. Заметки и вердикты — из docs/montage-journal.md. _tg-копии, sample и листы кадров не берутся: превью сервис соберёт сам.",
+  "import_dir_host": "D:\\vvf-data\\runtime\\feed_import",
+  "import_dir_container": "/data/runtime/feed_import",
+  "works": [
+    {
+      "title": "BURN YOUR LOCAL POLITICIAN — мувик Apex",
+      "kind": "movie",
+      "project_id": null,
+      "dir": "D:\\vvf-offload\\memes\\movie5\\out",
+      "versions": [
+        {
+          "label": "v4",
+          "note": "Файты целиком, скорость 0.87–1.15× (рамп только в нок), 6 реплик из микрофона (музыка −9 дБ), строк песни 11 вместо 15.",
+          "status": "review",
+          "verdict": "«Это образцовый монтаж. Только момент на 2:30 всё ещё забагован, а остальное около идеально»",
+          "variants": [
+            {"file": "movie5v4_9x16.mp4", "label": "9:16"},
+            {"file": "movie5v4_16x9.mp4", "label": "16:9"},
+            {"file": "movie5v4_9x16_tiktok.mp4", "label": "TikTok 9:16"},
+            {"file": "movie5v4_9x16_nomusic.mp4", "label": "9:16 без музыки"}
+          ]
+        },
+        {
+          "label": "v4.1",
+          "note": "Баг на 2:30 исправлен: запись B23 в 60 к/с читалась как 120 (двойная скорость и стоп-кадр). Плюс версия 58 с и части для TikTok по ≤58 с песни.",
+          "status": "accepted",
+          "verdict": "«Оно играет» — правило 60 с подтверждено; «Тогда можем делить мувик на части»",
+          "variants": [
+            {"file": "movie5v41_9x16.mp4", "label": "9:16"},
+            {"file": "movie5v41_16x9.mp4", "label": "16:9"},
+            {"file": "movie5v41_9x16_tiktok.mp4", "label": "TikTok 9:16"},
+            {"file": "movie5v41_9x16_nomusic.mp4", "label": "9:16 без музыки"},
+            {"file": "movie5v41_9x16_tt58.mp4", "label": "TikTok 58 с"},
+            {"file": "movie5v41_part1.mp4", "label": "TikTok часть 1/3"},
+            {"file": "movie5v41_part2.mp4", "label": "TikTok часть 2/3"},
+            {"file": "movie5v41_part3.mp4", "label": "TikTok часть 3/3"}
+          ]
+        },
+        {
+          "label": "v4.2",
+          "note": "Заставка yakoodev в начале и в конце длинной версии.",
+          "status": "accepted",
+          "verdict": "«Прям норм. Пара моментов спорные, но научишься»",
+          "variants": [
+            {"file": "movie5v42_16x9.mp4", "label": "16:9 с заставкой"},
+            {"file": "movie5v42_9x16.mp4", "label": "9:16 с заставкой"}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Stay Together — мувик Apex",
+      "kind": "movie",
+      "project_id": null,
+      "dir": "D:\\vvf-offload\\memes\\movie6_stay\\out",
+      "versions": [
+        {
+          "label": "v1",
+          "note": "Полная 9:16 и 16:9 с заставкой, 4 части TikTok ~48–50 с. Вторая половина слабее: не хватило сильных файтов, около половины моментов из BURN.",
+          "status": "accepted",
+          "verdict": "«Первая половина идеальна. Во второй есть лишние моменты, но пока похуй. Режь на части по минуте, буду постить»",
+          "variants": [
+            {"file": "stay_9x16.mp4", "label": "9:16"},
+            {"file": "stay_16x9.mp4", "label": "16:9"},
+            {"file": "stay_part1.mp4", "label": "TikTok часть 1/4"},
+            {"file": "stay_part2.mp4", "label": "TikTok часть 2/4"},
+            {"file": "stay_part3.mp4", "label": "TikTok часть 3/4"},
+            {"file": "stay_part4.mp4", "label": "TikTok часть 4/4"}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "AMV Chainsaw Man",
+      "kind": "amv",
+      "project_id": null,
+      "dir": "D:\\vvf-offload\\amv\\out_csm",
+      "versions": [
+        {
+          "label": "v1",
+          "note": "Один тайтл с сюжетной линией: акты истории по времени песни, кроп по источнику, сцены без повторов, плотнее тряска.",
+          "status": "review",
+          "variants": [
+            {"file": "amv_csm_9x16.mp4", "label": "9:16"},
+            {"file": "amv_csm_16x9.mp4", "label": "16:9"},
+            {"file": "amv_csm_tiktok_9x16.mp4", "label": "TikTok 9:16"}
+          ]
+        }
+      ]
+    },
+    {
+      "title": "AMV — первый заход (фильмы Blender)",
+      "kind": "amv",
+      "project_id": null,
+      "dir": "D:\\vvf-offload\\amv\\out",
+      "versions": [
+        {
+          "label": "v1",
+          "note": "Нарезка из 8 открытых фильмов Blender под трек референса.",
+          "status": "rejected",
+          "verdict": "«Нихуя не понятно» — без истории не читается; АМВ делать по одному тайтлу",
+          "variants": [
+            {"file": "amv_9x16.mp4", "label": "9:16"},
+            {"file": "amv_16x9.mp4", "label": "16:9"},
+            {"file": "amv_tiktok_9x16.mp4", "label": "TikTok 9:16"}
+          ]
+        }
+      ]
+    }
+  ]
+}
