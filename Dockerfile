@@ -134,6 +134,9 @@ COPY tools/anim_retarget.py tools/anim_library.py /app/tools/
 # Шаблоны 3D-серий (app/s3d_templates.py): планы готовых историй Витубики и мем-пилот (читается как текст, не запускается).
 COPY tools/vtubika_plans /app/tools/vtubika_plans
 COPY tools/meme3d_pilot.py /app/tools/meme3d_pilot.py
+# «Клип на песню» (app/music_video_job.py): разбор, план, текстуры и mp4 — этим инструментом; кадры Blender — на
+# компьютере с Blender (tools/render_worker.py), в образе его нет.
+COPY tools/music_video /app/tools/music_video
 # Бренд-ассеты (значок Витубики для концовки историй, app/vtubika_endcard.py).
 COPY assets /app/assets
 # Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.

@@ -7,7 +7,8 @@ get_playbook — центр-кроп игры без лица и донат-ба
 1. последний успешный ``get_playbook(name)`` хода или имя плейбука в запросе — как у монтажёра;
 2. плейбук, закреплённый за перепиской (``chat_threads.playbook``: карточка «Мувик под песню», app/frag_movie.py) —
    «ок, делай полную» плейбука по словам не назовёт, а работа та же;
-3. иначе — по словам запроса: мувик / фраг-мувик / бои под песню → ``frag-movie``, нарезка стрима →
+3. иначе — по словам запроса: клип на песню → ``music-video``, мувик / фраг-мувик / бои под песню → ``frag-movie``,
+   нарезка стрима →
    ``stream-shorts``, реклама сайта/товара → ``ad-voiceover``, серия по комменту / эпизод → заметка ``SERIES_NOTE``
    (плейбука серии ещё нет).
 """
@@ -24,6 +25,8 @@ _SCREEN_REC = re.compile(r"(запис[ьи] экрана|скринкаст|scr
 # Мувик: бои записей игры под песню, без мемов (с мемами — meme-edit, его зовут по имени).
 _FRAG = re.compile(r"(мувик|фраг[- ]?мув|frag ?movie|нарезк\w* бо[её]в под (песн|трек|музык)|бои под (песн|трек))", re.I)
 _MEMES = re.compile(r"(мем|meme)", re.I)
+# Клип на песню (пресет 13.11: картинки в 2.5D, большие слова на слогах) — не мувик из записей игры.
+_MUSIC_VIDEO = re.compile(r"(клип\w* (на|под) (сво\w+ )?песн|музыкальн\w* клип|music ?video)", re.I)
 
 SERIES_NOTE = """
 ЗАДАНИЕ — СЕРИЯ (эпизод по комменту зрителя)
@@ -49,6 +52,8 @@ def pick(message: str, steps: list[dict] | None = None, pinned: str | None = Non
     if pinned:
         return str(pinned)
     text = str(message or "")
+    if _MUSIC_VIDEO.search(text):
+        return "music-video"
     if _FRAG.search(text) and not _MEMES.search(text):
         return "frag-movie"
     if _AD.search(text) and not _STREAM.search(text):

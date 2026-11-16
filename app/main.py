@@ -82,6 +82,9 @@ stories_worker = StoriesWorker(store)
 from app.s3d_render import Series3dWorker  # noqa: E402 - 3D-серия: голос → 3D → проверки → клип, по одному
 
 series3d_worker = Series3dWorker(store)
+from app.music_video_job import MusicVideoWorker  # noqa: E402 - клип на песню: разбор → картинки → кадры → клип
+
+music_video_worker = MusicVideoWorker(store)
 AuthDep = Annotated[None, Depends(require_auth)]
 
 # Модули сервиса (app/modules.py): что выключено в «Настройки → Модули». Хранилище и работники —
@@ -96,6 +99,7 @@ modules.register_worker("ai_video", "aivideo-gen", lambda: aivideo_worker)
 modules.register_worker("explainer", "explainer", lambda: explainer_worker)
 modules.register_worker("stories", "stories", lambda: stories_worker)
 modules.register_worker("series3d", "series3d", lambda: series3d_worker)
+modules.register_worker("music_video", "music-video", lambda: music_video_worker)
 
 
 @asynccontextmanager
@@ -450,6 +454,14 @@ from app.stories_gen import kick as _stories_kick  # noqa: E402
 
 app.include_router(build_render3d_router(AuthDep, lambda: store))
 _render3d_on_done(_stories_kick)  # рендер готов — работник историй сразу собирает клип
+from app.music_video_job import kick as _music_video_kick  # noqa: E402
+
+_render3d_on_done(_music_video_kick)  # mp4 клипа на песню с компьютера — проверки и клип сразу
+
+# Клип на песню: задание, статус, файлы проверки, архив для рендера на компьютере (app/music_video_api.py).
+from app.music_video_api import build_music_video_router  # noqa: E402
+
+app.include_router(build_music_video_router(AuthDep, lambda: store))
 
 # 3D-серия в сервисе: библиотека проекта, серии с версиями плана, рендер заданием и проверки (app/s3d_api.py).
 from app.s3d_api import build_series3d_router  # noqa: E402
