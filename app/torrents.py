@@ -45,6 +45,14 @@ _log = logging.getLogger(__name__)
 ACTIVE_STATUSES = {"metadata", "selecting", "downloading", "registering", "cancelling"}
 KEEP_TERMINAL = 20
 WORK_SUBDIR = ".torrents"
+
+
+def torrent_work_root() -> Path:
+    """Где aria2 пишет куски. На сервисе ``sources`` — папка диска Windows (bind через 9p): мелкие случайные записи
+    там блокируют цикл aria2, RPC перестаёт отвечать (ReadTimeout) — поэтому по умолчанию качаем во внутренний том
+    данных (ext4), а готовый файл переносим в ``sources``. TORRENT_WORK_DIR — переопределить."""
+    custom = (os.getenv("TORRENT_WORK_DIR") or "").strip()
+    return Path(custom) if custom else settings.data_dir / WORK_SUBDIR
 STATUS_KEYS = ["gid", "status", "totalLength", "completedLength", "uploadLength", "downloadSpeed", "uploadSpeed",
                "connections", "numSeeders", "errorCode", "errorMessage", "followedBy", "infoHash", "bittorrent"]
 # Как задача выглядит в общей ленте «Активности» (frontend useActiveTasks: queued/running/downloading — активные).
@@ -263,7 +271,7 @@ class TorrentService:
             "created_at": _now_text(), "updated_at": _now_text(),
         }
         job = _Job(kind=kind, payload=payload,
-                   workdir=settings.source_dir / WORK_SUBDIR / f"t{task_id}-{uuid4().hex[:8]}",
+                   workdir=torrent_work_root() / f"t{task_id}-{uuid4().hex[:8]}",
                    on_source=on_source or self._assign_to_project(project_id))
         with self._lock:
             self._tasks.insert(0, task)
@@ -495,7 +503,7 @@ class TorrentService:
             name = PurePosixPath(entry["path"]).name
             stem = _safe_filename_stem(PurePosixPath(name).stem) or "torrent"
             dest = settings.source_dir / f"{uuid4().hex}-{stem}{PurePosixPath(name).suffix.lower()}"
-            os.replace(src, dest)  # тот же диск: переезд, не копия
+            shutil.move(str(src), str(dest))  # из рабочего каталога на быстром диске в sources (может быть другой диск)
             meta = {"torrent": {"name": task["name"], "info_hash": task["info_hash"], "file_path": entry["path"],
                                 "file_index": index, "magnet": task["magnet"], "input": task["input"]}}
             try:
@@ -550,7 +558,7 @@ class TorrentService:
         if self._swept:
             return
         self._swept = True
-        root = settings.source_dir / WORK_SUBDIR
+        root = torrent_work_root()
         if not root.is_dir():
             return
         with self._lock:

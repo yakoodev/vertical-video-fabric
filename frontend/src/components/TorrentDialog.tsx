@@ -25,11 +25,16 @@ function eta(sec: number | null): string {
   return `${sec} с`;
 }
 
-export function TorrentDialog({ projectId, onClose }: { projectId?: number | null; onClose: () => void }) {
+export function TorrentDialog({ projectId, onClose, initialMagnet = "" }: {
+  projectId?: number | null;
+  onClose: () => void;
+  /** Magnet, вставленный в обычное поле ссылки: окно открывается уже с ним и сразу запрашивает список файлов. */
+  initialMagnet?: string;
+}) {
   const toast = useToast();
   const qc = useQueryClient();
   const [mode, setMode] = useState<Mode>("magnet");
-  const [magnet, setMagnet] = useState("");
+  const [magnet, setMagnet] = useState(initialMagnet);
   const [file, setFile] = useState<File | null>(null);
   const [taskId, setTaskId] = useState<number | null>(null);
   const [picked, setPicked] = useState<number[] | null>(null);
@@ -43,6 +48,12 @@ export function TorrentDialog({ projectId, onClose }: { projectId?: number | nul
     },
     onError: (e) => toast.error(errText(e, "Не удалось добавить торрент")),
   });
+
+  // Пришли с magnet из поля ссылки — сразу запросить список файлов, без второго нажатия.
+  useEffect(() => {
+    if (initialMagnet.trim()) add.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const task = useQuery({
     queryKey: ["torrent", taskId],

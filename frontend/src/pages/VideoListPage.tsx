@@ -227,6 +227,8 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
   const [quality, setQuality] = useState("");
   const [picking, setPicking] = useState("");
   const [torrent, setTorrent] = useState(false);
+  // Magnet, вставленный в поле ссылки: открываем окно торрента с ним, а не шлём в обычное скачивание (там только http).
+  const [torrentMagnet, setTorrentMagnet] = useState("");
 
   const onDone = (s: Source) => {
     onStarted?.();
@@ -260,6 +262,17 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
     onError: onErr,
   });
   const busy = upload.isPending || ingest.isPending;
+  const submitUrl = (raw: string) => {
+    const u = raw.trim();
+    if (!u) return;
+    if (/^magnet:/i.test(u) && torrentsOn) {
+      setTorrentMagnet(u);
+      setTorrent(true);
+      setUrl("");
+      return;
+    }
+    ingest.mutate(u);
+  };
   const canPick = looksLikePlayerPage(url);
   // «Загрузка по ссылкам» выключена в «Настройки → Модули» — только файл и холст.
   const downloadsOn = useModuleOn("downloads");
@@ -297,11 +310,11 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
         <input
           className="input"
           style={{ flex: 1, minWidth: 200 }}
-          placeholder="…или ссылка (mp4, YouTube, Twitch, Smotvibe и похожие плееры)"
+          placeholder="…или ссылка (mp4, YouTube, Twitch, Smotvibe, magnet)"
           value={url}
           disabled={busy}
           onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && url.trim() && ingest.mutate(url.trim())}
+          onKeyDown={(e) => e.key === "Enter" && submitUrl(url)}
         />
         <select
           className="input"
@@ -327,7 +340,7 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
             🎞 Серия и озвучка
           </button>
         ) : null}
-        <button className="btn primary" disabled={busy || !url.trim()} onClick={() => ingest.mutate(url.trim())}>
+        <button className="btn primary" disabled={busy || !url.trim()} onClick={() => submitUrl(url)}>
           {ingest.isPending ? "…" : "Добавить"}
         </button>
       </div> : null}
@@ -336,8 +349,10 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
       {torrent ? (
         <TorrentDialog
           projectId={projectId}
+          initialMagnet={torrentMagnet}
           onClose={() => {
             setTorrent(false);
+            setTorrentMagnet("");
             onStarted?.();
           }}
         />

@@ -36,21 +36,29 @@ class Aria2Error(RuntimeError):
 class Aria2Rpc:
     """Тонкий клиент JSON-RPC aria2: методы называются как в документации aria2 (без префикса ``aria2.``)."""
 
-    def __init__(self, port: int, secret: str, *, timeout: float = 10.0) -> None:
+    def __init__(self, port: int, secret: str, *, timeout: float = 30.0, retries: int = 3) -> None:
         self.url = f"http://127.0.0.1:{port}/jsonrpc"
         self._secret = secret
         self._timeout = timeout
+        self._retries = max(1, retries)
         self._ids = 0
 
     def call(self, method: str, *params: Any) -> Any:
         self._ids += 1
         body = {"jsonrpc": "2.0", "id": str(self._ids), "method": f"aria2.{method}",
                 "params": [f"token:{self._secret}", *params]}
-        try:
-            # trust_env=False: к своему 127.0.0.1 — никогда не через прокси из окружения.
-            response = httpx.post(self.url, json=body, timeout=self._timeout, trust_env=False)
-        except httpx.HTTPError as exc:
-            raise Aria2Error(f"aria2 RPC недоступен: {exc.__class__.__name__}") from exc
+        response = None
+        for attempt in range(self._retries):
+            try:
+                # trust_env=False: к своему 127.0.0.1 — никогда не через прокси из окружения.
+                response = httpx.post(self.url, json=body, timeout=self._timeout, trust_env=False)
+                break
+            except httpx.TimeoutException as exc:
+                # aria2 однопоточен: занятый записью на диск, он отвечает с задержкой — не роняем загрузку сразу.
+                if attempt + 1 >= self._retries:
+                    raise Aria2Error(f"aria2 RPC недоступен: {exc.__class__.__name__}") from exc
+            except httpx.HTTPError as exc:
+                raise Aria2Error(f"aria2 RPC недоступен: {exc.__class__.__name__}") from exc
         try:
             payload = response.json()
         except ValueError as exc:
@@ -182,6 +190,7 @@ class Aria2Daemon:
         self.start_timeout = start_timeout
         self.proc: subprocess.Popen | None = None
         self.rpc: Aria2Rpc | None = None
+        self._port, self._secret = 0, ""
 
     def start(self) -> Aria2Rpc:
         from app.settings import settings
@@ -189,7 +198,8 @@ class Aria2Daemon:
         binary = aria2_binary()
         self.download_dir.mkdir(parents=True, exist_ok=True)
         port, secret = free_local_port(), secrets.token_urlsafe(24)
-        dht = settings.runtime_dir / "aria2" / "dht.dat"
+        # DHT — во внутреннем томе данных: runtime на сервисе смонтирован с диска Windows (медленные записи).
+        dht = settings.data_dir / ".aria2" / "dht.dat"
         dht.parent.mkdir(parents=True, exist_ok=True)
         conf = self.workdir / "aria2.conf"
         write_conf(conf, daemon_options(port=port, secret=secret, download_dir=self.download_dir,
@@ -199,13 +209,15 @@ class Aria2Daemon:
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             env=process_env(), cwd=str(self.workdir),
         )
+        probe = Aria2Rpc(port, secret, timeout=2.0, retries=1)
         rpc = Aria2Rpc(port, secret)
+        self._port, self._secret = port, secret
         deadline = time.monotonic() + self.start_timeout
         while True:
             if self.proc.poll() is not None:
                 raise Aria2Error(f"aria2c завершился при старте (код {self.proc.returncode}): {self.log_tail()}")
             try:
-                rpc.get_version()
+                probe.get_version()
                 break
             except Aria2Error:
                 if time.monotonic() > deadline:
@@ -228,7 +240,8 @@ class Aria2Daemon:
             return
         if proc.poll() is None and rpc is not None:
             try:
-                rpc.force_shutdown()
+                # Быстрый клиент без повторов: ждать занятый aria2 полторы минуты незачем — дальше terminate/kill.
+                Aria2Rpc(self._port, self._secret, timeout=3.0, retries=1).force_shutdown()
             except Aria2Error:
                 pass
         try:
@@ -239,6 +252,6 @@ class Aria2Daemon:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-                proc.wait(timeout=5)
+                proc.wait()  # после SIGKILL — дождаться, иначе остаётся процесс-зомби
         self.proc = None
         self.rpc = None
