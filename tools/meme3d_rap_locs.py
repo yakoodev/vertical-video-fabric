@@ -38,7 +38,7 @@ def M(oid: str, model: str, pos: list[float], yaw: float = 0.0, scale: float = K
 
 
 # Кресло Kenney как «трон»: бархат и золото (вместо CC BY трона — владелец не хочет строк атрибуции).
-THRONE = {"carpetBlue": "#7a1236", "metal": {"color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}}
+THRONE = {"carpetBlue": "#7a1236", "metal": {"color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}}
 
 
 def poster(oid: str, pos: list[float], yaw: float, text: str, bg: str, w: float, h: float) -> dict:
@@ -82,9 +82,9 @@ def loc_skyline() -> dict:
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
         M("throne", "lux/k_armchair", [0, 0, -0.5], 0, 0.5, materials=THRONE),  # кресло-«трон»: бархат и золото
         # Высокая спинка трона: бархатная панель в золотой раме и золотой гребень сверху.
-        obj("thr_frame", "box", [0, 0, -0.785], {"size": [0.62, 0.92, 0.03], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}),
-        obj("thr_back", "box", [0, 0.04, -0.765], {"size": [0.52, 0.82, 0.02], "color": "#7a1236", "roughness": 0.9}),
-        obj("thr_crest", "sphere", [0, 0.9, -0.785], {"size": [0.07], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}),
+        obj("thr_frame", "box", [0, 0, -0.785], {"size": [0.62, 0.92, 0.03], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}),
+        obj("thr_back", "box", [0, 0.04, -0.765], {"size": [0.52, 0.82, 0.02], "color": "#8a1840", "roughness": 0.9, "emissive": "#3a0618", "emissiveIntensity": 0.8}),
+        obj("thr_crest", "sphere", [0, 0.9, -0.785], {"size": [0.07], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}),
         # Носом к углу крыши. Стоит на чистой крыше: световые короба крыши (x 0.8…1.28, z −0.64…0 и 0.48…0.96) — в стороне.
         M("car", "vehicle/sedan_sports", [0.5, 0, 1.0], 45, 0.16),
         # Табличка «PROD» на капоте — прицеплена к машине (едет и падает вместе с ней).
@@ -194,7 +194,7 @@ def loc_penthouse() -> dict:
         obj("rug", "cylinder", [0, -0.006, 0.15], {"size": [1.5, 0.006], "color": "#5a0f2c", "roughness": 0.95}),
         M("sofa", "lux/k_sofa", [0, 0, -0.55], 0, materials={"carpetBlue": "#f1ece2", "metal": {"color": "#d9a640", "metalness": 0.8, "roughness": 0.3}}),
         M("table", "lux/k_table_glass", [0, 0, -0.22], 0),
-        M("bars", "lux/gold_bars", [0.05, 0.5 * K, -0.22], 20),
+        M("bars", "lux/gold_bars", [0.05, 0.35 * K, -0.22], 20),  # на стекле столика (верх 0.35 м модели)
         M("chest", "lux/chest_gold", [0.85, 0, -0.35], -30),
         M("safe", "lux/safe", [-0.95, 0, -0.6], 25),
         M("plant1", "lux/k_plant", [-0.75, 0, -0.75], 0),
