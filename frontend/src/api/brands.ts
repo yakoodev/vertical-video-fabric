@@ -26,6 +26,21 @@ export interface BrandNameplate {
   outro: "auto" | "collapse" | "none";
 }
 
+/** Заставка или концовка логотипом кистью (app/brand_kit_logo.py, шаблоны logo-intro / logo-outro). */
+export interface BrandLogoBumper {
+  on: boolean;
+  /** Длина, с (1.5–10; одобрено 3.5). */
+  duration: number;
+  color: string;
+  position: "верх" | "центр" | "низ";
+  /** Ширина логотипа, % кадра. */
+  size: number;
+  /** Взмах кисти, хлыст, удар (и вжух на уходе заставки) — записи пака, без треска. */
+  sound: boolean;
+  /** Только в роликах от стольких секунд (0 — во всех): заставка — на длинных версиях, не на частях TikTok. */
+  min_clip_sec: number;
+}
+
 export interface Brand {
   id: number;
   name: string;
@@ -59,6 +74,10 @@ export interface Brand {
   sfx_policy: "none" | "minimal";
   /** Плашка канала (значок площадки + ник) на весь ролик; пустой ник и platform none — нет плашки. */
   nameplate: BrandNameplate;
+  /** Заставка логотипом в начало ролика (по умолчанию выключена). */
+  logo_intro: BrandLogoBumper;
+  /** Концовка логотипом до последнего кадра (по умолчанию выключена). */
+  logo_outro: BrandLogoBumper;
   created_at?: string;
   updated_at?: string;
 }
@@ -78,6 +97,7 @@ export const brandsApi = {
   create: (brand: BrandInput) => api.post<Brand>("/api/brands", brand),
   update: (id: number, patch: Partial<BrandInput>) => api.patch<Brand>(`/api/brands/${id}`, patch),
   remove: (id: number) => api.del<{ deleted: boolean }>(`/api/brands/${id}`),
-  apply: (clipPlanId: number, brandId: number) =>
-    api.post<ApplyBrandResult>(`/api/clip-plans/${clipPlanId}/apply-brand`, { brand_id: brandId }),
+  /** `logo` — заставка/концовка логотипом на этот ролик поверх бренда (нет поля — как в бренде). */
+  apply: (clipPlanId: number, brandId: number, logo?: { logo_intro?: boolean; logo_outro?: boolean }) =>
+    api.post<ApplyBrandResult>(`/api/clip-plans/${clipPlanId}/apply-brand`, { brand_id: brandId, ...(logo ?? {}) }),
 };

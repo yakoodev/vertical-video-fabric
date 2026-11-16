@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { brandsApi, type Brand, type BrandInput, type BrandNameplate } from "@/api/brands";
+import { brandsApi, type Brand, type BrandInput, type BrandLogoBumper, type BrandNameplate } from "@/api/brands";
 import { audioTracksApi, montageAssetsApi } from "@/api/assets";
 import { motionApi } from "@/api/motion";
 import { qk } from "@/api/keys";
@@ -17,6 +17,9 @@ import {
   type Layer,
 } from "@/motion";
 import { BackgroundPicker } from "@/pages/workspace/BackgroundPicker";
+
+// Заставка/концовка логотипом — умолчания normalize_logo_bumper (app/brand_kit_logo.py): выключены, 3.5 с, белый.
+const BUMPER: BrandLogoBumper = { on: false, duration: 3.5, color: "#ffffff", position: "центр", size: 78, sound: true, min_clip_sec: 60 };
 
 // Новый бренд начинается с нейтральной формы — те же умолчания, что у normalize_brand.
 const EMPTY: BrandInput = {
@@ -43,6 +46,8 @@ const EMPTY: BrandInput = {
     live: false,
     outro: "auto",
   },
+  logo_intro: BUMPER,
+  logo_outro: { ...BUMPER, position: "низ" },
 };
 
 const PLATFORMS: { v: BrandNameplate["platform"]; label: string }[] = [
@@ -104,7 +109,92 @@ function NameplateSketch({ np, accent, font }: { np: BrandNameplate; accent: str
 function toInput(b: Brand): BrandInput {
   const { id: _id, created_at: _c, updated_at: _u, ...rest } = b;
   // Сервер до плашки канала отдавал бренд без nameplate — форма не должна падать.
-  return { ...rest, nameplate: { ...EMPTY.nameplate, ...(rest.nameplate ?? {}) } };
+  return {
+    ...rest,
+    nameplate: { ...EMPTY.nameplate, ...(rest.nameplate ?? {}) },
+    logo_intro: { ...EMPTY.logo_intro, ...(rest.logo_intro ?? {}) },
+    logo_outro: { ...EMPTY.logo_outro, ...(rest.logo_outro ?? {}) },
+  };
+}
+
+/** Заставка или концовка логотипом кистью: вкл, длина, цвет, место, размер, звук, с какой длины ролика. */
+function LogoBumperFields({
+  title,
+  hint,
+  value,
+  onChange,
+  disabled,
+}: {
+  title: string;
+  hint: string;
+  value: BrandLogoBumper;
+  onChange: (v: BrandLogoBumper) => void;
+  disabled: boolean;
+}) {
+  const patch = (p: Partial<BrandLogoBumper>) => onChange({ ...value, ...p });
+  return (
+    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
+      <label className="check" title={hint} style={{ minWidth: 190 }}>
+        <input type="checkbox" checked={value.on} disabled={disabled} onChange={(e) => patch({ on: e.target.checked })} />
+        <span>{title}</span>
+      </label>
+      {value.on ? (
+        <>
+          <label className="field" style={{ width: 90 }}>
+            <span>Длина, с</span>
+            <input
+              className="input"
+              type="number"
+              min={1.5}
+              max={10}
+              step={0.5}
+              value={value.duration}
+              onChange={(e) => patch({ duration: Number(e.target.value) || 3.5 })}
+            />
+          </label>
+          <ColorField label="Цвет" value={value.color} onChange={(v) => patch({ color: v })} />
+          <label className="field" style={{ width: 110 }}>
+            <span>Место</span>
+            <select className="input" value={value.position} onChange={(e) => patch({ position: e.target.value as BrandLogoBumper["position"] })}>
+              <option value="верх">Выше</option>
+              <option value="центр">По центру</option>
+              <option value="низ">Ниже</option>
+            </select>
+          </label>
+          <label className="field" style={{ width: 100 }}>
+            <span>Ширина, %</span>
+            <input
+              className="input"
+              type="number"
+              min={20}
+              max={100}
+              value={value.size}
+              onChange={(e) => patch({ size: Number(e.target.value) || 78 })}
+            />
+          </label>
+          <label
+            className="field"
+            style={{ width: 150 }}
+            title="Короче — без неё (части TikTok); 0 — во всех роликах. На один ролик её можно поставить вручную из галереи шаблонов"
+          >
+            <span>В роликах от, с</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              max={3600}
+              value={value.min_clip_sec}
+              onChange={(e) => patch({ min_clip_sec: Math.max(0, Number(e.target.value) || 0) })}
+            />
+          </label>
+          <label className="check" title="Взмах кисти, хлыст и один глубокий удар — записи пака, без треска">
+            <input type="checkbox" checked={value.sound} onChange={(e) => patch({ sound: e.target.checked })} />
+            <span>звук</span>
+          </label>
+        </>
+      ) : null}
+    </div>
+  );
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
@@ -273,6 +363,28 @@ function BrandForm({ initial, id, onDone }: { initial: BrandInput; id: number | 
               <option value="top-left">Слева сверху</option>
             </select>
           </label>
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {b.logo_asset_id
+              ? "Логотип кистью: пишется мазками, рывок царапинами, живой логотип (как в галерее шаблонов «Бренд»)"
+              : "Заставка и концовка логотипом — сначала выбери логотип"}
+          </span>
+          <LogoBumperFields
+            title="Заставка в начале"
+            hint="Логотип пишется кистью в начале ролика и уходит царапинами"
+            value={b.logo_intro}
+            onChange={(v) => set("logo_intro", v)}
+            disabled={!b.logo_asset_id && !b.logo_intro.on}
+          />
+          <LogoBumperFields
+            title="Концовка в конце"
+            hint="Тот же логотип в конце: без ухода, живёт до последнего кадра"
+            value={b.logo_outro}
+            onChange={(v) => set("logo_outro", v)}
+            disabled={!b.logo_asset_id && !b.logo_outro.on}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -584,7 +696,8 @@ export function BrandsSettings() {
           <strong style={{ flex: 1 }}>{b.name}</strong>
           <span className="muted" style={{ fontSize: 12.5 }}>
             {[b.font || "шрифт по умолчанию", b.cta.text || b.cta.url_text ? `призыв ${b.cta.duration_sec} с` : "без призыва",
-              b.logo_asset_id ? "логотип" : "", b.nameplate?.handle ? `плашка ${b.nameplate.handle}` : ""].filter(Boolean).join(" · ")}
+              b.logo_asset_id ? "логотип" : "", b.logo_intro?.on ? "заставка" : "", b.logo_outro?.on ? "концовка" : "",
+              b.nameplate?.handle ? `плашка ${b.nameplate.handle}` : ""].filter(Boolean).join(" · ")}
           </span>
           <button className="btn ghost sm" onClick={() => setEditing(b.id)}>Изменить</button>
           <button className="btn ghost sm" onClick={() => remove.mutate(b.id)}>🗑</button>

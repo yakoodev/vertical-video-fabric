@@ -14,14 +14,18 @@
 * музыка бренда, фон за персонажем, политика звуковых эффектов;
 * плашка канала (``nameplate``: значок площадки + ник) — весь ролик, под разделителем
   раскладки «игра + вебка» или в безопасном верхнем углу (``nameplate_place``); её же
-  ставит отдельно ``set_nameplate``.
+  ставит отдельно ``set_nameplate``;
+* заставка и концовка логотипом, который пишется кистью (``logo_intro`` / ``logo_outro``, по
+  умолчанию выключены): шаблоны галереи logo-intro / logo-outro, концовка — до последнего кадра
+  (``app/brand_kit_logo.py``); логотип в углу тогда идёт между ними.
 
 Слои бренда помечены id с префиксом ``brand_`` — повторное применение (или другой
 бренд) снимает прежние и ставит заново, дублей нет. Снимок для Ctrl+Z делает
 вызывающий (MCP — ``ctx.before_change``), иначе — сам ``apply_brand``.
 
 Где что лежит. Здесь — наложение ``apply_brand`` и ``_subject_box`` (его подменяют тесты). Вынесено: нормализация ``app/brand_kit_normalize.py``, свойства титров и конец
-``app/brand_kit_props.py``, плашка с именем ``app/brand_kit_nameplate.py``. Те модули этот не импортируют, а он их — поэтому все имена по-прежнему доступны отсюда.
+``app/brand_kit_props.py``, плашка с именем ``app/brand_kit_nameplate.py``, заставка и концовка логотипом
+``app/brand_kit_logo.py``. Те модули этот не импортируют, а он их — поэтому все имена по-прежнему доступны отсюда.
 """
 
 from __future__ import annotations
@@ -67,15 +71,34 @@ def _subject_box(store: Any, clip_plan_id: int) -> dict | None:
         return None
 
 
+def _bumper_band(bumpers: dict, asset: dict | None, ref_h: float) -> tuple[float, float] | None:
+    """Полоса кадра (доли высоты) под концовкой логотипом — призыв её обходит."""
+    from app.brand_kit_logo import OUTRO_ID
+
+    layer = next((l for l in bumpers.get("layers") or [] if l.get("id") == OUTRO_ID), None)
+    if layer is None or asset is None:
+        return None
+    aw, ah = float(asset.get("width") or 0), float(asset.get("height") or 0)
+    ratio = ah / aw if aw > 0 and ah > 0 else 0.5
+    half = float((layer.get("props") or {}).get("w") or 0) * ratio * float(layer.get("scale") or 1) / ref_h / 2
+    y = float(layer.get("y", 0.5))
+    return (y - half, y + half)
+
+
 def apply_brand(
     store: Any, clip_plan_id: int, brand_id: int, *, before_change: Callable[[], None] | None = None,
     nameplate: Any = None, run: Callable[[list[str], float], str] | None = None,
+    logo_intro: bool | None = None, logo_outro: bool | None = None,
+    build_template: Callable[[str, dict, float, Any], dict] | None = None,
 ) -> dict:
     """Оформить клип в стиле бренда. Повторный вызов даёт тот же результат (без дублей).
 
     ``before_change`` — снимок истории от вызывающего (MCP); без него снимок делается здесь.
     ``nameplate`` — плашка канала вместо бренда: dict — поля поверх плашки бренда, False — снять;
     None — как в бренде (у бренда её нет — уже стоящая плашка, например от set_nameplate, остаётся).
+    ``logo_intro`` / ``logo_outro`` — заставка/концовка логотипом на этот ролик: True — поставить (даже
+    если в бренде выключена или ролик короче её ``min_clip_sec``), False — не ставить, None — как в бренде.
+    ``build_template`` — сборщик шаблона заставки (тесты подменяют компоновщик).
     Ошибки — ValueError (слои не прошли проверку), KeyError (нет клипа/бренда)."""
     from app.agent_tools import clip_timeline, covering_problems, lint_layers
     from app.asset_scope import new_foreign_assets
@@ -160,6 +183,42 @@ def apply_brand(
     elif old_plate is not None:
         layers.append(old_plate)  # у бренда плашки нет — поставленная руками/set_nameplate остаётся
 
+    # 3c. Логотип бренда (угол, заставка, концовка) — общий файл, картинка.
+    asset = None
+    if brand.get("logo_asset_id"):
+        try:
+            asset = store.get_montage_asset(int(brand["logo_asset_id"]))
+        except KeyError:
+            asset = None
+            warnings.append(f"логотипа #{brand['logo_asset_id']} больше нет в библиотеке — без логотипа")
+        if asset is not None and asset.get("kind") not in ("image", "gif"):
+            warnings.append(f"логотип #{asset['id']} — не картинка, пропущен")
+            asset = None
+        if asset is not None and new_foreign_assets(store, clip_plan_id, [asset["id"]], render):
+            warnings.append(f"логотип #{asset['id']} лежит в другом проекте, клипу его брать нельзя — без логотипа "
+                            "(логотип бренда держи в общих файлах)")
+            asset = None
+
+    # 3d. Заставка в начало и концовка до последнего кадра — логотипом кистью (до призыва: призыв её обходит).
+    bumpers: dict = {"layers": [], "intro": None, "outro": None}
+    wants_bumper = (logo_intro is True or logo_outro is True
+                    or (logo_intro is None and brand["logo_intro"]["on"])
+                    or (logo_outro is None and brand["logo_outro"]["on"]))
+    if wants_bumper and asset is None:
+        warnings.append("заставка/концовка логотипом включена, но у бренда нет логотипа-картинки — не поставлены")
+    elif wants_bumper:
+        from app.brand_kit_logo import build_logo_bumpers
+        from app.cuts import CutMap, normalize_cuts
+
+        cut_map = CutMap(normalize_cuts(render.get("cuts") or []))
+        finished = cut_map.clamp(duration) if cut_map else duration
+        bumpers = build_logo_bumpers(brand, int(asset["id"]), duration, finished, render.get("cuts") or [], fmt,
+                                     intro=logo_intro, outro=logo_outro, build=build_template)
+        added += bumpers["layers"]
+        changes += bumpers["changes"]
+        warnings += bumpers["warnings"]
+    outro_band = _bumper_band(bumpers, asset, ref_h)
+
     # 4. Концовка-призыв на последние cta.duration_sec готового ролика: плашкой или (style banner)
     # концовкой-баннером — видео в размытие, поверх анимированный баннер (app/end_screen.py).
     cta = brand["cta"]
@@ -194,6 +253,8 @@ def apply_brand(
             blocked.append((float(box["y0"]), float(box["y1"])))
         if plate_band:
             blocked.append(plate_band)
+        if outro_band:
+            blocked.append(outro_band)
         text = "\n".join(t for t in (cta["text"], cta["url_text"]) if t)
         height = (_cta_lines(text, CTA_SIZE) * CTA_SIZE * 1.15 + 2 * CTA_PAD_Y) / ref_h
         y, fits = cta_y(height, blocked, fmt)
@@ -207,30 +268,21 @@ def apply_brand(
             added[added.index(plate)] = plate = build_nameplate(np, place, duration, brand["font"], cta_start)
             changes.append(f"плашка канала сворачивается к призыву ({cta_start:.1f} с)")
 
-    # 5. Логотип: после хука (он тоже наверху) и до призыва.
-    if brand.get("logo_asset_id"):
-        try:
-            asset = store.get_montage_asset(int(brand["logo_asset_id"]))
-        except KeyError:
-            asset = None
-            warnings.append(f"логотипа #{brand['logo_asset_id']} больше нет в библиотеке — без логотипа")
-        if asset is not None and asset.get("kind") not in ("image", "gif"):
-            warnings.append(f"логотип #{asset['id']} — не картинка, пропущен")
-            asset = None
-        if asset is not None and new_foreign_assets(store, clip_plan_id, [asset["id"]], render):
-            warnings.append(f"логотип #{asset['id']} лежит в другом проекте, клипу его брать нельзя — без логотипа "
-                            "(логотип бренда держи в общих файлах)")
-            asset = None
-        if asset is not None:
-            start = 0.0
-            if hook is not None and float(hook.get("y", 0.5)) < 0.35:
-                start = float(hook.get("end") or 0.0)
-            end = cta_start if cta_start is not None else duration
-            if end - start >= 1.0:
-                added.append(build_logo(brand, asset, round(start, 3), round(end, 3), fmt))
-                changes.append("логотип в углу")
-            else:
-                warnings.append("клип слишком короткий для логотипа между хуком и призывом")
+    # 5. Логотип в углу: после хука (он тоже наверху) и заставки, до призыва и концовки логотипом.
+    if asset is not None:
+        start = 0.0
+        if hook is not None and float(hook.get("y", 0.5)) < 0.35:
+            start = float(hook.get("end") or 0.0)
+        if bumpers["intro"]:
+            start = max(start, bumpers["intro"][1])
+        end = cta_start if cta_start is not None else duration
+        if bumpers["outro"]:
+            end = min(end, bumpers["outro"][0])
+        if end - start >= 1.0:
+            added.append(build_logo(brand, asset, round(start, 3), round(end, 3), fmt))
+            changes.append("логотип в углу")
+        else:
+            warnings.append("клип слишком короткий для логотипа в углу между хуком, заставкой и концовкой")
 
     def asset_exists(asset_id: int) -> bool:
         try:

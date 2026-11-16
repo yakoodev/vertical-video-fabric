@@ -173,6 +173,8 @@ def normalize_nameplate(raw: Any) -> dict:
 
 def normalize_brand(raw: Any) -> dict:
     """Бренд в полной форме (без id и дат) — так он хранится и так отдаётся API."""
+    from app.brand_kit_logo import normalize_logo_bumper
+
     src = raw if isinstance(raw, dict) else {}
     colors_src = src.get("colors") if isinstance(src.get("colors"), dict) else {}
     colors = {k: _color(colors_src.get(k)) or v for k, v in DEFAULT_COLORS.items()}
@@ -196,6 +198,9 @@ def normalize_brand(raw: Any) -> dict:
         "sfx_policy": policy if policy in SFX_POLICIES else "minimal",
         # Плашка канала (значок площадки + ник) на весь ролик; пустая — не ставится.
         "nameplate": normalize_nameplate(src.get("nameplate")),
+        # Заставка в начало и концовка до последнего кадра — логотипом кистью (app/brand_kit_logo.py); выключены.
+        "logo_intro": normalize_logo_bumper(src.get("logo_intro"), "intro"),
+        "logo_outro": normalize_logo_bumper(src.get("logo_outro"), "outro"),
     }
 
 

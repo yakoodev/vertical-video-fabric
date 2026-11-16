@@ -278,8 +278,8 @@
 {
 "name": "list_motion_templates",
 "title": "Смотрю шаблоны графики",
-"description": "31996d5649b3ec34",
-"parameters": "507f44b148982bf1",
+"description": "8e4731cffb41f017",
+"parameters": "19b3c8b4a8bc6337",
 "mutating": false,
 "scope": "clip",
 "module": null,
@@ -289,7 +289,7 @@
 {
 "name": "add_motion_template",
 "title": "Вставляю шаблон",
-"description": "c98a2d42078f0f5d",
+"description": "9ec3101ae2988bdc",
 "parameters": "fa2263aabbee65ef",
 "mutating": true,
 "scope": "clip",
@@ -707,7 +707,7 @@
 {
 "name": "list_brands",
 "title": "Смотрю бренды",
-"description": "1ac857ab46f84cf5",
+"description": "cbfe59ffd6a5a16d",
 "parameters": "47055dafa1144126",
 "mutating": false,
 "scope": "global",
@@ -718,8 +718,8 @@
 {
 "name": "apply_brand",
 "title": "Оформляю в стиле бренда",
-"description": "4044c9f6711d9695",
-"parameters": "f416ecd5f2ef4dd0",
+"description": "5973669d4c7fc5b6",
+"parameters": "a68b5a93f9404718",
 "mutating": true,
 "scope": "clip",
 "module": null,

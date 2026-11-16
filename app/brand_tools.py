@@ -95,9 +95,15 @@ def h_apply_brand(ctx: ToolContext, args: dict) -> dict:
     plate = False if args.get("remove_nameplate") is True else args.get("nameplate")
     if plate is not None and not isinstance(plate, (dict, bool)):
         raise ToolError("nameplate — объект полей плашки канала или false (снять)")
+    bumpers = {}
+    for key in ("logo_intro", "logo_outro"):
+        value = args.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ToolError(f"{key} — true (поставить на этот ролик) или false (не ставить); нет — как в бренде")
+        bumpers[key] = value
     try:
         return apply_brand(ctx.store, ctx.plan_id, int(brand_id), before_change=ctx.before_change,
-                           nameplate=None if plate is True else plate)
+                           nameplate=None if plate is True else plate, **bumpers)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -389,21 +395,29 @@ def tools() -> list[Tool]:
         Tool(
             "list_brands", "Смотрю бренды",
             "Бренды владельца (повторяющиеся заказчики, например магазин): шрифт, цвета, логотип, призыв в "
-            "конце (cta), плашка канала (nameplate), музыка, фон, политика эффектов. Создаёт и правит их только "
-            "владелец. / Brand kits.",
+            "конце (cta), плашка канала (nameplate), заставка и концовка логотипом (logo_intro / logo_outro), "
+            "музыка, фон, политика эффектов. Создаёт и правит их только владелец. / Brand kits.",
             _obj({}), h_list_brands, scope="global",
         ),
         Tool(
             "apply_brand", "Оформляю в стиле бренда",
             "Ролик для бренда (реклама повторяющегося заказчика) — в его стиле одной командой: перекрашивает "
             "субтитры-слои и хук, ставит маленький логотип в углу, плашку-призыв на последние секунды, плашку "
-            "канала (если она есть в бренде), музыку и фон бренда, снимает лишние эффекты. Зови ПОСЛЕ монтажа "
-            "(auto_edit, хук, вырезы): повтор ничего не дублирует (слои brand_*). nameplate — плашка канала "
-            "на этот ролик: поля как у set_nameplate поверх плашки бренда; remove_nameplate:true — снять. "
+            "канала (если она есть в бренде), музыку и фон бренда, снимает лишние эффекты; заставку и концовку "
+            "логотипом кистью (шаблоны logo-intro / logo-outro: концовка — до последнего кадра), если они "
+            "включены в бренде (logo_intro / logo_outro, по умолчанию — только в роликах от min_clip_sec). Зови "
+            "ПОСЛЕ монтажа (auto_edit, хук, вырезы): повтор ничего не дублирует (слои brand_*). nameplate — "
+            "плашка канала на этот ролик: поля как у set_nameplate поверх плашки бренда; remove_nameplate:true "
+            "— снять. logo_intro / logo_outro: true — поставить на этот ролик (длинная версия), false — нет. "
             "Потом view_frame на концовке — призыв не на лице. / Apply a brand kit to the clip.",
             _obj({"brand_id": {"type": "integer"},
                   "nameplate": {"type": "object", "description": "поля плашки канала, как у set_nameplate"},
-                  "remove_nameplate": {"type": "boolean"}},
+                  "remove_nameplate": {"type": "boolean"},
+                  "logo_intro": {"type": "boolean",
+                                 "description": "заставка логотипом в начало: true — поставить, false — нет, "
+                                                "нет поля — как в бренде"},
+                  "logo_outro": {"type": "boolean",
+                                 "description": "концовка логотипом до последнего кадра: true / false / как в бренде"}},
                  ["brand_id"]),
             h_apply_brand, mutating=True, label=lambda a: f"Бренд #{a.get('brand_id')}",
         ),

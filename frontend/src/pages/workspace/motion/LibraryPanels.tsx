@@ -9,6 +9,7 @@ import {
   CAPTION_STYLES,
   TEMPLATES,
   TEMPLATE_CATEGORIES,
+  buildTemplate,
   drawFrame,
   fitTemplate,
   frameSize,
@@ -17,6 +18,7 @@ import {
   type FormatId,
   type Layer,
   type MotionTemplate,
+  type RenderEnv,
 } from "@/motion";
 import { motionApi, packFileUrl, type PackItem, type PackSummary } from "@/api/motion";
 import { montageAssetsApi, type AssetSearchResult, type MontageAsset } from "@/api/assets";
@@ -27,6 +29,8 @@ import { LAYER_DND } from "@/pages/workspace/ClipTimeline";
 import { browserEnv } from "@/pages/workspace/motion/runtime";
 
 export type AddLayers = (layers: Layer[], camera?: CameraKey[]) => void;
+/** Вставить слои с началом в момент `at` клипа (заставка — в 0, концовка — до последнего кадра). */
+export type AddLayersAt = (layers: Layer[], at: number, camera?: CameraKey[]) => void;
 
 /** Перетаскивание из библиотеки: слои с началом в 0, таймлайн сдвинет их на место броска. */
 function dragPayload(e: React.DragEvent, layers: Layer[], camera?: CameraKey[]) {
@@ -43,6 +47,53 @@ function defaultsOf(t: MotionTemplate): TemplateParams {
 /** Слои шаблона в опорном кадре формата клипа (у 9:16 — как нарисованы). */
 function buildFor(t: MotionTemplate, params: TemplateParams, fmt: FormatId) {
   return fitTemplate(t.build(params, 0), fmt, t.fit);
+}
+
+/** Параметр-картинка (логотип заставки) не выбран — вставлять нечего, сначала настройка. */
+function missingImage(t: MotionTemplate, params: TemplateParams): boolean {
+  return t.params.some((p) => p.type === "image" && !String(params[p.name] ?? "").trim());
+}
+
+/** Где по времени встаёт шаблон: `place` start — с начала клипа, end — кончается на последнем кадре; иначе null (курсор). */
+function placeAt(t: MotionTemplate, layers: Layer[], clipDuration: number): number | null {
+  if (!t.place) return null;
+  if (t.place === "start" || !layers.length) return 0;
+  const span = Math.max(...layers.map((l) => l.end)) - Math.min(...layers.map((l) => l.start));
+  return Math.max(0, Number((clipDuration - span).toFixed(3)));
+}
+
+/* ---------- образец логотипа для превью без выбранной картинки ---------- */
+
+const DEMO_LOGO = "__demo_logo__";
+let demoLogoCanvas: HTMLCanvasElement | null = null;
+
+/** Белая надпись «LOGO» — превью шаблонов логотипа, пока картинка не выбрана. */
+function demoLogo(): HTMLCanvasElement {
+  if (demoLogoCanvas) return demoLogoCanvas;
+  const cv = document.createElement("canvas");
+  cv.width = 900;
+  cv.height = 300;
+  const g = cv.getContext("2d");
+  if (g) {
+    g.fillStyle = "#ffffff";
+    g.font = "italic 900 230px Montserrat, Arial, sans-serif";
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("LOGO", 450, 160);
+  }
+  demoLogoCanvas = cv;
+  return cv;
+}
+
+/** Слои превью: логотип без картинки рисуется образцом (в клип такой слой не попадает). */
+function withDemoLogo(layers: Layer[]): Layer[] {
+  return layers.map((l) =>
+    l.type === "logo_reveal" && !l.props.asset_id && !l.props.src ? ({ ...l, props: { ...l.props, asset_id: DEMO_LOGO } } as Layer) : l,
+  );
+}
+
+function demoEnv(env: RenderEnv): RenderEnv {
+  return { ...env, getImage: (ref: string) => (ref === DEMO_LOGO ? (demoLogo() as unknown as ReturnType<RenderEnv["getImage"]>) : env.getImage(ref)) };
 }
 
 /* ---------- живое превью шаблона ---------- */
@@ -85,7 +136,8 @@ function TemplatePreview({
     const cv = ref.current;
     const ctx = cv?.getContext("2d");
     if (!cv || !ctx) return;
-    const env = browserEnv(cv.width, cv.height, format);
+    const env = demoEnv(browserEnv(cv.width, cv.height, format));
+    const shown = withDemoLogo(built.layers.filter((l) => l.type !== "audio"));
     const dur = Math.max(0.5, template.duration);
     const poster = Math.min(dur * 0.55, 1.4);
     let raf = 0;
@@ -93,7 +145,7 @@ function TemplatePreview({
     const paint = (t: number) => {
       ctx.clearRect(0, 0, cv.width, cv.height);
       try {
-        drawFrame(ctx, { layers: built.layers.filter((l) => l.type !== "audio"), words: DEMO_WORDS, chat: DEMO_CHAT }, t, env);
+        drawFrame(ctx, { layers: shown, words: DEMO_WORDS, chat: DEMO_CHAT }, t, env);
       } catch {
         /* шаблон без данных (субтитры без слов) — просто пустая карточка */
       }
@@ -137,11 +189,14 @@ function TemplateDialog({
   onClose,
   onInsert,
   format,
+  images = [],
 }: {
   template: MotionTemplate;
   onClose: () => void;
   onInsert: AddLayers;
   format: FormatId;
+  /** Картинки для параметров type image (логотип заставки). */
+  images?: MontageAsset[];
 }) {
   const [params, setParams] = useState<TemplateParams>(() => defaultsOf(template));
   const set = (name: string, value: string | number | boolean) => setParams((p) => ({ ...p, [name]: value }));
@@ -168,6 +223,25 @@ function TemplateDialog({
                     <input type="checkbox" checked={Boolean(v)} onChange={(e) => set(p.name, e.target.checked)} />
                     <span className="switch-track" />
                     <span>{p.label}</span>
+                  </label>
+                );
+              if (p.type === "image")
+                return (
+                  <label key={p.name} className="field">
+                    <span>{p.label}</span>
+                    <select className="input" value={String(v)} onChange={(e) => set(p.name, e.target.value)}>
+                      <option value="">— выбери картинку —</option>
+                      {images.map((a) => (
+                        <option key={a.id} value={String(a.id)}>
+                          {a.label || `Файл #${a.id}`}
+                        </option>
+                      ))}
+                    </select>
+                    {!images.length ? (
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        Загрузи логотип (PNG с прозрачностью) в «Файлы для монтажа» или во вкладку «Мемы» → «Своя картинка»
+                      </span>
+                    ) : null}
                   </label>
                 );
               return (
@@ -207,6 +281,8 @@ function TemplateDialog({
           <button
             type="button"
             className="btn primary"
+            disabled={missingImage(template, params)}
+            title={missingImage(template, params) ? "Сначала выбери картинку" : undefined}
             onClick={() => {
               const r = buildFor(template, params, format);
               onInsert(r.layers, r.camera);
@@ -221,9 +297,30 @@ function TemplateDialog({
   );
 }
 
-/** `format` — формат, в котором размечены слои клипа: шаблоны встают в его кадр (fitTemplate). */
-export function TemplatesPanel({ onAdd, format = "9:16" }: { onAdd: AddLayers; format?: FormatId }) {
+/**
+ * `format` — формат, в котором размечены слои клипа: шаблоны встают в его кадр (fitTemplate).
+ * `onAddAt` + `clipDuration` — шаблоны с `place` (заставка/концовка логотипом) встают в начало или так,
+ * чтобы кончиться на последнем кадре; `images` — картинки для параметра-логотипа.
+ */
+export function TemplatesPanel({
+  onAdd,
+  onAddAt,
+  clipDuration = 0,
+  images = [],
+  format = "9:16",
+}: {
+  onAdd: AddLayers;
+  onAddAt?: AddLayersAt;
+  clipDuration?: number;
+  images?: MontageAsset[];
+  format?: FormatId;
+}) {
   const [tuning, setTuning] = useState<MotionTemplate | null>(null);
+  const insertFor = (t: MotionTemplate): AddLayers => (layers, camera) => {
+    const at = onAddAt ? placeAt(t, layers, clipDuration) : null;
+    if (at === null || !onAddAt) onAdd(layers, camera);
+    else onAddAt(layers, at, camera);
+  };
   const [cat, setCat] = useState<string>("Все");
   const [q, setQ] = useState("");
   const list = TEMPLATES.filter(
@@ -254,8 +351,13 @@ export function TemplatesPanel({ onAdd, format = "9:16" }: { onAdd: AddLayers; f
               dragPayload(e, r.layers, r.camera);
             }}
             onClick={() => {
+              // Логотип не выбран — сначала настройка (картинка, цвет, длина).
+              if (missingImage(t, defaultsOf(t))) {
+                setTuning(t);
+                return;
+              }
               const r = buildFor(t, defaultsOf(t), format);
-              onAdd(r.layers, r.camera);
+              insertFor(t)(r.layers, r.camera);
             }}
           >
             <TemplatePreview template={t} format={format} />
@@ -278,7 +380,9 @@ export function TemplatesPanel({ onAdd, format = "9:16" }: { onAdd: AddLayers; f
         ))}
         {!list.length ? <div className="muted">Ничего не нашлось</div> : null}
       </div>
-      {tuning ? <TemplateDialog template={tuning} onClose={() => setTuning(null)} onInsert={onAdd} format={format} /> : null}
+      {tuning ? (
+        <TemplateDialog template={tuning} onClose={() => setTuning(null)} onInsert={insertFor(tuning)} format={format} images={images} />
+      ) : null}
     </div>
   );
 }
@@ -488,6 +592,10 @@ export function TextPanel({ onAdd, onCaptions }: { onAdd: AddLayers; onCaptions?
 
 /* ---------- эмодзи и стикеры ---------- */
 
+
+/** Слой «Логотип кистью» (logo_reveal) из картинки — вид шаблона «Логотип: заставка», без звуков. */
+const logoLayer = (assetId: string): Layer[] =>
+  (buildTemplate("logo-intro", { logo: assetId, sound: false }, 0)?.layers ?? []).filter((l) => l.type === "logo_reveal");
 
 const imageLayer = (ref: { asset_id?: string; src?: string }, w = 640, end = 2.5): Layer =>
   ({
@@ -728,6 +836,19 @@ export function MemesPanel({ onAdd, assets, clipId }: { onAdd: AddLayers; assets
                   onClick={() => onAdd([make()])}
                 >
                   <img src={`${a.url}/thumb`} alt="" loading="lazy" decoding="async" onError={(ev) => { if (a.kind !== "video") ev.currentTarget.src = a.url; }} />
+                  {a.kind === "image" || a.kind === "gif" ? (
+                    <span
+                      className="lib-tpl-tune lib-logo-add"
+                      role="button"
+                      title="Логотипом кистью: картинка пишется мазками (эскиз, рывок, живой логотип), 3.5 с от курсора"
+                      onClick={(ev) => {
+                        ev.stopPropagation();
+                        onAdd(logoLayer(String(a.id)));
+                      }}
+                    >
+                      ✍
+                    </span>
+                  ) : null}
                 </button>
               );
             })}

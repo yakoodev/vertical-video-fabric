@@ -163,7 +163,15 @@ export function EditorLibrary({ session }: { session: DraftsEditorSession }) {
             }}
           />
         ) : null}
-        {libTab === "templates" ? <TemplatesPanel onAdd={addAtCursor} format={layers.length || camera.length ? layersFmt : aspect} /> : null}
+        {libTab === "templates" ? (
+          <TemplatesPanel
+            onAdd={addAtCursor}
+            onAddAt={(incoming, at, cam) => addLayers(incoming, at, cam)}
+            clipDuration={clipDuration}
+            images={pickableAssets.filter((a) => a.kind === "image" || a.kind === "gif")}
+            format={layers.length || camera.length ? layersFmt : aspect}
+          />
+        ) : null}
         {libTab === "text" ? (
           <TextPanel
             onAdd={addAtCursor}
