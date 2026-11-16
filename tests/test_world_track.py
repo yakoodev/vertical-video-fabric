@@ -69,6 +69,84 @@ def test_track_plane_lost_on_blank_frames_is_not_predicted_forever():
     assert res["found"] < 0.7
 
 
+def _sq(cx=100.0, cy=100.0, w=80.0, h=30.0, ang=0.0, mirror=False):
+    q = np.array([[-w / 2, -h / 2], [w / 2, -h / 2], [w / 2, h / 2], [-w / 2, h / 2]])
+    if mirror:
+        q[:, 0] *= -1
+    a = math.radians(ang)
+    rot = np.array([[math.cos(a), -math.sin(a)], [math.sin(a), math.cos(a)]])
+    return q @ rot.T + [cx, cy]
+
+
+def test_check_surface_fails_on_synthetic_flip_rotation_and_jitter():
+    from app.surface_pose import check_surface
+
+    def samples(quads):
+        return [{"t": i / 30, "s": "ok", "q": list((q / [200, 200]).reshape(-1))} for i, q in enumerate(quads)]
+
+    clean = samples([_sq(cx=100 + i) for i in range(20)])
+    rep = check_surface(clean, frame=(200, 200), out_width=200)
+    assert rep["ok"] and rep["flips"] == 0 and rep["jitter_px"] < 0.1 and rep["rot_step_max"] < 0.1
+    flipped = samples([_sq(cx=100 + i, mirror=i == 10) for i in range(20)])
+    rep = check_surface(flipped, frame=(200, 200), out_width=200)
+    assert not rep["ok"] and rep["flips"] == 1 and any("переворот" in f for f in rep["fail"])
+    # Слово боком (как «WISHFUL» по колонне) — провал, даже если трек ровный.
+    assert not check_surface(clean, frame=(200, 200), rotation=-90)["ok"]
+    wobble = samples([_sq(ang=4.0 * (-1) ** i) for i in range(20)])
+    rep = check_surface(wobble, frame=(200, 200), out_width=200)
+    assert not rep["ok"] and rep["rot_step_max"] > 7 and rep["jitter_px"] > 2
+    # Потерянные кадры и кадры вне окна показа не считаются.
+    hidden = samples([_sq(mirror=i == 10) for i in range(20)])
+    hidden[10]["s"] = "lost"
+    assert check_surface(hidden, frame=(200, 200))["ok"]
+    assert check_surface(flipped, frame=(200, 200), show=[0.0, 0.3])["ok"]
+
+
+def test_reject_reason_and_constrained_model():
+    from app.surface_pose import PERSP_CAP, area, compose, constrain, order_quad, pose, reject_reason
+
+    q0 = _sq()
+    assert reject_reason(q0, q0, _sq(cx=103), 1 / 30) is None
+    assert reject_reason(q0, q0, _sq(mirror=True), 1 / 30) == "flip"
+    assert reject_reason(q0, q0, _sq(ang=8), 1 / 30) == "rotation_jump"
+    assert reject_reason(q0, _sq(ang=17), _sq(ang=19), 1 / 30) == "rotation_limit"
+    assert reject_reason(q0, q0, _sq(w=80 * 1.3, h=30 * 1.3), 1 / 30) == "scale_jump"
+    squashed = _sq()
+    squashed[2:, 1] = squashed[:2, 1][::-1] + 3  # нижнее ребро почти на верхнем
+    assert reject_reason(q0, q0, squashed, 1 / 30) in ("collapse", "scale_jump", "flip")
+    # Перспектива сверх подобия урезана: дикий угол сдвинут не дальше PERSP_CAP размера.
+    wild = _sq()
+    wild[2] += [60, 40]
+    got = constrain(q0, wild, None)
+    c, s, ang, _ = pose(q0, wild)
+    base = compose(q0, c, s, ang, np.zeros_like(q0))
+    cap = PERSP_CAP * math.sqrt(abs(area(base)))
+    assert np.max(np.linalg.norm(got - base, axis=1)) <= cap + 1e-6
+    assert np.linalg.norm(got[2] - wild[2]) > 20
+    # Углы против часовой (или с другого угла) упорядочиваются — обход у семени всегда один.
+    assert np.allclose(order_quad(q0[::-1]), q0) and np.allclose(order_quad(np.roll(q0, 2, axis=0)), q0)
+
+
+def test_track_plane_never_shows_mirrored_or_spinning_plane():
+    big = _texture(9, (H * 2, W * 2))
+    frames = []
+    for i in range(30):
+        a = math.radians(0.3 * i if i < 12 else 0.3 * i + 3.0 * (i - 12))  # с 12-го кадра — «дрейф» 3°/кадр
+        Hm = np.array([[math.cos(a), -math.sin(a), -W / 2 + 2 * i], [math.sin(a), math.cos(a), -H / 2], [0, 0, 1.0]])
+        img = cv2.warpPerspective(big, Hm, (W, H), borderMode=cv2.BORDER_REFLECT)
+        if i in (20, 21, 22):
+            img = cv2.flip(img, 1)  # зеркальные кадры посреди трека
+        frames.append({"t": round(i / 30, 4), "img": img})
+    res = ST.track_plane(frames, 2, [[0.3, 0.4], [0.7, 0.4], [0.7, 0.55], [0.3, 0.55]])
+    check = res["check"]
+    assert check["flips"] == 0 and check["text_angle_max"] <= 19.5, check
+    assert check["rot_step_max"] <= 2.5, check
+    assert res["rejects"], res["rejects"]
+    # Слово, что не может удержать позу, гаснет, а не крутится.
+    shown = [s for s in res["samples"] if s["s"] in ("ok", "weak", "pred")]
+    assert len(shown) < len(res["samples"])
+
+
 def test_track_plane_refuses_textureless_surface():
     frames = [{"t": i / 30, "img": np.full((H, W), 90, np.uint8)} for i in range(5)]
     with pytest.raises(ValueError, match="мало фактуры"):

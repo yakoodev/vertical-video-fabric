@@ -137,7 +137,10 @@ def normalize_quad(args: dict, aspect_wh: float) -> list[list[float]]:
             raise TrackError("quad — 4 точки [[x, y], …] в долях кадра") from exc
         if len(flat) != 8 or not all(-0.5 <= v <= 1.5 for v in flat):
             raise TrackError("quad — 4 точки [[x, y], …] в долях кадра (0..1)")
-        return [[flat[i], flat[i + 1]] for i in range(0, 8, 2)]
+        from app.surface_pose import order_quad
+
+        # Углы по часовой с левого верхнего, как бы их ни дали: обход у семени всегда один (иначе текст зеркалится).
+        return [[round(float(a), 5), round(float(b), 5)] for a, b in order_quad(np.array(flat).reshape(4, 2))]
     box = args.get("box") if isinstance(args.get("box"), dict) else args
     x, y = _num(box.get("x")), _num(box.get("y"))
     w, h = _num(box.get("w")), _num(box.get("h"))
@@ -206,10 +209,23 @@ def _piece_runs(frames: list[dict], seed: int) -> tuple[int, int]:
     return a, b
 
 
-def surface_report(track: dict) -> dict:
+def surface_check(track: dict, rotation: float = 0.0, show: Any = None) -> dict:
+    """Проверка позы трека под слово (app/surface_pose.check_surface): перевороты, угол текста на экране с поворотом
+    слоя, шаг и разброс поворота, дрожь углов (px кадра 1080)."""
+    from app.surface_pose import check_surface
+
+    fr = track.get("frame") or {}
+    w = float(fr.get("dw") or 540)
+    h = float(fr.get("dh") or 960)
+    return check_surface(track.get("samples") or [], frame=(w, h), rotation=float(rotation or 0.0), show=show,
+                         out_width=float(fr.get("w") or 1080))
+
+
+def surface_report(track: dict, rotation: float = 0.0, show: Any = None) -> dict:
     return {"track_id": track.get("id"), "kind": "surface", "range": track.get("range"), "fps": track.get("fps"),
             "seed": track.get("seed"), "held": track.get("found"), "ok_share": track.get("ok_share"),
-            "err_px": track.get("err_px"), "lost": track.get("lost"), "notes": track.get("notes") or []}
+            "err_px": track.get("err_px"), "lost": track.get("lost"), "rejects": track.get("rejects") or {},
+            "check": surface_check(track, rotation, show), "notes": track.get("notes") or []}
 
 
 def compute_surface(frames: list[dict], seed_t: float, quad: list, *, smooth: float = 0.35) -> dict:

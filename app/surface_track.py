@@ -35,6 +35,8 @@ from typing import Any, Iterable, Sequence
 
 import numpy as np
 
+from app import surface_pose as P
+
 MIN_INLIERS = 10
 MIN_POINTS = 14
 MAX_POINTS = 260
@@ -225,6 +227,7 @@ class _PlaneRun:
         # Опорные точки для сверки с семенем — сетка внутри четырёхугольника + углы.
         self.ref_pts = pts.astype(np.float32)
         self.orb = None
+        self.rejects: dict[str, int] = {}
 
     def quad(self, H: np.ndarray | None = None) -> np.ndarray:
         return apply_h(self.H if H is None else H, self.quad0)
@@ -293,9 +296,22 @@ class _PlaneRun:
             anchor, cur = self.anchor[good], moved[good]
             H, inl = _homography(anchor, cur.astype(np.float64))
             gap = 1 + int(round(self.missed / max(dt, 1e-3)))
-            if H is not None and inl.sum() >= MIN_INLIERS and _sane(prev_q, apply_h(H, self.quad0), self.diag, gap):
+            why = None
+            if H is None or inl.sum() < MIN_INLIERS:
+                self.rejects["few_points"] = self.rejects.get("few_points", 0) + 1
+            if H is not None and inl.sum() >= MIN_INLIERS:
                 if self.correct:
                     H = self._correct(gray, H)
+                # Ограниченная модель: подобие по точкам + урезанная перспектива (app/surface_pose.py).
+                H = self._constrain(H, anchor[inl], cur[inl].astype(np.float64))
+                why = None if H is not None else "degenerate"
+                if H is not None and not _sane(prev_q, apply_h(H, self.quad0), self.diag, gap):
+                    why = "jump"
+                if why is None:
+                    why = P.reject_reason(self.quad0, prev_q, apply_h(H, self.quad0), dt, gap)
+                if why is not None:
+                    self.rejects[why] = self.rejects.get(why, 0) + 1
+            if H is not None and inl.sum() >= MIN_INLIERS and why is None:
                 err = _rms(H, anchor[inl], cur[inl].astype(np.float64))
                 conf = _confidence(int(inl.sum()), len(self.anchor), err)
                 q = apply_h(H, self.quad0)
@@ -319,6 +335,10 @@ class _PlaneRun:
                     self.H = H
             else:
                 got = self._reacquire(gray)
+                if got is not None and P.reject_reason(self.quad0, prev_q, apply_h(got[0], self.quad0), dt,
+                                                       1 + int(round(self.missed / max(dt, 1e-3)))) in (
+                        "flip", "rotation_limit", "collapse"):
+                    got = None  # нашлось что-то перевёрнутое или боком — не верим
                 if got is not None:
                     self.H, conf = got
                     status, self.missed = "weak", 0.0
@@ -328,6 +348,15 @@ class _PlaneRun:
         self.prev_gray = gray
         return {"q": self.quad(), "c": conf if status in ("ok", "weak") else 0.0, "s": status,
                 "e": round(err, 3) if err < 99 else None}
+
+    def _constrain(self, H: np.ndarray, src: np.ndarray, dst: np.ndarray) -> np.ndarray | None:
+        """Гомография → подобие по точкам (``estimateAffinePartial2D``) + перспектива, урезанная до PERSP_CAP."""
+        sim = None
+        if len(src) >= 3:
+            sim, _ = self.cv2.estimateAffinePartial2D(src.reshape(-1, 1, 2), dst.reshape(-1, 1, 2),
+                                                      method=self.cv2.LMEDS)
+        q = P.constrain(self.quad0, apply_h(H, self.quad0), sim)
+        return self._quad_h(q)
 
     def _quad_h(self, q: np.ndarray) -> np.ndarray | None:
         H = self.cv2.getPerspectiveTransform(self.quad0.astype(np.float32), q.astype(np.float32))
@@ -376,7 +405,29 @@ class _PlaneRun:
 # ---------------------------------------------------------------- плоскость: весь трек
 
 
-def _smooth_runs(samples: list[dict], amount: float) -> None:
+def _smooth_runs(samples: list[dict], amount: float, quad0: np.ndarray | None = None) -> None:
+    """Сглаживание позы (app/surface_pose.smooth_poses) по непрерывным видимым кускам (ok/weak/pred); прогноз
+    тянет слабее. Без ``quad0`` — прежнее симметричное по углам."""
+    if quad0 is None:
+        _smooth_corners(samples, amount)
+        return
+    i = 0
+    while i < len(samples):
+        if samples[i]["s"] not in ("ok", "weak", "pred"):
+            i += 1
+            continue
+        j = i
+        while j < len(samples) and samples[j]["s"] in ("ok", "weak", "pred"):
+            j += 1
+        run = samples[i:j]
+        sm = P.smooth_poses(quad0, [s["t"] for s in run], [s["q"] for s in run], amount,
+                            noise=[1.0 if s["s"] == "ok" else 2.0 if s["s"] == "weak" else 6.0 for s in run])
+        for s, q in zip(run, sm):
+            s["q"] = q
+        i = j
+
+
+def _smooth_corners(samples: list[dict], amount: float) -> None:
     """Симметричное сглаживание углов [a/2, 1−a, a/2] внутри непрерывных ok/weak-кусков (на месте)."""
     if amount <= 0:
         return
@@ -419,12 +470,14 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
     seed_index = max(0, min(len(frames) - 1, int(seed_index)))
     grays = [to_gray(f["img"]) for f in frames]
     h, w = grays[0].shape[:2]
-    q0 = quad_px(quad, w, h)
+    q0 = P.order_quad(quad_px(quad, w, h)).astype(np.float32)
     if not is_convex(q0.astype(np.float64)) or abs(_area(q0.astype(np.float64))) < 64:
         raise ValueError("quad — выпуклый четырёхугольник заметного размера (углы по кругу)")
     out: dict[int, dict] = {seed_index: {"q": q0.astype(np.float64), "c": 1.0, "s": "ok", "e": 0.0}}
+    rejects: dict[str, int] = {}
     for direction in (1, -1):
         run = _PlaneRun(grays[seed_index], q0, correct=correct)
+        run.rejects = rejects
         lost_for = 0.0
         i = seed_index + direction
         while 0 <= i < len(frames):
@@ -443,7 +496,12 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
         samples.append({"t": round(float(f["t"]), 4), "q": np.asarray(r["q"], np.float64), "c": r["c"], "s": r["s"],
                         "e": r.get("e")})
     _bound_predictions(samples)
-    _smooth_runs(samples, float(smooth))
+    _smooth_runs(samples, float(smooth), q0.astype(np.float64))
+    # После сглаживания — та же проверка позы: что всё же легло боком или перевернулось, не показываем.
+    sign = 1.0 if P.area(q0.astype(np.float64)) > 0 else -1.0
+    for s in samples:
+        if s["s"] != "lost" and not P.convex_same_winding(np.asarray(s["q"], np.float64), sign):
+            s["s"] = "lost"
     errs = [s["e"] for s in samples if s["s"] == "ok" and s["e"] is not None and s is not samples[seed_index]]
     for s in samples:
         q = np.asarray(s["q"]) / np.array([w, h])
@@ -457,6 +515,9 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
         "err_px": {"median": round(float(np.median(errs)), 3) if errs else None,
                    "p95": round(float(np.percentile(errs, 95)), 3) if errs else None},
         "lost": _runs([s for s in samples], ("lost", "pred")),
+        # Отбракованные кадры по причинам (переворот, поворот, скачок…) и проверка позы трека (app/surface_pose.py).
+        "rejects": rejects,
+        "check": P.check_surface(samples, frame=(w, h)),
     }
 
 

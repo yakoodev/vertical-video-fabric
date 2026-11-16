@@ -42,10 +42,11 @@ export function sampleIndex(ts: number[], tt: number): number {
   return lo;
 }
 
-/** Видимость сэмпла по статусу: o/w/d (и e — продолжение дуги броска) — да, p (прогноз) — гаснет, l — нет. */
+/** Видимость сэмпла по статусу: o/w/d (и e — продолжение дуги броска), p (прогноз в пропуске) — да, l — нет. */
 function seen(code: string | undefined): number {
   if (code === "o" || code === "w" || code === "d" || code === "e") return 1;
-  if (code === "p") return 0.6;
+  // Прогноз — только в коротком пропуске между увиденными кадрами (сервис обрезает края): виден целиком, иначе мигал бы.
+  if (code === "p") return 1;
   return 0;
 }
 
@@ -62,9 +63,47 @@ export function quadAt(track: TrackData, tt: number): { q: number[]; vis: number
   const k = j > i ? clamp01((tt - ts[i]) / Math.max(1e-6, ts[j] - ts[i])) : 0;
   const out: number[] = [];
   for (let c = 0; c < 8; c++) out.push(q[i * 8 + c] + (q[j * 8 + c] - q[i * 8 + c]) * k);
+  return { q: out, vis: visibility(track, tt) };
+}
+
+/** Плавное появление/угасание: средняя видимость сэмплов в окне ±FADE_SEC (слово гаснет за ~0.25 с, а не мигает). */
+export const FADE_SEC = 0.12;
+
+function visibility(track: TrackData, tt: number): number {
+  const ts = track.t;
   const s = track.s || "";
-  const vis = seen(s[i]) + (seen(s[j]) - seen(s[i])) * k;
-  return { q: out, vis };
+  let lo = Math.max(0, sampleIndex(ts, tt - FADE_SEC));
+  if (ts[lo] < tt - FADE_SEC && lo + 1 < ts.length) lo += 1;
+  let sum = 0;
+  let n = 0;
+  for (let i = lo; i < ts.length && ts[i] <= tt + FADE_SEC; i++) {
+    // Треугольное окно: ближние к моменту сэмплы весят больше.
+    const w = 1 - Math.abs(ts[i] - tt) / (FADE_SEC * 1.0001);
+    sum += seen(s[i]) * w;
+    n += w;
+  }
+  if (n > 0) return clamp01(sum / n);
+  // Редкие сэмплы (шаг трека больше окна) — линейно между соседями.
+  const i = Math.max(0, sampleIndex(ts, tt));
+  const j = Math.min(ts.length - 1, i + 1);
+  const k = j > i ? clamp01((tt - ts[i]) / Math.max(1e-6, ts[j] - ts[i])) : 0;
+  return seen(s[i]) + (seen(s[j]) - seen(s[i])) * k;
+}
+
+/** Четырёхугольник (px) выпуклый и обходится по часовой (y вниз) — как семя; иначе текст вышел бы зеркальным. */
+export function quadUpright(q: number[]): boolean {
+  let sign = 0;
+  for (let i = 0; i < 4; i++) {
+    const ax = q[i * 2], ay = q[i * 2 + 1];
+    const bx = q[((i + 1) % 4) * 2], by = q[((i + 1) % 4) * 2 + 1];
+    const cx = q[((i + 2) % 4) * 2], cy = q[((i + 2) % 4) * 2 + 1];
+    const cross = (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+    if (!(Math.abs(cross) > 1e-12)) return false;
+    const sg = Math.sign(cross);
+    if (sign && sg !== sign) return false;
+    sign = sg;
+  }
+  return sign > 0;
 }
 
 /** Гомография единичного квадрата (0,0)(1,0)(1,1)(0,1) → четырёхугольник (Хекберт). */
@@ -133,6 +172,8 @@ export function drawTrackedText(ctx: Ctx2D, layer: TrackedTextLayer, t: number, 
   if (!at || at.vis <= 0.01) return;
   const W = env.width;
   const H = env.height;
+  // Защита: перевёрнутый/изломанный четырёхугольник не рисуем (сервис такие кадры уже отбраковал — это страховка).
+  if (!quadUpright(at.q.map((v, i) => v * (i % 2 ? H : W)))) return;
   const Hq = squareToQuad(at.q);
   if (!Hq) return;
   // Размер плоскости в px кадра сейчас — по нему разрешение промежуточного холста.

@@ -161,3 +161,25 @@ test("tracked_text: перспективная поверхность в пол�
   for (let y = 600; y < 1100; y++) for (let x = 0; x < 1080; x++) if (d[(y * 1080 + x) * 4 + 3] > 40 && x > right) right = x;
   assert.ok(right > 0.56 * 1080, `правый край слова ${right}`); // с copy — 587 px, без — 621
 });
+
+test("tracked_text: зеркальный (перевёрнутый) четырёхугольник не рисуется — текст не может выйти зеркальным", () => {
+  const tr = surfaceTrack();
+  // Левый и правый края поменялись местами (обход против часовой) — как «перевёрнутая» плоскость трека.
+  const mirrored = { ...tr, q: tr.q.map((v, i) => (i % 8 === 0 || i % 8 === 6 ? v + 0.4 : i % 8 === 2 || i % 8 === 4 ? v - 0.4 : v)) };
+  assert.equal(E.quadUpright([0, 0, 1, 0, 1, 1, 0, 1]), true);
+  assert.equal(E.quadUpright([1, 0, 0, 0, 0, 1, 1, 1]), false);
+  assert.equal(bbox(render([word({ trackData: mirrored })], 0.5)), null);
+  assert.ok(bbox(render([word()], 0.5)));
+});
+
+test("tracked_text: потеря трека — слово гаснет плавно, а не мигает", () => {
+  const tr = surfaceTrack();
+  const t = [];
+  for (let i = 0; i <= 60; i++) t.push(i / 60);
+  const q = t.flatMap(() => tr.q.slice(0, 8));
+  const s = t.map((x) => (x < 0.5 ? "o" : "l")).join("");
+  const track = { ...tr, t, q, s };
+  const vis = [0.36, 0.42, 0.48, 0.5, 0.54, 0.6, 0.66].map((x) => E.quadAt(track, x).vis);
+  for (let i = 1; i < vis.length; i++) assert.ok(vis[i] <= vis[i - 1] + 1e-9, String(vis));
+  assert.ok(vis[0] === 1 && vis[vis.length - 1] === 0 && vis[3] > 0.2 && vis[3] < 0.8, String(vis));
+});
