@@ -18,6 +18,10 @@
   относительной яркости ≥ 10 %, тёмная сторона < 0.8) и насыщенно-красные, по всему кадру и по
   четвертям (площадь ≥ ¼ кадра, как у WCAG 2.3.1 / критерия Хардинга — упрощённо). Больше 3
   вспышек в секунду — диапазоны времени.
+* ``freezes`` — застывшие куски готового рендера от 0.6 с (журнал монтажа 15.11: «клип просто остановился»):
+  сетка кадров без зерна, клетки под слоями клипа (титры, субтитры, стикеры) не считаются, кадр стоит, если
+  сдвинулось ≤ 5 % остальных клеток; нарочные стоп-кадры (``freeze_frame``, ``set_end_hold``) пропускаются.
+  Тот же проход ffmpeg, что у вспышек (``app/quality_lint_freeze.py``).
 * ``loop`` — насколько конец стыкуется с началом: разница последнего и первого кадра, уровень
   звука последних ~0.3 с против первых 0.3 с → оценка 0..1 и подсказки (``set_end_hold(0)``,
   подрезать хвост, убрать концовку-баннер). Без рендера — только подсказки по настройкам клипа.
@@ -39,6 +43,7 @@
 
 Где что лежит. Здесь — общий прогон ``lint_clip``, свежесть рендера, сводка. Проверки по файлам: общее ``app/quality_lint_base.py``,
 зоны интерфейса ``app/quality_lint_zones.py``, темп чтения ``app/quality_lint_reading.py``, вспышки и луп ``app/quality_lint_media.py``,
+застывшие куски ``app/quality_lint_freeze.py``,
 монтаж ``app/quality_lint_montage.py``. Те модули этот не импортируют, а он их — поэтому все имена по-прежнему доступны отсюда.
 """
 
@@ -78,7 +83,7 @@ from app.quality_lint_montage import (  # noqa: F401
     avatar_face_findings, avatar_presence_findings, tail_fragment_findings, fragment_findings, sub_sync_findings,
 )
 
-MEDIA_CHECKS = ("flashes",)  # без рендера не проверить; loop без рендера — только подсказки
+MEDIA_CHECKS = ("flashes", "freezes")  # без рендера не проверить; loop без рендера — только подсказки
 
 
 # Субтитры по 1–2 слова (maxWords ≤ 2) — нарочно быстрый стиль «слово за голосом»: норму чтения
@@ -175,6 +180,50 @@ def _media_flag(media: Any) -> str:
     return "yes" if media else "no"
 
 
+def _freeze_scanner(store: Any, plan: dict, rs: dict, clock: Any, layers: list[dict],
+                    pages_by_layer: dict[str, list[dict]], ass: dict | None) -> tuple[Any, str | None]:
+    """Сканер застывших кусков (app/quality_lint_freeze.py) с маской слоёв клипа → (сканер, причина пропуска)."""
+    from app.canvas import is_canvas
+    from app.formats import settings_layers_format
+    from app.freeze import normalize_freezes
+    from app.quality_lint_freeze import FREEZE_FPS, FreezeScanner, clip_mask_fn, clip_skip_fn
+
+    try:
+        source = store.get_source(int(plan["source_id"]))
+    except (KeyError, TypeError, ValueError):
+        source = None
+    if is_canvas(source):
+        # Холст: картинка — сами слои на фоне, позы маскота стоят нарочно.
+        return None, "холст без видео основы — застывшие куски не проверяются"
+    freezes = normalize_freezes(rs.get("freezes"))
+    mask_at = clip_mask_fn(layers, clock, size=FLASH_SIZE, camera=rs.get("camera"),
+                           vertical=settings_layers_format(rs) == "9:16", caption_pages=pages_by_layer,
+                           ass=ass if rs.get("subs_on") else None, freezes=freezes)
+    return FreezeScanner(FREEZE_FPS, mask_at=mask_at, skip_at=clip_skip_fn(clock, freezes)), None
+
+
+def _freeze_findings(scanner: Any, path: Path, plan: dict, rs: dict, clock: Any, *, fed: bool, out: dict) -> list[dict]:
+    """Досчитать сканер (свой проход ffmpeg, если вспышки не проверялись) → находки ``freezes``."""
+    from app.freeze import normalize_freezes
+    from app.piece_speed import normalize_speed
+    from app.quality_lint_freeze import FREEZE_FPS, FREEZE_MIN_SEC, freeze_findings, gray_cells
+
+    if not fed:
+        frames = 0
+        for chunk in read_frames(Path(path), FREEZE_FPS):
+            frames += len(chunk)
+            scanner.feed(gray_cells(chunk))
+        if not frames:
+            raise RuntimeError(f"в {Path(path).name} нет кадров")
+    runs = scanner.finish()
+    speeds = {e["piece"]: e["speed"] for e in normalize_speed(rs.get("speed")) if e.get("speed") is not None}
+    items = freeze_findings(runs, clock, segments=plan.get("segments") or [], speeds=speeds,
+                            freezes=normalize_freezes(rs.get("freezes")))
+    out["freezes"] = {"found": len(items), "min_sec": FREEZE_MIN_SEC,
+                      "seconds": round(sum(r["duration"] for r in runs), 2)}
+    return items
+
+
 def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any = None, media: Any = "auto") -> dict:
     """Все проверки клипа. ``checks`` — подмножество ``CHECKS``; ``platforms`` — tiktok/reels/shorts
     (youtube/instagram; пусто — площадки проекта, нет — все три); ``media`` — auto (по готовому
@@ -201,7 +250,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                            "final_duration": clock.final_duration, "platforms": list(uis)}
 
     words: list[dict] = []
-    if "ui_zones" in wanted or "reading" in wanted or "sub_sync" in wanted:
+    if "ui_zones" in wanted or "reading" in wanted or "sub_sync" in wanted or "freezes" in wanted:
         try:
             from app.motion_render import plan_caption_words
 
@@ -240,7 +289,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
     mode = _media_flag(media)
     clip, path = (None, None)
-    if mode != "no" and ("flashes" in wanted or "loop" in wanted):
+    if mode != "no" and ("flashes" in wanted or "loop" in wanted or "freezes" in wanted):
         clip, path = _latest_render_file(store, clip_plan_id)
         if clip is not None:
             # Два номера с подписями: render_clip_id (готовый рендер в базе) и render_job_id (задание render_clip).
@@ -253,17 +302,41 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
     no_media = ("проверка медиа выключена (media: false)" if mode == "no" else
                 "нет готового рендера — render, потом lint_clip" if clip is None else "файла рендера нет на диске")
 
+    freeze_scan = None
+    if "freezes" in wanted:
+        if path is None:
+            skipped["freezes"] = no_media
+        else:
+            freeze_scan, reason = _freeze_scanner(store, plan, rs, clock, layers, pages_by_layer, ass)
+            if reason:
+                skipped["freezes"] = reason
+    freeze_fed = False
+
     if "flashes" in wanted:
         if path is None:
             skipped["flashes"] = no_media
         else:
             try:
-                result = analyze_flashes(path)
+                from app.quality_lint_freeze import subsample_feed
+
+                # Застывшие куски — из того же прохода ffmpeg (каждый третий кадр).
+                consumers = [subsample_feed(freeze_scan, FLASH_FPS)] if freeze_scan is not None else []
+                freeze_fed = bool(consumers)
+                result = analyze_flashes(path, consumers=consumers)
                 findings += flash_findings(result, clock)
                 out["flashes"] = {"max_per_sec": result["max_per_sec"], "seconds": result["seconds"],
                                   "limit_per_sec": MAX_FLASHES_PER_SEC}
             except Exception as exc:  # noqa: BLE001 - не прочитали файл — скажем, не упадём
                 skipped["flashes"] = f"не удалось разобрать рендер: {str(exc)[:200]}"
+                if freeze_fed:
+                    skipped["freezes"] = skipped["flashes"]
+                    freeze_scan = None
+
+    if freeze_scan is not None:
+        try:
+            findings += _freeze_findings(freeze_scan, path, plan, rs, clock, fed=freeze_fed, out=out)
+        except Exception as exc:  # noqa: BLE001 - не прочитали файл — скажем, не упадём
+            skipped["freezes"] = f"не удалось разобрать рендер: {str(exc)[:200]}"
 
     if "loop" in wanted:
         metrics = None
@@ -374,7 +447,8 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
 
 def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
-    labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "loop": "луп",
+    labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "freezes": "застывшие куски",
+              "loop": "луп",
               "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки", "sub_sync": "субтитры и голос",
               "voice": "озвучка"}
     if not counts.get("warn") and not counts.get("info"):

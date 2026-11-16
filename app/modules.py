@@ -481,6 +481,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "search_video_memes", "place_video_meme", "describe_video_meme",
     # мем-эдит игры одним вызовом: рубка по долям музыки + врезки видеомемов (app/meme_edit_tools.py)
     "meme_edit",
+    # план частей длинного клипа для TikTok: ≤ 58 с песни, стыки на долях, не посреди боя (app/tiktok_parts_tools.py)
+    "plan_tiktok_parts",
     # субтитры (стиль и правка; распознавание — модуль transcription)
     "list_subtitle_styles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "emphasize_words",
     # цвет кусков и такт музыки

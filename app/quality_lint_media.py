@@ -197,11 +197,14 @@ def read_frames(path: Path, fps: int = FLASH_FPS, size: int = FLASH_SIZE, timeou
         raise RuntimeError(f"ffmpeg не прочитал {path.name} (код {proc.returncode})")
 
 
-def analyze_flashes(path: Path, fps: int = FLASH_FPS) -> dict:
-    """Вспышки файла: окна нарушений (секунды файла) и пик вспышек в секунду."""
+def analyze_flashes(path: Path, fps: int = FLASH_FPS, consumers: Any = ()) -> dict:
+    """Вспышки файла: окна нарушений (секунды файла) и пик вспышек в секунду. ``consumers`` — кому ещё отдать
+    те же пачки кадров (застывшие куски, app/quality_lint_freeze.py): один проход ffmpeg на обе проверки."""
     series: dict[str, dict[str, list[float]]] = {"lum": {k: [] for k in _REGIONS}, "red": {k: [] for k in _REGIONS}}
     frames = 0
     for chunk in read_frames(Path(path), fps):
+        for consume in consumers:
+            consume(chunk)
         part = frame_series(chunk)
         frames += len(chunk)
         for key in ("lum", "red"):

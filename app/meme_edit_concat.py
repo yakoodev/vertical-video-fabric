@@ -33,12 +33,19 @@ def _run(cmd: list[str], timeout: float = 3600) -> subprocess.CompletedProcess:
 
 
 def video_frames(path: Path) -> tuple[int, float]:
-    """Число кадров и частота картинки файла."""
+    """Число кадров и частота картинки файла — из самого файла (ffprobe), не по умолчанию."""
     out = _run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-count_packets", "-show_entries",
-                "stream=nb_read_packets,r_frame_rate", "-of", "json", str(path)]).stdout
+                "stream=nb_read_packets,r_frame_rate,avg_frame_rate", "-of", "json", str(path)]).stdout
     s = json.loads(out)["streams"][0]
-    num, den = (s.get("r_frame_rate") or "30/1").split("/")
-    return int(s["nb_read_packets"]), float(num) / float(den or 1)
+    for key in ("r_frame_rate", "avg_frame_rate"):
+        num, _sep, den = str(s.get(key) or "0/0").partition("/")
+        try:
+            rate = float(num) / float(den or 1)
+        except (ValueError, ZeroDivisionError):
+            continue
+        if rate > 0:
+            return int(s["nb_read_packets"]), rate
+    raise RuntimeError(f"ffprobe не знает частоту кадров {Path(path).name}")
 
 
 def decode(path: Path | str, ch: int = 2, start: float | None = None, dur: float | None = None) -> Any:
@@ -94,8 +101,9 @@ def concat_reel(blocks: list[dict], files: list[Path], out: Path, *, music_path:
         n, rate = video_frames(path)
         fps = fps or rate
         # длина блока — по плану (кадры на долях): рендер мог потерять кадр-другой в хвосте — стоп-кадр добивает,
-        # иначе к концу ролика стыки уезжают с долей музыки
-        want = int(round(float(b.get("total") or n / fps) * fps)) or n
+        # иначе к концу ролика стыки уезжают с долей музыки. Без плана — секунды по СВОЕЙ частоте файла (n / rate):
+        # блоки 60 и 120 к/с в одном ролике (журнал 15.11: запись 60 к/с, прочитанная как 120, — двойная скорость).
+        want = int(round(float(b.get("total") or n / (rate or fps)) * fps)) or n
         segs.append({"block": b, "path": path, "frames": want, "rendered": n, "at": round(t, 4), "len": want / fps})
         t += want / fps
     total = t

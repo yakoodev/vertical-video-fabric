@@ -61,11 +61,12 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
         "set_audio_keys", "set_audio_joins", "set_source_audio", "source_loudness", "audio_mix_report", "auto_mix", "set_mix", "audio_fx_reference",
         "set_audio_chain", "auto_sfx", "audio_crossfade")),
-    "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, цвет куска, фокус, раскладка, хромакей, формат", (
+    "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, цвет куска, фокус, раскладка, хромакей, формат, "
+             "части для TikTok", (
         "suggest_cuts", "apply_cuts", "trim_piece", "set_segment_speed", "set_piece_color", "match_piece_colors",
         "set_end_hold", "set_focus", "auto_focus",
         "auto_crop_layer",
-        "set_piece_fit", "set_layout", "set_chroma_key", "set_format", "set_aspect")),
+        "set_piece_fit", "set_layout", "set_chroma_key", "set_format", "set_aspect", "plan_tiktok_parts")),
     "voice": ("голос: озвучить клип или холст текстом (add_voiceover), проверить озвучку, пробы голосов, банк голосов", (
         "add_voiceover", "check_voiceover", "tts_preview", "list_voices")),
     "screens": ("плашка с именем, концовка, промо приложения, холст", (

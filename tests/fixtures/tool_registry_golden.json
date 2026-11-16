@@ -1015,7 +1015,7 @@
 {
 "name": "set_segment_speed",
 "title": "Скорость куска",
-"description": "3061870a52e60862",
+"description": "e3dd0e9ca72abf23",
 "parameters": "c9ac385bbf4f9519",
 "mutating": true,
 "scope": "clip",
@@ -1301,8 +1301,8 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "ce7dd00b8ea11479",
-"parameters": "93fbee834d6991b1",
+"description": "bb5b15671275eec2",
+"parameters": "741112d481484077",
 "mutating": false,
 "scope": "clip",
 "module": null,
@@ -1475,6 +1475,17 @@
 "cost": [
 "cpu"
 ]
+},
+{
+"name": "plan_tiktok_parts",
+"title": "Делю ролик на части для TikTok",
+"description": "a8093fa17835987b",
+"parameters": "5d53aa0cc077e9ec",
+"mutating": false,
+"scope": "clip",
+"module": null,
+"handler": "h_plan_tiktok_parts",
+"label": true
 },
 {
 "name": "game_events",
