@@ -24,12 +24,10 @@ K = 0.3
 HEIGHTS = {  # высота модели в библиотеке, м (для постановки крыш)
     "building/kenney_sky_a": 60, "building/kenney_sky_b": 60, "building/kenney_sky_c": 60, "building/kenney_sky_d": 60, "building/kenney_sky_e": 60,
     "building/skyscraper_glass_a": 60, "building/skyscraper_glass_b": 70, "building/skyscraper_tiered": 55, "building/big_brick": 24,
-    "building/large_office": 22, "building/skyscraper_brick": 80, "building/skyscraper_blue": 75, "building/skyscraper_classic": 70,
-    "building/skyscraper_spire": 120, **{f"building/kenney_{c}": 18 for c in "abcdefghijklmn"}, **{f"building/suburb_{c}": 7 for c in "abcdefghijk"},
+    "building/large_office": 22, **{f"building/kenney_{c}": 18 for c in "abcdefghijklmn"}, **{f"building/suburb_{c}": 7 for c in "abcdefghijk"},
 }
 TALL = ["building/kenney_sky_a", "building/kenney_sky_b", "building/kenney_sky_c", "building/kenney_sky_d", "building/kenney_sky_e",
-        "building/skyscraper_glass_a", "building/skyscraper_glass_b", "building/skyscraper_tiered", "building/skyscraper_blue",
-        "building/skyscraper_classic", "building/skyscraper_brick"]
+        "building/skyscraper_glass_a", "building/skyscraper_glass_b", "building/skyscraper_tiered"]
 MID = [f"building/kenney_{c}" for c in "abcdefghijklmn"] + ["building/big_brick", "building/large_office"]
 
 
@@ -37,6 +35,19 @@ def M(oid: str, model: str, pos: list[float], yaw: float = 0.0, scale: float = K
     o = {"id": oid, "model": model, "position": [round(v, 4) for v in pos], "rotation": [0, yaw, 0], "scale": scale}
     o.update(kw)
     return o
+
+
+# Кресло Kenney как «трон»: бархат и золото (вместо CC BY трона — владелец не хочет строк атрибуции).
+THRONE = {"carpetBlue": "#7a1236", "metal": {"color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}}
+
+
+def poster(oid: str, pos: list[float], yaw: float, text: str, bg: str, w: float, h: float) -> dict:
+    """Плакат на стене (своя отрисовка): крупная строка + подпись под ней."""
+    head, _, sub = text.partition("|")
+    p = {"text": head, "width": w, "height": h, "bg": bg, "fg": "#fbf4e4", "glow": 0.15, "depth": 0.006}
+    if sub:
+        p["sub"] = sub
+    return obj(oid, "sign_plate", [pos[0], pos[1] + h / 2, pos[2]], p, rotation=[0, yaw, 0])
 
 
 def building(oid: str, model: str, x: float, z: float, top: float, yaw: float = 0.0, scale: float = K) -> dict:
@@ -69,15 +80,21 @@ def loc_skyline() -> dict:
     objs = [
         # Башня, на крыше которой стоит Клод: крыша (y 58.33 у модели) — ровно на y = 0.
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
-        M("throne", "lux/throne", [0, 0, -0.42], 180, [0.95, 0.5, 0.85]),  # перёд модели — на −z
-        M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], 35, 0.16),  # носом к краю крыши — туда и покатится
-        obj("prodsign", "sign_plate", [1.06, 0.27, 0.31], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
-            rotation=[0, 35, 0]),
+        M("throne", "lux/k_armchair", [0, 0, -0.5], 0, 0.5, materials=THRONE),  # кресло-«трон»: бархат и золото
+        # Высокая спинка трона: бархатная панель в золотой раме и золотой гребень сверху.
+        obj("thr_frame", "box", [0, 0, -0.785], {"size": [0.62, 0.92, 0.03], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}),
+        obj("thr_back", "box", [0, 0.04, -0.765], {"size": [0.52, 0.82, 0.02], "color": "#7a1236", "roughness": 0.9}),
+        obj("thr_crest", "sphere", [0, 0.9, -0.785], {"size": [0.07], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#5a3a08", "emissiveIntensity": 0.6}),
+        # Носом к углу крыши. Стоит на чистой крыше: световые короба крыши (x 0.8…1.28, z −0.64…0 и 0.48…0.96) — в стороне.
+        M("car", "vehicle/sedan_sports", [0.5, 0, 1.0], 45, 0.16),
+        # Табличка «PROD» на капоте — прицеплена к машине (едет и падает вместе с ней).
+        obj("prodsign", "sign_plate", [0, 0.27, 0.19], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
+            parent="car"),
         M("ac1", "roof/q_ac", [-1.15, 0, -1.0], 30),
         M("ac2", "roof/q_ac_stacked", [-1.55, 0, -0.35], 80),
         M("tank", "roof/water_tower", [1.55, 0, -1.4], 0, 0.28),
         M("dish", "roof/q_antenna_b", [-1.6, 0, 0.9], 40, 0.22),
-        M("ant", "roof/antenna", [1.65, 0, 0.9], 0, 0.3),
+        M("ant", "roof/antenna", [1.75, 0, -0.35], 0, 0.3),  # в стороне от пути машины к краю
         M("signs", "roof/cyber_signs", [-0.95, 0.27, -1.85], 15, 0.35),
         M("platform", "roof/cyber_platform", [0.55, 0.27, -2.1], -10, 0.3),
         obj("bbtext", "led_wall", [-0.75, 0.27, -1.95], {"size": [1.3, 0.42], "text": "УРОНЮ БД", "lift": 0.15}, rotation=[0, 12, 0]),
@@ -96,6 +113,8 @@ def loc_skyline() -> dict:
         x, z = math.sin(a) * r, -math.cos(a) * r
         if abs(x) < 5.5 and abs(z) < 5.5:
             continue
+        if math.hypot(x - 2.6, z - 2.8) < 3.6:
+            continue  # под углом крыши пусто: туда падает машина
         tall = rng.random() < 0.45
         model = rng.choice(TALL if tall else MID)
         top = rng.uniform(-3.0, 10.0) if tall else rng.uniform(-10.0, -2.5)
@@ -116,7 +135,7 @@ def loc_skyline() -> dict:
                    {"saturation": 1.15, "contrast": 1.05, "shadows": "#3a2470", "highlights": "#ffc89a", "split": 0.35},
                    bloom=0.6, threshold=0.82, dof=True)
     return {"objects": objs, "lights": lights, "env": env,
-            "spot": {"claude": [0, 0, 0.1], "throne": [0, 0.69 * 0.5, -0.4], "car": [0.95, 1.94 * 0.16, 0.15]}}
+            "spot": {"claude": [0, 0, 0.1], "throne": [0, 0.58 * 0.5, -0.45], "car": [0.5, 1.94 * 0.16, 1.0]}}
 
 
 # --------------------------------------------------------------------------- неоновая сцена с толпой
@@ -173,14 +192,15 @@ def loc_penthouse() -> dict:
     objs = [
         floor("floor", [9, 9], "#efe6d8", surface=None, rough=0.12, metalness=0.15),
         obj("rug", "cylinder", [0, -0.006, 0.15], {"size": [1.5, 0.006], "color": "#5a0f2c", "roughness": 0.95}),
-        M("sofa", "lux/sofa_white", [0, 0, -0.55], 0),
-        M("table", "lux/table_glass", [0, 0, -0.22], 0),
+        M("sofa", "lux/k_sofa", [0, 0, -0.55], 0, materials={"carpetBlue": "#f1ece2", "metal": {"color": "#d9a640", "metalness": 0.8, "roughness": 0.3}}),
+        M("table", "lux/k_table_glass", [0, 0, -0.22], 0),
         M("bars", "lux/gold_bars", [0.05, 0.5 * K, -0.22], 20),
         M("chest", "lux/chest_gold", [0.85, 0, -0.35], -30),
         M("safe", "lux/safe", [-0.95, 0, -0.6], 25),
-        M("plant1", "lux/plant_fiddle", [-0.75, 0, -0.75], 0),
-        M("plant2", "lux/plant_white", [0.62, 0, -0.75], 0),
-        M("piano", "lux/piano", [1.25, 0, 0.2], -60),
+        M("plant1", "lux/k_plant", [-0.75, 0, -0.75], 0),
+        M("plant2", "lux/k_plant_small", [0.62, 0, -0.75], 0, 0.45),
+        M("lamp", "lux/k_lamp_floor", [1.2, 0, -0.55], 0),
+        M("armch", "lux/k_armchair", [1.2, 0, 0.15], -70, materials={"carpetBlue": "#5a0f2c", "metal": {"color": "#d9a640", "metalness": 0.8, "roughness": 0.3}}),
         M("chand", "lux/chandelier", [0, 1.15, -0.1], 0),
         obj("coins", "rain", [0, 0, -0.3], {"kind": "coin", "count": 80, "area": [2.4, 1.2], "height": 1.6, "speed": 0.5, "size": 0.045, "seed": 4}),
         obj("cards", "rain", [0, 0, -0.3], {"kind": "card", "count": 24, "area": [2.0, 1.0], "height": 1.6, "speed": 0.35, "size": 0.09, "seed": 7}),
@@ -269,31 +289,35 @@ def loc_classroom() -> dict:
         obj("wainscot", "box", [0, 0, -1.22], {"size": [8, 0.32, 0.03], "color": "#7a5034", "roughness": 0.8}),
         obj("wallL", "box", [-1.9, 0, 0], {"size": [0.05, 3, 6], "color": "#4f7f70", "roughness": 0.9}),
         obj("wallR", "box", [2.0, 0, 0], {"size": [0.05, 3, 6], "color": "#4f7f70", "roughness": 0.9}),
-        M("board", "classroom/blackboard", [0, 0.25, -1.22], 0, 0.6),
-        obj("formulas", "chalkboard", [0, 0.29, -1.2], {"size": [1.68, 0.8], "scribble": [44.6, 48.0], "frame": False}),
+        obj("formulas", "chalkboard", [0, 0.29, -1.2], {"size": [1.68, 0.8], "scribble": [44.6, 48.0]}),
+        obj("chalktray", "box", [0, 0.27, -1.17], {"size": [1.7, 0.025, 0.06], "color": "#7a5232", "roughness": 0.8}),
         obj("clock", "wall_clock", [1.25, 1.35, -1.21], {"radius": 0.12, "minutes": 0, "spins": [{"t0": 46.4, "t1": 48.0, "add": 60}]}),
         obj("dust", "rain", [0.6, 0, -0.5], {"kind": "ember", "count": 140, "area": [3, 1.4], "height": 1.8, "speed": 0.05, "size": 0.004,
                                           "colors": ["#fff6d8", "#ffffff"], "seed": 2}),
-        M("teacher", "classroom/teacher_desk", [-1.05, 0, -0.75], 20, S),
+        M("teacher", "desk/wood_drawers", [-1.05, 0, -0.75], 20, S),
         M("globe", "classroom/globe", [-1.15, 0.75 * S, -0.75], 0, S),
-        M("poster1", "classroom/poster_band", [1.35, 0.55, -1.215], 0, 0.5),
+        poster("poster1", [1.35, 0.55, -1.215], 0, "ROCK|DB", "#c23b4a", 0.3, 0.42),
         M("cork1", "classroom/corkboard", [-1.35, 0.6, -1.215], 0, 0.6),
-        M("poster2", "classroom/poster_art", [-1.87, 0.6, 0.6], 90, 0.5),
-        M("shelf", "classroom/bookshelf", [-1.85, 0, -0.2], 90, S),
-        M("files", "classroom/file_cabinet", [1.8, 0, -1.0], -90, S),
-        M("poster3", "classroom/poster_art", [-0.6, 1.25, -1.215], 0, 0.4),
-        M("poster4", "classroom/poster_band", [0.6, 1.25, -1.215], 0, 0.4),
+        poster("poster2", [-1.87, 0.6, 0.6], 90, "ТАБЛИЦА|УМНОЖЕНИЯ", "#2f6fb0", 0.42, 0.32),
+        M("shelf", "classroom/k_bookcase", [-1.85, 0, -0.2], 90, S, materials={"wood": "#6a4428"}),
+        M("files", "classroom/k_cabinet", [1.8, 0, -1.0], -90, S, materials={"wood": "#8a9098"}),
+        poster("poster3", [-0.6, 1.25, -1.215], 0, "SELECT *", "#e0a030", 0.34, 0.24),
+        poster("poster4", [0.6, 1.25, -1.215], 0, "NO|PROD", "#3a8a5a", 0.26, 0.32),
         M("cork2", "classroom/corkboard", [1.45, 0.95, -1.215], 0, 0.45),
-        M("shelf2", "classroom/bookshelf", [0.95, 0, -1.1], 0, 0.3),
+        M("shelf2", "classroom/k_bookcase", [0.95, 0, -1.1], 0, 0.3, materials={"wood": "#6a4428"}),
     ]
+    for name, (x, z, yaw, sc) in {"shelf": (-1.85, -0.2, 90, S), "shelf2": (0.95, -1.1, 0, 0.3)}.items():
+        for j, h in enumerate((0.27, 0.76, 1.25)):
+            objs.append(M(f"{name}_books{j}", "classroom/k_books", [x, h * sc, z], yaw + (0 if j % 2 else 180), sc * 0.9))
     for i in range(6):
-        objs.append(M(f"locker{i}", "classroom/locker_red" if i % 2 else "classroom/locker_grey", [-1.85, 0, 0.9 + i * 0.28], 90, S))
+        objs.append(M(f"locker{i}", "classroom/k_cabinet", [-1.85, 0, 0.9 + i * 0.28], 90, S, materials={"wood": "#b0393a" if i % 2 else "#7d8a96"}))
     k = 0
     for z in (0.35, 0.95, 1.55):
         for x in (-0.95, -0.15, 0.65, 1.45):
             if x > 1.0 or (z < 1.2 and x > 0.2):
                 continue  # у доски место для Клода и камеры
-            objs.append(M(f"desk{k}", "classroom/school_desk", [x, 0, z], 180, S))
+            objs.append(M(f"desk{k}", "classroom/desk_cc0", [x, 0, z], 180, S * 0.85))
+            objs.append(M(f"chair{k}", "classroom/k_chair", [x, 0, z + 0.2], 180, S * 0.85))
             k += 1
     for i, z in enumerate([-0.6, 0.6]):
         # Окна справа: светлые проёмы и лучи солнца в пыли.
@@ -331,18 +355,14 @@ def loc_inferno(bursts: list[float] | None = None) -> dict:
         obj("smoke", "rain", [0, 0.7, -1.2], {"kind": "smoke", "count": 40, "area": [2.0, 5], "height": 1.4, "speed": 0.18, "size": 0.5,
                                               "colors": ["#3a2a2a", "#4a3530", "#2a2224"], "opacity": 0.6, "seed": 3}),
         obj("dbs", "rain", [0, 0, 0.2], {"kind": "db", "count": 14, "area": [1.4, 1.2], "height": 2.0, "speed": 0.8, "size": 0.1, "seed": 12}),
-        M("exit", "server/exit_sign", [0, 0.95, -3.6], 0, 0.8),
-        M("ext", "server/extinguisher", [0.45, 0, 0.45], -30, 0.45),
-        M("alarm", "server/fire_alarm", [-0.62, 0.5, 0.55], 90, 0.4),
+        obj("exit", "sign_plate", [0, 0.95, -3.6], {"text": "EXIT", "width": 0.3, "height": 0.1, "bg": "#1a9a4a", "fg": "#f2fff4", "glow": 0.8}),
     ]
-    racks = ["server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack_mixed"]  # без стойки с чужой эмблемой
+    racks = ["server/computer_large", "server/q_computer", "roof/q_computer_large", "server/q_computer"]  # без стойки с чужой эмблемой
     for side in (-1, 1):
         for j in range(8):  # ряды заканчиваются за героями (последние стойки задевали Кодекса)
             z = -3.4 + j * 0.4
             x = side * 0.68
             objs.append(M(f"r{side}{j}", racks[(j + (side > 0)) % len(racks)], [x, 0, z], -side * 90, 0.36))
-            if j % 2 == 0:
-                objs.append(M(f"fire{side}{j}", "server/fire", [x, 0.7, z], j * 40, 0.45))
             objs.append(obj(f"f{side}{j}", "flame_jet", [x, 0.72, z], {"height": 0.6, "radius": 0.14, "dur": 0.7, "bursts": [t + 0.05 * j for t in b]}))
     for i, x in enumerate([-0.35, 0.35]):
         objs.append(obj(f"tray{i}", "box", [x, 1.05, -1.6], {"size": [0.12, 0.03, 4.2], "color": "#4a4d55", "metalness": 0.5, "roughness": 0.4}))
@@ -371,13 +391,13 @@ def loc_datacenter() -> dict:
         floor("floor", [12, 12], "#1a1d2a", surface="steel_panel", rough=0.35, metalness=0.45),
         obj("ring1", "torus", [0, 0.003, 0], {"size": [1.3, 0], "tube": 0.006, "color": CYAN, "emissive": CYAN, "emissiveIntensity": 0.9, "noShadow": True},
             rotation=[90, 0, 0]),
-        M("master", "server/rack_mixed", [-0.1, 0, -0.6], -20, 0.2),
+        M("master", "server/computer_large", [-0.1, 0, -0.6], -20, 0.19),
         obj("mastersign", "sign_plate", [-0.1, 0.44, -0.85], {"text": "MASTER", "width": 0.3, "height": 0.08, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.6},
             rotation=[0, -20, 0]),
         obj("dust", "rain", [0, 0, -1.2], {"kind": "ember", "count": 90, "area": [3, 1.6], "height": 1.8, "speed": 0.05, "size": 0.004,
                                         "colors": ["#9ff3ff", "#ffffff"], "seed": 4}),
     ]
-    racks = ["server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack_mixed"]
+    racks = ["server/computer_large", "server/q_computer", "roof/q_computer_large", "server/q_computer"]
     for side in (-1, 1):
         for j in range(8):
             z = -3.4 + j * 0.62
