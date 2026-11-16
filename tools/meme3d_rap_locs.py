@@ -86,7 +86,7 @@ def loc_skyline() -> dict:
         sky("skyR", ["#140b33", "#3d1658", "#7a2a6e", "#e0577a", "#f2a36b"], z=0, x=120, rot=-90, stars=120),
         sky("skyB", ["#140b33", "#2a1450", "#4a2060", "#7a3a7a", "#9a5a8a"], z=120, rot=180, stars=120),
         glow("sunglow", [28, 2.0, -115], 30, "#ff8a5c", opacity=0.7, core="#fff1c0"),
-        obj("haze", "rain", [0, -0.4, -1.5], {"kind": "ember", "count": 90, "area": [7, 7], "height": 3.2, "speed": 0.12, "size": 0.006,
+        obj("haze", "rain", [0, -0.4, -3.2], {"kind": "ember", "count": 90, "area": [7, 4], "height": 3.2, "speed": 0.12, "size": 0.006,
                                            "colors": ["#ffd9a8", "#ff9ad5", "#ffe9c4"], "seed": 3}),
     ]
     # Город: высотки дальше и выше (силуэт на закате), середина — ниже крыши.
@@ -135,7 +135,7 @@ def loc_stage() -> dict:
         M("spkR2", "stage/speaker_box", [1.3, fl + 1.6 * K, -0.55], -15),
         M("mh1", "stage/moving_spot", [-0.95, fl, -0.85], 0),
         M("mh2", "stage/moving_spot", [0.95, fl, -0.85], 0),
-        obj("confetti", "rain", [0, fl, 0.1], {"kind": "confetti", "count": 180, "area": [3.0, 2.0], "height": 1.6, "speed": 0.45, "size": 0.03, "seed": 9}),
+        obj("confetti", "rain", [0, fl, -0.2], {"kind": "confetti", "count": 180, "area": [3.0, 1.4], "height": 1.6, "speed": 0.45, "size": 0.03, "seed": 9}),
     ]
     cols = ["#ff7ab6", "#7ad7ff", "#ffd36b", "#8cff9a", "#c49bff", "#ff9a6b", "#6bffe1"]
     tops = ["sprout", "propeller", "ears"]
@@ -182,8 +182,8 @@ def loc_penthouse() -> dict:
         M("plant2", "lux/plant_white", [0.62, 0, -0.75], 0),
         M("piano", "lux/piano", [1.25, 0, 0.2], -60),
         M("chand", "lux/chandelier", [0, 1.15, -0.1], 0),
-        obj("coins", "rain", [0, 0, 0.1], {"kind": "coin", "count": 80, "area": [2.4, 1.8], "height": 1.6, "speed": 0.5, "size": 0.045, "seed": 4}),
-        obj("cards", "rain", [0, 0, 0.25], {"kind": "card", "count": 24, "area": [2.0, 1.4], "height": 1.6, "speed": 0.35, "size": 0.09, "seed": 7}),
+        obj("coins", "rain", [0, 0, -0.3], {"kind": "coin", "count": 80, "area": [2.4, 1.2], "height": 1.6, "speed": 0.5, "size": 0.045, "seed": 4}),
+        obj("cards", "rain", [0, 0, -0.3], {"kind": "card", "count": 24, "area": [2.0, 1.0], "height": 1.6, "speed": 0.35, "size": 0.09, "seed": 7}),
         sky("sky", ["#070a1e", "#14183c", "#2a2050", "#5a2a5a", "#8a3a5a"], stars=160, z=-70, y=-20),
     ]
     # Окно во всю стену: тонкие рамы, за ним ночной город (настоящие дома).
@@ -272,7 +272,7 @@ def loc_classroom() -> dict:
         M("board", "classroom/blackboard", [0, 0.25, -1.22], 0, 0.6),
         obj("formulas", "chalkboard", [0, 0.29, -1.2], {"size": [1.68, 0.8], "scribble": [44.6, 48.0], "frame": False}),
         obj("clock", "wall_clock", [1.25, 1.35, -1.21], {"radius": 0.12, "minutes": 0, "spins": [{"t0": 46.4, "t1": 48.0, "add": 60}]}),
-        obj("dust", "rain", [0.6, 0, 0], {"kind": "ember", "count": 140, "area": [3, 2.4], "height": 1.8, "speed": 0.05, "size": 0.004,
+        obj("dust", "rain", [0.6, 0, -0.5], {"kind": "ember", "count": 140, "area": [3, 1.4], "height": 1.8, "speed": 0.05, "size": 0.004,
                                           "colors": ["#fff6d8", "#ffffff"], "seed": 2}),
         M("teacher", "classroom/teacher_desk", [-1.05, 0, -0.75], 20, S),
         M("globe", "classroom/globe", [-1.15, 0.75 * S, -0.75], 0, S),
@@ -327,7 +327,7 @@ def loc_inferno(bursts: list[float] | None = None) -> dict:
     b = bursts or [0.1 + 0.6 * i for i in range(200)]
     objs = [
         floor("floor", [12, 12], "#26282e", surface="steel_panel", rough=0.4, metalness=0.4),
-        obj("embers", "rain", [0, 0, -0.8], {"kind": "ember", "count": 200, "area": [2.2, 5], "height": 2.2, "speed": 0.5, "size": 0.008, "seed": 6}),
+        obj("embers", "rain", [0, 0, -1.8], {"kind": "ember", "count": 200, "area": [2.2, 3.2], "height": 2.2, "speed": 0.5, "size": 0.008, "seed": 6}),
         obj("smoke", "rain", [0, 0.7, -1.2], {"kind": "smoke", "count": 40, "area": [2.0, 5], "height": 1.4, "speed": 0.18, "size": 0.5,
                                               "colors": ["#3a2a2a", "#4a3530", "#2a2224"], "opacity": 0.6, "seed": 3}),
         obj("dbs", "rain", [0, 0, 0.2], {"kind": "db", "count": 14, "area": [1.4, 1.2], "height": 2.0, "speed": 0.8, "size": 0.1, "seed": 12}),
@@ -335,7 +335,7 @@ def loc_inferno(bursts: list[float] | None = None) -> dict:
         M("ext", "server/extinguisher", [0.45, 0, 0.45], -30, 0.45),
         M("alarm", "server/fire_alarm", [-0.62, 0.5, 0.55], 90, 0.4),
     ]
-    racks = ["server/rack", "server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack"]
+    racks = ["server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack_mixed"]  # без стойки с чужой эмблемой
     for side in (-1, 1):
         for j in range(10):
             z = -3.4 + j * 0.4
@@ -374,10 +374,10 @@ def loc_datacenter() -> dict:
         M("master", "server/rack_mixed", [-0.1, 0, -0.6], -20, 0.2),
         obj("mastersign", "sign_plate", [-0.1, 0.44, -0.85], {"text": "MASTER", "width": 0.3, "height": 0.08, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.6},
             rotation=[0, -20, 0]),
-        obj("dust", "rain", [0, 0, 0], {"kind": "ember", "count": 90, "area": [3, 3], "height": 1.8, "speed": 0.05, "size": 0.004,
+        obj("dust", "rain", [0, 0, -1.2], {"kind": "ember", "count": 90, "area": [3, 1.6], "height": 1.8, "speed": 0.05, "size": 0.004,
                                         "colors": ["#9ff3ff", "#ffffff"], "seed": 4}),
     ]
-    racks = ["server/rack", "server/computer_large", "server/rack_mixed", "roof/q_computer_large"]
+    racks = ["server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack_mixed"]
     for side in (-1, 1):
         for j in range(8):
             z = -3.4 + j * 0.62
