@@ -2577,6 +2577,28 @@
 "label": true
 },
 {
+"name": "series3d_list_templates",
+"title": "Смотрю шаблоны 3D-серий",
+"description": "c2765c4356e48b93",
+"parameters": "47055dafa1144126",
+"mutating": false,
+"scope": "global",
+"module": "series3d",
+"handler": "h_list_templates",
+"label": true
+},
+{
+"name": "series3d_from_template",
+"title": "3D-серия из шаблона",
+"description": "dd8ea8bc60d18e4b",
+"parameters": "bbc000fd523bbdc3",
+"mutating": true,
+"scope": "project",
+"module": "series3d",
+"handler": "h_from_template",
+"label": true
+},
+{
 "name": "series3d_plan_from_script",
 "title": "Пишу план 3D-серии",
 "description": "82a2ba2a0c899186",

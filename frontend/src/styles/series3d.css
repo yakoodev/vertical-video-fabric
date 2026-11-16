@@ -62,7 +62,21 @@
 .s3d-add { padding-top: 2px; }
 .s3d-versions { margin: 0; padding-left: 18px; font-size: 13px; color: var(--text-dim); }
 
+.s3d-tpl-modal { max-width: 980px; max-height: calc(100vh - 40px); overflow-y: auto; display: grid; gap: 8px; }
+.s3d-tpl-modal p { margin: 0; }
+.s3d-tpls { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; }
+.s3d-tpl { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 10px; align-items: start; text-align: left; padding: 8px;
+  border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.s3d-tpl:hover:not(:disabled) { border-color: var(--accent); }
+.s3d-tpl:disabled { cursor: progress; opacity: 0.7; }
+.s3d-tpl img, .s3d-tpl .s3d-ep-ph { width: 96px; height: 171px; object-fit: cover; border-radius: 6px; background: var(--bg-elev); }
+.s3d-tpl-text { display: grid; gap: 4px; min-width: 0; align-content: start; }
+.s3d-tpl-text .s3d-tag { justify-self: start; }
+
 @media (max-width: 640px) {
   .s3d-job-body { grid-template-columns: 1fr; }
   .s3d-eps { grid-template-columns: 1fr; }
+  .s3d-tpls { grid-template-columns: 1fr; }
+  .s3d-tpl { grid-template-columns: 72px minmax(0, 1fr); }
+  .s3d-tpl img, .s3d-tpl .s3d-ep-ph { width: 72px; height: 128px; }
 }

@@ -16,6 +16,7 @@ import {
   type S3dOverview,
   type S3dPlan,
   type S3dPreset,
+  type S3dTemplate,
 } from "@/api/series3d";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading } from "@/components/ui";
@@ -24,7 +25,7 @@ import "@/styles/series3d.css";
 
 /**
  * 3D-серия (app/s3d_*.py): раздел материалов проекта. Список — библиотека (персонажи, локации), серии со статусом и
- * «Новая серия» из сценария или темы. Серия (?ep=ID) — редактор плана: реплики подряд, у каждой кадры (ракурс и
+ * «Новая серия» из сценария или темы, или «Из шаблона» — готовая история (галерея). Серия (?ep=ID) — редактор плана: реплики подряд, у каждой кадры (ракурс и
  * движение камеры), игра (эмоции и жесты), события и переход; «Рендер» с оценкой; карточка проверок и лист кадров.
  */
 
@@ -68,6 +69,7 @@ export function Series3dTab({ projectId }: { projectId: number }) {
       { replace: false },
     );
   const q = useOverview(projectId);
+  const [gallery, setGallery] = useState(false);
   if (q.isLoading) return <Loading />;
   if (q.isError || !q.data) return <ErrorState error={q.error} onRetry={() => q.refetch()} />;
   const o = q.data;
@@ -79,10 +81,20 @@ export function Series3dTab({ projectId }: { projectId: number }) {
       ) : (
         <>
           <Library o={o} />
-          <Episodes o={o} onOpen={open} />
-          <NewEpisode o={o} onCreated={open} />
+          <Episodes o={o} onOpen={open} onTemplates={() => setGallery(true)} />
+          <NewEpisode o={o} onCreated={open} onTemplates={() => setGallery(true)} />
         </>
       )}
+      {gallery ? (
+        <TemplateGallery
+          projectId={o.project.id}
+          onClose={() => setGallery(false)}
+          onCreated={(id) => {
+            setGallery(false);
+            open(id);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -175,8 +187,15 @@ function Library({ o }: { o: S3dOverview }) {
 
 // --------------------------------------------------------------------------- серии
 
-function Episodes({ o, onOpen }: { o: S3dOverview; onOpen: (id: number) => void }) {
-  if (!o.episodes.length) return <EmptyState title="Серий пока нет" hint="Новая серия — из сценария или темы, ниже." />;
+function Episodes({ o, onOpen, onTemplates }: { o: S3dOverview; onOpen: (id: number) => void; onTemplates: () => void }) {
+  if (!o.episodes.length)
+    return (
+      <EmptyState
+        title="Серий пока нет"
+        hint="Начните с готовой истории — или напишите свою из сценария или темы, ниже."
+        actions={<button className="btn primary sm" onClick={onTemplates}>Из шаблона</button>}
+      />
+    );
   return (
     <section className="panel">
       <h3>Серии</h3>
@@ -210,7 +229,7 @@ function EpisodeRow({ e, onOpen }: { e: S3dEpisodeBrief; onOpen: () => void }) {
   );
 }
 
-function NewEpisode({ o, onCreated }: { o: S3dOverview; onCreated: (id: number) => void }) {
+function NewEpisode({ o, onCreated, onTemplates }: { o: S3dOverview; onCreated: (id: number) => void; onTemplates: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [mode, setMode] = useState<"script" | "topic">("script");
@@ -233,7 +252,10 @@ function NewEpisode({ o, onCreated }: { o: S3dOverview; onCreated: (id: number) 
   });
   return (
     <section className="panel s3d-new">
-      <h3>Новая серия</h3>
+      <div className="s3d-head">
+        <h3>Новая серия</h3>
+        <button className="btn ghost sm" onClick={onTemplates}>Из шаблона</button>
+      </div>
       <nav className="pills">
         <button className={`pill${mode === "script" ? " on" : ""}`} onClick={() => setMode("script")}>Из сценария</button>
         <button className={`pill${mode === "topic" ? " on" : ""}`} onClick={() => setMode("topic")}>По теме</button>
@@ -265,6 +287,70 @@ function NewEpisode({ o, onCreated }: { o: S3dOverview; onCreated: (id: number) 
       </div>
       <p className="muted small">План пишет Gemini (бесплатно); без него — по правилам: реплика на фразу, ракурсы по кругу. Ничего не рисуется и не тратится, пока вы не нажмёте «Рендер».</p>
     </section>
+  );
+}
+
+// --------------------------------------------------------------------------- шаблоны
+
+const secs = (v: number) => `≈ ${Math.round(v)} с`;
+
+function TemplateGallery({ projectId, onClose, onCreated }: { projectId: number; onClose: () => void; onCreated: (id: number) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["series3d", "templates"], queryFn: s3dApi.templates, staleTime: 3600_000 });
+  const create = useMutation({
+    mutationFn: (t: S3dTemplate) => s3dApi.fromTemplate(projectId, t.slug),
+    onSuccess: (ep) => {
+      toast.success(`Серия «${ep.title}» готова как черновик — поменяйте реплики под себя`);
+      qc.invalidateQueries({ queryKey: s3dKey(projectId) });
+      onCreated(ep.id);
+    },
+    onError: (e) => toast.error(errText(e, "Не получилось")),
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !create.isPending) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose, create.isPending]);
+  return (
+    <div className="modal-backdrop" onClick={() => !create.isPending && onClose()}>
+      <div className="modal s3d-tpl-modal" role="dialog" aria-modal="true" aria-label="Шаблоны серий" onClick={(e) => e.stopPropagation()}>
+        <div className="s3d-head">
+          <h3>Серия из шаблона</h3>
+          <button className="btn ghost sm" onClick={onClose} disabled={create.isPending}>Закрыть</button>
+        </div>
+        <p className="muted small">
+          Готовые истории: план с репликами, кадрами и событиями. Серия появится черновиком — реплики, героев и комнату можно
+          поменять. Ничего не рисуется и не тратится, пока вы не нажмёте «Рендер».
+        </p>
+        {q.isLoading ? (
+          <Loading />
+        ) : q.isError || !q.data ? (
+          <ErrorState error={q.error} onRetry={() => q.refetch()} />
+        ) : (
+          <div className="s3d-tpls">
+            {q.data.templates.map((t) => {
+              const busy = create.isPending && create.variables?.slug === t.slug;
+              return (
+                <button key={t.slug} className="s3d-tpl" disabled={create.isPending} onClick={() => create.mutate(t)} title={t.note || t.source}>
+                  {t.thumb ? <img src={t.thumb} alt="" loading="lazy" /> : <span className="s3d-ep-ph">3D</span>}
+                  <span className="s3d-tpl-text">
+                    <b>{busy ? "Создаю…" : t.name}</b>
+                    <span className="small">{t.description}</span>
+                    <span className="muted small">
+                      {t.cast.map((c) => c.name).join(", ")} · {secs(t.length_sec)} · {t.lines} реплик
+                    </span>
+                    {!t.renderable ? <span className="s3d-tag">рендер в сервисе — скоро, план уже правится</span> : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

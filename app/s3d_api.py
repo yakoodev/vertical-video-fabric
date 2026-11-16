@@ -7,6 +7,8 @@
 * ``POST /api/projects/{id}/series3d/episodes`` {script | topic | plan, title?, cast?, location?, duration?}
 * ``GET/DELETE /api/series3d/episodes/{eid}``, ``PUT …/plan`` {plan | changes, note?}, ``GET …/plan/{version}``,
   ``POST …/render`` {dry_run?} (оценка — в ответе), ``POST …/cancel``, ``GET …/estimate``
+* ``GET /api/series3d/templates`` — шаблоны (готовые истории Витубики и мем-пилот), ``GET …/templates/{slug}/thumb``,
+  ``POST /api/projects/{id}/series3d/from-template`` {template, overrides?} — серия-черновик из шаблона
 * ``GET /api/series3d/catalog`` — ракурсы, движения, игра, переходы, свет (с миниатюрами)
 * ``GET /api/series3d/preset-thumb/{category}/{name}`` — миниатюра пресета из docs/3d/img
 
@@ -92,6 +94,30 @@ def build_series3d_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRou
                     plan=body.get("plan"), title=str(body.get("title") or ""), cast=body.get("cast") or None,
                     location=body.get("location") or None, narrator=str(body.get("narrator") or "narrator"),
                     duration=float(body.get("duration") or 30), tone=str(body.get("tone") or ""), author="ui")
+
+    @router.post("/api/projects/{project_id}/series3d/from-template", summary="3D-серия из шаблона")
+    def from_template(project_id: int, _auth: auth_dep, body: dict = Body(...)) -> dict:
+        from app import s3d_templates as T
+
+        overrides = body.get("overrides")
+        if overrides is not None and not isinstance(overrides, dict):
+            raise HTTPException(status_code=400, detail="overrides — объект")
+        return call(T.from_template, project_id, str(body.get("template") or ""), overrides, author="ui")
+
+    @router.get("/api/series3d/templates", summary="Шаблоны 3D-серий: готовые истории")
+    def templates(_auth: auth_dep) -> dict:
+        from app import s3d_templates as T
+
+        return {"templates": T.catalog()}
+
+    @router.get("/api/series3d/templates/{slug}/thumb", summary="Миниатюра шаблона", include_in_schema=False)
+    def template_thumb(slug: str, _auth: auth_dep) -> FileResponse:
+        from app import s3d_templates as T
+
+        path = T.thumb_path(slug)
+        if path is None:
+            raise HTTPException(status_code=404, detail="нет миниатюры")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
 
     @router.get("/api/series3d/episodes/{episode_id}", summary="3D-серия: план, версии, рендеры, проверки")
     def episode(episode_id: int, _auth: auth_dep) -> dict:

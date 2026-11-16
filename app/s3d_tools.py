@@ -50,7 +50,8 @@ def h_list(ctx: ToolContext, args: dict) -> dict:
             "props": [_short(c) for c in o["props"]], "episodes": o["episodes"],
             "approvals": [{k: a.get(k) for k in ("id", "status", "title")} for a in o["approvals"]],
             "plan_schema": SP.cheatsheet(),
-            "next": "series3d_create_episode (из script/topic или готового plan) → series3d_render → series3d_status"}
+            "next": "series3d_create_episode (из script/topic или готового plan) или series3d_from_template (готовая "
+                    "история, series3d_list_templates) → series3d_render → series3d_status"}
 
 
 def h_create(ctx: ToolContext, args: dict) -> dict:
@@ -133,6 +134,30 @@ def h_save_item(ctx: ToolContext, args: dict) -> dict:
     return {"item": {**_short(item), "kind": item["kind"]}}
 
 
+def h_list_templates(ctx: ToolContext, args: dict) -> dict:
+    from app import s3d_templates as T
+
+    return {"templates": T.catalog(),
+            "next": "series3d_from_template(project_id, template=slug, overrides?) — серия-черновик, потом правки и "
+                    "series3d_render"}
+
+
+def h_from_template(ctx: ToolContext, args: dict) -> dict:
+    from app import s3d_templates as T
+
+    pid = _need(args, "project_id")
+    if not args.get("template"):
+        raise ToolError("нужен template — slug из series3d_list_templates")
+    overrides = args.get("overrides")
+    if overrides is not None and not isinstance(overrides, dict):
+        raise ToolError("overrides — объект {title?, cast?, location?, lines?: {id: текст}, changes?: […]}")
+    out = _call(T.from_template, ctx.store, pid, str(args["template"]), overrides, author="agent")
+    return {"episode_id": out["id"], "title": out["title"], "template": out["template"], "plan_version": out["plan_version"],
+            "plan": out["plan"], "estimate": out["estimate"], "estimate_sec": out["estimate_sec"],
+            "warnings": out["warnings"], "problems": out["problems"],
+            "next": "поправь реплики и состав series3d_update_plan, потом series3d_render (сам шаблон ничего не тратит)"}
+
+
 def tools() -> list[Tool]:
     return [
         Tool("series3d_list", "Смотрю 3D-серию проекта",
@@ -154,6 +179,27 @@ def tools() -> list[Tool]:
                    "narrator": {"type": "string"}, "duration": {"type": "number"}, "tone": {"type": "string"}},
                   ["project_id"]),
              h_create, mutating=True, scope="project", label=lambda a: f"Новая 3D-серия {a.get('title') or ''}".strip()),
+        Tool("series3d_list_templates", "Смотрю шаблоны 3D-серий",
+             "Шаблоны 3D-серий — готовые истории, с которых можно начать: VRM-рекламы Витубики (Лиса из двух картинок, "
+             "Стикер, Пробная, Канал из 2014, Одно лицо, Лёша ужинать, Коллаб с Кэт, Караоке при свечах, Трекинг "
+             "отвалился, Без лица) и мем-пилот с роботом Клодом. У шаблона — slug, название, описание, состав и "
+             "локация, число реплик, длина (с), миниатюра, движок (renderable — рисуется ли в сервисе), файл-источник. "
+             "/ List ready-made 3D series templates.",
+             _obj({}), h_list_templates, scope="global", label=lambda a: "Смотрю шаблоны 3D-серий"),
+        Tool("series3d_from_template", "3D-серия из шаблона",
+             "Новая серия-черновик проекта из шаблона (slug из series3d_list_templates): план истории целиком — реплики, "
+             "кадры, события; недостающие готовые персонажи и локация добавляются в библиотеку. overrides — сразу "
+             "поменять: поля серии (title, cast, location, narrator, presets, music, …), lines {id реплики: новый "
+             "текст или {поля}}, changes — правки по шагам как у series3d_update_plan. Всё правится и после. Ничего "
+             "не рендерит и не тратит: голос — рассказчика проекта, платный — только по карточке при «Рендере». "
+             "/ Create a 3D series episode from a template.",
+             _obj({"project_id": PROJECT,
+                   "template": {"type": "string", "description": "slug шаблона (series3d_list_templates)"},
+                   "overrides": {"type": "object", "description": "{title?, cast?, location?, …, lines?: {id: текст}, "
+                                                                  "changes?: [{op, …}]}"}},
+                  ["project_id", "template"]),
+             h_from_template, mutating=True, scope="project",
+             label=lambda a: f"3D-серия из шаблона {a.get('template') or ''}".strip()),
         Tool("series3d_plan_from_script", "Пишу план 3D-серии",
              "План серии из сценария (script) или темы (topic): Gemini раскладывает текст на реплики, кадры (ракурс "
              "camera и движение move), игру (эмоции и жесты) и события (заголовок, комментарий в чате, звук); без "

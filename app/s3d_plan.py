@@ -74,6 +74,9 @@ CARD_KINDS = ("chat", "screen", "alert", "phone", "hud")
 SCREEN_MODES = ("stream", "draw", "shop", "rig")
 AVATAR_ACTS = ("mirror", "idle", "png", "dance", "mug", "bow", "showcase")
 MAX_LINES = 80
+# Пауза после реплики и хвост — до 8 с: в готовых историях Витубики бывают немые паузы под действие (песня в караоке,
+# замершая модель в «Трекинг отвалился», 4–6 с), шаблоны серий переносят их как есть.
+MAX_PAUSE = 8
 MAX_SEC = 120.0
 CPS = 14.0  # символов речи в секунду — оценка длины до озвучки
 
@@ -286,7 +289,7 @@ def validate_plan(plan: Any, lib: dict, settings: dict | None = None) -> tuple[d
         if p not in (lib.get("props") or {}):
             problems.append(f"props: нет вещи «{p}» в библиотеке")
     out["props"] = props
-    for key, lo, hi, default in (("lead", 0, 5, settings.get("lead", 0.6)), ("tail", 0, 6, settings.get("tail", 1.8))):
+    for key, lo, hi, default in (("lead", 0, 5, settings.get("lead", 0.6)), ("tail", 0, MAX_PAUSE, settings.get("tail", 1.8))):
         value = plan.get(key, default)
         if not _num(value, lo, hi):
             problems.append(f"{key}: число секунд от {lo} до {hi}")
@@ -335,8 +338,8 @@ def validate_plan(plan: Any, lib: dict, settings: dict | None = None) -> tuple[d
         if raw.get("say"):
             line["say"] = " ".join(str(raw["say"]).split())[:600]
         pause = raw.get("pause_after", 0.3)
-        if not _num(pause, 0, 3):
-            problems.append(f"{where}: pause_after — 0…3 с")
+        if not _num(pause, 0, MAX_PAUSE):
+            problems.append(f"{where}: pause_after — 0…{MAX_PAUSE} с")
             pause = 0.3
         line["pause_after"] = round(float(pause), 3)
         line["shots"] = [_shot(s, f"{where}, кадр {i + 1}", engine, text, problems) for i, s in enumerate(raw.get("shots") or [])]
