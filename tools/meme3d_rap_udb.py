@@ -342,6 +342,9 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
             for k, t in seen.items():
                 probs.append(f"{s.t0:6.2f} {s.lab}: проникновение {k} (с t={t:.2f})")
     probs += heading_check(specs)
+    import meme3d_rap_caps as Cp
+
+    probs += Cp.check_safe(0.0, Sh.DUR, work)
     (out / "check_sight.txt").write_text("\n".join(probs) + "\n", "utf-8")
     return probs
 
@@ -513,7 +516,7 @@ def main() -> int:
         print(clean, chk)
     elif a.cmd == "check":
         probs = check_sight(out, a.gl)
-        print("\n".join(probs) or "все планы: герои в кадре и не заслонены")
+        print("\n".join(probs) or "все планы: герои в кадре и не заслонены, ничего не проходит сквозь мир, подписи в безопасной зоне")
     elif a.cmd == "animatic":
         v, sh = stage_render(out, a.gl, a.name or "stage2_animatic", a.t0, a.t1, (540, 960), title="Уроню БД")
         print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))

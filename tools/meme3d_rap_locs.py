@@ -38,7 +38,31 @@ def M(oid: str, model: str, pos: list[float], yaw: float = 0.0, scale: float = K
 
 
 # Кресло Kenney как «трон»: бархат и золото (вместо CC BY трона — владелец не хочет строк атрибуции).
-THRONE = {"carpetBlue": "#7a1236", "metal": {"color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}}
+THRONE = {"carpetBlue": "#8a1640", "metal": {"color": "#f2bd48", "metalness": 0.4, "roughness": 0.3, "emissive": "#b07a1c", "emissiveIntensity": 1.0}}
+
+
+GOLD_M = {"color": "#e8b445", "metalness": 0.4, "roughness": 0.35, "emissive": "#8a5a12", "emissiveIntensity": 0.55}
+
+
+def throne_back(z: float = -0.79) -> list[dict]:
+    """Резная спинка трона за креслом: рама, стёганый бархат, пуговицы, навершия, корона."""
+    g = lambda **p: {**GOLD_M, **p}  # noqa: E731
+    o = [obj("thr_frame", "box", [0, 0, z], g(size=[0.56, 0.74, 0.03])),
+         obj("thr_back", "box", [0, 0.05, z + 0.02], {"size": [0.46, 0.64, 0.015], "color": "#9a1a46", "roughness": 0.9, "emissive": "#3a0818",
+                                                      "emissiveIntensity": 0.45}),
+         obj("thr_bead_t", "box", [0, 0.68, z + 0.025], g(size=[0.47, 0.018, 0.02])),
+         obj("thr_crown_b", "box", [0, 0.74, z], g(size=[0.22, 0.035, 0.04])),
+         obj("thr_crown_c", "sphere", [0, 0.765, z], g(size=[0.065])),
+         obj("thr_ruby", "sphere", [0, 0.778, z + 0.03], {"size": [0.032], "color": "#ff2a55", "emissive": "#ff2a55", "emissiveIntensity": 0.7,
+                                                          "roughness": 0.2})]
+    for sx in (-1, 1):
+        o += [obj(f"thr_bead{sx}", "box", [sx * 0.235, 0.05, z + 0.025], g(size=[0.018, 0.64, 0.02])),
+              obj(f"thr_fin{sx}", "sphere", [sx * 0.28, 0.72, z], g(size=[0.07])),
+              obj(f"thr_crown{sx}", "sphere", [sx * 0.075, 0.755, z], g(size=[0.045]))]
+    for j, (y, xs) in enumerate([(0.52, (-0.16, -0.053, 0.053, 0.16)), (0.6, (-0.107, 0.0, 0.107))]):
+        for k, x in enumerate(xs):
+            o.append(obj(f"thr_btn{j}{k}", "sphere", [x, y, z + 0.026], g(size=[0.026])))
+    return o
 
 
 def poster(oid: str, pos: list[float], yaw: float, text: str, bg: str, w: float, h: float) -> dict:
@@ -81,10 +105,9 @@ def loc_skyline() -> dict:
         # Башня, на крыше которой стоит Клод: крыша (y 58.33 у модели) — ровно на y = 0.
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
         M("throne", "lux/k_armchair", [0, 0, -0.5], 0, 0.5, materials=THRONE),  # кресло-«трон»: бархат и золото
-        # Высокая спинка трона: бархатная панель в золотой раме и золотой гребень сверху.
-        obj("thr_frame", "box", [0, 0, -0.785], {"size": [0.62, 0.92, 0.03], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}),
-        obj("thr_back", "box", [0, 0.04, -0.765], {"size": [0.52, 0.82, 0.02], "color": "#8a1840", "roughness": 0.9, "emissive": "#3a0618", "emissiveIntensity": 0.8}),
-        obj("thr_crest", "sphere", [0, 0.9, -0.785], {"size": [0.07], "color": "#f0b840", "metalness": 0.35, "roughness": 0.35, "emissive": "#a8701a", "emissiveIntensity": 0.9}),
+        # Спинка трона (CC0, своя): ниже прежней, золотая рама с бусиной, стёганый бархат с золотыми пуговицами,
+        # шары-навершия по углам и корона с рубином; подсвечена тёплым светом сверху-спереди (не тёмная доска на контре).
+        *throne_back(),
         # Носом к углу крыши. Стоит на чистой крыше: световые короба крыши (x 0.8…1.28, z −0.64…0 и 0.48…0.96) — в стороне.
         M("car", "vehicle/sedan_sports", [0.5, 0, 1.0], 45, 0.16),
         # Табличка «PROD» на капоте — прицеплена к машине (едет и падает вместе с ней).
@@ -127,6 +150,7 @@ def loc_skyline() -> dict:
         point("front", "#ffd6c0", 0.8, [0.4, 0.6, 1.6], 3.5),
         point("pink", PINK, 1.2, [-1.1, 0.5, -1.4], 3.0),
         point("cyan", CYAN, 0.6, [1.9, 0.35, 1.4], 2.2),
+        point("thr_key", "#ffbf8a", 0.3, [0, 0.95, -0.62], 0.5),  # тёплый свет на спинку трона
     ]
     for i, (x, z, tx, tz, c) in enumerate([(-9, -14, -14, -40, "#bcd6ff"), (8, -16, 16, -44, "#ffd0f0"), (-18, -6, -30, -26, "#9ff3ff")]):
         lights.append({"type": "spot", "id": f"search{i}", "color": c, "intensity": 0.01, "position": [x, -6, z], "target": [tx, 30, tz], "angle": 3,

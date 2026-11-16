@@ -140,6 +140,18 @@ def overlay(video: Path, out: Path, t0: float, t1: float, work: Path) -> Path:
     return out
 
 
+def check_safe(t0: float, t1: float, work: Path) -> list[str]:
+    """Каждая фраза и сноска (во время выезда слов, целиком и на уходе) — в безопасной зоне кадра; иначе строки проблем."""
+    work.mkdir(parents=True, exist_ok=True)
+    pf = work / "caps_check_plan.json"
+    pf.write_text(json.dumps(plan(t0, t1), ensure_ascii=False), "utf-8")
+    r = subprocess.run(["node", "--max-old-space-size=2048", str(ROOT / "tools" / "meme3d_rap_caps.mjs"), str(pf), "--check"], cwd=ROOT,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    if r.returncode != 0 or not r.stdout.strip():
+        return [f"подписи: проверка не запустилась ({r.stderr.strip()[-300:]})"]
+    return [f"подпись вне безопасной зоны: {x}" for x in json.loads(r.stdout.strip().splitlines()[-1])]
+
+
 if __name__ == "__main__":
     a, b = float(sys.argv[2]), float(sys.argv[3])
     print(overlay(Path(sys.argv[1]), Path(sys.argv[4]), a, b, Path(sys.argv[4]).parent / "caps_work"))
