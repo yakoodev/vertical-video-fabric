@@ -67,9 +67,14 @@ def body_top(width: float = WIDTH) -> float:
 def hero(pose: list[dict], face: list[dict], voice: list[float] | None, blinks: list[float] | None = None, *,
          position: list[float], yaw: float = 0.0, width: float = WIDTH, headset: bool = True, label: str | None = None,
          fps: int = 30, gain: float = 1.0, bounce: float = 1.0, step_fps: int = 15, seed: int = 5,
-         char_id: str = "claude", glow: float = 0.12) -> dict:
-    """Описание персонажа для spec["characters"]. ``glow`` — своё свечение корпуса (в ярко освещённой сцене меньше)."""
+         char_id: str = "claude", glow: float = 0.12, mouth: bool = False, mouth_keys: list[dict] | None = None) -> dict:
+    """Описание персонажа для spec["characters"]. ``glow`` — своё свечение корпуса (в ярко освещённой сцене меньше).
+
+    ``mouth`` — рот на морде (по умолчанию нет — старые серии без рта); ``mouth_keys`` — формы губ по слогам
+    ``[{t, shape}]`` (open | o | wide | closed, см. :func:`mouth_keys_from_words`), раскрытие — от ``voice``."""
     look = {"body": PALETTE["body"], "shade": PALETTE["shade"], "eye": PALETTE["eye"], "glow": glow}
+    if mouth:
+        look["mouth"] = True
     if headset:
         look.update({"headset": PALETTE["headset"], "headsetAccent": PALETTE["headset_accent"]})
     if label:
@@ -78,7 +83,27 @@ def hero(pose: list[dict], face: list[dict], voice: list[float] | None, blinks: 
            "pose": pose, "face": face, "blinks": blinks or [], "stepFps": step_fps, "seed": seed}
     if voice:
         out["voice"] = {"fps": fps, "start": 0, "values": voice, "gain": gain, "bounce": bounce}
+    if mouth and mouth_keys:
+        out["mouthKeys"] = mouth_keys
     return out
+
+
+VOWEL_SHAPE = {**{v: "open" for v in "аяa"}, **{v: "o" for v in "оуюёouw"}, **{v: "wide" for v in "еиыэeiy"}}
+
+
+def mouth_keys_from_words(words: list[dict]) -> list[dict]:
+    """Формы губ по словам с атаками слогов (выравнивание текста песни: ``{w, t0, syl: [t…]}``): гласная слога → форма
+    (а — open, о/у — o, е/и — wide); между словами — closed."""
+    keys: list[dict] = []
+    for w in words:
+        vowels = [ch for ch in str(w.get("w", "")).lower() if ch in VOWEL_SHAPE]
+        syl = list(w.get("syl") or [w["t0"]])
+        for i, t in enumerate(syl):
+            v = vowels[i] if i < len(vowels) else (vowels[-1] if vowels else "а")
+            keys.append({"t": round(float(t), 3), "shape": VOWEL_SHAPE.get(v, "open")})
+        keys.append({"t": round(float(w.get("t1", syl[-1] + 0.2)), 3), "shape": "closed"})
+    keys.sort(key=lambda k: k["t"])
+    return keys
 
 
 def helper(*, color: str, accent: str, top: str = "sprout", label: str | None = None, size: float = 0.13,

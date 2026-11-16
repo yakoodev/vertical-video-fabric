@@ -42,7 +42,7 @@ GOLD = "#f6c445"
 VIOLET = "#8a4dff"
 
 LOOKS = {
-    "A": {"headset": True, "costume": {"chain": {"pendant": "db"}, "shades": {"on": 1}}},
+    "A": {"headset": True, "costume": {"chain": {"pendant": "db", "drop": 0.0}, "shades": {"on": 1}}},
     "B": {"headset": False, "costume": {"chain": {"pendant": "db"}, "cap": {"color": "#1d1b24", "accent": GOLD}}},
     "C": {"headset": False, "costume": {"chain": {"pendant": "db"}, "cap": {"color": "#1d1b24", "accent": GOLD}, "shades": {"on": 1}}},
 }
@@ -52,10 +52,12 @@ LOOKS = {
 
 
 def claude(pose: list[dict], face: list[dict], *, look: str = "A", move: list[dict], visible: list[dict] | None = None,
-           voice: list[float] | None = None, yaw: float = 0.0, char_id: str = "claude") -> dict:
+           voice: list[float] | None = None, yaw: float = 0.0, char_id: str = "claude", mouth_keys: list[dict] | None = None) -> dict:
     lk = LOOKS[look]
+    # С ноября рэп-клипа у Клода есть рот (поёт): формы — по слогам текста, раскрытие — громкость вокала.
     ch = H.hero(pose, face, voice, [], position=move[0]["position"], yaw=yaw, width=W_CLAUDE, headset=lk["headset"], label="Claude",
-                char_id=char_id, glow=0.14, step_fps=15, gain=1.0, bounce=1.3)
+                char_id=char_id, glow=0.14, step_fps=15, gain=1.0, bounce=1.3, mouth=True, mouth_keys=mouth_keys)
+    ch["critter"]["mouth"] = {"width": 0.21, "y": 0.11, "color": "#1b1214"}
     ch["costume"] = lk["costume"]
     ch["move"] = move
     if visible:
@@ -94,7 +96,11 @@ def glow(oid: str, pos: list[float], radius: float, color: str, rot: list[float]
 
 def toon_env(background: str, fog: dict | None, grade: dict, *, bloom: float = 0.4, threshold: float = 0.95, vignette: float = 0.32,
              exposure: float = 1.0, dof: bool = False, outline: float = 4.5) -> dict:
-    post = {"ao": 0, "bloom": {"strength": bloom, "radius": 0.5, "threshold": threshold}, "vignette": vignette, "grain": 0.035, "ca": 1.0,
+    # Пересвет (замечание владельца к аниматику): свечение мягче и только у самого яркого, экспозиция чуть ниже.
+    bloom = min(bloom * 0.6, 0.35)
+    threshold = max(threshold, 0.93)
+    exposure = min(exposure, 0.95)
+    post = {"ao": 0, "bloom": {"strength": bloom, "radius": 0.45, "threshold": threshold}, "vignette": vignette, "grain": 0.035, "ca": 1.0,
             "grade": grade}
     if dof:
         post["dof"] = True

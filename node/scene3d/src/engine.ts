@@ -894,6 +894,40 @@ class Engine {
   }
 
   /** Сведения для проверки сцены: где кто, габариты объектов на t. */
+  /**
+   * Видит ли камера героя: голова в кадре (NDC) и луч камера → центр головы не упирается в чужую вещь раньше героя
+   * (частицы, свечения, лучи и поводок не считаются). blocker — имя первой помехи.
+   */
+  sightline(c: Character) {
+    this.camera.updateMatrixWorld(true);
+    const head = headCenter(c);
+    const ndc = head.clone().project(this.camera);
+    const inFrame = Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1 && ndc.z < 1;
+    const from = this.camera.position.clone();
+    const dir = head.clone().sub(from);
+    const dist = dir.length();
+    const ray = new THREE.Raycaster(from, dir.normalize(), this.camera.near, dist);
+    ray.camera = this.camera; // спрайты (ярлыки, частицы) без камеры луча падают
+    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet"]);
+    const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
+    const solid = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+        if (!p.visible) return false;
+        if (p === c.root) return false;
+        if (soft.has(prim.get(p) || "")) return false;
+      }
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || (m as any).isSprite) return false;
+      const mat = m.material as THREE.Material;
+      return !(mat && (mat as any).transparent && (mat as any).opacity < 0.6);
+    };
+    const hits = ray.intersectObjects(this.scene.children, true).filter((h) => solid(h.object));
+    const hit = hits.find((h) => h.distance < dist - c.head.r * 1.2);
+    let owner = "";
+    if (hit) for (let p: THREE.Object3D | null = hit.object; p; p = p.parent) if (String(p.name).startsWith("obj:")) { owner = p.name; break; }
+    return { inFrame, occluded: !!hit, blocker: hit ? owner || hit.object.name || "?" : null, dist: r3(dist) };
+  }
+
   inspect(t: number) {
     this.update(t);
     const dirv = this.camera.getWorldDirection(new THREE.Vector3());
@@ -906,7 +940,7 @@ class Engine {
     for (const [id, c] of Object.entries(this.characters)) {
       const b = new THREE.Box3().setFromObject(c.root, true);
       out.characters[id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3), hand_r: c.boneWorld("hand_r").toArray().map(r3), hand_l: c.boneWorld("hand_l").toArray().map(r3), head: c.boneWorld("Head").toArray().map(r3),
-        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r) };
+        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r), shown: c.root.visible, sight: c.root.visible ? this.sightline(c) : null };
     }
     return out;
   }

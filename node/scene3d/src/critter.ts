@@ -44,6 +44,8 @@ export interface CritterLook {
   badge?: { text?: string; number?: string | number; accent?: string };
   /** Собственное свечение корпуса (тень остаётся тёплой), 0..0.3; по умолчанию 0.12. */
   glow?: number;
+  /** Рот на морде (рэп-клип): плоская фигура в стиле глаз под ними; без поля — зверёк без рта, как раньше. */
+  mouth?: boolean | { color?: string; tongue?: string; y?: number; width?: number };
 }
 
 export interface CritterSpec {
@@ -67,6 +69,8 @@ export interface CritterSpec {
   gear?: GearSpec;
   /** Костюм (meme_costume.ts): фартук, ободок горничной, очки, бигуди. */
   costume?: CostumeSpec;
+  /** Губы по слогам: [{t, shape}] — open (а), o (о/у), wide (е/и), closed; раскрытие — огибающая voice. Нужен look.mouth. */
+  mouthKeys?: Key[];
 }
 
 /** Ручки-обрубки: [поднять в сторону°, махнуть вперёд°, выдвинуть 0..1, покачивание 0..1]. */
@@ -478,6 +482,122 @@ export function setNub(a: Parts["arms"][number], n: Nub, S: number, t: number, e
   a.nub.position.x = a.side * (CP.armW / 2 + 0.06 * n[2]) * S;
 }
 
+/** Форма рта в покое по выражению (когда не поёт). */
+const REST_MOUTH: Record<string, string> = {
+  smug: "smirk", happy: "grin", cute: "grin", dreamy: "smirk", angry: "teeth", rage: "teeth", grumpy: "flat", annoyed: "flat", deadpan: "flat",
+  meh: "flat", surprised: "o", shocked: "o", sad: "frown", hurt: "frown", focused: "flat", working: "flat",
+};
+
+/**
+ * Рот зверька: под глазами, по центру морды, цветом глаз. ``shape`` — open | o | wide | closed (поёт) или smirk | grin |
+ * teeth | flat | frown | o (покой), ``open`` 0..1 — раскрытие (громкость слога).
+ */
+export function paintCritterMouth(g: CanvasRenderingContext2D, W: number, H: number, u: number, shape: string, open: number, lk: number[],
+  opt: { color?: string; tongue?: string; y?: number; width?: number } = {}) {
+  const ink = opt.color || "#1b1214";
+  const cx = W / 2 + lk[0] * u * 0.03;
+  const cy = H - (opt.y ?? 0.115) * u - lk[1] * u * 0.02;
+  const mw = (opt.width ?? 0.15) * u;
+  const o = Math.max(0, Math.min(1, open));
+  g.save();
+  g.fillStyle = ink;
+  g.strokeStyle = ink;
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  const teeth = (x0: number, x1: number, y: number, h: number) => {
+    g.fillStyle = "#ffffff";
+    g.fillRect(x0, y, x1 - x0, h);
+    g.strokeStyle = ink;
+    g.lineWidth = u * 0.006;
+    for (let i = 1; i < 4; i++) {
+      const x = x0 + ((x1 - x0) * i) / 4;
+      g.beginPath();
+      g.moveTo(x, y);
+      g.lineTo(x, y + h);
+      g.stroke();
+    }
+    g.fillStyle = ink;
+  };
+  const tongue = (x: number, y: number, rw: number, rh: number) => {
+    g.fillStyle = opt.tongue || "#ff6f86";
+    g.beginPath();
+    g.ellipse(x, y, rw, rh, 0, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = ink;
+  };
+  if (shape === "open" || shape === "wide" || (shape === "closed" && o > 0.15)) {
+    // Поёт: скруглённая пасть, высота — от раскрытия; «wide» — шире и ниже.
+    const wide = shape === "wide";
+    const w = mw * (wide ? 1.05 : 0.8) * (0.85 + 0.15 * o);
+    const h = u * (0.02 + (wide ? 0.06 : 0.1) * o);
+    const r = Math.min(h / 2, w / 2) * 0.9;
+    g.beginPath();
+    g.roundRect(cx - w / 2, cy - h / 2, w, h, r);
+    g.fill();
+    if (h > u * 0.035) {
+      g.save();
+      g.beginPath();
+      g.roundRect(cx - w / 2, cy - h / 2, w, h, r);
+      g.clip();
+      teeth(cx - w * 0.38, cx + w * 0.38, cy - h / 2, h * 0.22);
+      tongue(cx, cy + h * 0.38, w * 0.26, h * 0.3);
+      g.restore();
+    }
+  } else if (shape === "o") {
+    const rw = mw * (0.24 + 0.12 * o), rh = u * (0.03 + 0.055 * o);
+    g.beginPath();
+    g.ellipse(cx, cy, rw, rh, 0, 0, Math.PI * 2);
+    g.fill();
+    if (rh > u * 0.04) tongue(cx, cy + rh * 0.45, rw * 0.5, rh * 0.32);
+  } else if (shape === "grin") {
+    // Ухмылка до ушей: «D» плоским верхом, зубы.
+    const w = mw * 1.05, h = u * 0.05;
+    g.beginPath();
+    g.moveTo(cx - w / 2, cy - h * 0.35);
+    g.lineTo(cx + w / 2, cy - h * 0.35);
+    g.quadraticCurveTo(cx + w * 0.45, cy + h * 0.75, cx, cy + h * 0.7);
+    g.quadraticCurveTo(cx - w * 0.45, cy + h * 0.75, cx - w / 2, cy - h * 0.35);
+    g.fill();
+    g.save();
+    g.clip();
+    teeth(cx - w * 0.42, cx + w * 0.42, cy - h * 0.35, h * 0.32);
+    g.restore();
+  } else if (shape === "teeth") {
+    // Оскал сквозь зубы.
+    const w = mw * 0.95, h = u * 0.04;
+    g.beginPath();
+    g.roundRect(cx - w / 2 - u * 0.008, cy - h / 2 - u * 0.008, w + u * 0.016, h + u * 0.016, u * 0.012);
+    g.fill();
+    teeth(cx - w / 2, cx + w / 2, cy - h / 2, h);
+    g.lineWidth = u * 0.006;
+    g.beginPath();
+    g.moveTo(cx - w / 2, cy);
+    g.lineTo(cx + w / 2, cy);
+    g.stroke();
+  } else if (shape === "smirk") {
+    // Наглая ухмылка: кривая, правый уголок вверх.
+    g.lineWidth = u * 0.022;
+    g.beginPath();
+    g.moveTo(cx - mw * 0.42, cy + u * 0.004);
+    g.quadraticCurveTo(cx + mw * 0.05, cy + u * 0.03, cx + mw * 0.45, cy - u * 0.03);
+    g.stroke();
+  } else if (shape === "frown") {
+    g.lineWidth = u * 0.02;
+    g.beginPath();
+    g.moveTo(cx - mw * 0.35, cy + u * 0.02);
+    g.quadraticCurveTo(cx, cy - u * 0.025, cx + mw * 0.35, cy + u * 0.02);
+    g.stroke();
+  } else {
+    // flat / closed: ровная черта.
+    g.lineWidth = u * 0.02;
+    g.beginPath();
+    g.moveTo(cx - mw * 0.32, cy);
+    g.lineTo(cx + mw * 0.32, cy);
+    g.stroke();
+  }
+  g.restore();
+}
+
 export function createCritter(spec: CritterSpec): Character {
   const look = spec.critter || {};
   const S = spec.width ?? 0.3;
@@ -626,14 +746,33 @@ export function createCritter(spec: CritterSpec): Character {
 
   const g = parts.faceCanvas.getContext("2d")!;
   let lastSig = "";
+  // Рот (look.mouth): форма — по слогам (mouthKeys), в тишине — по выражению; раскрытие — громкость голоса.
+  const mouthOn = !!look.mouth;
+  const mouthOpt = typeof look.mouth === "object" ? look.mouth : { color: look.eye };
+  const mouthKeys = (spec.mouthKeys || []).slice().sort((a, b) => a.t - b.t);
+  const exprAt = (t: number) => {
+    let e = "neutral";
+    for (const k of faceKeys) if (k.t <= t + 1e-9) e = String(k.expr || "neutral");
+    return e;
+  };
+  function mouthAt(t: number, talk: number): { shape: string; open: number } {
+    if (talk > 0.08) {
+      let sh = "open";
+      for (const k of mouthKeys) if (k.t <= t + 1e-9) sh = String(k.shape || "open");
+      return { shape: sh, open: Math.min(1, talk * 1.25) };
+    }
+    return { shape: REST_MOUTH[exprAt(t)] || "flat", open: 0 };
+  }
   function drawFace(t: number, talk: number) {
     const f = faceParams(t);
     const lk = lookAt(t);
     const bl = blinkAt(t) * (1 - f.closed) * (1 - f.happy) * (1 - f.squint);
-    const sig = [Math.round(t * 30), ...Object.values(f).map((v) => Math.round(v * 100)), Math.round(lk[0] * 100), Math.round(lk[1] * 100), Math.round(talk * 30), Math.round(bl * 20)].join(",");
+    const ms = mouthOn ? mouthAt(t, talk) : { shape: "", open: 0 };
+    const sig = [Math.round(t * 30), ...Object.values(f).map((v) => Math.round(v * 100)), Math.round(lk[0] * 100), Math.round(lk[1] * 100), Math.round(talk * 30), Math.round(bl * 20), ms.shape, Math.round(ms.open * 20)].join(",");
     if (sig === lastSig) return f;
     lastSig = sig;
     paintCritterFace(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, f, lk, bl, talk, t, look);
+    if (mouthOn) paintCritterMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, ms.shape, ms.open, lk, mouthOpt);
     parts.faceTex.needsUpdate = true;
     return f;
   }

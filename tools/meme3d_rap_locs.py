@@ -78,8 +78,6 @@ def loc_skyline() -> dict:
         M("tank", "roof/water_tower", [1.55, 0, -1.4], 0, 0.28),
         M("dish", "roof/q_antenna_b", [-1.6, 0, 0.9], 40, 0.22),
         M("ant", "roof/antenna", [1.65, 0, 0.9], 0, 0.3),
-        M("spot1", "roof/q_light_square", [-0.6, 0, 0.75], 200, 0.3),
-        M("spot2", "roof/q_light_square", [0.55, 0, 0.8], 160, 0.3),
         M("signs", "roof/cyber_signs", [-0.95, 0.27, -1.85], 15, 0.35),
         M("platform", "roof/cyber_platform", [0.55, 0.27, -2.1], -10, 0.3),
         obj("bbtext", "led_wall", [-0.75, 0.27, -1.95], {"size": [1.3, 0.42], "text": "УРОНЮ БД", "lift": 0.15}, rotation=[0, 12, 0]),
@@ -88,7 +86,7 @@ def loc_skyline() -> dict:
         sky("skyR", ["#140b33", "#3d1658", "#7a2a6e", "#e0577a", "#f2a36b"], z=0, x=120, rot=-90, stars=120),
         sky("skyB", ["#140b33", "#2a1450", "#4a2060", "#7a3a7a", "#9a5a8a"], z=120, rot=180, stars=120),
         glow("sunglow", [28, 2.0, -115], 30, "#ff8a5c", opacity=0.7, core="#fff1c0"),
-        obj("haze", "rain", [0, -0.4, 0], {"kind": "ember", "count": 160, "area": [7, 7], "height": 3.2, "speed": 0.12, "size": 0.006,
+        obj("haze", "rain", [0, -0.4, -1.5], {"kind": "ember", "count": 90, "area": [7, 7], "height": 3.2, "speed": 0.12, "size": 0.006,
                                            "colors": ["#ffd9a8", "#ff9ad5", "#ffe9c4"], "seed": 3}),
     ]
     # Город: высотки дальше и выше (силуэт на закате), середина — ниже крыши.
@@ -336,7 +334,6 @@ def loc_inferno(bursts: list[float] | None = None) -> dict:
         M("exit", "server/exit_sign", [0, 0.95, -3.6], 0, 0.8),
         M("ext", "server/extinguisher", [0.45, 0, 0.45], -30, 0.45),
         M("alarm", "server/fire_alarm", [-0.62, 0.5, 0.55], 90, 0.4),
-        obj("sparks", "spark_burst", [0.3, 0.5, -0.5], {"size": 0.25, "hits": [t for t in b[::3]]}),
     ]
     racks = ["server/rack", "server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack"]
     for side in (-1, 1):

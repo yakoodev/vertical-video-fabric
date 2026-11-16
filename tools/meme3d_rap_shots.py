@@ -111,7 +111,7 @@ def shots() -> list[Shot]:
     S.append(Shot(6.85, 8.65, "datacenter", C([0.0, 0.13, 0.05], 0.45, 80, -28, 2, fish=0.8), C([0.0, 0.13, 0.05], 0.38, 80, -24, 2, fish=0.85),
                   c=ch([0, 0, 0], {"lean": 18, "armL": "hips", "armR": [12, 70, 0.9, 0]}, "smug"), k=ch([-0.3, 0, 0.12], {"turn": 25}, "angry"),
                   lab="тычет в линзу"))
-    S.append(Shot(8.65, 10.5, "datacenter", C([-0.15, 0.2, 0.12], 0.75, 50, 18, -3, fish=0.4, roll=-6), C([-0.12, 0.18, 0.1], 0.6, 50, 14, -3, fish=0.45, roll=-4),
+    S.append(Shot(8.65, 10.5, "datacenter", C([-0.22, 0.2, 0.15], 0.9, 50, 18, -3, fish=0.4, roll=-6), C([-0.2, 0.18, 0.14], 0.8, 50, 14, -3, fish=0.45, roll=-4),
                   c=ch([0, 0, 0], {"lean": -14, "tilt": 4, "turn": 10, "armL": [30, -20, 0.3, 0], "armR": [6, 45, 0.8, 0]}, "smug", end={"lean": 16}),
                   k=ch([-0.42, 0, 0.32], {"lean": 28, "turn": 30, "hop": 0.012, "squash": 0.92}, "snarl"), lab="Кодекс рвётся, «братан»"))
     S.append(Shot(10.5, 12.3, "skyline", C([CAR[0], CAR[1] + 0.1, CAR[2]], 1.0, 44, -30, 6), C([CAR[0], CAR[1] + 0.1, CAR[2]], 0.8, 44, -22, 3),
@@ -125,8 +125,7 @@ def shots() -> list[Shot]:
     S.append(Shot(13.9, 15.32, "datacenter", C([-0.1, 0.36 + fy, -0.6], 0.6, 40, 24, -6), C([-0.1, 0.36 + fy, -0.6], 0.5, 40, 18, -6),
                   c=ch([-0.1, 0.36, -0.6], {"armR": [20, 70, 0.9, 0], "armL": "hips", "lean": 8}, "smug", yaw=-20,
                        mid=[(14.32, {"hop": 0.025}), (14.5, {"hop": 0})]),
-                  k=ch([-0.45, 0, -0.25], {"turn": -20}, "angry"), leash=0.6, lab="форс-пуш в мастер",
-                  fx=[fx_obj("spk1", "spark_burst", [-0.1, 0.36, -0.6], {"size": 0.3, "hits": [14.32, 14.9]}, 13.9, 15.32)]))
+                  k=ch([-0.45, 0, -0.25], {"turn": -20}, "angry"), leash=0.6, lab="форс-пуш в мастер"))
     S.append(Shot(15.32, 16.9, "datacenter", C([-0.1, 0.36 + fy, -0.6], 0.75, 52, -20, -8, roll=28, fish=0.3), C([-0.1, 0.36 + fy, -0.6], 0.65, 52, -16, -8, roll=34, fish=0.3),
                   c=ch([-0.1, 0.36, -0.6], {"armL": "shrug", "armR": "shrug", "lean": -6}, "smug", yaw=-20), k=ch([-0.45, 0, -0.25], {"turn": -20}, "bark"),
                   leash=0.6, lab="«тесты — для лохов» (завал)"))
@@ -167,15 +166,15 @@ def shots() -> list[Shot]:
                 {"t": 31.6, "position": [2.3, -0.3, 1.95], "rotation": [-60, -35, 20], "ease": "linear"},
                 {"t": 32.5, "position": [3.3, -7.0, 3.2], "rotation": [-260, -35, 90], "ease": "inQuad"}]
     sign_roll = [{**k, "position": [k["position"][0], k["position"][1] + 0.335, k["position"][2]]} for k in car_roll]
-    S.append(Shot(29.5, 31.0, "skyline", C([0.8, 0.25, 0.6], 1.2, 44, -40, 8), C([1.0, 0.2, 0.9], 1.1, 44, -30, 6),
+    S.append(Shot(29.5, 31.0, "skyline", C([0.55, 0.2, 0.3], 1.4, 44, -55, 10), C([0.75, 0.18, 0.55], 1.3, 44, -45, 8),
                   c=ch([0.3, 0, 0.0], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=40, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
                   k=ch([0.0, 0, 0.12], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}, {"id": "_mod_prodsign", "keys": sign_roll}]))
-    S.append(Shot(31.0, 32.53, "skyline", C([2.2, -0.3, 1.9], 0, 55, pos=[1.2, 0.9, 2.9]), C([3.2, -6.0, 3.1], 0, 60, pos=[2.1, 0.6, 2.5], roll=-35), ease="inCubic",
+    S.append(Shot(31.0, 32.53, "skyline", C([0.7, 0.05, 0.5], 0, 58, pos=[2.5, 0.5, 2.3]), C([1.2, -0.25, 1.0], 0, 62, pos=[2.55, 0.42, 2.4], roll=-14), ease="inCubic",
                   c=ch([0.3, 0, 0.0], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=40), k=ch([0.0, 0, 0.12], {"turn": 30}, "bark"),
                   leash=0.5, lab="«прод под откос»"))
     # ================= CHORUS 1
     ck = [t for t in kicks() if 32.5 <= t <= 44.7]
-    S.append(Shot(32.53, 34.0, "stage", C([-0.1, POD + 0.18, 0.1], 0.9, 56, 14, -6, fish=0.4), C([-0.1, POD + 0.16, 0.1], 0.78, 56, 10, -6, fish=0.45),
+    S.append(Shot(32.53, 34.0, "stage", C([-0.1, POD + 0.2, 0.1], 0.9, 56, 14, -1, fish=0.4), C([-0.1, POD + 0.18, 0.1], 0.78, 56, 10, -1, fish=0.45),
                   c=ch([0, POD, 0], {"lean": -16, "tilt": 4, "turn": 10, "armL": [30, -20, 0.3, 0], "armR": [6, 45, 0.8, 0]}, "smug"),
                   k=ch([-0.42, POD, 0.3], {"lean": 28, "turn": 30, "hop": 0.012, "squash": 0.92}, "snarl"), flash=True, shake=0.012,
                   fx=[fx_obj("dbr1", "rain", [0, 0, 0.1], {"kind": "db", "count": 22, "area": [1.8, 1.2], "height": 1.8, "speed": 1.0, "size": 0.12, "seed": 2,
@@ -189,7 +188,7 @@ def shots() -> list[Shot]:
                   c=ch([-0.15, POD, 0.0], {"armL": "shrug", "armR": "point", "turn": 20}, "smug", yaw=10), k=ch([-0.5, POD, 0.2], {"turn": 30}, "bark"),
                   fx=tower, lab="уроню БД — башня падает"))
     box_in = [{"id": "boxin", "primitive": "delivery_box", "params": {"size": [0.32, 0.24, 0.28]}, "position": [0, 0, 0], "visible": win(35.6, 36.6),
-               "keys": [{"t": 35.6, "position": [0.05, 0.12, 0.2], "rotation": [0, 10, 0]}, {"t": 36.4, "position": [0.0, 0.1, 0.62], "rotation": [-8, 0, 0],
+               "keys": [{"t": 35.6, "position": [0.3, 0.12, 0.25], "rotation": [0, 10, 0]}, {"t": 36.4, "position": [0.3, 0.1, 0.5], "rotation": [-8, 25, 0],
                                                                                                 "ease": "outBack"}]}]
     S.append(Shot(35.6, 36.6, "street", C([0.0, 0.2, 0.4], 0.5, 82, 0, 2, fish=0.85), None,
                   c=ch([0.1, 0, 0.0], {"armL": "hips", "armR": "rest"}, "smug"), k=None, leash=None, fx=box_in, lab="коробка фури-аниме в фишай"))
@@ -331,7 +330,7 @@ def shots() -> list[Shot]:
                 {"t": 101.5, "position": [0.42, POD - 0.02, 0.4], "rotation": [70, 0, 20], "ease": "inQuad"},
                 {"t": 104.4, "position": [1.6, POD - 0.02 + 0.13, 1.4], "rotation": [90, 0, 720], "ease": "outQuad"}]
     btn_state = [{"t": 0, "press": 0, "crack": 0, "cap": 1}, {"t": 99.75, "crack": 0.35}, {"t": 100.35, "crack": 1.0}, {"t": 101.0, "cap": 0}]
-    S.append(Shot(99.7, 101.0, "stage", C([0.32, POD + 0.12, 0.25], 0.5, 40, -10, 30), C([0.32, POD + 0.12, 0.25], 0.42, 40, -8, 34),
+    S.append(Shot(99.7, 101.0, "stage", C([0.14, POD + 0.12, 0.2], 0.95, 40, -10, 28), C([0.16, POD + 0.12, 0.22], 0.8, 40, -8, 30),
                   c=ch([-0.05, POD, 0.1], {"armL": "hips", "armR": "hips"}, "smug", yaw=20), k=ch([0.05, POD, 0.45], {"turn": -10}, "smug"), leash=0.6,
                   lab="«Подписку отменить.» — трещина",
                   fx=[fx_obj("btn4", "cancel_button", [0.32, POD, 0.25], {"radius": 0.13, "pedestal": 0.1}, 99.7, DUR + 1, state=btn_state),
@@ -401,10 +400,22 @@ def _track(shots_: list[Shot], who: str, kk: list[float]) -> tuple[list[dict], l
     return pose, face, move or [{"t": 0, "position": [0, -5, 0]}], vis
 
 
+BRIDGE_CLAUDE = [(69.2, 72.15), (73.95, 75.9)]
+
+
+def mouth_keys() -> list[dict]:
+    """Формы губ Клода по слогам текста песни (work/lyrics.json)."""
+    import meme3d_hero_claude as H
+
+    data = json.loads((DATA / "lyrics.json").read_text("utf-8"))
+    return H.mouth_keys_from_words([w for ln in data["lines"] for w in ln["words"]])
+
+
 def build_specs(width: int = 1080, height: int = 1920) -> tuple[dict[str, dict], list[Shot]]:
     all_shots = shots()
     kk = kicks()
     env = vocal_env()
+    mk = mouth_keys()
     out: dict[str, dict] = {}
     for loc_name in dict.fromkeys(s.loc for s in all_shots):
         mine = [s for s in all_shots if s.loc == loc_name]
@@ -417,7 +428,11 @@ def build_specs(width: int = 1080, height: int = 1920) -> tuple[dict[str, dict],
             if s.c and s.loc != "studio":
                 for i in range(int(s.t0 * 30), min(len(env), int(s.t1 * 30) + 1)):
                     voice[i] = env[i]
-        chars = [Wd.claude(cp or [{"t": 0, **BASE_C}], cf or [{"t": 0, "expr": "smug"}], move=cm, visible=cv, voice=voice)]
+        # Мост: реплики юзера — не его; рот и тело Клода — только на его строках.
+        for a, b in BRIDGE_CLAUDE:
+            for i in range(int(a * 30), min(len(env), int(b * 30) + 1)):
+                voice[i] = env[i]
+        chars = [Wd.claude(cp or [{"t": 0, **BASE_C}], cf or [{"t": 0, "expr": "smug"}], move=cm, visible=cv, voice=voice, mouth_keys=mk)]
         chars.append(Wd.codex(kp or [{"t": 0, **BASE_K}], kf or [{"t": 0, "expr": "angry"}], move=km, visible=kv, yaw=10))
         extra: list[dict] = []
         lvis = [{"t": 0, "on": False}]

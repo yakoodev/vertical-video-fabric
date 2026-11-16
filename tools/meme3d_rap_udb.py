@@ -218,17 +218,18 @@ def lyric_words(t0: float = 0.0, t1: float = 1e9) -> list[dict]:
     data = json.loads((Sh.DATA / "lyrics.json").read_text("utf-8"))
     out = []
     for ln in data["lines"]:
-        for w in ln["words"]:
-            if not (t0 - 0.01 <= w["t0"] < t1):
+        # Мост: реплики юзера (строки с «—», не Клода) — своим цветом.
+        who = "U" if ln["text"].lstrip().startswith("—") and not any(x in ln["text"] for x in ("Отличный", "бэкап я")) else "A"
+        words = [w for w in ln["words"] if t0 - 0.01 <= w["t0"] < t1]
+        for j, w in enumerate(words):
+            core = w["w"].strip("—–-,.:;!?«»\"' ")
+            if not core:
                 continue
-            txt = w["w"].strip("—–-,.:;!?«»\"' ")
-            if not txt:
-                continue
-            low = txt.lower()
             for k, v in MASK.items():
-                if low == k:
-                    txt = v
-            out.append({"t0": round(w["t0"] - t0, 3), "t1": round(min(w["t1"], t1) - t0, 3), "w": txt})
+                if core.lower() == k:
+                    core = v
+            tail = "." if j == len(words) - 1 else ""  # конец строки песни — конец страницы подписи
+            out.append({"t0": round(w["t0"] - t0, 3), "t1": round(min(w["t1"], t1) - t0, 3), "w": core + tail, "s": who})
     # Слово держится до следующего (без мигания пустоты внутри строки).
     for a, b in zip(out, out[1:]):
         if 0 < b["t0"] - a["t1"] < 0.35:
@@ -239,9 +240,12 @@ def lyric_words(t0: float = 0.0, t1: float = 1e9) -> list[dict]:
 def add_captions(video: Path, words: list[dict], out: Path, work: Path, dur: float, title: str | None = None) -> Path:
     from app.motion_render_comp import build_compositor_args, write_comp
 
-    layers = [{"id": "caps", "type": "captions", "start": 0.0, "end": round(dur, 3), "x": 0.5, "y": 0.74,
-               "props": {"style": "mrbeast", "size": 118, "activeColor": "#FFD23F", "uppercase": True, "maxWords": 2, "maxLines": 1,
-                         "stroke": {"color": "#1a0d18", "width": 14}}}]
+    # Текст песни — фразами по 2–4 слова в одном спокойном стиле (не «наклейки»), вверху в безопасной зоне — не на лицах.
+    layers = [{"id": "caps", "type": "captions", "start": 0.0, "end": round(dur, 3), "x": 0.5, "y": 0.2,
+               "props": {"style": "karaoke", "font": "Montserrat", "weight": 900, "size": 76, "color": "#ffffff", "dimColor": "#ffffff",
+                         "activeColor": "#FFD23F", "uppercase": True, "maxWords": 4, "maxLines": 2, "maxWidth": 900, "wordScale": 1,
+                         "punctuation": False, "stroke": {"color": "#140a14", "width": 10},
+                         "speakerColors": [{"s": "U", "color": "#9fe8ff", "activeColor": "#9fe8ff"}]}}]
     if title:
         layers.append({"id": "title", "type": "text", "start": 0.0, "end": 4.2, "x": 0.5, "y": 0.13,
                        "props": {"text": title, "font": "Montserrat", "weight": 900, "size": 120, "color": "#fff6e8", "align": "center", "uppercase": True,
@@ -277,6 +281,101 @@ def contact(video: Path, shots: list, out: Path, t0: float = 0.0) -> Path:
     return out
 
 
+def check_sight(out: Path, gl: str = "gpu") -> list[str]:
+    """Проверка кадров без рендера: в начале, середине и конце каждого плана герои плана в кадре и не заслонены
+    (луч камера → голова, engine.sightline). Список проблем — для правки раскадровки."""
+    import meme3d_rap_shots as Sh
+
+    specs, shots = Sh.build_specs(540, 960)
+    for a, b in zip(shots, shots[1:]):
+        a.t1 = b.t0
+    work = out / "work" / "check"
+    work.mkdir(parents=True, exist_ok=True)
+    probs = []
+    for loc, sp in specs.items():
+        mine = [s for s in shots if s.loc == loc]
+        ts = sorted({round(t, 3) for s in mine for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1)})
+        f = work / f"{loc}.json"
+        f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
+        res = subprocess.run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(f), "--models", str(MODELS), "--gl", gl,
+                              "--inspect-list", ",".join(map(str, ts))], capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=subprocess.DEVNULL, timeout=1800)
+        if not res.stdout.strip():
+            raise RuntimeError(f"проверка {loc}: {res.stderr.strip()[-800:]}")
+        data = json.loads(res.stdout.strip().splitlines()[-1])
+        by_t = {round(x["t"], 3): x for x in data["inspect"]}
+        for s in mine:
+            for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1):
+                x = by_t.get(round(t, 3))
+                if not x:
+                    continue
+                # Вставки про Кодекса (оскал, шипы) — главный в кадре он, Клод может быть за кадром.
+                main = "codex" if ("Кодекс" in s.lab or "шипы" in s.lab) else "claude"
+                for cid, want in (("claude", s.c), ("codex", s.k)):
+                    if not want:
+                        continue
+                    sg = (x["characters"].get(cid) or {}).get("sight")
+                    if not sg:
+                        probs.append(f"{s.t0:6.2f} {s.lab}: {cid} не показан (t={t:.2f})")
+                    elif not sg["inFrame"] and cid == main:
+                        probs.append(f"{s.t0:6.2f} {s.lab}: {cid} вне кадра (t={t:.2f})")
+                    elif sg["occluded"] and cid == main:
+                        probs.append(f"{s.t0:6.2f} {s.lab}: {cid} заслонён «{sg['blocker']}» (t={t:.2f})")
+    (out / "check_sight.txt").write_text("\n".join(probs) + "\n", "utf-8")
+    return probs
+
+
+def dark_check(video: Path, shots: list, t0: float = 0.0, thr: int = 22, limit: float = 0.35) -> list[str]:
+    """Доля почти чёрных пикселей в середине каждого плана готового ролика; > limit — план «в чёрной пустоте»."""
+    import numpy as np
+
+    probs = []
+    for s in shots:
+        t = (s.t0 + s.t1) / 2 - t0
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1", "-vf", "scale=108:192,format=gray",
+                              "-f", "rawvideo", "-"], capture_output=True).stdout
+        if not raw:
+            continue
+        a = np.frombuffer(raw, np.uint8)
+        dark, white = float((a < thr).mean()), float((a > 250).mean())
+        if dark > limit:
+            probs.append(f"{s.t0:6.2f} {s.lab}: тёмного {dark:.0%}")
+        if white > 0.08:
+            probs.append(f"{s.t0:6.2f} {s.lab}: пересвет {white:.0%}")
+    return probs
+
+
+def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6) -> Path:
+    """Проба рта: крупный план Клода на сцене, поёт припев (губы по слогам, раскрытие — громкость вокала)."""
+    import meme3d_rap_shots as Sh
+
+    pod = Sh.POD
+    loc = Lc.LOCATIONS["stage"]()
+    env = Sh.vocal_env()
+    voice = [v if t0 - 0.2 <= i / 30 <= t1 + 0.2 else 0.0 for i, v in enumerate(env)]
+    kk = [t for t in Sh.kicks() if t0 < t < t1]
+    pose = [{"t": 0, "ease": "step", **Sh.BASE_C, "shades": 1, "armL": "hips", "armR": [30, 50, 0.6, 0.5]}]
+    for k in kk:
+        pose += [{"t": round(k, 3), "ease": "outQuad", "lean": 7, "squash": 0.95}, {"t": round(k + 0.18, 3), "ease": "inOutSine", "lean": 0, "squash": 1.0}]
+    face = [{"t": 0, "expr": "smug", "look": [0, 0]}, {"t": 35.6, "expr": "happy", "look": [0, 0]}]
+    ch = Wd.claude(pose, face, move=[{"t": 0, "position": [0, pod, 0], "ease": "step"}], voice=voice, mouth_keys=Sh.mouth_keys())
+    kx = Wd.codex([{"t": 0, "ease": "step", **Sh.BASE_K, "turn": 25, "lean": 12}], [{"t": 0, "expr": "snarl", "look": [0.1, 0]}],
+                  move=[{"t": 0, "position": [-0.3, pod, 0.1], "ease": "step"}], yaw=10)
+    a = Sh.C([0.0, pod + FY - 0.02, 0.0], 0.42, 34, 8, 2)
+    b = Sh.C([0.0, pod + FY - 0.02, 0.0], 0.34, 34, 4, 2)
+    cam = [{"t": t0, **a, "cut": True}, {"t": t1, **b, "ease": "linear"}]
+    sp = Wd.spec(loc, [ch, kx], [Wd.leash(0.44)], cam, Sh.DUR)
+    work = out / "work" / "mouthtest"
+    work.mkdir(parents=True, exist_ok=True)
+    f = work / "mouth.json"
+    f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
+    clip = work / "mouth_raw.mp4"
+    P1._run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(f), "--models", str(MODELS), "--gl", gl, "--workers", "2",
+             "--frames", f"{round(t0 * FPS)}:{round(t1 * FPS)}", "--out", str(clip)], "проба рта", timeout=1800)
+    raw = concat([clip], work / "mouth_mux.mp4", t0, t1, (1080, 1920))
+    return add_captions(raw, lyric_words(t0, t1), out / "stage2b_mouth_test.mp4", work, t1 - t0)
+
+
 def credits(specs: dict, out: Path) -> Path:
     """Строки атрибуции моделей клипа (CC BY — обязательны в описании ролика; CC0 — для порядка)."""
     man = json.loads((MODELS / "manifest.json").read_text("utf-8"))["models"]
@@ -304,12 +403,16 @@ def stage_render(out: Path, gl: str, name: str, t0: float, t1: float, size: tupl
     final = add_captions(raw, lyric_words(t0, t1), out / f"{name}.mp4", work, t1 - t0, title)
     sel = [s for s in shots if s.t1 > t0 and s.t0 < t1]
     sheet_ = contact(final, sel, out / f"{name}_sheet.jpg", t0)
+    dk = dark_check(final, sel, t0)
+    (out / f"{name}_dark.txt").write_text("\n".join(dk) + "\n", "utf-8")
+    if dk:
+        print("[rap] кадры с тёмной пустотой/пересветом:\n" + "\n".join(dk), file=sys.stderr)
     return final, sheet_
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["locations", "animatic", "section", "final"])
+    ap.add_argument("cmd", choices=["locations", "animatic", "section", "final", "check", "mouth"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
@@ -322,6 +425,11 @@ def main() -> int:
         subprocess.run(["npm", "run", "build:scene3d"], cwd=ROOT, check=True, shell=sys.platform == "win32")
     if a.cmd == "locations":
         print(stage_locations(out, a.gl))
+    elif a.cmd == "mouth":
+        print(mouth_test(out, a.gl))
+    elif a.cmd == "check":
+        probs = check_sight(out, a.gl)
+        print("\n".join(probs) or "все планы: герои в кадре и не заслонены")
     elif a.cmd == "animatic":
         v, sh = stage_render(out, a.gl, a.name or "stage2_animatic", a.t0, a.t1, (540, 960), title="Уроню БД")
         print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
