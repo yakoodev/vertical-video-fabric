@@ -2706,7 +2706,7 @@
 "name": "feed_list",
 "title": "Смотрю ленту",
 "description": "3808b2b42288afab",
-"parameters": "c8a2e8430003a241",
+"parameters": "16d9c31fd207a091",
 "mutating": false,
 "scope": "global",
 "module": null,
