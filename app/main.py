@@ -60,6 +60,11 @@ source_ingestor = SourceIngestor(store)
 video_analysis_service = VideoAnalysisService(store)
 clip_render_service = ClipRenderService(store)
 download_service = DownloadService(source_ingestor)
+# Источник из торрента (magnet / .torrent → выбор файлов → aria2c → источники), app/torrents.py.
+from app import torrents  # noqa: E402
+
+torrent_service = torrents.TorrentService(source_ingestor)
+torrents.register(lambda: torrent_service)
 # «Авто»: публикует только через одобрение (submit_clip), качает фоново через download_service.
 automation_service = AutomationService(store, source_ingestor, video_analysis_service, clip_render_service, download_service)
 from app.vod_watch import VodWatchWorker  # noqa: E402 - наблюдатель VOD: новый эфир → нарезка → одобрение
@@ -283,7 +288,7 @@ app.include_router(build_stats_router(AuthDep, lambda: store))
 from app.automation_api import build_automation_router  # noqa: E402
 
 app.include_router(build_automation_router(
-    AuthDep, lambda: store, lambda: automation_service, lambda: download_service,
+    AuthDep, lambda: store, lambda: automation_service, lambda: download_service, lambda: torrent_service,
 ))
 
 from app.sources_api import build_sources_router  # noqa: E402
@@ -291,6 +296,10 @@ from app.sources_api import build_sources_router  # noqa: E402
 app.include_router(build_sources_router(
     AuthDep, lambda: store, lambda: source_ingestor, lambda: download_service, lambda: video_analysis_service, _download_source_url,
 ))
+
+from app.torrents_api import build_torrents_router  # noqa: E402
+
+app.include_router(build_torrents_router(AuthDep, lambda: torrent_service))
 
 from app.render_library_api import build_render_library_router  # noqa: E402
 

@@ -20,6 +20,7 @@ def build_automation_router(
     get_store: Callable[[], Any],
     get_automation_service: Callable[[], Any],
     get_download_service: Callable[[], Any],
+    get_torrent_service: Callable[[], Any] | None = None,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -132,12 +133,17 @@ def build_automation_router(
 
     @router.get("/api/tasks/active", tags=["Jobs"], summary="List active UI tasks")
     def api_active_tasks(_auth: auth_dep) -> list[dict]:
-        return _merge_tasks(get_store().list_active_tasks(), get_download_service().as_tasks())
+        return _merge_tasks(get_store().list_active_tasks(), _memory_tasks())
 
     @router.get("/api/tasks", tags=["Jobs"], summary="List recent tasks (execution log)")
     def api_recent_tasks(_auth: auth_dep, limit: int = 80) -> list[dict]:
         limit = max(1, min(300, limit))
-        return _merge_tasks(get_store().list_recent_tasks(limit), get_download_service().as_tasks())[:limit]
+        return _merge_tasks(get_store().list_recent_tasks(limit), _memory_tasks())[:limit]
+
+    def _memory_tasks() -> list[dict]:
+        """Загрузки по ссылке и торренты живут в памяти процесса, не в SQLite."""
+        torrents = get_torrent_service().as_tasks() if get_torrent_service is not None else []
+        return [*get_download_service().as_tasks(), *torrents]
 
     def _merge_tasks(stored: list[dict], downloads: list[dict]) -> list[dict]:
         """Downloads live in memory, the rest in SQLite — the UI wants one feed."""

@@ -18,6 +18,7 @@ const SOURCE_KIND: Record<string, string> = {
   upload: "файл",
   direct_url: "ссылка",
   smotvibe_url: "плеер",
+  torrent: "торрент torrent magnet",
 };
 
 type Cmd = { id: string; group: string; label: string; hint?: string; keywords?: string; icon: string; run: () => void };

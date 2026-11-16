@@ -27,7 +27,8 @@ VALID_CUT_STRATEGIES = set(CUT_STRATEGIES)
 VALID_PLATFORMS = {"youtube", "tiktok", "instagram"}
 VALID_PRIVACY = {"public", "unlisted", "private"}
 # clip_upload и canvas — скрытые якоря (готовый клип, пустой холст app/canvas.py): в «Проектах» их нет.
-VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload", "canvas"}
+VALID_SOURCE_TYPES = {"upload", "direct_url", "youtube_url", "smotvibe_url", "twitch_url", "clip_upload", "canvas",
+                      "torrent"}
 VALID_SOURCE_STATUSES = {"created", "downloading", "ready", "analyzing", "analyzed", "failed"}
 # manual — клипы, которые агент создал по таймкодам сам (app/manual_clips.py).
 VALID_AI_PROVIDERS = {"polza", "gemini", "artemox", "mock", "action", "manual"}

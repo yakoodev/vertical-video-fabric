@@ -63,8 +63,11 @@ WORKDIR /app
 # chromium — и TikTok-подпись, и SVG → webm (app/svg_webm.py, node/svg-to-webm.mjs, headless покадрово).
 # fonts-dejavu-core — запасной шрифт Chromium (~1.5 МБ): шрифты сервиса конвертер подключает сам, а глифы
 # своих SVG вне них без системного шрифта рисовались бы квадратами.
+# aria2 — источники из торрентов (app/torrents.py, app/aria2.py): отдельная программа aria2c (GPL-2.0+, ~2 МБ),
+# сервис говорит с ней по JSON-RPC на 127.0.0.1 и в свой код не линкует.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        aria2 \
         ca-certificates \
         chromium \
         fonts-dejavu-core \

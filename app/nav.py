@@ -37,6 +37,7 @@ KIND_LABEL = {
     "smotvibe_url": "Серия",
     "upload": "Запись",
     "direct_url": "Видео",
+    "torrent": "Торрент",
     "canvas": "Холст",
     "clip_upload": "Клип",
 }

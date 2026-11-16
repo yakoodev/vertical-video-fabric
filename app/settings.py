@@ -198,6 +198,19 @@ class Settings:
         # запуск --dump-json; DOWNLOAD_SIZE_PROBE=0 — не спрашивать, только запас).
         self.download_free_reserve_gb = float(os.getenv("DOWNLOAD_FREE_RESERVE_GB", "2") or 0)
         self.download_size_probe = os.getenv("DOWNLOAD_SIZE_PROBE", "1").strip().lower() not in {"0", "false", "no", "off"}
+        # Источник из торрента (app/torrents.py, aria2c): потолок выбранного за раз, ГБ; отдача пирам, пока качаем
+        # (формат aria2: 256K, 1M; 0 — без предела); сколько торрентов сразу. Раздача после загрузки выключена всегда.
+        self.aria2_bin = os.getenv("ARIA2_BIN", "aria2c").strip() or "aria2c"
+        self.torrent_max_gb = float(os.getenv("TORRENT_MAX_GB", "60") or 60)
+        self.torrent_upload_limit = os.getenv("TORRENT_UPLOAD_LIMIT", "256K").strip() or "256K"
+        self.torrent_max_active = int(os.getenv("TORRENT_MAX_ACTIVE", "2") or 2)
+        # Ждать метаданные magnet (пиры с info), выбора файлов человеком и хоть одного байта при загрузке, с.
+        self.torrent_metadata_timeout_sec = float(os.getenv("TORRENT_METADATA_TIMEOUT_SEC", "180") or 180)
+        self.torrent_select_timeout_sec = float(os.getenv("TORRENT_SELECT_TIMEOUT_SEC", "3600") or 3600)
+        self.torrent_stall_timeout_sec = float(os.getenv("TORRENT_STALL_TIMEOUT_SEC", "1800") or 1800)
+        # Торрент НЕ идёт через прокси Gemini/загрузок. Свой прокси — только явно; у aria2 он касается лишь
+        # HTTP(S)-трекеров и веб-сидов, пиры и DHT всегда напрямую.
+        self.torrent_proxy_url = os.getenv("TORRENT_PROXY_URL", "").strip()
         self.gemini_base_url = os.getenv(
             "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
         ).strip()

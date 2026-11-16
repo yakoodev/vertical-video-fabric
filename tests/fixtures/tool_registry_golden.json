@@ -2604,6 +2604,56 @@
 "module": "series3d",
 "handler": "h_save_item",
 "label": true
+},
+{
+"name": "add_torrent_source",
+"title": "Добавляю торрент",
+"description": "4300b27ff9451e0d",
+"parameters": "24b8e1513c1b8337",
+"mutating": true,
+"scope": "global",
+"module": "torrents",
+"handler": "h_add_torrent_source",
+"label": true,
+"cost": [
+"network"
+]
+},
+{
+"name": "torrent_status",
+"title": "Смотрю торрент",
+"description": "ed7785ad5a961e2b",
+"parameters": "069b85337ec96348",
+"mutating": false,
+"scope": "global",
+"module": "torrents",
+"handler": "h_torrent_status",
+"label": true
+},
+{
+"name": "start_torrent",
+"title": "Начинаю загрузку торрента",
+"description": "4c74d6080981f8ab",
+"parameters": "647984f5abee6dea",
+"mutating": true,
+"scope": "global",
+"module": "torrents",
+"handler": "h_start_torrent",
+"label": true,
+"cost": [
+"network"
+]
+},
+{
+"name": "cancel_torrent",
+"title": "Отменяю торрент",
+"description": "38d5067868d24b93",
+"parameters": "f40e931b45c99f41",
+"mutating": true,
+"scope": "global",
+"module": "torrents",
+"handler": "h_cancel_torrent",
+"label": true
 }
 ]
 }

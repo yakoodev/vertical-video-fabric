@@ -292,6 +292,8 @@ def build_sources_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if source.get("has_file"):
             raise HTTPException(status_code=409, detail="Файл записи уже на месте")
+        if source.get("source_type") == "torrent":
+            raise HTTPException(status_code=400, detail="Запись из торрента: добавьте торрент заново («Новое видео» → «Торрент»)")
         url = str(source.get("original_url") or "").strip()
         if not url:
             raise HTTPException(status_code=400, detail="У записи нет ссылки: её загружали файлом")

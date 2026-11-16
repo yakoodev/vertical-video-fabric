@@ -21,6 +21,7 @@ const KIND_RU: Record<string, string> = {
   clip: "Клип",
   analysis: "Анализ",
   download: "Скачивание",
+  torrent: "Торрент",
 };
 
 function taskKey(t: ActiveTask): string {

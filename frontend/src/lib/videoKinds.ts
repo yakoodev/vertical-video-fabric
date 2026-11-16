@@ -5,6 +5,7 @@ export const KIND_LABELS: Record<string, string> = {
   smotvibe_url: "Серия",
   upload: "Запись",
   direct_url: "Видео",
+  torrent: "Торрент",
   canvas: "Холст",
   clip_upload: "Клип",
 };

@@ -681,14 +681,16 @@ def _project_tools() -> list[Tool]:
     from app.s3d_tools import all_tools as series3d_tools
     from app.stories_tools import all_tools as stories_tools
     from app.stream_question_tools import tools as stream_question_tools
+    from app.torrent_tools import tools as torrent_tools
 
     # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный;
     # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег;
     # истории (app/stories_tools.py) — рассказчик и сцена на каждую фразу.
     # вопросы по стриму и выбор мемов (app/stream_question_tools.py) — монтажёр спрашивает владельца.
     # 3D-серия (app/s3d_tools.py) — план серии, версии, рендер заданием и проверки.
+    # Источник из торрента (app/torrent_tools.py) — не клиповый: ИИ-монтажёру клипа не нужен.
     return (tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
-            + series3d_tools())
+            + series3d_tools() + torrent_tools())
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:
