@@ -81,7 +81,7 @@ def chunks_from_lyrics(lines: list[dict], skip_user: bool = True) -> list[dict]:
             out.append({"t0": gr[0]["t0"] - 0.05, "t1": gr[-1]["t1"] + 0.3, "words": gr})
     # Фраза держится до следующей (без мигания), не дольше 1.6 с после последнего слова.
     for a, b in zip(out, out[1:]):
-        a["t1"] = round(min(max(a["t1"], b["t0"] - 0.02), b["t0"] - 0.02, a["words"][-1]["t1"] + 1.6), 3)
+        a["t1"] = round(min(max(a["t1"], b["t0"] - 0.02), b["t0"] - 0.02, a["words"][-1]["t1"] + 0.7), 3)
     return out
 
 
@@ -91,9 +91,37 @@ def plan(t0: float, t1: float, width: int = 1080, height: int = 1920, fps: int =
     title = {"t0": 0.3, "t1": 4.25, "scale": 1.25,
              "words": [{"text": "УРОНЮ", "t0": 0.35, "t1": 0.4}, {"text": "БД", "t0": 0.75, "t1": 0.8, "accent": True}]}
     ch = [c for c in [title, *chunks_from_lyrics(data["lines"])] if c["t1"] > t0 and c["t0"] < t1]
-    notes = [{"t0": a, "t1": a + 2.6, "text": tx} for a, tx in NOTES if a + 2.6 > t0 and a < t1]
+    # Крупные планы (лицо во весь кадр, верх занят головой) — фраза внизу кадра, иначе — вверху. Не на лицах.
+    close = closeup_spans()
+    for c in ch:
+        mid = (c["t0"] + min(c["t1"], c["words"][-1]["t1"])) / 2
+        c["y"] = 0.8 if any(a <= mid < b for a, b in close) else 0.19
+    notes = []
+    for a, tx in NOTES:
+        if a + 2.6 > t0 and a < t1:
+            y = 0.8 if any(x <= a + 0.5 < y2 for x, y2 in close) else 0.19
+            notes.append({"t0": a, "t1": a + 2.6, "text": tx, "y": y + 0.085})
     return {"width": width, "height": height, "fps": fps, "t0": t0, "dur": round(t1 - t0, 3), "y": 0.19, "noteY": 0.275, "fonts": FONTS,
             "palette": PALETTE, "kicks": [k for k in beats["kicks"] if t0 - 1 < k < t1 + 1], "chunks": ch, "notes": notes}
+
+
+def closeup_spans() -> list[tuple[float, float]]:
+    """Планы, где голова занимает верх кадра: половина видимой высоты у цели < 0.42 м (крупно)."""
+    import math
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    import meme3d_rap_shots as Sh
+
+    shots = Sh.shots()
+    for a, b in zip(shots, shots[1:]):
+        a.t1 = b.t0
+    out = []
+    for s in shots:
+        c = s.cam
+        d = math.dist(c["position"], c["target"])
+        if d * math.tan(math.radians(c["fov"] / 2)) < 0.42:
+            out.append((s.t0, s.t1))
+    return out
 
 
 def overlay(video: Path, out: Path, t0: float, t1: float, work: Path) -> Path:

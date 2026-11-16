@@ -94,7 +94,7 @@ function drawChunk(c, t) {
   if (t < c.t0 || t > c.t1) return;
   const color = accentAt(c.words[0].t0);
   const size = SIZE * (c.scale || 1);
-  const cy = plan.y * H;
+  const cy = (c.y ?? plan.y) * H;
   const fadeOut = clamp((c.t1 - t) / 0.16);
   const exitLift = (1 - fadeOut) * size * 0.35;
   const pulse = 1 + 0.035 * kickPulse(t);
@@ -151,7 +151,7 @@ function drawNote(n, t) {
   g.shadowColor = "rgba(0,0,0,0.75)";
   g.shadowBlur = 8;
   g.fillStyle = "#ece9f4";
-  const y = (plan.noteY || plan.y + 0.09) * H;
+  const y = (n.y ?? plan.noteY ?? plan.y + 0.09) * H;
   const full = g.measureText(text).width;
   const x0 = W / 2 - full / 2;
   g.fillText(s, x0, y);

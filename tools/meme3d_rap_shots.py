@@ -122,7 +122,7 @@ def shots() -> list[Shot]:
                                                                        "t0": 11.55, "t1": 13.7}, 0, 13.7)]))
     S.append(Shot(12.3, 13.7, "skyline", C([CAR[0], CAR[1] + fy + 0.04, CAR[2]], 0.5, 40, -12, -10), C([CAR[0], CAR[1] + fy + 0.04, CAR[2]], 0.42, 40, -8, -8),
                   c=ch(CAR, {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=-28), k=None, leash=None, lab="«утренний план»"))
-    S.append(Shot(13.9, 15.32, "datacenter", C([-0.1, 0.36 + fy, -0.6], 0.6, 40, 24, -6), C([-0.1, 0.36 + fy, -0.6], 0.5, 40, 18, -6),
+    S.append(Shot(13.9, 15.32, "datacenter", C([-0.1, 0.32, -0.6], 0.85, 40, 24, 12), C([-0.1, 0.34, -0.6], 0.72, 40, 18, 10),
                   c=ch([-0.1, 0.36, -0.6], {"armR": [20, 70, 0.9, 0], "armL": "hips", "lean": 8}, "smug", yaw=-20,
                        mid=[(14.32, {"hop": 0.025}), (14.5, {"hop": 0})]),
                   k=ch([-0.45, 0, -0.25], {"turn": -20}, "angry"), leash=0.6, lab="форс-пуш в мастер"))
@@ -265,7 +265,7 @@ def shots() -> list[Shot]:
     pet = {"armR": [30, 50, 0.6, 0.6], "turn": 15}
     S.append(Shot(66.0, 69.2, "studio", C([-0.03, 0.27, 0.0], 0.8, 32, 0, 4), None, c=ch(B, pet, "deadpan", nod=False), k=ch(KB, {}, "smile", yaw=20, nod=False),
                   leash=0.3, lab="мост: «Ты зачем базу удалил?»",
-                  fx=[fx_obj("bub1", "chat_bubble", [0.0, 0.55, -0.1], {"text": "Ты зачем базу удалил?", "side": "right", "avatar": "user", "width": 0.85,
+                  fx=[fx_obj("bub1", "chat_bubble", [0.0, 0.42, -0.1], {"text": "Ты зачем базу удалил?", "side": "right", "avatar": "user", "width": 0.85,
                                                                      "height": 0.24}, 67.1, 69.2)]))
     S.append(Shot(69.2, 71.2, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch(B, {**pet, "shades": 1}, "deadpan", nod=False),
                   k=ch(KB, {}, "smile", yaw=20, nod=False), leash=0.3, lab="«Отличный вопрос! Вы абсолютно правы.»"))
@@ -273,7 +273,7 @@ def shots() -> list[Shot]:
                   k=ch(KB, {"lean": 22}, "snarl", yaw=0, nod=False), leash=0.3, lab="вставка: Кодекс скалится"))
     S.append(Shot(72.26, 73.95, "studio", C([-0.03, 0.27, 0.0], 0.8, 32, 0, 4), None, c=ch(B, pet, "deadpan", nod=False), k=ch(KB, {}, "smile", yaw=20, nod=False),
                   leash=0.3, lab="«Восстанови из бэкапа.»",
-                  fx=[fx_obj("bub2", "chat_bubble", [0.0, 0.55, -0.1], {"text": "Восстанови из бэкапа.", "side": "right", "avatar": "user", "width": 0.85,
+                  fx=[fx_obj("bub2", "chat_bubble", [0.0, 0.42, -0.1], {"text": "Восстанови из бэкапа.", "side": "right", "avatar": "user", "width": 0.85,
                                                                      "height": 0.24}, 72.26, 73.95)]))
     S.append(Shot(73.95, 75.0, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch(B, {**pet, "shades": 0}, "deadpan", nod=False),
                   k=ch(KB, {}, "smile", yaw=20, nod=False), leash=0.3, lab="«А бэкап я тоже удалил.»"))
