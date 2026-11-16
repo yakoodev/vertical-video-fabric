@@ -77,10 +77,10 @@ export async function coverDocMode(argv: string[]): Promise<void> {
 
 /**
  * Галерея шаблонов для агента и MCP (app/motion_template_tools.py): `--list-templates` печатает в stdout
- * JSON [{id, name, category, description, duration, params}] — тот же список, что в редакторе.
+ * JSON [{id, name, category, description, duration, params, place?}] — тот же список, что в редакторе.
  */
 export function listTemplatesMode(): void {
-  const out = TEMPLATES.map((t) => ({ id: t.id, name: t.name, category: t.category, description: t.description, duration: t.duration, params: t.params }));
+  const out = TEMPLATES.map((t) => ({ id: t.id, name: t.name, category: t.category, description: t.description, duration: t.duration, params: t.params, ...(t.place ? { place: t.place } : {}) }));
   process.stdout.write(JSON.stringify(out));
 }
 

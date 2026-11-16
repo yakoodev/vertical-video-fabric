@@ -1,7 +1,8 @@
 // Кирпичики шаблонов графики: типы, новый слой, цвета, чтение параметров, искры и утилиты данных.
 import type { CameraKey, Layer, LayerBase, LayerPropsMap, LayerType, Shadow } from "../types";
 
-export type TemplateParamType = "text" | "number" | "color" | "emoji" | "select" | "bool" | "sound";
+/** image — картинка из «Файлов для монтажа» (значение — id файла строкой, "" — не выбрана). */
+export type TemplateParamType = "text" | "number" | "color" | "emoji" | "select" | "bool" | "sound" | "image";
 
 export type TemplateParam = {
   name: string;
@@ -37,9 +38,14 @@ export type MotionTemplate = {
    * лента у левого края). `anchor: "first"` — на своей доле стоит первый слой (цель стрелки).
    */
   fit?: { x?: "group" | "frame"; y?: "group" | "frame"; anchor?: "box" | "first" };
+  /**
+   * Где шаблон встаёт по времени при вставке из галереи: "start" — с начала клипа (заставка), "end" — так,
+   * чтобы закончиться ровно на последнем кадре (концовка). Нет — в момент курсора, как остальные.
+   */
+  place?: "start" | "end";
 };
 
-export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо", "Реклама", "Плоский UI", "Эффекты", "3D"] as const;
+export const TEMPLATE_CATEGORIES = ["Титры", "Плашки", "Инфографика", "Призывы", "Акценты", "Списки", "Мемы", "Промо", "Реклама", "Плоский UI", "Эффекты", "Бренд", "3D"] as const;
 
 /* ---------- кирпичики ---------- */
 

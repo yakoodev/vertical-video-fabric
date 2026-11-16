@@ -69,7 +69,7 @@ def build_template(template_id: str, params: dict | None, at: float, fmt: str | 
 def _brief(t: dict) -> dict:
     return {
         "id": t.get("id"), "name": t.get("name"), "category": t.get("category"), "description": t.get("description"),
-        "duration": t.get("duration"),
+        "duration": t.get("duration"), **({"place": t["place"]} if t.get("place") else {}),
         "params": [{k: p[k] for k in ("name", "label", "type", "default", "options", "min", "max") if k in p}
                    for p in t.get("params") or []],
     }
@@ -122,6 +122,43 @@ def with_brand(params: dict, brand: dict) -> dict:
     return out
 
 
+def _brand_logo(ctx: ToolContext) -> str:
+    """id логотипа бренда проекта клипа (строкой) — для шаблонов с картинкой-логотипом; нет — ""."""
+    try:
+        from app.cover_variants import clip_brand
+
+        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
+        brand = clip_brand(ctx.store, {"clip_plan_id": ctx.plan_id, "source_id": plan.get("source_id")}) or {}
+    except Exception:  # noqa: BLE001 - без бренда — логотип должен прийти в params
+        return ""
+    return str(brand["logo_asset_id"]) if brand.get("logo_asset_id") else ""
+
+
+def with_images(template: dict, params: dict, ctx: ToolContext) -> dict:
+    """Параметры-картинки (type image: логотип заставки) без значения — логотип бренда проекта; нет и его — ошибка."""
+    out = dict(params)
+    for prm in template.get("params") or []:
+        name = prm.get("name")
+        if prm.get("type") != "image" or str(out.get(name) or "").strip():
+            continue
+        logo = _brand_logo(ctx)
+        if not logo:
+            raise ToolError(f"шаблону «{template.get('id')}» нужна картинка {name} — id файла из «Файлов для монтажа» "
+                            "(у бренда проекта логотипа нет)", ["list_assets(kind: image) — найти логотип"])
+        out[name] = logo
+    return out
+
+
+def placed_at(template: dict, params: dict, at: float, clip_duration: float) -> float:
+    """Концовка (place end) не вылезает за клип: начало сдвигается, чтобы кончиться на последнем кадре."""
+    if template.get("place") != "end" or clip_duration <= 0:
+        return at
+    length = _num(params.get("duration"), None) or float(template.get("duration") or 0)
+    if at + length > clip_duration - 0.05:
+        return round(max(0.0, clip_duration - length), 3)
+    return at
+
+
 def h_add_motion_template(ctx: ToolContext, args: dict) -> dict:
     from app.formats import settings_layers_format
     from app.layer_tools import h_add_layers
@@ -130,15 +167,20 @@ def h_add_motion_template(ctx: ToolContext, args: dict) -> dict:
     template_id = str(args.get("template") or "").strip()
     if not template_id:
         raise ToolError("нужен template — id из list_motion_templates")
-    known = {str(t.get("id")) for t in list_templates()}
-    if template_id not in known:
+    template = next((t for t in list_templates() if str(t.get("id")) == template_id), None)
+    if template is None:
         raise ToolError(f"шаблона «{template_id}» нет", ["list_motion_templates — список с категориями"])
     params = args.get("params") if isinstance(args.get("params"), dict) else {}
     if args.get("duration") is not None:
         params = {**params, "duration": args["duration"]}
     if str(params.get("theme") or "") == "brand":
         params = with_brand(params, _brand_colors(ctx))
+    params = with_images(template, params, ctx)
     at = max(0.0, _num(args.get("at"), 0.0) or 0.0)
+    if template.get("place") == "end":
+        from app.tool_core import _clip_duration
+
+        at = placed_at(template, params, at, _clip_duration(ctx))
     render = _current_render(ctx)
     built = build_template(template_id, params, at, settings_layers_format(render))
     layers = [l for l in built.get("layers") or [] if isinstance(l, dict)]
@@ -152,6 +194,8 @@ def h_add_motion_template(ctx: ToolContext, args: dict) -> dict:
         _save_render(ctx, {**fresh, "camera": normalize_camera(merged)})
         out["camera_keys_added"] = len(camera)
     out["template"] = template_id
+    if template.get("place") == "end":
+        out["at"] = at
     return out
 
 
@@ -164,12 +208,13 @@ def tools() -> list[Tool]:
             "наездом, карусель карточек с кольцами, волна голоса, фраза по словам в карточке, наклонная стена "
             "плиток, схема безопасной сделки с замком и «Готово»), ПЛОСКИЙ UI (хук-слово во весь кадр, чип «ОШИБКА 1» + "
             "заголовок, карточка с числом, сравнение полосами, чек-лист в окне, уведомление, окно браузера/чата, "
-            "счётчик-пилюля, чип, фон под плашками; theme red|dark|light|brand — одна палитра на ролик), 3D. Без аргументов — короткий список; category "
+            "счётчик-пилюля, чип, фон под плашками; theme red|dark|light|brand — одна палитра на ролик), БРЕНД "
+            "(заставка и концовка логотипом кистью: logo-intro / logo-outro), 3D. Без аргументов — короткий список; category "
             "или q (слово/ id) — с параметрами (имя, подпись, тип, умолчание). Вставка — add_motion_template. "
             "/ List motion gallery templates.",
             _obj({"category": {"type": "string", "description": "категория: Титры, Плашки, Инфографика, Призывы, "
                                                                  "Акценты, Списки, Мемы, Промо, Реклама, Плоский UI, "
-                                                                 "Эффекты, 3D"},
+                                                                 "Эффекты, Бренд, 3D"},
                   "q": {"type": "string", "description": "поиск по id, имени и описанию"}}),
             h_list_motion_templates,
             label=lambda a: f"Смотрю шаблоны {a.get('category') or a.get('q') or ''}".strip(),
@@ -179,7 +224,9 @@ def tools() -> list[Tool]:
             "Вставить шаблон галереи слоями в момент at (с, шкала clip): template — id из list_motion_templates, "
             "params — его параметры (нет — по умолчанию; списки «a | b | c; d | e | f»), duration? — длина. Слои "
             "встают как add_layers (проверки, линт, предел), дальше правятся update_layer. Слои подогнаны под "
-            "формат клипа. Проверка — view_frame внутри шаблона. / Insert a gallery template as layers.",
+            "формат клипа. Параметр-картинка (type image, логотип) без значения — логотип бренда проекта. Концовка "
+            "(place end, logo-outro) кончается на последнем кадре: at дальше длина − duration сдвигается. Проверка — "
+            "view_frame внутри шаблона. / Insert a gallery template as layers.",
             _obj({"template": {"type": "string"}, "at": {"type": "number"},
                   "params": {"type": "object", "description": "параметры шаблона: {имя: значение}"},
                   "duration": {"type": "number"}},

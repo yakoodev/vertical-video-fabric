@@ -736,6 +736,17 @@ Effects» — `tools/logo_boil.py` (Python-рендер того же языка
 `tools/logo_bumpers.py` (интро и аутро на весь фильм, песня не сдвигается). Мастер «yakoodev» из его
 логотипа «YAKOO» — `tools/yakoodev_logo.py` (d/e/v собраны из его же мазков).
 
+**Пресет сервиса — без скриптов.** Шаблоны галереи категории «Бренд»: «Логотип: заставка» (`logo-intro`,
+`place: start` — встаёт в начало клипа) и «Логотип: концовка» (`logo-outro`, `place: end` — кончается на последнем
+кадре; без ухода), `frontend/src/motion/templates/logo.ts`. Вид — одобренный (кипение 3, эскиз контуром, рывок
+0.3 с, белый с ореолом, 3.5 с, 78 % ширины), параметры: `logo` (type `image` — id картинки; в MCP без него берётся
+логотип бренда проекта), `color`, `duration`, `position` (верх/центр/низ), `size` (% кадра), `sound` (whoosh-3,
+whip, impact-low, у заставки ещё whoosh-1 на уход — без треска). Бренд: `logo_intro` / `logo_outro`
+`{on, duration, color, position, size, sound, min_clip_sec}` (выключены; `min_clip_sec` 60 — только длинные
+версии) — `apply_brand` вставляет их слоями `brand_intro*` / `brand_outro*` (`app/brand_kit_logo.py`), на один
+ролик — `apply_brand(logo_intro: true, logo_outro: true)`. В редакторе картинку можно поставить логотипом кнопкой
+✍ на плитке «Мои файлы» (вкладка «Мемы»).
+
 ### Концовка-баннер (`render.end_screen`)
 
 Отдельное решение монтажа, а не ещё один титр (`app/end_screen.py`): на последних `duration` с готового

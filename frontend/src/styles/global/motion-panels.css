@@ -185,6 +185,9 @@
 .lib-tpl { position: relative; }
 .lib-tpl-tune { position: absolute; top: 10px; right: 10px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: rgba(10, 8, 20, 0.75); color: #fff; font-size: 14px; opacity: 0; transition: opacity 0.15s; }
 .lib-tpl:hover .lib-tpl-tune { opacity: 1; }
+/* «✍ логотипом» на своей картинке во вкладке «Мемы»: тот же кружок, что ⚙ у шаблонов. */
+.lib-logo-add { top: 4px; right: 4px; width: 24px; height: 24px; font-size: 13px; cursor: pointer; }
+.lib-sticker:hover .lib-logo-add { opacity: 1; }
 .tpl-dialog { width: min(760px, 96vw); }
 .tpl-dialog-body { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 16px; padding: 4px 0 12px; }
 .tpl-dialog-preview .lib-tpl-canvas { border-radius: 14px; }

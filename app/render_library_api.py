@@ -139,6 +139,9 @@ class SubtitleProfilePatchPayload(BaseModel):
 
 class ApplyBrandRequest(BaseModel):
     brand_id: int = Field(gt=0)
+    # Заставка/концовка логотипом на этот ролик: true — поставить, false — нет, нет поля — как в бренде.
+    logo_intro: bool | None = None
+    logo_outro: bool | None = None
 
 
 def build_render_library_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -318,7 +321,8 @@ def build_render_library_router(auth_dep: Any, get_store: Callable[[], Any]) -> 
     @router.post("/api/brands", tags=["Brands"], summary="Create a brand kit (font, colors, logo, CTA, music)")
     def api_create_brand(_auth: auth_dep, payload: dict = Body(...)) -> dict:
         """Поля — как в ответе: name, font, colors{text,accent,plate}, logo_asset_id, caption_style,
-        hook_style, cta{text,url_text,duration_sec}, music_track_id, backdrop{kind,colors,speed,intensity} (анимированный фон, app/backgrounds.py), sfx_policy."""
+        hook_style, cta{text,url_text,duration_sec}, music_track_id, backdrop{kind,colors,speed,intensity} (анимированный фон, app/backgrounds.py), sfx_policy,
+        logo_intro / logo_outro {on, duration, color, position, size, sound, min_clip_sec} — заставка и концовка логотипом кистью."""
         try:
             return get_store().create_brand(str(payload.get("name") or ""), **{k: v for k, v in payload.items() if k != "name"})
         except ValueError as exc:
@@ -357,7 +361,8 @@ def build_render_library_router(auth_dep: Any, get_store: Callable[[], Any]) -> 
         from app.brand_kit import apply_brand
 
         try:
-            return apply_brand(get_store(), clip_plan_id, payload.brand_id)
+            return apply_brand(get_store(), clip_plan_id, payload.brand_id,
+                               logo_intro=payload.logo_intro, logo_outro=payload.logo_outro)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
