@@ -136,7 +136,7 @@ def location_stills() -> list[tuple[str, dict]]:
             k_pos=[-0.3, 0, 0.45], k_face="angry", cam=([-0.2, 0.45, 0.4], 1.8, 50, 28, -2, 0.0, 0), dof=0.3)),
         ("6. класс", still_spec(
             "classroom", c_pos=[0.3, 0, -0.85], c_yaw=-25, c_pose={"armR": [40, 60, 0.7, 0.3], "lean": 6}, c_face="focused",
-            cam=([0.15, 0.25, -0.95], 0.7, 40, 24, 4, 0.0, 0), dof=0.3)),
+            cam=([0.0, 0.42, -0.6], 1.7, 48, 30, 8, 0.0, 0), dof=0.3)),
         ("7. горящий дата-центр", still_spec(
             "inferno", c_pos=[0, 0, 0.2], c_pose={"lean": -8, "armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, c_face="smug",
             k_pos=[-0.34, 0, 0.32], k_pose={"lean": 20, "turn": 25}, k_face="bark", cam=([0.0, 0.4, -0.2], 1.4, 56, 0, 0, 0.3, 0))),
@@ -153,18 +153,182 @@ def stage_locations(out: Path, gl: str) -> Path:
     return dst
 
 
+# --------------------------------------------------------------------------- аниматик, участки, финал
+
+SONG = Path(r"D:\vvf-offload\memes\claude_rap\song_final.mp3")
+FPS = 30
+MASK = {"разъебу": "разъ**у"}  # мат в подписях — только самое грубое, звук без цензуры
+
+
+def runs(shots: list, t_from: float = 0.0, t_to: float = 1e9) -> list[tuple[str, int, int, list]]:
+    """Подряд идущие планы одной локации → участки кадров [A, B) песни."""
+    out: list[tuple[str, int, int, list]] = []
+    for s in shots:
+        if s.t1 <= t_from or s.t0 >= t_to:
+            continue
+        a, b = max(s.t0, t_from), min(s.t1, t_to)
+        fa, fb = round(a * FPS), round(b * FPS)
+        if fb <= fa:
+            continue
+        if out and out[-1][0] == s.loc and out[-1][2] == fa:
+            out[-1] = (s.loc, out[-1][1], fb, out[-1][3] + [s])
+        else:
+            out.append((s.loc, fa, fb, [s]))
+    return out
+
+
+def render_runs(specs: dict, rr: list, work: Path, gl: str, tag: str) -> list[Path]:
+    work.mkdir(parents=True, exist_ok=True)
+    spec_files = {}
+    for name, sp in specs.items():
+        f = work / f"{tag}_{name}.json"
+        f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
+        spec_files[name] = f
+    clips = []
+    for i, (loc, fa, fb, _) in enumerate(rr):
+        dst = work / f"{tag}_{i:03d}_{loc}_{fa}_{fb}.mp4"
+        clips.append(dst)
+        if dst.exists() and dst.stat().st_size > 1000:
+            continue
+        P1.wait_ram(5.0)
+        print(f"[rap] {tag} {i + 1}/{len(rr)} {loc} кадры {fa}:{fb}", file=sys.stderr, flush=True)
+        proc = subprocess.run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(spec_files[loc]), "--packs", str(P1.PACKS),
+                               "--models", str(MODELS), "--gl", gl, "--workers", "2", "--frames", f"{fa}:{fb}", "--out", str(dst), "--crf", "20"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", stdin=subprocess.DEVNULL, timeout=3600)
+        if proc.returncode == 3 and dst.exists():
+            # Тёмные кадры — не повод бросать весь рендер: в лог, лист покажет.
+            print(f"[rap] ВНИМАНИЕ тёмные кадры {loc} {fa}:{fb}: {proc.stdout.strip()[:300]}", file=sys.stderr, flush=True)
+        elif proc.returncode != 0:
+            raise RuntimeError(f"{tag} {loc} {fa}:{fb}: {proc.stderr.strip()[-1500:]}")
+    return clips
+
+
+def concat(clips: list[Path], dst: Path, t0: float, t1: float, size: tuple[int, int]) -> Path:
+    lst = dst.with_suffix(".txt")
+    lst.write_text("".join(f"file '{c.as_posix()}'\n" for c in clips), "utf-8")
+    P1._run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}", "-i", str(SONG),
+             "-map", "0:v", "-map", "1:a", "-vf", f"scale={size[0]}:{size[1]}:flags=lanczos,setsar=1,fps={FPS}", "-c:v", "libx264", "-preset", "medium",
+             "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-shortest", str(dst)], "склейка")
+    return dst
+
+
+def lyric_words(t0: float = 0.0, t1: float = 1e9) -> list[dict]:
+    import meme3d_rap_shots as Sh
+
+    data = json.loads((Sh.DATA / "lyrics.json").read_text("utf-8"))
+    out = []
+    for ln in data["lines"]:
+        for w in ln["words"]:
+            if not (t0 - 0.01 <= w["t0"] < t1):
+                continue
+            txt = w["w"].strip("—–-,.:;!?«»\"' ")
+            if not txt:
+                continue
+            low = txt.lower()
+            for k, v in MASK.items():
+                if low == k:
+                    txt = v
+            out.append({"t0": round(w["t0"] - t0, 3), "t1": round(min(w["t1"], t1) - t0, 3), "w": txt})
+    # Слово держится до следующего (без мигания пустоты внутри строки).
+    for a, b in zip(out, out[1:]):
+        if 0 < b["t0"] - a["t1"] < 0.35:
+            a["t1"] = b["t0"]
+    return out
+
+
+def add_captions(video: Path, words: list[dict], out: Path, work: Path, dur: float, title: str | None = None) -> Path:
+    from app.motion_render_comp import build_compositor_args, write_comp
+
+    layers = [{"id": "caps", "type": "captions", "start": 0.0, "end": round(dur, 3), "x": 0.5, "y": 0.74,
+               "props": {"style": "mrbeast", "size": 118, "activeColor": "#FFD23F", "uppercase": True, "maxWords": 2, "maxLines": 1,
+                         "stroke": {"color": "#1a0d18", "width": 14}}}]
+    if title:
+        layers.append({"id": "title", "type": "text", "start": 0.0, "end": 4.2, "x": 0.5, "y": 0.13,
+                       "props": {"text": title, "font": "Montserrat", "weight": 900, "size": 120, "color": "#fff6e8", "align": "center", "uppercase": True,
+                                 "stroke": {"color": "#2b1030", "width": 14}, "bg": {"color": "#ff3fa4", "opacity": 1, "radius": 30, "padX": 40, "padY": 20}},
+                       "out": {"type": "fade", "duration": 0.3}})
+    comp = write_comp(work / "comp.json", width=1080, height=1920, fps=FPS, duration=dur, layers=layers, camera=[], words=words)
+    (work / "assets.json").write_text("{}", "utf-8")
+    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", check=False, stdin=subprocess.DEVNULL)
+    if proc.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"субтитры: {proc.stderr.strip()[-1200:]}")
+    return out
+
+
+def tg_copy(src: Path, dst: Path, dur: float, mb: float = 18.5) -> Path:
+    """Копия для Telegram: два прохода x264 под размер ≤ 19 МБ."""
+    kbps = max(400, int((mb * 8 * 1024) / dur) - 140)
+    log = dst.with_suffix("")
+    base = ["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vf", "scale=720:1280:flags=lanczos", "-c:v", "libx264", "-preset", "medium",
+            "-b:v", f"{kbps}k", "-pix_fmt", "yuv420p", "-passlogfile", str(log)]
+    P1._run([*base, "-pass", "1", "-an", "-f", "mp4", "NUL" if sys.platform == "win32" else "/dev/null"], "tg 1")
+    P1._run([*base, "-pass", "2", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", str(dst)], "tg 2")
+    for f in dst.parent.glob(log.name + "*.log*"):
+        f.unlink(missing_ok=True)
+    return dst
+
+
+def contact(video: Path, shots: list, out: Path, t0: float = 0.0) -> Path:
+    times = [((s.t0 + s.t1) / 2) - t0 for s in shots]
+    labels = [f"{s.t0:.1f} {s.lab}"[:34] for s in shots]
+    cols = 8
+    P1.frame_sheet(video, times, labels, out, cols=cols)
+    return out
+
+
+def credits(specs: dict, out: Path) -> Path:
+    """Строки атрибуции моделей клипа (CC BY — обязательны в описании ролика; CC0 — для порядка)."""
+    man = json.loads((MODELS / "manifest.json").read_text("utf-8"))["models"]
+    used = sorted({o["model"] for sp in specs.values() for o in sp["objects"] if o.get("model") in man})
+    by = [man[m]["attribution"] for m in used if man[m]["license"].startswith("CC-BY")]
+    cc0 = sorted({f"{man[m]['author']}" for m in used if not man[m]["license"].startswith("CC-BY")})
+    txt = ("3D-модели (CC BY 3.0):\n" + "\n".join(f"— {a}" for a in by) + "\n\nCC0: " + ", ".join(cc0) +
+           " (Kenney, Quaternius, iPoly3D и др.; источники — tools/models3d/sources.json)\n")
+    out.write_text(txt, "utf-8")
+    return out
+
+
+def stage_render(out: Path, gl: str, name: str, t0: float, t1: float, size: tuple[int, int], title: str | None = None) -> tuple[Path, Path]:
+    import meme3d_rap_shots as Sh
+
+    specs, shots = Sh.build_specs(*size)
+    for a, b in zip(shots, shots[1:]):
+        a.t1 = b.t0  # без дыр между планами
+    shots[-1].t1 = Sh.DUR
+    rr = runs(shots, t0, t1)
+    work = out / "work" / name
+    credits(specs, out / "credits.txt")
+    clips = render_runs(specs, rr, work, gl, name)
+    raw = concat(clips, work / f"{name}_raw.mp4", t0, t1, (1080, 1920))
+    final = add_captions(raw, lyric_words(t0, t1), out / f"{name}.mp4", work, t1 - t0, title)
+    sel = [s for s in shots if s.t1 > t0 and s.t0 < t1]
+    sheet_ = contact(final, sel, out / f"{name}_sheet.jpg", t0)
+    return final, sheet_
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["locations"])
+    ap.add_argument("cmd", choices=["locations", "animatic", "section", "final"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--t0", type=float, default=0.0)
+    ap.add_argument("--t1", type=float, default=109.6)
+    ap.add_argument("--name", default="")
     a = ap.parse_args()
     out = Path(a.out_dir).resolve()
     if not a.no_build:
         subprocess.run(["npm", "run", "build:scene3d"], cwd=ROOT, check=True, shell=sys.platform == "win32")
     if a.cmd == "locations":
         print(stage_locations(out, a.gl))
+    elif a.cmd == "animatic":
+        v, sh = stage_render(out, a.gl, a.name or "stage2_animatic", a.t0, a.t1, (540, 960), title="Уроню БД")
+        print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
+    elif a.cmd in ("section", "final"):
+        v, sh = stage_render(out, a.gl, a.name or f"section_{a.t0:.0f}_{a.t1:.0f}", a.t0, a.t1, (1080, 1920),
+                             title="Уроню БД" if a.t0 == 0 else None)
+        print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
     return 0
 
 

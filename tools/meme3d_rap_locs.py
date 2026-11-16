@@ -262,73 +262,146 @@ def loc_street() -> dict:
 
 
 def loc_classroom() -> dict:
+    """Класс: доска с формулами, ряды парт, шкафчики, стеллаж с книгами, постеры и пробковая доска, глобус,
+    окна справа — лучи света в пыли."""
+    S = 0.4
     objs = [
         floor("floor", [8, 8], "#7a5a3e", surface="pixel_planks", rough=0.7),
-        obj("wall", "box", [0, 0, -1.25], {"size": [8, 3, 0.05], "color": "#3a6a5f", "surface": {"kind": "concrete", "tile": 1.2}, "roughness": 0.9}),
-        obj("wallL", "box", [-2.2, 0, 0], {"size": [0.05, 3, 6], "color": "#3a6a5f", "roughness": 0.9}),
+        obj("wall", "box", [0, 0, -1.25], {"size": [8, 3, 0.05], "color": "#4f7f70", "surface": {"kind": "concrete", "tile": 1.2}, "roughness": 0.9}),
+        obj("wainscot", "box", [0, 0, -1.22], {"size": [8, 0.32, 0.03], "color": "#7a5034", "roughness": 0.8}),
+        obj("wallL", "box", [-1.9, 0, 0], {"size": [0.05, 3, 6], "color": "#4f7f70", "roughness": 0.9}),
+        obj("wallR", "box", [2.0, 0, 0], {"size": [0.05, 3, 6], "color": "#4f7f70", "roughness": 0.9}),
         M("board", "classroom/blackboard", [0, 0.25, -1.22], 0, 0.6),
         obj("formulas", "chalkboard", [0, 0.29, -1.2], {"size": [1.68, 0.8], "scribble": [44.6, 48.0], "frame": False}),
         obj("clock", "wall_clock", [1.25, 1.35, -1.21], {"radius": 0.12, "minutes": 0, "spins": [{"t0": 46.4, "t1": 48.0, "add": 60}]}),
-        obj("dust", "rain", [0, 0, 0], {"kind": "ember", "count": 90, "area": [3, 2], "height": 1.8, "speed": 0.05, "size": 0.004,
-                                        "colors": ["#e8fff0", "#ffffff"], "seed": 2}),
-        M("teacher", "classroom/desk", [-1.1, 0, -0.75], 30, 0.45),
+        obj("dust", "rain", [0.6, 0, 0], {"kind": "ember", "count": 140, "area": [3, 2.4], "height": 1.8, "speed": 0.05, "size": 0.004,
+                                          "colors": ["#fff6d8", "#ffffff"], "seed": 2}),
+        M("teacher", "classroom/teacher_desk", [-1.05, 0, -0.75], 20, S),
+        M("globe", "classroom/globe", [-1.15, 0.75 * S, -0.75], 0, S),
+        M("poster1", "classroom/poster_band", [1.35, 0.55, -1.215], 0, 0.5),
+        M("cork1", "classroom/corkboard", [-1.35, 0.6, -1.215], 0, 0.6),
+        M("poster2", "classroom/poster_art", [-1.87, 0.6, 0.6], 90, 0.5),
+        M("shelf", "classroom/bookshelf", [-1.85, 0, -0.2], 90, S),
+        M("files", "classroom/file_cabinet", [1.8, 0, -1.0], -90, S),
+        M("poster3", "classroom/poster_art", [-0.6, 1.25, -1.215], 0, 0.4),
+        M("poster4", "classroom/poster_band", [0.6, 1.25, -1.215], 0, 0.4),
+        M("cork2", "classroom/corkboard", [1.45, 0.95, -1.215], 0, 0.45),
+        M("shelf2", "classroom/bookshelf", [0.95, 0, -1.1], 0, 0.3),
     ]
+    for i in range(6):
+        objs.append(M(f"locker{i}", "classroom/locker_red" if i % 2 else "classroom/locker_grey", [-1.85, 0, 0.9 + i * 0.28], 90, S))
     k = 0
-    for z in (0.9, 1.5):
-        for x in (-1.1, -0.3, 0.5):
-            objs.append(M(f"desk{k}", "classroom/school_desk", [x, 0, z], 180, 0.4))
+    for z in (0.35, 0.95, 1.55):
+        for x in (-0.95, -0.15, 0.65, 1.45):
+            if x > 1.0 or (z < 1.2 and x > 0.2):
+                continue  # у доски место для Клода и камеры
+            objs.append(M(f"desk{k}", "classroom/school_desk", [x, 0, z], 180, S))
             k += 1
+    for i, z in enumerate([-0.6, 0.6]):
+        # Окна справа: светлые проёмы и лучи солнца в пыли.
+        objs.append(obj(f"win{i}", "box", [1.98, 0.55, z], {"size": [0.02, 0.85, 0.75], "color": "#fff1c8", "emissive": "#fff1c8", "emissiveIntensity": 1.6,
+                                                             "noShadow": True}))
+        objs.append(obj(f"winf{i}", "box", [1.96, 0.55, z], {"size": [0.03, 0.9, 0.04], "color": "#e8e2d4"}))
     for i, x in enumerate([-0.9, 0.9]):
         objs.append(obj(f"lampc{i}", "box", [x, 1.6, 0.3], {"size": [0.9, 0.04, 0.16], "color": "#fff6e0", "emissive": "#fff6e0", "emissiveIntensity": 1.4,
                                                               "noShadow": True}))
     lights = [
-        {"type": "hemisphere", "color": "#9fd8c4", "ground": "#3a2a1a", "intensity": 0.5},
-        {"type": "ambient", "color": "#bfe8d8", "intensity": 0.22},
-        sun_key("#fff1d0", 1.3, [-2.5, 2.6, 2.0], extent=2.4),
-        point("lamp", "#ffd9a0", 1.5, [0.3, 1.3, 0.3], 3.0),
-        point("hero", "#fff0d8", 0.9, [0.4, 0.45, -0.3], 1.6),
-        point("boardl", "#a0ffd8", 0.7, [0, 0.6, -0.6], 2.0),
+        {"type": "hemisphere", "color": "#cfeee0", "ground": "#5a4a3a", "intensity": 0.85},
+        {"type": "ambient", "color": "#e0f0e6", "intensity": 0.3},
+        sun_key("#ffe8c0", 2.0, [3.5, 2.2, -0.2], target=[0, 0.2, 0], extent=2.6),
+        point("lamp", "#ffd9a0", 1.8, [0.3, 1.3, 0.3], 3.5),
+        point("boardl", "#a0ffd8", 0.6, [0, 0.6, -0.6], 2.0),
     ]
-    env = toon_env("#0e1b18", {"color": "#15302a", "near": 5, "far": 14},
-                   {"saturation": 1.05, "contrast": 1.06, "shadows": "#1d3a4a", "highlights": "#ffe6b0", "split": 0.3}, bloom=0.35, dof=True)
-    return {"objects": objs, "lights": lights, "env": env, "spot": {"claude": [0.25, 0, -0.85]}}
+    for i, z in enumerate([-0.6, 0.6]):
+        lights.append({"type": "spot", "id": f"shaft{i}", "color": "#fff0c8", "intensity": 0.01, "position": [2.1, 0.8, z], "target": [0.3, 0, z * 0.6 - 0.1],
+                       "angle": 18, "penumbra": 0.5, "distance": 4, "beam": {"length": 2.4, "radius": 0.45, "opacity": 0.12, "color": "#fff0c8"}})
+    env = toon_env("#0e1b18", {"color": "#1d3a32", "near": 5, "far": 14},
+                   {"saturation": 1.08, "contrast": 1.06, "shadows": "#1d3a4a", "highlights": "#ffe6b0", "split": 0.3}, bloom=0.4, threshold=0.9, dof=True)
+    return {"objects": objs, "lights": lights, "env": env, "spot": {"claude": [0.3, 0, -0.85]}}
 
 
 # --------------------------------------------------------------------------- горящий дата-центр
 
 
 def loc_inferno(bursts: list[float] | None = None) -> dict:
+    """Горящий дата-центр: два плотных ряда настоящих стоек (проход), огонь на стойках, дым под потолком, искры,
+    аварийный красный свет, табличка «выход», огнетушитель, падающие значки БД."""
     b = bursts or [0.1 + 0.6 * i for i in range(200)]
     objs = [
-        floor("floor", [12, 12], "#2a2226", surface="steel_panel", rough=0.4, metalness=0.4),
-        obj("embers", "rain", [0, 0, -0.3], {"kind": "ember", "count": 180, "area": [4, 4], "height": 2.6, "speed": 0.5, "size": 0.008, "seed": 6}),
-        obj("dbs", "rain", [0, 0, 0.2], {"kind": "db", "count": 18, "area": [2.2, 1.4], "height": 2.2, "speed": 0.8, "size": 0.12, "seed": 12}),
+        floor("floor", [12, 12], "#26282e", surface="steel_panel", rough=0.4, metalness=0.4),
+        obj("embers", "rain", [0, 0, -0.8], {"kind": "ember", "count": 200, "area": [2.2, 5], "height": 2.2, "speed": 0.5, "size": 0.008, "seed": 6}),
+        obj("smoke", "rain", [0, 0.7, -1.2], {"kind": "smoke", "count": 40, "area": [2.0, 5], "height": 1.4, "speed": 0.18, "size": 0.5,
+                                              "colors": ["#3a2a2a", "#4a3530", "#2a2224"], "opacity": 0.6, "seed": 3}),
+        obj("dbs", "rain", [0, 0, 0.2], {"kind": "db", "count": 14, "area": [1.4, 1.2], "height": 2.0, "speed": 0.8, "size": 0.1, "seed": 12}),
+        M("exit", "server/exit_sign", [0, 0.95, -3.6], 0, 0.8),
+        M("ext", "server/extinguisher", [0.45, 0, 0.45], -30, 0.45),
+        M("alarm", "server/fire_alarm", [-0.62, 0.5, 0.55], 90, 0.4),
+        obj("sparks", "spark_burst", [0.3, 0.5, -0.5], {"size": 0.25, "hits": [t for t in b[::3]]}),
     ]
-    racks = ["server/rack", "server/rack_mixed", "server/computer_large", "roof/q_computer_large"]
+    racks = ["server/rack", "server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack"]
     for side in (-1, 1):
-        for j in range(7):
-            z = -3.0 + j * 0.62
-            x = side * 0.75
-            objs.append(M(f"r{side}{j}", racks[(j + (side > 0)) % len(racks)], [x, 0, z], -side * 90, 0.38))
-            objs.append(obj(f"f{side}{j}", "flame_jet", [x, 0.75, z], {"height": 0.8, "radius": 0.18, "dur": 0.7, "bursts": [t + 0.07 * j for t in b]}))
-    for i, x in enumerate([-0.5, 0.5]):
-        objs.append(obj(f"jet{i}", "flame_jet", [x, 0, -0.6], {"height": 1.4, "radius": 0.13, "dur": 0.8, "bursts": b}))
+        for j in range(10):
+            z = -3.4 + j * 0.4
+            x = side * 0.68
+            objs.append(M(f"r{side}{j}", racks[(j + (side > 0)) % len(racks)], [x, 0, z], -side * 90, 0.36))
+            if j % 2 == 0:
+                objs.append(M(f"fire{side}{j}", "server/fire", [x, 0.7, z], j * 40, 0.45))
+            objs.append(obj(f"f{side}{j}", "flame_jet", [x, 0.72, z], {"height": 0.6, "radius": 0.14, "dur": 0.7, "bursts": [t + 0.05 * j for t in b]}))
+    for i, x in enumerate([-0.35, 0.35]):
+        objs.append(obj(f"tray{i}", "box", [x, 1.05, -1.6], {"size": [0.12, 0.03, 4.2], "color": "#4a4d55", "metalness": 0.5, "roughness": 0.4}))
+    for i, x in enumerate([-0.45, 0.45]):
+        objs.append(obj(f"jet{i}", "flame_jet", [x, 0, -0.9], {"height": 1.2, "radius": 0.12, "dur": 0.8, "bursts": b}))
+    alarm_keys = [{"t": 0, "intensity": 1.4}]
+    for i in range(220):
+        alarm_keys += [{"t": i * 0.5, "intensity": 1.6, "ease": "step"}, {"t": i * 0.5 + 0.25, "intensity": 0.2, "ease": "step"}]
     lights = [
-        {"type": "hemisphere", "color": "#ff8a5a", "ground": "#2a0a0a", "intensity": 0.5},
-        {"type": "ambient", "color": "#ff6a4a", "intensity": 0.2},
-        sun_key("#ffd0a0", 1.0, [0.8, 2.6, 2.2]),
-        {**point("fireL", "#ff5a1f", 1.4, [-0.8, 1.0, -0.5], 3.5), "flicker": [{"t": t, "amount": 0.4, "duration": 0.4} for t in b[:400]]},
-        {**point("fireR", "#ff8a1f", 1.3, [0.8, 1.0, -0.8], 3.5), "flicker": [{"t": t + 0.2, "amount": 0.4, "duration": 0.4} for t in b[:400]]},
-        point("rim", "#ffcc66", 1.4, [0, 0.5, -1.2], 2.5),
-        point("rackL", "#ff9a6a", 1.2, [-0.4, 0.5, 0.3], 2.0),
-        point("rackR", "#ff9a6a", 1.2, [0.4, 0.5, 0.3], 2.0),
+        {"type": "hemisphere", "color": "#ff8a5a", "ground": "#2a0a0a", "intensity": 0.45},
+        {"type": "ambient", "color": "#ff6a4a", "intensity": 0.16},
+        sun_key("#ffd0a0", 0.9, [0.8, 2.6, 2.2]),
+        {**point("fireL", "#ff5a1f", 1.6, [-0.5, 0.9, -0.8], 3.0), "flicker": [{"t": t, "amount": 0.45, "duration": 0.4} for t in b[:400]]},
+        {**point("fireR", "#ff8a1f", 1.5, [0.5, 0.9, -1.6], 3.0), "flicker": [{"t": t + 0.2, "amount": 0.45, "duration": 0.4} for t in b[:400]]},
+        {**point("alarm", "#ff1030", 1.4, [0, 1.0, -2.6], 3.0), "keys": alarm_keys},
+        point("hero", "#ffc890", 0.8, [0, 0.45, 0.8], 2.0),
     ]
-    env = toon_env("#1a0603", {"color": "#3a0f08", "near": 3, "far": 11},
-                   {"saturation": 1.15, "contrast": 1.12, "shadows": "#4a0f1a", "highlights": "#ffc070", "split": 0.35}, bloom=0.45, threshold=0.93)
+    env = toon_env("#14070a", {"color": "#3a120c", "near": 2.5, "far": 9},
+                   {"saturation": 1.15, "contrast": 1.12, "shadows": "#3a0f1a", "highlights": "#ffc070", "split": 0.35}, bloom=0.5, threshold=0.9)
     return {"objects": objs, "lights": lights, "env": env, "spot": {"claude": [0, 0, 0.2]}}
 
 
+def loc_datacenter() -> dict:
+    """Серверная (до пожара): ряды настоящих стоек, холодный бирюзовый свет, розовый неон, стойка «MASTER» по пояс Клоду."""
+    objs = [
+        floor("floor", [12, 12], "#1a1d2a", surface="steel_panel", rough=0.35, metalness=0.45),
+        obj("ring1", "torus", [0, 0.003, 0], {"size": [1.3, 0], "tube": 0.006, "color": CYAN, "emissive": CYAN, "emissiveIntensity": 0.9, "noShadow": True},
+            rotation=[90, 0, 0]),
+        M("master", "server/rack_mixed", [-0.1, 0, -0.6], -20, 0.2),
+        obj("mastersign", "sign_plate", [-0.1, 0.44, -0.85], {"text": "MASTER", "width": 0.3, "height": 0.08, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.6},
+            rotation=[0, -20, 0]),
+        obj("dust", "rain", [0, 0, 0], {"kind": "ember", "count": 90, "area": [3, 3], "height": 1.8, "speed": 0.05, "size": 0.004,
+                                        "colors": ["#9ff3ff", "#ffffff"], "seed": 4}),
+    ]
+    racks = ["server/rack", "server/computer_large", "server/rack_mixed", "roof/q_computer_large"]
+    for side in (-1, 1):
+        for j in range(8):
+            z = -3.4 + j * 0.62
+            objs.append(M(f"r{side}{j}", racks[(j + (side > 0)) % len(racks)], [side * 0.9, 0, z], -side * 90, 0.4))
+    for j in range(5):
+        objs.append(M(f"back{j}", racks[j % 2], [-1.2 + j * 0.6, 0, -1.6], 0, 0.42))
+    lights = [
+        {"type": "hemisphere", "color": "#7f9ad8", "ground": "#1a1f3a", "intensity": 0.55},
+        {"type": "ambient", "color": "#8ab8d8", "intensity": 0.25},
+        sun_key("#e6f2ff", 1.2, [1.0, 2.8, 2.2], extent=2.4),
+        point("pink", PINK, 1.6, [-0.7, 0.8, -0.9], 3.0),
+        point("cyan", CYAN, 1.6, [0.7, 0.7, -0.6], 3.0),
+        point("fill", "#ffd2b8", 0.45, [0, 0.4, 0.9], 2.5),
+    ]
+    env = toon_env("#0d1020", {"color": "#141a33", "near": 4, "far": 14},
+                   {"saturation": 1.12, "contrast": 1.06, "shadows": "#2b2c6e", "highlights": "#d2f0ff", "split": 0.3}, bloom=0.4, threshold=0.92)
+    return {"objects": objs, "lights": lights, "env": env, "spot": {"claude": [0, 0, 0], "master": [-0.1, 0.36, -0.6]}}
+
+
 LOCATIONS = {
+    "datacenter": loc_datacenter,
     "skyline": loc_skyline,
     "stage": loc_stage,
     "penthouse": loc_penthouse,

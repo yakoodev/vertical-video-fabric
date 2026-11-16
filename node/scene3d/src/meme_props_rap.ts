@@ -463,6 +463,8 @@ function glowDisc(p: Record<string, any>): Prop {
 
 /* ---------------------------------------------------------------- дождь вещей */
 
+let smokeTex: THREE.CanvasTexture | null = null;
+
 function rain(p: Record<string, any>): Prop {
   const kind = p.kind || "coin";
   const n = p.count ?? 40;
@@ -491,6 +493,21 @@ function rain(p: Record<string, any>): Prop {
       tab.position.set(-size * 0.28, size * 0.42, 0);
       g.add(tab);
       o = g;
+    } else if (kind === "smoke") {
+      // Дым: мягкий спрайт-клубок, растёт и тает по мере подъёма (прозрачность — в update).
+      smokeTex ||= canvasTex(128, 128, (g, W, H) => {
+        const rg = g.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W / 2);
+        rg.addColorStop(0, "rgba(255,255,255,0.9)");
+        rg.addColorStop(0.5, "rgba(255,255,255,0.45)");
+        rg.addColorStop(1, "rgba(255,255,255,0)");
+        g.fillStyle = rg;
+        g.fillRect(0, 0, W, H);
+      });
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: smokeTex, color: c, transparent: true, depthWrite: false, opacity: 0.5 }));
+      sp.scale.setScalar(size);
+      sp.userData.toon = false;
+      sp.userData.outline = false;
+      o = sp;
     } else {
       const m = new THREE.MeshBasicMaterial({ color: c, side: THREE.DoubleSide, toneMapped: false });
       o = new THREE.Mesh(kind === "ember" ? new THREE.SphereGeometry(size, 6, 4) : new THREE.PlaneGeometry(size, size * 0.6), m);
@@ -500,7 +517,8 @@ function rain(p: Record<string, any>): Prop {
     grp.add(o);
     items.push({ o, x: (r() - 0.5) * aw, z: (r() - 0.5) * ad, ph: r(), spin: [r() * 6 - 3, r() * 6 - 3, r() * 6 - 3], sp: speed * (0.75 + r() * 0.5) });
   }
-  const up = kind === "ember" || p.up;
+  const up = kind === "ember" || kind === "smoke" || p.up;
+  const smokeOp = p.opacity ?? 0.55;
   return {
     object: grp,
     update(t) {
@@ -515,6 +533,13 @@ function rain(p: Record<string, any>): Prop {
         const y = up ? k * H : H * (1 - k);
         const sway = kind === "confetti" || kind === "card" || kind === "ember" ? Math.sin((dt + it.ph * 9) * 3) * 0.08 : 0;
         it.o.position.set(it.x + sway, y, it.z + Math.cos((dt + it.ph * 5) * 2.5) * sway);
+        if (kind === "smoke") {
+          const sp = it.o as THREE.Sprite;
+          sp.scale.setScalar(size * (0.6 + k * 2.4));
+          sp.material.opacity = smokeOp * Math.sin(k * Math.PI);
+          sp.material.rotation = it.spin[0] * dt * 0.2;
+          continue;
+        }
         it.o.rotation.set(it.spin[0] * dt, it.spin[1] * dt, it.spin[2] * dt);
       }
     },
