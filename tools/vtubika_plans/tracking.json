@@ -1,0 +1,302 @@
+{
+  "id": "tracking",
+  "title": "Трекинг отвалился",
+  "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "will", "paid_ok": true},
+  "voices_extra": [
+    {
+      "id": "mila1", "after": 2, "dt": 0.35, "who": "hero",
+      "text": "А препод такой: «Вы вообще кто?» Я чуть не умерла!",
+      "caption": "— А препод такой: «Вы вообще кто?» Я чуть не умерла!",
+      "color": "#ffa8d8", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "mila2", "after": 4, "dt": 0.35, "who": "hero",
+      "text": "Чат, а почему все пишут «лицо»?.. Ой.",
+      "caption": "— Чат, а почему все пишут «лицо»?.. Ой.",
+      "color": "#ffa8d8", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    },
+    {
+      "id": "ksyusha1", "after": 5, "dt": 0.5, "who": "phone",
+      "text": "Мила, ты в рекомендациях! Это лицо теперь везде!",
+      "caption": "Ксюша: Мила, ты в рекомендациях! Это лицо теперь везде!",
+      "color": "#9fe0ff", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "lily", "paid_ok": true}
+    },
+    {
+      "id": "mila3", "after": 9, "dt": 0.45, "who": "hero",
+      "text": "Сами просили.",
+      "caption": "— Сами просили.",
+      "color": "#ffa8d8", "gain_db": -1.0,
+      "voice": {"provider": "polza", "model": "elevenlabs/eleven-v4", "voice": "jessica", "paid_ok": true}
+    }
+  ],
+  "script": "серия 10 «Трекинг отвалился» (сценарий D:/vvf-offload/vtubika/story10_tracking/script_v1.md): Мила (каст mila: пушистые светлые волосы с розовым низом, бирюзовая лента, пышное платье) стримит болталки на 30 зрителей; посреди смешной истории трекинг отваливается — модель на эфире замирает с гримасой (рот открыт, глаз прикрыт, голова набок), а Мила болтает дальше целую минуту; чат режет клипы, «ЛИЦО»; утром подруга Ксюша пишет: ты в рекомендациях; вечером чат просит «Зависни!»; Мила вешает гримасу на горячую клавишу, а на соседнюю — руку с фраппе すやみや с vtubika.store (650 ₽, пять напитков по клавишам; настоящие страницы и кадры превью, GREEN); теперь это номер программы: глоток — и лицо замирает; «Сами просили». Голоса: рассказчик Will, Мила Jessica, Ксюша Lily. Крючок — застывшее лицо модели на эфире и одно огромное «ЗАВИСЛА» на кадре 0.",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {"word": "Зависла", "until": 1.3, "y": 0.13, "size": 168, "accent": "#ff6ab8"},
+  "vrm": {
+    "heroine": "mila",
+    "arkit": false,
+    "tail_wide": false,
+    "props_models": {"keyboard": "keyboard/mech_tkl_dark", "mouse": "mouse/black"},
+    "monitor": {"eggs": {"sticker": "eggs/doge_sticker.png", "photo": "eggs/this_is_fine.jpg", "critter": true}},
+    "avatars": ["mila_av"],
+    "avatar_size": [1200, 667]
+  },
+  "pronounce": {"Free10": "фри десять"},
+  "music": {"file": "lofi-beat.mp3", "under_db": 6.5},
+  "tail": 2.4,
+  "pace": {"tempo_cap": 1.0, "tempo": 1.0, "lead": 0.2},
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1770,
+    "duration": 4.0,
+    "music_fade": 4.0
+  },
+  "presets3d": {
+    "room": {"name": "cozy_desk"},
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": ["bloom", "dust_motes", {"name": "depth_of_field", "amount": 2}, "film_grain"]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {"keyColor": "#fff0f6", "keyPower": 2.0, "fill": "#6a5a9a", "fillPower": 0.85}
+  },
+  "site_shots": {
+    "dir": "D:/vvf-offload/vtubika/story10_tracking/site",
+    "catalog": {"file": "catalog_frappe.png", "from": 0, "scroll": 230, "tap": [288, 560]},
+    "product": {"file": "product_frappe.png", "from": 120, "scroll": 640, "tap": [195, 1458], "button": [16, 1434, 358, 48]}
+  },
+  "screen": {
+    "uptime": 2400,
+    "title": "болтаем · чай и универ",
+    "camBg": ["#1a1630", "#0c0a18"],
+    "viewers": [{"t": 0.0, "value": 30, "label": "30 зрителей"}],
+    "chat": [
+      {"t": 0.0, "user": "chai_s_limonom", "color": "#ffd35c", "text": "мила привет!"},
+      {"t": 0.0, "user": "sova_na_parah", "color": "#9af0ff", "text": "какой чай сегодня?"}
+    ]
+  },
+  "highlight": {
+    "болталки:": "#ffa8d8",
+    "универа.": "#ffa8d8",
+    "трекинг": "#ff6a6a",
+    "отваливается.": "#ff6a6a",
+    "застыла": "#ff6a6a",
+    "минуту.": "#ffd35c",
+    "клипов": "#9af0ff",
+    "рекомендациях.": "#9af0ff",
+    "«Зависни!»": "#ff6ab8",
+    "гримасу": "#ff6ab8",
+    "клавишу.": "#ffd35c",
+    "фраппе": "#ffb07e",
+    "напитков": "#ffb07e",
+    "глоток": "#ffb07e",
+    "замирает.": "#ff6ab8",
+    "Free10": "#ffd35c"
+  },
+  "sentences": [
+    {
+      "text": "Мила стримит болталки: тридцать зрителей, чай и истории из универа.",
+      "pause_after": 0.3,
+      "show": ["кадр 0 (обложка): её эфир крупно — модель Милы застыла с гримасой (рот открыт, глаз прикрыт, голова набок); сверху огромное «ЗАВИСЛА»",
+               "на «болталки» — Мила у стола, весело болтает в камеру",
+               "на «истории» — её эфир на мониторе: модель повторяет за ней, 30 зрителей, тёплый чат"],
+      "shots": [{"cam": "monitor_close", "push": 0.06},
+                {"cam": "face", "at": "болталки:", "dt": -0.05, "push": 0.08},
+                {"cam": "monitor", "at": "истории", "dt": -0.1, "push": 0.1}],
+      "do": [
+        {"screen": "stream", "dt": -0.3},
+        {"avatar": "live", "dt": -0.3},
+        {"scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12}}, "dt": -0.3},
+        {"act": "Talk_Loop", "dt": -0.3},
+        {"face": "happy", "dt": -0.3},
+        {"at": "чай", "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "мила, расскажи ещё"}},
+        {"at": "истории", "chat": {"user": "kotik_v_kapyushone", "color": "#c9a0ff", "text": "ахаха препод"}},
+        {"at": "универа.", "dt": 0.05, "chat": {"user": "sova_na_parah", "color": "#9af0ff", "text": "я так же на паре сижу"}}
+      ],
+      "vrm": [{"av_show": ["mila_av"], "dt": -0.3},
+              {"av_cam": "solo_bust", "dt": -0.3},
+              {"av": "freeze", "who": "mila_av", "dt": -0.3},
+              {"at": "болталки:", "av": "track", "who": "mila_av", "dt": -0.05},
+              {"at": "болталки:", "look": "webcam", "dur": 3.0, "dt": -0.05}]
+    },
+    {
+      "text": "И посреди самой смешной истории трекинг отваливается.",
+      "pause_after": 4.8,
+      "show": ["эфир: модель повторяет за Милой — и на «отваливается» рывком замирает с гримасой; звук сбоя",
+               "реплика Милы (Jessica): «А препод такой: „Вы вообще кто?“ Я чуть не умерла!» — Мила у стола хохочет и рассказывает, рот по её голосу",
+               "конец реплики — снова эфир: модель всё так же застыла"],
+      "shots": [{"cam": "monitor", "push": 0.08},
+                {"cam": "monitor_close", "at": "отваливается.", "dt": -0.05, "push": 0.14},
+                {"cam": "face", "at": "end", "dt": 0.3, "push": 0.06},
+                {"cam": "monitor_close", "at": "end", "dt": 2.9, "push": 0.1}],
+      "do": [
+        {"at": "отваливается.", "dt": 0.0, "sfx": "glitch"},
+        {"at": "отваливается.", "dt": 0.05, "sfx": "scratch"},
+        {"at": "end", "face": "laugh", "dt": 0.3},
+        {"at": "end", "act": "Laugh_Loop", "dt": 0.3},
+        {"at": "end", "dt": 1.4, "chat": {"user": "kotik_v_kapyushone", "color": "#c9a0ff", "text": "мила???"}},
+        {"at": "end", "dt": 2.6, "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "ЛИЦО 💀"}},
+        {"at": "end", "face": "happy", "dt": 3.2},
+        {"at": "end", "act": "Talk_Loop", "dt": 3.2}
+      ],
+      "vrm": [{"at": "отваливается.", "av": "freeze", "who": "mila_av", "dt": -0.05},
+              {"at": "end", "look": "webcam", "dur": 3.6, "dt": 0.3}]
+    },
+    {
+      "text": "Модель застыла вот так. А Мила не видит и болтает дальше — целую минуту.",
+      "pause_after": 0.3,
+      "show": ["эфир крупно: застывшее лицо, наезд; чат «она зависла»",
+               "на «Мила» — Мила у стола, весело болтает в камеру, не смотрит на монитор",
+               "на «минуту» — чат крупно"],
+      "shots": [{"cam": "monitor_close", "push": 0.16, "fov": 40},
+                {"cam": "face", "at": "Мила", "dt": -0.1, "push": 0.08},
+                {"cam": "chat", "at": "минуту.", "dt": -0.15, "push": 0.1}],
+      "do": [
+        {"at": "застыла", "chat": {"user": "sova_na_parah", "color": "#9af0ff", "text": "она зависла"}},
+        {"at": "так.", "chat": {"user": "pelmen_1987", "color": "#9dff7e", "text": "ЛИЦООО"}},
+        {"at": "болтает", "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "мила посмотри на экран"}},
+        {"at": "дальше", "viewers": 90, "label": "90 зрителей"},
+        {"at": "минуту.", "chat": {"user": "kotik_v_kapyushone", "color": "#c9a0ff", "text": "не говорите ей"}},
+        {"at": "Мила", "face": "happy"}
+      ],
+      "vrm": [{"at": "Мила", "look": "webcam", "dur": 4.0, "dt": -0.1}]
+    },
+    {
+      "text": "Чат за эту минуту нарезает клипов на неделю.",
+      "pause_after": 4.5,
+      "show": ["чат крупно: «!clip», «КЛИПНУЛ», «КЛИП» крупным, щелчки затвора; зрители 90 → 410",
+               "реплика Милы (Jessica): «Чат, а почему все пишут „лицо“?.. Ой.» — Мила удивлённо, на «Ой» смотрит на монитор",
+               "на «Ой» — эфир: трекинг вернулся рывком, модель с её испуганным лицом"],
+      "shots": [{"cam": "chat", "push": 0.14},
+                {"cam": "face", "at": "end", "dt": 0.25, "push": 0.06},
+                {"cam": "monitor_close", "at": "end", "dt": 3.12, "push": 0.08}],
+      "do": [
+        {"at": "Чат", "chat": {"user": "pelmen_1987", "color": "#9dff7e", "text": "!clip"}},
+        {"at": "Чат", "sfx": "shutter", "dt": 0.05},
+        {"at": "минуту", "chat": {"user": "sova_na_parah", "color": "#9af0ff", "text": "КЛИПНУЛ"}},
+        {"at": "минуту", "sfx": "shutter", "dt": 0.05},
+        {"at": "нарезает", "viewers": 410, "label": "410 зрителей"},
+        {"at": "клипов", "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "КЛИП", "big": true}},
+        {"at": "клипов", "sfx": "shutter", "dt": 0.05},
+        {"at": "неделю.", "chat": {"user": "kotik_v_kapyushone", "color": "#c9a0ff", "text": "это лучший день"}},
+        {"at": "end", "face": "wide", "dt": 0.25},
+        {"at": "end", "act": "Sit_Loop", "dt": 0.25},
+        {"at": "end", "face": "shock", "dt": 3.05}
+      ],
+      "vrm": [{"at": "end", "look": "chat", "dur": 2.75, "dt": 0.25},
+              {"at": "end", "look": "monitor", "dur": 1.6, "dt": 3.0},
+              {"at": "end", "av": "track", "who": "mila_av", "dt": 3.18}]
+    },
+    {
+      "text": "Утром это лицо уже в рекомендациях.",
+      "pause_after": 5.0,
+      "show": ["телефон: личка с Ксюшей — «Мила, ты в рекомендациях!!», «это лицо теперь везде 😭»; голос Ксюши (Lily)"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"phone": {"screen": "dm", "dm": {"title": "Ксюша", "letter": "К", "color": "#5ab8f0", "status": "в сети", "clock": "08:12", "msgs": []},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.15, "until": "end", "dt_end": 4.9},
+        {"at": "лицо", "dm": {"text": "МИЛА", "time": "08:11"}},
+        {"at": "end", "dt": 0.5, "dm": {"text": "ты в рекомендациях!!", "time": "08:12"}},
+        {"at": "end", "dt": 2.3, "dm": {"text": "это лицо теперь везде 😭", "time": "08:12"}},
+        {"face": "happy"}
+      ]
+    },
+    {
+      "text": "А вечером чат просит одного: «Зависни!»",
+      "pause_after": 0.6,
+      "show": ["вечерний эфир, чат крупно: «ЗАВИСНИ», «лицо лицо лицо», «ЗАВИСНИ» крупным; зрителей 640",
+               "на конце — Мила у стола смеётся"],
+      "shots": [{"cam": "chat", "push": 0.14},
+                {"cam": "smile", "at": "end", "dt": -0.1, "push": 0.08}],
+      "do": [
+        {"dt": -0.2, "viewers": 640, "label": "640 зрителей"},
+        {"dt": -0.2, "title": "болтаем · вечер"},
+        {"at": "вечером", "chat": {"user": "pelmen_1987", "color": "#9dff7e", "text": "ЗАВИСНИ"}},
+        {"at": "просит", "chat": {"user": "sova_na_parah", "color": "#9af0ff", "text": "лицо лицо лицо"}},
+        {"at": "одного:", "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "ЗАВИСНИ", "big": true}},
+        {"at": "end", "face": "laugh", "dt": -0.1},
+        {"at": "end", "act": "Laugh_Loop", "dt": -0.1}
+      ]
+    },
+    {
+      "text": "Мила не прячется. Она вешает гримасу на горячую клавишу.",
+      "pause_after": 1.3,
+      "show": ["Мила хитро улыбается",
+               "на «вешает» — руки на клавиатуре: настраивает",
+               "на «клавишу» — эфир: плашка «F9 · ЗАВИСЛА», щелчок — модель замирает с той самой гримасой, через секунду отмирает"],
+      "shots": [{"cam": "smile", "push": 0.06},
+                {"cam": "insert", "at": "вешает", "dt": -0.1, "push": 0.06},
+                {"cam": "monitor", "at": "клавишу.", "dt": -0.1, "push": 0.1, "zoom": 1.05}],
+      "do": [
+        {"face": "happy"},
+        {"act": "Sit_Loop"},
+        {"at": "вешает", "act": "Typing_Loop", "dt": -0.15},
+        {"at": "клавишу.", "act": "Sit_Loop", "dt": -0.2},
+        {"at": "клавишу.", "sfx": "toggle", "dt": 0.25},
+        {"at": "клавишу.", "dt": 0.6, "chat": {"user": "pelmen_1987", "color": "#9dff7e", "text": "ОНО"}},
+        {"at": "клавишу.", "sfx": "toggle", "dt": 1.45}
+      ],
+      "vrm": [{"at": "клавишу.", "badge": "F9 · ЗАВИСЛА", "dur": 1.9, "dt": -0.1},
+              {"at": "клавишу.", "av": "freeze", "who": "mila_av", "dt": 0.25},
+              {"at": "клавишу.", "av": "track", "who": "mila_av", "dt": 1.45},
+              {"at": "клавишу.", "look": "monitor", "dur": 1.8, "dt": -0.2}]
+    },
+    {
+      "text": "А на соседнюю — руку с фраппе. Нашла на Витубике: шестьсот пятьдесят рублей, пять напитков по клавишам.",
+      "pause_after": 0.3,
+      "show": ["телефон: настоящий поиск «frappe» на vtubika.store → страница すやみや «Сезонный кафе-фраппе — анимированная рука с напитком», 650 ₽, «5 напитков по горячим клавишам»"],
+      "shots": [{"cam": "insert", "push": 0.06, "flow": {"kind": "push_slide", "direction": "up", "dur": 0.5, "dip": 0.0}}],
+      "do": [
+        {"phone": {"screen": "shop", "store": {"title": "Сезонный кафе-фраппе", "price": "650 ₽"},
+                   "x": 540, "y": 820, "scale": 1.45, "dim": 0.35}, "dt": -0.15, "until": "end", "dt_end": 0.3},
+        {"at": "Нашла", "site_step": "product", "dt": -0.1},
+        {"at": "end", "site_step": "tap", "dt": 3.0, "quiet": true},
+        {"face": "happy"}
+      ]
+    },
+    {
+      "text": "Теперь это номер программы: глоток — и лицо замирает.",
+      "pause_after": 2.2,
+      "show": ["эфир: снизу поднимается рука с фраппе (кадры превью すやみや) к лицу модели",
+               "на «глоток» — стакан у рта; на «замирает» — щелчок, модель застывает с гримасой, стакан опускается; чат «ЗАВИСЛА!!!» крупным, смех и крики зала; 1 120 зрителей",
+               "реплика Милы (Jessica): «Сами просили.» — Мила крупно, довольная улыбка, рот по её голосу"],
+      "shots": [{"cam": "monitor_close", "push": 0.12},
+                {"cam": "smile", "at": "end", "dt": 0.35, "push": 0.08}],
+      "do": [
+        {"dt": -0.2,
+         "scene": {"bg": {"seq": {"pattern": "/site/media/bg_kabinet/f_{:03d}.jpg", "from": 1, "count": 72}, "fps": 12},
+                   "front": [{"seq": {"pattern": "/site/media/frappe_hand/f_{:03d}.png", "from": 1, "count": 36}, "fps": 15,
+                              "x": 0.74, "y": 1.02, "w": 0.26, "t0": 0.25, "shadow": true,
+                              "keys": [{"t": 0.3, "dx": 0, "dy": 0.12, "rot": 0},
+                                       {"t": 1.3, "dx": -0.06, "dy": -0.21, "rot": -10},
+                                       {"t": 2.2, "dx": -0.08, "dy": -0.26, "rot": -16},
+                                       {"t": 3.0, "dx": -0.03, "dy": -0.06, "rot": -6}]}]}},
+        {"at": "замирает.", "sfx": "toggle", "dt": -0.05},
+        {"at": "замирает.", "viewers": 1120, "label": "1 120 зрителей", "dt": 0.1},
+        {"at": "замирает.", "dt": 0.3, "chat": {"user": "chai_s_limonom", "color": "#ffd35c", "text": "ЗАВИСЛА!!!", "big": true}},
+        {"at": "замирает.", "sfx": "laugh", "dt": 0.3},
+        {"at": "замирает.", "sfx": "cheer", "dt": 0.5},
+        {"at": "end", "dt": 0.2, "chat": {"user": "pelmen_1987", "color": "#9dff7e", "text": "легенда"}},
+        {"at": "end", "face": "happy", "dt": 0.35},
+        {"at": "end", "act": "Talk_Loop", "dt": 0.35}
+      ],
+      "vrm": [{"at": "замирает.", "av": "freeze", "who": "mila_av", "dt": -0.05},
+              {"at": "end", "look": "webcam", "dur": 2.0, "dt": 0.35}]
+    },
+    {
+      "text": "Промокод Free10 на Витубике — минус десять процентов.",
+      "pause_after": 0.2,
+      "show": ["эфир: модель всё ещё застыла с фраппе в руке, чат «ЗАВИСЛА» — под промокод"],
+      "shots": [{"cam": "monitor_close", "push": 0.1}],
+      "do": [
+        {"at": "Free10", "chat": {"user": "sova_na_parah", "color": "#9af0ff", "text": "F9 F9 F9"}}
+      ]
+    }
+  ]
+}

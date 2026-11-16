@@ -6,7 +6,7 @@
  *
  *   node node/vrm/site_shots.mjs --probe URL                     — заголовок, ссылки и баннеры страницы (JSON)
  *   node node/vrm/site_shots.mjs --shot URL --out FILE.png [--max-screens 4] [--find "Оплатить"]
- *       кадр всей страницы (до N экранов в высоту, PNG 1170 px шириной) + JSON: высота страницы, где на ней
+ *       [--settle 6] — кадр всей страницы (до N экранов в высоту, PNG 1170 px шириной) + JSON: высота страницы, где на ней
  *       текст --find (координаты в CSS px; для анимации прокрутки «к цене и кнопке»), цвета и шрифт страницы.
  *
  * Без зависимостей: обвязка CDP — из node/scene3d/render.mjs.
@@ -130,7 +130,8 @@ async function main() {
     const maxH = VIEW.height * Number(a.maxScreens || 4);
     const h = Math.min(info.height, maxH);
     await b.s("Emulation.setDeviceMetricsOverride", { ...VIEW, height: h });
-    await sleep(800);
+    // --settle N: ещё N секунд ожидания (видео в галерее товара успевает уйти с размытой заставки на сам товар).
+    await sleep(800 + 1000 * Number(a.settle || 0));
     await b.evaluate("window.scrollTo(0, 0), true");
     const shot = await b.s("Page.captureScreenshot", { format: "png", captureBeyondViewport: true,
       clip: { x: 0, y: 0, width: VIEW.width, height: h, scale: 1 } });

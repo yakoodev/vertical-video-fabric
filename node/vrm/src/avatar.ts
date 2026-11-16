@@ -7,7 +7,9 @@
  * пальцев зеркально, как в зеркале, и выражения лица); ``idle`` — стоит, дышит; ``dance`` — спокойно танцует;
  * ``mug`` — держит кружку, в ``drop`` роняет (кружка падает и катится), пугается; ``bow`` — кланяется;
  * ``showcase`` — витрина (медленно поворачивается, улыбается); ``png`` — PNGtuber: застывшая картинка, только
- * моргает. Смена действия — наплыв 0.5 с.
+ * моргает; ``freeze`` — трекинг отвалился: модель замирает на полуслове с гримасой (голова набок, глаза прикрыты
+ * наполовину и по-разному, рот открыт) — ни дыхания, ни моргания. Смена действия — наплыв 0.5 с, а в «замерла» и
+ * обратно — рывком (FREEZE_SNAP), как настоящий обрыв и возврат трекинга.
  * Подписи над головами (``labels``) и плашка трекинга (``badge``) — 2D поверх.
  */
 import * as THREE from "three";
@@ -66,6 +68,16 @@ const AV_FACES: Record<string, Record<string, number>> = {
   // Улыбка с закрытым ртом (VRoid: relaxed — «Fun»): рот открывает только голос (гласные), а не выражение.
   smile: { relaxed: 0.75 },
 };
+
+/** Гримаса «трекинг отвалился»: последний кадр трекинга на полуслове и на полуморгании — рот широко открыт, глаза
+ * прикрыты наполовину и по-разному (левый сильнее). Поза головы — набок и вниз (поймана посреди движения). */
+export const FREEZE_EXPR: Record<string, number> = { aa: 0.95, oh: 0.3, blink: 0.5, blinkLeft: 0.28 };
+export const FREEZE_BONES: Record<string, V3> = {
+  leftUpperLeg: [0, 0, -2], rightUpperLeg: [0, 0, 2], spine: [1.5, 0, 2], chest: [1, 3, 2],
+  neck: [6, 7, -9], head: [8, 6, -14],
+};
+/** Наплыв смены действия в «замерла» и обратно (с): трекинг обрывается и возвращается рывком. */
+const FREEZE_SNAP = 0.07;
 
 function mirrorName(b: string): string {
   return b.startsWith("left") ? "right" + b.slice(4) : b.startsWith("right") ? "left" + b.slice(5) : b;
@@ -196,7 +208,14 @@ export class AvatarStage {
       p.right = armDown(-1, t, 1.3);
       p.hips = [Math.sin(t * 0.5) * 0.008, 0, 0];
       p.expr = { relaxed: 0.25, blink: blinkAt(t, 3.6, 0.4) };
-      if (act.act === "png") {
+      if (act.act === "freeze") {
+        // Трекинг отвалился: всё замерло (ни дыхания, ни покачиваний, ни моргания), гримаса последнего кадра.
+        p.bones = { ...FREEZE_BONES };
+        p.hips = [0, 0, 0];
+        p.left = armDown(1, 0);
+        p.right = armDown(-1, 0, 1.3);
+        p.expr = { ...FREEZE_EXPR };
+      } else if (act.act === "png") {
         // PNGtuber: неподвижная картинка — ни дыхания, ни покачиваний, ни поворота; живёт только моргание.
         p.bones = { leftUpperLeg: [0, 0, -2], rightUpperLeg: [0, 0, 2] };
         p.hips = [0, 0, 0];
@@ -279,7 +298,8 @@ export class AvatarStage {
     a.vrm.scene.rotation.y = a.baseYaw;
     a.vrm.scene.updateMatrixWorld(true);
     const pb = this.pose(a, cur, t, hero);
-    const w = i > 0 ? smooth((t - cur.t) / 0.5) : 1;
+    const snap = i > 0 && (cur.act === "freeze" || keys[i - 1].act === "freeze");
+    const w = i > 0 ? smooth((t - cur.t) / (snap ? FREEZE_SNAP : 0.5)) : 1;
     let out = pb;
     if (w < 1) {
       const pa = this.pose(a, keys[i - 1], t, hero);
