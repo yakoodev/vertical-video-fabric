@@ -70,9 +70,9 @@ def loc_skyline() -> dict:
         # Башня, на крыше которой стоит Клод: крыша (y 58.33 у модели) — ровно на y = 0.
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
         M("throne", "lux/throne", [0, 0, -0.42], 180, [0.95, 0.5, 0.85]),  # перёд модели — на −z
-        M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], 145, 0.16),
-        obj("prodsign", "sign_plate", [1.06, 0.27, -0.01], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
-            rotation=[0, -35, 0]),
+        M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], 35, 0.16),  # носом к краю крыши — туда и покатится
+        obj("prodsign", "sign_plate", [1.06, 0.27, 0.31], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
+            rotation=[0, 35, 0]),
         M("ac1", "roof/q_ac", [-1.15, 0, -1.0], 30),
         M("ac2", "roof/q_ac_stacked", [-1.55, 0, -0.35], 80),
         M("tank", "roof/water_tower", [1.55, 0, -1.4], 0, 0.28),
@@ -133,8 +133,8 @@ def loc_stage() -> dict:
         M("spkR", "stage/speaker_tall", [1.25, fl, -0.55], -15),
         M("spkL2", "stage/speaker_box", [-1.3, fl + 1.6 * K, -0.55], 15),
         M("spkR2", "stage/speaker_box", [1.3, fl + 1.6 * K, -0.55], -15),
-        M("mh1", "stage/moving_spot", [-0.6, fl, 0.55], 180),
-        M("mh2", "stage/moving_spot", [0.6, fl, 0.55], 180),
+        M("mh1", "stage/moving_spot", [-0.95, fl, -0.85], 0),
+        M("mh2", "stage/moving_spot", [0.95, fl, -0.85], 0),
         obj("confetti", "rain", [0, fl, 0.1], {"kind": "confetti", "count": 180, "area": [3.0, 2.0], "height": 1.6, "speed": 0.45, "size": 0.03, "seed": 9}),
     ]
     cols = ["#ff7ab6", "#7ad7ff", "#ffd36b", "#8cff9a", "#c49bff", "#ff9a6b", "#6bffe1"]

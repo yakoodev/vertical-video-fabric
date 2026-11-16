@@ -220,6 +220,8 @@ def lyric_words(t0: float = 0.0, t1: float = 1e9) -> list[dict]:
     for ln in data["lines"]:
         # Мост: реплики юзера (строки с «—», не Клода) — своим цветом.
         who = "U" if ln["text"].lstrip().startswith("—") and not any(x in ln["text"] for x in ("Отличный", "бэкап я")) else "A"
+        if who == "U":
+            continue  # реплики юзера на мосту — в кадре пузырём чата, подписью не дублируем
         words = [w for w in ln["words"] if t0 - 0.01 <= w["t0"] < t1]
         for j, w in enumerate(words):
             core = w["w"].strip("—–-,.:;!?«»\"' ")
@@ -335,7 +337,31 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
                         seen.setdefault(f"{cid} ↔ {hit}", t)
             for k, t in seen.items():
                 probs.append(f"{s.t0:6.2f} {s.lab}: проникновение {k} (с t={t:.2f})")
+    probs += heading_check(specs)
     (out / "check_sight.txt").write_text("\n".join(probs) + "\n", "utf-8")
+    return probs
+
+
+def heading_check(specs: dict, max_deg: float = 10.0) -> list[str]:
+    """Едущие вещи (машины, тележки, ползущий юзер) смотрят туда, куда едут: угол между «вперёд» (+z, повёрнутым на
+    yaw ключа) и скоростью по горизонтали между ключами < max_deg. Летящее (коробки, монеты) — по своим правилам."""
+    import math
+
+    probs = []
+    for loc, sp in specs.items():
+        for o in sp["objects"]:
+            if not (str(o.get("model", "")).startswith("vehicle/") or o.get("primitive") in ("mochi_user", "hand_cart")):
+                continue
+            ks = [k for k in o.get("keys") or [] if "position" in k]
+            for a, b in zip(ks, ks[1:]):
+                dx, dz = b["position"][0] - a["position"][0], b["position"][2] - a["position"][2]
+                dt = max(1e-3, b["t"] - a["t"])
+                if math.hypot(dx, dz) / dt < 0.05:
+                    continue
+                yaw = math.radians((b.get("rotation") or a.get("rotation") or o.get("rotation") or [0, 0, 0])[1])
+                ang = math.degrees(abs(math.atan2(math.sin(math.atan2(dx, dz) - yaw), math.cos(math.atan2(dx, dz) - yaw))))
+                if ang > max_deg:
+                    probs.append(f"{loc} {o['id']} {a['t']:.2f}→{b['t']:.2f}: едет под углом {ang:.0f}° к своему «вперёд»")
     return probs
 
 
@@ -394,9 +420,9 @@ SECTIONS = [(0.0, 32.53, "stage3_s1_intro_verse1"), (32.53, 44.66, "stage3_s2_ch
             (66.0, 76.09, "stage3_s4_bridge"), (76.09, 109.6, "stage3_s5_final_outro")]
 
 
-def assemble_final(out: Path, tiktok: tuple[float, float] = (66.0, 109.6)) -> list[Path]:
+def assemble_final(out: Path) -> list[Path]:
     """Финал из готовых участков: видео участков подряд + вся песня одной дорожкой, подписи на весь ролик; копия для
-    Telegram (≤ 19 МБ) и нарезка для TikTok (≤ 58 с, вокруг финального припева)."""
+    Telegram (≤ 19 МБ). Нарезку не делаем — владелец: «резать не надо»."""
     import meme3d_rap_shots as Sh
 
     work = out / "work" / "final"
@@ -407,15 +433,11 @@ def assemble_final(out: Path, tiktok: tuple[float, float] = (66.0, 109.6)) -> li
     full_raw = work / "final_raw.mp4"
     P1._run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-i", str(SONG), "-map", "0:v", "-map", "1:a",
              "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{Sh.DUR:.3f}", str(full_raw)], "финал: склейка")
-    final = add_captions(full_raw, lyric_words(0, Sh.DUR), out / "claude_rap_uronyu_bd.mp4", work, Sh.DUR, title="Уроню БД")
+    import meme3d_rap_caps as Cp
+
+    final = Cp.overlay(full_raw, out / "claude_rap_uronyu_bd.mp4", 0.0, Sh.DUR, work)
     tg = tg_copy(final, out / "claude_rap_uronyu_bd_tg.mp4", Sh.DUR)
-    a, b = tiktok
-    tt_raw = work / "tiktok_raw.mp4"
-    P1._run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(full_raw), "-c:v", "libx264", "-preset", "medium",
-             "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(tt_raw)], "tiktok")
-    tt = add_captions(tt_raw, lyric_words(a, b), out / "claude_rap_uronyu_bd_tiktok.mp4", work, b - a, title="Уроню БД")
-    tt_tg = tg_copy(tt, out / "claude_rap_uronyu_bd_tiktok_tg.mp4", b - a)
-    return [final, tg, tt, tt_tg]
+    return [final, tg]
 
 
 def credits(specs: dict, out: Path) -> Path:
@@ -442,7 +464,9 @@ def stage_render(out: Path, gl: str, name: str, t0: float, t1: float, size: tupl
     credits(specs, out / "credits.txt")
     clips = render_runs(specs, rr, work, gl, name)
     raw = concat(clips, work / f"{name}_raw.mp4", t0, t1, (1080, 1920))
-    final = add_captions(raw, lyric_words(t0, t1), out / f"{name}.mp4", work, t1 - t0, title)
+    import meme3d_rap_caps as Cp
+
+    final = Cp.overlay(raw, out / f"{name}.mp4", t0, t1, work)
     sel = [s for s in shots if s.t1 > t0 and s.t0 < t1]
     sheet_ = contact(final, sel, out / f"{name}_sheet.jpg", t0)
     dk = dark_check(final, sel, t0)
@@ -454,7 +478,7 @@ def stage_render(out: Path, gl: str, name: str, t0: float, t1: float, size: tupl
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["locations", "animatic", "section", "final", "check", "mouth"])
+    ap.add_argument("cmd", choices=["locations", "animatic", "section", "final", "check", "mouth", "capstest"])
     ap.add_argument("out_dir")
     ap.add_argument("--gl", default="gpu")
     ap.add_argument("--no-build", action="store_true")
@@ -486,10 +510,25 @@ def main() -> int:
     elif a.cmd == "animatic":
         v, sh = stage_render(out, a.gl, a.name or "stage2_animatic", a.t0, a.t1, (540, 960), title="Уроню БД")
         print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
-    elif a.cmd in ("section", "final"):
+    elif a.cmd == "section":
         v, sh = stage_render(out, a.gl, a.name or f"section_{a.t0:.0f}_{a.t1:.0f}", a.t0, a.t1, (1080, 1920),
                              title="Уроню БД" if a.t0 == 0 else None)
         print(v, sh, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
+    elif a.cmd == "capstest":
+        # Проба новой типографики подписей на участке [t0, t1] (кадры — свежий рендер участка, песня — тот участок).
+        import meme3d_rap_caps as Cp
+        import meme3d_rap_shots as Sh
+
+        specs, shots = Sh.build_specs(1080, 1920)
+        for x, y in zip(shots, shots[1:]):
+            x.t1 = y.t0
+        work = out / "work" / "capstest"
+        clips = render_runs(specs, runs(shots, a.t0, a.t1), work, a.gl, "capstest")
+        raw = concat(clips, work / "capstest_raw.mp4", a.t0, a.t1, (1080, 1920))
+        v = Cp.overlay(raw, out / "stage3b_caps_style_test.mp4", a.t0, a.t1, work)
+        print(v, tg_copy(v, v.with_name(v.stem + "_tg.mp4"), a.t1 - a.t0))
+    elif a.cmd == "final":
+        print(*assemble_final(out), sep="\n")
     return 0
 
 

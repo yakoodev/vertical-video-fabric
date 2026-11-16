@@ -161,11 +161,12 @@ def shots() -> list[Shot]:
     S.append(Shot(27.45, 29.4, "datacenter", C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6), C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6),
                   c=ch([0, 0, 0], {"lean": 20, "armR": [70, 80, 1.0, 0], "armL": "hips"}, "smug", end={"armR": [60, 88, 1.0, 0]}), k=None, leash=None,
                   lab="ладонь в объектив, «Отличный вопрос!»"))
-    car_roll = [{"t": 29.5, "position": [0.95, 0, 0.15], "rotation": [0, 145, 0], "ease": "linear"},
-                {"t": 31.0, "position": [1.85, 0, 1.45], "rotation": [0, 145, 0], "ease": "inQuad"},
-                {"t": 31.6, "position": [2.3, -0.3, 1.95], "rotation": [60, 145, 20], "ease": "linear"},
-                {"t": 32.5, "position": [3.3, -7.0, 3.2], "rotation": [260, 145, 90], "ease": "inQuad"}]
-    sign_roll = [{**k, "position": [k["position"][0], k["position"][1] + 0.335, k["position"][2]]} for k in car_roll]
+    # Машина катится НОСОМ вперёд (курс = касательная пути): разгон к краю, клевок носом, кувырок вниз.
+    car_roll = [{"t": 29.5, "position": [0.95, 0, 0.15], "rotation": [0, 35, 0], "ease": "linear"},
+                {"t": 31.0, "position": [1.85, 0, 1.45], "rotation": [0, 35, 0], "ease": "inQuad"},
+                {"t": 31.6, "position": [2.3, -0.3, 2.1], "rotation": [45, 35, 0], "ease": "linear"},
+                {"t": 32.5, "position": [3.0, -7.0, 3.1], "rotation": [200, 35, 25], "ease": "inQuad"}]
+    sign_roll = [{**k, "position": [k["position"][0] + 0.11, k["position"][1] + 0.27, k["position"][2] + 0.156]} for k in car_roll]
     S.append(Shot(29.5, 31.0, "skyline", C([0.55, 0.2, 0.3], 1.4, 44, -55, 10), C([0.75, 0.18, 0.55], 1.3, 44, -45, 8),
                   c=ch([0.3, 0, 0.0], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=40, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
                   k=ch([-0.15, 0, 0.3], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}, {"id": "_mod_prodsign", "keys": sign_roll}]))
@@ -244,9 +245,9 @@ def shots() -> list[Shot]:
     S.append(Shot(57.43, 59.3, "datacenter", C([0.0, 0.3, 0.0], 0.8, 42, 0, 4), C([0.0, 0.3, 0.0], 0.7, 42, 0, 4),
                   c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), fx=gauge, lab="лимиты в ноль"))
     crawl = []
-    for i in range(9):
-        a = math.radians(200 - i * 25)
-        crawl.append({"t": round(59.3 + i * 0.32, 3), "position": [round(math.sin(a) * 0.65, 3), 0, round(math.cos(a) * 0.65, 3)],
+    for i in range(37):  # часто: курс по касательной без «шагов»
+        a = math.radians(200 - i * 6.25)
+        crawl.append({"t": round(59.3 + i * 0.08, 3), "position": [round(math.sin(a) * 0.65, 3), 0, round(math.cos(a) * 0.65, 3)],
                       "rotation": [0, round(math.degrees(a) - 90, 1), 0], "ease": "linear"})
     S.append(Shot(59.3, 61.95, "datacenter", C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 2.2, 0.02]), C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 1.8, 0.02], roll=40),
                   c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), lab="юзер приполз (сверху)",
@@ -264,16 +265,16 @@ def shots() -> list[Shot]:
     pet = {"armR": [30, 50, 0.6, 0.6], "turn": 15}
     S.append(Shot(66.0, 69.2, "studio", C([-0.03, 0.27, 0.0], 0.8, 32, 0, 4), None, c=ch(B, pet, "deadpan", nod=False), k=ch(KB, {}, "smile", yaw=20, nod=False),
                   leash=0.3, lab="мост: «Ты зачем базу удалил?»",
-                  fx=[fx_obj("bub1", "chat_bubble", [0.0, 0.62, -0.1], {"text": "Ты зачем базу удалил?", "side": "right", "avatar": "user", "width": 0.6,
-                                                                     "height": 0.15}, 67.1, 69.2)]))
+                  fx=[fx_obj("bub1", "chat_bubble", [0.0, 0.55, -0.1], {"text": "Ты зачем базу удалил?", "side": "right", "avatar": "user", "width": 0.85,
+                                                                     "height": 0.24}, 67.1, 69.2)]))
     S.append(Shot(69.2, 71.2, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch(B, {**pet, "shades": 1}, "deadpan", nod=False),
                   k=ch(KB, {}, "smile", yaw=20, nod=False), leash=0.3, lab="«Отличный вопрос! Вы абсолютно правы.»"))
     S.append(Shot(71.2, 72.26, "studio", C([-0.17, 0.16 + 0.08, 0.02], 0.24, 64, 0, 0, fish=0.6), None, c=ch(B, pet, "deadpan", nod=False),
                   k=ch(KB, {"lean": 22}, "snarl", yaw=0, nod=False), leash=0.3, lab="вставка: Кодекс скалится"))
     S.append(Shot(72.26, 73.95, "studio", C([-0.03, 0.27, 0.0], 0.8, 32, 0, 4), None, c=ch(B, pet, "deadpan", nod=False), k=ch(KB, {}, "smile", yaw=20, nod=False),
                   leash=0.3, lab="«Восстанови из бэкапа.»",
-                  fx=[fx_obj("bub2", "chat_bubble", [0.0, 0.62, -0.1], {"text": "Восстанови из бэкапа.", "side": "right", "avatar": "user", "width": 0.6,
-                                                                     "height": 0.15}, 72.26, 73.95)]))
+                  fx=[fx_obj("bub2", "chat_bubble", [0.0, 0.55, -0.1], {"text": "Восстанови из бэкапа.", "side": "right", "avatar": "user", "width": 0.85,
+                                                                     "height": 0.24}, 72.26, 73.95)]))
     S.append(Shot(73.95, 75.0, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch(B, {**pet, "shades": 0}, "deadpan", nod=False),
                   k=ch(KB, {}, "smile", yaw=20, nod=False), leash=0.3, lab="«А бэкап я тоже удалил.»"))
     S.append(Shot(75.0, 76.09, "studio", C([-0.17, 0.24, 0.02], 0.3, 50, 0, 0, fish=0.3), C([-0.17, 0.24, 0.02], 0.26, 50, 0, 0, fish=0.35, roll=-20),
@@ -408,8 +409,9 @@ def _track(shots_: list[Shot], who: str, kk: list[float]) -> tuple[list[dict], l
         if h["end"]:
             pose.append({"t": round(s.t1 - 0.05, 3), "ease": "inOutSine", **h["end"]})
         if h["nod"]:
-            lean0, sq0, hop0 = p0["lean"], p0["squash"], p0.get("hop", 0)
+            lean0, sq0, hop0, tilt0 = p0["lean"], p0["squash"], p0.get("hop", 0), p0.get("tilt", 0)
             hot = _in(s.t0, CHORUS)
+            side = 1
             for kt in kk:
                 if not (s.t0 + 0.08 < kt < s.t1 - 0.2):
                     continue
@@ -420,7 +422,11 @@ def _track(shots_: list[Shot], who: str, kk: list[float]) -> tuple[list[dict], l
                         {"t": round(kt, 3), "ease": "outQuad", "squash": sq0 * (1 + 0.07 * amp), "hop": hop0 + 0.016 * amp, "lean": lean0 + 7 * amp},
                         {"t": round(kt + 0.13, 3), "ease": "inQuad", "squash": sq0 * (1 - 0.03 * amp), "hop": hop0},
                         {"t": round(kt + 0.24, 3), "ease": "outBack", "squash": sq0, "lean": lean0},
+                        # Перенос веса: покачивание из стороны в сторону на удары.
+                        {"t": round(kt + 0.02, 3), "ease": "outQuad", "tilt": tilt0 + side * 5 * amp},
+                        {"t": round(kt + 0.42, 3), "ease": "inOutSine", "tilt": tilt0 + side * 1.5},
                     ]
+                    side = -side
                 else:
                     lunge = hot
                     pose += [
@@ -529,6 +535,12 @@ def build_specs(width: int = 1080, height: int = 1920) -> tuple[dict[str, dict],
                 flashes.append({"t": s.t0, "amount": 0.85, "duration": 0.22})
             if s.shake:
                 shakes.append({"t": s.t0, "amp": s.shake, "duration": 0.6})
+            # «Ручная» камера: лёгкое живое покачивание весь план (кроме ровного моста).
+            if s.loc != "studio":
+                tt = s.t0 + 0.05
+                while tt < s.t1 - 0.1:
+                    shakes.append({"t": round(tt, 3), "amp": 0.0016, "duration": 0.7})
+                    tt += 0.45
             # Камера «дышит» на ударах припева: короткий толчок на каждый удар бочки.
             for kt in kk:
                 if s.t0 + 0.05 < kt < s.t1 - 0.05 and _in(kt, CHORUS):

@@ -234,8 +234,6 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 VISEMES = {
     "a": {"w": 0.8, "h": 1.0, "r": 0.35, "th": 0.6},
@@ -303,3 +301,7 @@ def viseme_keys_from_words(words: list[dict]) -> list[dict]:
             continue
         out.append(k)
     return out
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
