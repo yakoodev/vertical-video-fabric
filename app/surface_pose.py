@@ -24,14 +24,18 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 
 PERSP_CAP = 0.12  # перспектива сверх подобия — не больше этой доли размера четырёхугольника на угол
-MAX_ROT_DEG = 18.0  # поворот от кадра-семени (камера игры не кренится — больше это дрейф трека)
+# Поворот подобия от кадра-семени. Камера игры не кренится, но стена, уходящая вглубь, при движении мимо неё
+# заметно меняет наклон краёв (перспектива) — 40° ещё возможны, больше — дрейф трека.
+MAX_ROT_DEG = 40.0
 ROT_STEP_DEG = 1.5  # допуск поворота за кадр (+ скорость ниже)
 ROT_RATE_DEG = 45.0  # градусов в секунду — предел скорости поворота
 SCALE_STEP = 1.12  # масштаб за кадр
 MIN_EDGE_SHARE = 0.35  # ребро не короче этой доли своего в кадре-семени (с поправкой на масштаб)
 
 # Проверка (пороги провала).
-TEXT_ANGLE_MAX = 35.0  # текст боком/вверх ногами — провал
+# Текст вдоль стены в глубину может идти наклонно (до ~50°, «LIKE A» на скале у референса); боком (≈90°) и вверх
+# ногами — провал.
+TEXT_ANGLE_MAX = 60.0
 ROT_STEP_FAIL = 2.5  # градусов за кадр (сглаженный трек)
 JITTER_FAIL_PX = 2.0  # дрожь углов, px кадра 1080 по ширине
 
@@ -59,7 +63,11 @@ def order_quad(q: np.ndarray) -> np.ndarray:
     c = q.mean(axis=0)
     ang = np.arctan2(q[:, 1] - c[1], q[:, 0] - c[0])
     q = q[np.argsort(ang)]  # по возрастанию угла при y вниз — по часовой на экране
-    start = int(np.argmin(q[:, 0] + q[:, 1]))
+    # «Левый верхний» — угол, ребро из которого (по часовой) ближе всего к направлению +x: это база строки текста.
+    # (min(x+y) ошибался у стены, уходящей вглубь: верхнее ребро под 40° — и текст ложился боком.)
+    edges = np.roll(q, -1, axis=0) - q
+    cos = edges[:, 0] / np.maximum(1e-9, np.linalg.norm(edges, axis=1))
+    start = int(np.argmax(cos))
     return np.roll(q, -start, axis=0)
 
 
@@ -84,7 +92,7 @@ def compose(q0: np.ndarray, c: np.ndarray, s: float, ang: float, res: np.ndarray
     return c + s * ((p + res) @ rot.T)
 
 
-def constrain(q0: np.ndarray, q_full: np.ndarray, sim: np.ndarray | None) -> np.ndarray:
+def constrain(q0: np.ndarray, q_full: np.ndarray, sim: np.ndarray | None, cap_share: float | None = PERSP_CAP) -> np.ndarray:
     """Углы: подобие ``sim`` (2×3 по точкам поверхности; нет — подобие по углам) + перспектива ``q_full`` сверх
     него, урезанная до ``PERSP_CAP`` размера четырёхугольника на угол."""
     if sim is not None:
@@ -92,7 +100,9 @@ def constrain(q0: np.ndarray, q_full: np.ndarray, sim: np.ndarray | None) -> np.
     else:
         c, s, ang, _ = pose(q0, q_full)
         base = compose(q0, c, s, ang, np.zeros_like(q0))
-    cap = PERSP_CAP * math.sqrt(max(1e-9, abs(area(base))))
+    if cap_share is None:
+        return np.asarray(q_full, np.float64)
+    cap = cap_share * math.sqrt(max(1e-9, abs(area(base))))
     d = q_full - base
     n = np.linalg.norm(d, axis=1, keepdims=True)
     d = np.where(n > cap, d * (cap / np.maximum(n, 1e-9)), d)
@@ -121,7 +131,7 @@ def reject_reason(q0: np.ndarray, prev_q: np.ndarray, q: np.ndarray, dt: float, 
 
 
 def smooth_poses(q0: np.ndarray, ts: Sequence[float], quads: Sequence[np.ndarray], smooth: float,
-                 noise: Sequence[float] | None = None) -> list[np.ndarray]:
+                 noise: Sequence[float] | None = None, extra: tuple[float, float, float] = (0.25, 0.45, 0.5)) -> list[np.ndarray]:
     """Сглаживание одного непрерывного куска без запаздывания: центр ``smooth``, масштаб/поворот/остаток сильнее."""
     from app.tracking_normalize import smooth_series
 
@@ -133,11 +143,11 @@ def smooth_poses(q0: np.ndarray, ts: Sequence[float], quads: Sequence[np.ndarray
     nz = list(noise) if noise is not None else None
     cx = smooth_series(ts, [p[0][0] for p in poses], smooth, noise=nz)
     cy = smooth_series(ts, [p[0][1] for p in poses], smooth, noise=nz)
-    ls = smooth_series(ts, [math.log(max(1e-9, p[1])) for p in poses], min(1.0, smooth + 0.25), noise=nz)
+    ls = smooth_series(ts, [math.log(max(1e-9, p[1])) for p in poses], min(1.0, smooth + extra[0]), noise=nz)
     angs = np.unwrap([p[2] for p in poses])
-    an = smooth_series(ts, list(angs), min(1.0, smooth + 0.45), noise=nz)
+    an = smooth_series(ts, list(angs), min(1.0, smooth + extra[1]), noise=nz)
     res = np.array([p[3].reshape(-1) for p in poses])
-    rs = np.array([smooth_series(ts, list(res[:, k]), min(1.0, smooth + 0.5), noise=nz) for k in range(8)]).T
+    rs = np.array([smooth_series(ts, list(res[:, k]), min(1.0, smooth + extra[2]), noise=nz) for k in range(8)]).T
     return [compose(q0, np.array([cx[i], cy[i]]), math.exp(ls[i]), an[i], rs[i].reshape(4, 2)) for i in range(n)]
 
 
