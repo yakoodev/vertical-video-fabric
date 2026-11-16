@@ -106,7 +106,12 @@ def h_track_surface(ctx: ToolContext, args: dict) -> Any:
                                  smooth=args.get("smooth"))
     except WT.TrackError as exc:
         raise ToolError(f"поверхность не отслежена: {exc}", exc.hints) from exc
-    report = {"ok": True, "time": "clip", **WT.surface_report(track)}
+    show_arg = args.get("show") if isinstance(args.get("show"), list) and len(args["show"]) == 2 else None
+    report = {"ok": True, "time": "clip", **WT.surface_report(track, _num(args.get("rotation"), 0.0) or 0.0, show_arg)}
+    if not report["check"]["ok"]:
+        report["warning_check"] = ("ПРОВАЛ проверки позы: " + "; ".join(report["check"]["fail"])
+                                   + " — другое место (без деревьев/рук перед поверхностью), окно короче, без поворота "
+                                   "текста; такое слово владельцу не показывать")
     held = float(track.get("found") or 0)
     if held < WT.SURFACE_OK:
         report["warning"] = (f"держится только {held:.0%} кадров — слово на этой поверхности будет пропадать; другое "
@@ -130,7 +135,8 @@ def h_track_surface(ctx: ToolContext, args: dict) -> Any:
             layer["id"] = str(args["id"])
     report.update(_add_or_attach(ctx, args, "tracked_text", track["id"], layer))
     report["next"] = ("слой: add_layers({type: \"tracked_text\", start, end, props: {text, track: track_id, words: [{t}]}}) "
-                      "— x/y/scale/rotation слоя — место и размер на плоскости (rotation −90 — вертикально по колонне). "
+                      "— x/y/scale слоя — место и размер на плоскости; текст не поворачивать (боком владелец читает как "
+                      "«перевёрнутый», проверка check такое проваливает). "
                       "Смотри лист: слово стоит на поверхности, не плавает? Плывёт — другой quad (без деревьев и рук "
                       "перед поверхностью) или окно короче.")
     a, b = (layer["start"], layer["end"]) if layer else (start, end)
@@ -194,8 +200,11 @@ def tools() -> list[Tool]:
             "кадра; трапеция по перспективе поверхности) или box {x, y, w, h, angle} — центр и размер. start/end — окно "
             "трека (шкала clip; нет — t−0.6…t+1.6), не через склейку. Ответ: track_id, held (доля кадров, где держится), "
             "err_px, lost. text — сразу слой tracked_text (preset graffiti3d: синий→фиолетовый, белая обводка, объём; "
-            "word_times — время появления каждого слова, шкала clip; show [start, end] — когда виден; rotation −90 — "
-            "вертикально), layer_id — привязать трек к готовому слою. Ответ со слоем — лист кадров проверки. / Track a "
+            "word_times — время появления каждого слова, шкала clip; show [start, end] — когда виден; текст только "
+            "горизонтально), layer_id — привязать трек к готовому слою. Модель — подобие + ограниченная перспектива, "
+            "перевёрнутые/боком/скачущие кадры отбраковываются, слово там гаснет. check — проверка позы (flips, "
+            "text_angle_max, rot_step_max, jitter_px; ok false — не показывать). Ответ со слоем — лист кадров "
+            "проверки. / Track a "
             "planar surface for a world-stuck word layer.",
             _obj({"t": {"type": "number"},
                   "quad": {"type": "array", "items": POINT, "minItems": 4, "maxItems": 4},

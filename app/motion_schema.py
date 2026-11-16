@@ -453,7 +453,7 @@ PROPS["logo_reveal"] = {
 }
 
 # Слово «в мире игры» (frontend/src/motion/layers/tracked.ts): текст лежит на поверхности по треку track
-# (app/world_track.py, track_surface) — едет и поворачивается с ней. x/y/scale/rotation слоя — место и
+# (app/world_track.py, track_surface) — едет и поворачивается с ней (текст — горизонтально). x/y/scale/rotation слоя — место и
 # размер на плоскости (доли). Пусто у стиля — пресет graffiti3d (как в референсе владельца). words — время
 # появления каждого слова (шкала clip, по слогам вокала). Данные трека (trackData) сервис кладёт сам.
 TRACKED_TEXT_PRESETS = ("graffiti3d", "plain")
