@@ -45,7 +45,7 @@ export interface CritterLook {
   /** Собственное свечение корпуса (тень остаётся тёплой), 0..0.3; по умолчанию 0.12. */
   glow?: number;
   /** Рот на морде (рэп-клип): плоская фигура в стиле глаз под ними; без поля — зверёк без рта, как раньше. */
-  mouth?: boolean | { color?: string; tongue?: string; y?: number; width?: number };
+  mouth?: boolean | CritterMouth;
 }
 
 export interface CritterSpec {
@@ -492,13 +492,61 @@ const REST_MOUTH: Record<string, string> = {
  * Рот зверька: под глазами, по центру морды, цветом глаз. ``shape`` — open | o | wide | closed (поёт) или smirk | grin |
  * teeth | flat | frown | o (покой), ``open`` 0..1 — раскрытие (громкость слога).
  */
+export interface CritterMouth {
+  /** cartoon — рисованный рот (формы по слогам); eq — экранный «эквалайзер»: светящиеся столбики пульсируют с голосом. */
+  style?: "cartoon" | "eq";
+  color?: string;
+  tongue?: string;
+  /** Цвет столбиков эквалайзера и подложки. */
+  glow?: string;
+  panel?: string;
+  bars?: number;
+  y?: number;
+  width?: number;
+}
+
+/**
+ * Рот-эквалайзер: тёмная скруглённая плашка поперёк низа морды (как стекло очков) и светящиеся столбики, высота —
+ * громкость голоса × свой «шум» у каждого столбика (детерминированно от t); в тишине — тонкая ровная линия.
+ */
+function paintEqMouth(g: CanvasRenderingContext2D, cx: number, cy: number, mw: number, u: number, o: number, t: number, opt: CritterMouth) {
+  const n = opt.bars ?? 11;
+  const w = mw, hMax = u * 0.085;
+  const glow = opt.glow || "#3cf2ff";
+  g.save();
+  g.fillStyle = opt.panel || "#14121c";
+  g.beginPath();
+  g.roundRect(cx - w / 2 - u * 0.012, cy - hMax / 2 - u * 0.01, w + u * 0.024, hMax + u * 0.02, u * 0.02);
+  g.fill();
+  const bw = (w / n) * 0.62;
+  const fr = Math.floor(t * 15);
+  for (let i = 0; i < n; i++) {
+    const x = cx - w / 2 + (i + 0.5) * (w / n);
+    // Шум столбика: сумма синусов от номера и кадра (по двойкам, как поза), к краям ниже — «колокол» спектра.
+    const bell = 0.55 + 0.45 * Math.cos(((i - (n - 1) / 2) / ((n - 1) / 2)) * Math.PI * 0.5);
+    const nz = 0.55 + 0.45 * Math.abs(Math.sin(i * 1.7 + fr * 0.9) * Math.cos(i * 0.6 - fr * 1.3));
+    const h = Math.max(u * 0.008, hMax * Math.min(1, o * 1.3) * bell * nz);
+    g.shadowColor = glow;
+    g.shadowBlur = u * 0.02;
+    g.fillStyle = glow;
+    g.beginPath();
+    g.roundRect(x - bw / 2, cy - h / 2, bw, h, Math.min(bw / 2, u * 0.006));
+    g.fill();
+  }
+  g.restore();
+}
+
 export function paintCritterMouth(g: CanvasRenderingContext2D, W: number, H: number, u: number, shape: string, open: number, lk: number[],
-  opt: { color?: string; tongue?: string; y?: number; width?: number } = {}) {
+  opt: CritterMouth = {}, t = 0) {
   const ink = opt.color || "#1b1214";
   const cx = W / 2 + lk[0] * u * 0.03;
   const cy = H - (opt.y ?? 0.115) * u - lk[1] * u * 0.02;
   const mw = (opt.width ?? 0.15) * u;
   const o = Math.max(0, Math.min(1, open));
+  if (opt.style === "eq") {
+    paintEqMouth(g, cx, cy, mw, u, o, t, opt);
+    return;
+  }
   g.save();
   g.fillStyle = ink;
   g.strokeStyle = ink;
@@ -772,7 +820,7 @@ export function createCritter(spec: CritterSpec): Character {
     if (sig === lastSig) return f;
     lastSig = sig;
     paintCritterFace(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, f, lk, bl, talk, t, look);
-    if (mouthOn) paintCritterMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, ms.shape, ms.open, lk, mouthOpt);
+    if (mouthOn) paintCritterMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, ms.shape, ms.open, lk, mouthOpt, t);
     parts.faceTex.needsUpdate = true;
     return f;
   }

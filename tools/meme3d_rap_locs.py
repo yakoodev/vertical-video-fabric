@@ -70,8 +70,8 @@ def loc_skyline() -> dict:
         # Башня, на крыше которой стоит Клод: крыша (y 58.33 у модели) — ровно на y = 0.
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
         M("throne", "lux/throne", [0, 0, -0.42], 0, 0.2),
-        M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], -35, 0.16),
-        obj("prodsign", "sign_plate", [0.95, 0.335, 0.15], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.6},
+        M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], 145, 0.16),
+        obj("prodsign", "sign_plate", [0.95, 0.335, 0.15], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
             rotation=[0, -35, 0]),
         M("ac1", "roof/q_ac", [-1.15, 0, -1.0], 30),
         M("ac2", "roof/q_ac_stacked", [-1.55, 0, -0.35], 80),
@@ -107,7 +107,7 @@ def loc_skyline() -> dict:
         {"type": "directional", "id": "sky_fill", "color": "#b49cff", "intensity": 0.6, "position": [-4, 6, 8], "target": [0, 0, 0]},
         point("front", "#ffd6c0", 0.8, [0.4, 0.6, 1.6], 3.5),
         point("pink", PINK, 1.2, [-1.1, 0.5, -1.4], 3.0),
-        point("cyan", CYAN, 1.0, [1.2, 0.4, 0.5], 2.6),
+        point("cyan", CYAN, 0.6, [1.9, 0.35, 1.4], 2.2),
     ]
     for i, (x, z, tx, tz, c) in enumerate([(-9, -14, -14, -40, "#bcd6ff"), (8, -16, 16, -44, "#ffd0f0"), (-18, -6, -30, -26, "#9ff3ff")]):
         lights.append({"type": "spot", "id": f"search{i}", "color": c, "intensity": 0.01, "position": [x, -6, z], "target": [tx, 30, tz], "angle": 3,

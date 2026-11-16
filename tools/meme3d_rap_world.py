@@ -51,13 +51,26 @@ LOOKS = {
 # --------------------------------------------------------------------------- герои
 
 
+import os  # noqa: E402
+
+# Рот Клода — переключатель (владелец выбирает): "" — без рта (как в канале), "eq" — экранный эквалайзер,
+# "cartoon" — рисованный рот по слогам (забракован 16.11). Переменная окружения RAP_MOUTH.
+MOUTH = os.environ.get("RAP_MOUTH", "")
+MOUTH_STYLES = {
+    "eq": {"style": "eq", "width": 0.34, "y": 0.105, "glow": "#3cf2ff", "panel": "#14121c", "bars": 11},
+    "cartoon": {"width": 0.21, "y": 0.11, "color": "#1b1214"},
+}
+
+
 def claude(pose: list[dict], face: list[dict], *, look: str = "A", move: list[dict], visible: list[dict] | None = None,
-           voice: list[float] | None = None, yaw: float = 0.0, char_id: str = "claude", mouth_keys: list[dict] | None = None) -> dict:
+           voice: list[float] | None = None, yaw: float = 0.0, char_id: str = "claude", mouth_keys: list[dict] | None = None,
+           mouth: str | None = None) -> dict:
     lk = LOOKS[look]
-    # С ноября рэп-клипа у Клода есть рот (поёт): формы — по слогам текста, раскрытие — громкость вокала.
+    style = MOUTH if mouth is None else mouth
     ch = H.hero(pose, face, voice, [], position=move[0]["position"], yaw=yaw, width=W_CLAUDE, headset=lk["headset"], label="Claude",
-                char_id=char_id, glow=0.14, step_fps=15, gain=1.0, bounce=1.3, mouth=True, mouth_keys=mouth_keys)
-    ch["critter"]["mouth"] = {"width": 0.21, "y": 0.11, "color": "#1b1214"}
+                char_id=char_id, glow=0.14, step_fps=15, gain=1.0, bounce=1.3, mouth=bool(style), mouth_keys=mouth_keys)
+    if style:
+        ch["critter"]["mouth"] = MOUTH_STYLES[style]
     ch["costume"] = lk["costume"]
     ch["move"] = move
     if visible:

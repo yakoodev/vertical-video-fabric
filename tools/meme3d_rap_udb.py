@@ -253,10 +253,14 @@ def add_captions(video: Path, words: list[dict], out: Path, work: Path, dur: flo
                        "out": {"type": "fade", "duration": 0.3}})
     comp = write_comp(work / "comp.json", width=1080, height=1920, fps=FPS, duration=dur, layers=layers, camera=[], words=words)
     (work / "assets.json").write_text("{}", "utf-8")
-    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out), capture_output=True, text=True,
+    silent = work / (out.stem + "_noaudio.mp4")
+    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=silent), capture_output=True, text=True,
                           encoding="utf-8", errors="replace", check=False, stdin=subprocess.DEVNULL)
-    if proc.returncode != 0 or not out.is_file():
+    if proc.returncode != 0 or not silent.is_file():
         raise RuntimeError(f"субтитры: {proc.stderr.strip()[-1200:]}")
+    # Компоновщик отдаёт видео без звука — песню (её участок) возвращаем из склейки.
+    P1._run(["ffmpeg", "-y", "-v", "error", "-i", str(silent), "-i", str(video), "-map", "0:v", "-map", "1:a", "-c", "copy", "-shortest",
+             "-movflags", "+faststart", str(out)], "звук")
     return out
 
 
@@ -325,7 +329,7 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
     return probs
 
 
-def dark_check(video: Path, shots: list, t0: float = 0.0, thr: int = 22, limit: float = 0.35) -> list[str]:
+def dark_check(video: Path, shots: list, t0: float = 0.0, thr: int = 12, limit: float = 0.45) -> list[str]:
     """Доля почти чёрных пикселей в середине каждого плана готового ролика; > limit — план «в чёрной пустоте»."""
     import numpy as np
 
@@ -345,7 +349,7 @@ def dark_check(video: Path, shots: list, t0: float = 0.0, thr: int = 22, limit: 
     return probs
 
 
-def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6) -> Path:
+def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6, style: str = "eq") -> Path:
     """Проба рта: крупный план Клода на сцене, поёт припев (губы по слогам, раскрытие — громкость вокала)."""
     import meme3d_rap_shots as Sh
 
@@ -358,14 +362,14 @@ def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6) -> Path:
     for k in kk:
         pose += [{"t": round(k, 3), "ease": "outQuad", "lean": 7, "squash": 0.95}, {"t": round(k + 0.18, 3), "ease": "inOutSine", "lean": 0, "squash": 1.0}]
     face = [{"t": 0, "expr": "smug", "look": [0, 0]}, {"t": 35.6, "expr": "happy", "look": [0, 0]}]
-    ch = Wd.claude(pose, face, move=[{"t": 0, "position": [0, pod, 0], "ease": "step"}], voice=voice, mouth_keys=Sh.mouth_keys())
+    ch = Wd.claude(pose, face, move=[{"t": 0, "position": [0, pod, 0], "ease": "step"}], voice=voice, mouth_keys=Sh.mouth_keys(), mouth=style)
     kx = Wd.codex([{"t": 0, "ease": "step", **Sh.BASE_K, "turn": 25, "lean": 12}], [{"t": 0, "expr": "snarl", "look": [0.1, 0]}],
                   move=[{"t": 0, "position": [-0.3, pod, 0.1], "ease": "step"}], yaw=10)
     a = Sh.C([0.0, pod + FY - 0.02, 0.0], 0.42, 34, 8, 2)
     b = Sh.C([0.0, pod + FY - 0.02, 0.0], 0.34, 34, 4, 2)
     cam = [{"t": t0, **a, "cut": True}, {"t": t1, **b, "ease": "linear"}]
     sp = Wd.spec(loc, [ch, kx], [Wd.leash(0.44)], cam, Sh.DUR)
-    work = out / "work" / "mouthtest"
+    work = out / "work" / f"mouthtest_{style or 'none'}"
     work.mkdir(parents=True, exist_ok=True)
     f = work / "mouth.json"
     f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
@@ -373,7 +377,7 @@ def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6) -> Path:
     P1._run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(f), "--models", str(MODELS), "--gl", gl, "--workers", "2",
              "--frames", f"{round(t0 * FPS)}:{round(t1 * FPS)}", "--out", str(clip)], "проба рта", timeout=1800)
     raw = concat([clip], work / "mouth_mux.mp4", t0, t1, (1080, 1920))
-    return add_captions(raw, lyric_words(t0, t1), out / "stage2b_mouth_test.mp4", work, t1 - t0)
+    return raw
 
 
 def credits(specs: dict, out: Path) -> Path:
@@ -426,7 +430,17 @@ def main() -> int:
     if a.cmd == "locations":
         print(stage_locations(out, a.gl))
     elif a.cmd == "mouth":
-        print(mouth_test(out, a.gl))
+        # Сравнение: рот-эквалайзер слева, без рта справа; песня — тот же участок.
+        eq = mouth_test(out, a.gl, style="eq")
+        no = mouth_test(out, a.gl, style="")
+        dst = out / "stage2c_mouth_eq_vs_none.mp4"
+        font = "fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
+        lab = "drawtext=text='{}':x=(w-tw)/2:y=60:fontsize=58:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=14:" + font
+        P1._run(["ffmpeg", "-y", "-v", "error", "-i", str(eq), "-i", str(no), "-filter_complex",
+                 f"[0:v]scale=540:960,{lab.format('ЭКВАЛАЙЗЕР')}[a];[1:v]scale=540:960,{lab.format('БЕЗ РТА')}[b];[a][b]hstack[v]",
+                 "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+                 "-movflags", "+faststart", str(dst)], "сравнение рта")
+        print(dst)
     elif a.cmd == "check":
         probs = check_sight(out, a.gl)
         print("\n".join(probs) or "все планы: герои в кадре и не заслонены")

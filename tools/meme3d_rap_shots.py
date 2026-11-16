@@ -161,10 +161,10 @@ def shots() -> list[Shot]:
     S.append(Shot(27.45, 29.4, "datacenter", C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6), C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6),
                   c=ch([0, 0, 0], {"lean": 20, "armR": [70, 80, 1.0, 0], "armL": "hips"}, "smug", end={"armR": [60, 88, 1.0, 0]}), k=None, leash=None,
                   lab="ладонь в объектив, «Отличный вопрос!»"))
-    car_roll = [{"t": 29.5, "position": [0.95, 0, 0.15], "rotation": [0, -35, 0], "ease": "linear"},
-                {"t": 31.0, "position": [1.85, 0, 1.45], "rotation": [0, -35, 0], "ease": "inQuad"},
-                {"t": 31.6, "position": [2.3, -0.3, 1.95], "rotation": [-60, -35, 20], "ease": "linear"},
-                {"t": 32.5, "position": [3.3, -7.0, 3.2], "rotation": [-260, -35, 90], "ease": "inQuad"}]
+    car_roll = [{"t": 29.5, "position": [0.95, 0, 0.15], "rotation": [0, 145, 0], "ease": "linear"},
+                {"t": 31.0, "position": [1.85, 0, 1.45], "rotation": [0, 145, 0], "ease": "inQuad"},
+                {"t": 31.6, "position": [2.3, -0.3, 1.95], "rotation": [60, 145, 20], "ease": "linear"},
+                {"t": 32.5, "position": [3.3, -7.0, 3.2], "rotation": [260, 145, 90], "ease": "inQuad"}]
     sign_roll = [{**k, "position": [k["position"][0], k["position"][1] + 0.335, k["position"][2]]} for k in car_roll]
     S.append(Shot(29.5, 31.0, "skyline", C([0.55, 0.2, 0.3], 1.4, 44, -55, 10), C([0.75, 0.18, 0.55], 1.3, 44, -45, 8),
                   c=ch([0.3, 0, 0.0], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=40, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
@@ -367,9 +367,34 @@ def vocal_env() -> list[float]:
     return [round(float(v), 3) for v in env]
 
 
+CHORUS = [(32.5, 44.7), (76.0, 91.7), (92.1, 99.7)]
+GESTURES = [[38, 55, 0.8, 0], [18, 72, 0.9, 0], [70, 12, 0.55, 0], [50, 35, 0.7, 0.4]]
+
+
+def _in(t: float, spans) -> bool:
+    return any(a <= t < b for a, b in spans)
+
+
+def _arm(v) -> list[float]:
+
+    named = {"rest": [-8, 0, 0, 0], "down": [-38, 4, 0, 0], "up": [75, 5, 0.4, 0], "hips": [-30, -14, 0.1, 0], "shrug": [42, -6, 0.35, 0],
+             "point": [12, 62, 0.6, 0], "cross": [-4, 72, 0.15, 0], "jab": [22, 55, 0.7, 0.5], "fist": [24, 30, 0.3, 0.6], "flail": [62, 18, 0.5, 1]}
+    return list(v) if isinstance(v, (list, tuple)) else named.get(str(v), [-8, 0, 0, 0])
+
+
+def word_onsets() -> list[float]:
+    data = json.loads((DATA / "lyrics.json").read_text("utf-8"))
+    return [w["t0"] for ln in data["lines"] for w in ln["words"]]
+
+
 def _track(shots_: list[Shot], who: str, kk: list[float]) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
-    """Ключи героя по планам его локации: поза (база, середина, конец, кивки на бит), лицо, позиция, видимость."""
+    """Ключи героя по планам его локации: поза плана (база, середина, конец), жизнь на бит, лицо, позиция, видимость.
+
+    Клод: на каждый удар — подготовка (присел), прыжок со вытягиванием и отдача (перелёт), кивок; на ударные слова —
+    жесты ручками попеременно (выброс вперёд/вверх и возврат), если поза плана не держит руки особо (ладонь в объектив,
+    рупор). Кодекс: подпрыгивает на ударах, на припевах — бросается вперёд и лает."""
     base = BASE_C if who == "c" else BASE_K
+    words = word_onsets()
     pose, face, move, vis = [], [], [], [{"t": 0, "on": False}]
     for s in shots_:
         h = s.c if who == "c" else s.k
@@ -383,20 +408,52 @@ def _track(shots_: list[Shot], who: str, kk: list[float]) -> tuple[list[dict], l
         if h["end"]:
             pose.append({"t": round(s.t1 - 0.05, 3), "ease": "inOutSine", **h["end"]})
         if h["nod"]:
-            lean0 = p0["lean"]
+            lean0, sq0, hop0 = p0["lean"], p0["squash"], p0.get("hop", 0)
+            hot = _in(s.t0, CHORUS)
             for kt in kk:
-                if s.t0 + 0.05 < kt < s.t1 - 0.12:
-                    pose.append({"t": round(kt, 3), "ease": "outQuad", "lean": lean0 + 7, "squash": p0["squash"] * 0.95})
-                    pose.append({"t": round(kt + 0.18, 3), "ease": "inOutSine", "lean": lean0, "squash": p0["squash"]})
+                if not (s.t0 + 0.08 < kt < s.t1 - 0.2):
+                    continue
+                if who == "c":
+                    amp = 1.0 if hot else 0.6
+                    pose += [
+                        {"t": round(kt - 0.07, 3), "ease": "inQuad", "squash": sq0 * (1 - 0.07 * amp), "lean": lean0 - 2},
+                        {"t": round(kt, 3), "ease": "outQuad", "squash": sq0 * (1 + 0.07 * amp), "hop": hop0 + 0.016 * amp, "lean": lean0 + 7 * amp},
+                        {"t": round(kt + 0.13, 3), "ease": "inQuad", "squash": sq0 * (1 - 0.03 * amp), "hop": hop0},
+                        {"t": round(kt + 0.24, 3), "ease": "outBack", "squash": sq0, "lean": lean0},
+                    ]
+                else:
+                    lunge = hot
+                    pose += [
+                        {"t": round(kt, 3), "ease": "outQuad", "hop": hop0 + (0.02 if lunge else 0.01), "lean": lean0 + (14 if lunge else 5),
+                         "squash": 0.92 if lunge else 0.96},
+                        {"t": round(kt + 0.16, 3), "ease": "outBack", "hop": hop0, "lean": lean0, "squash": p0["squash"]},
+                    ]
+            if who == "c" and s.loc != "studio":
+                aL, aR = _arm(p0["armL"]), _arm(p0["armR"])
+                special = max(aL[1], aR[1]) >= 60 or max(aL[0], aR[0]) >= 60
+                if not special:
+                    side = 0
+                    last = -9.0
+                    for wt in words:
+                        if not (s.t0 + 0.1 < wt < s.t1 - 0.25) or wt - last < 0.42:
+                            continue
+                        last = wt
+                        g = GESTURES[(side + int(wt * 7)) % len(GESTURES)]
+                        fld, back = ("armR", aR) if side % 2 == 0 else ("armL", aL)
+                        pose += [{"t": round(wt - 0.04, 3), "ease": "outBack", fld: g}, {"t": round(wt + 0.24, 3), "ease": "inOutSine", fld: back}]
+                        side += 1
         fk = {"t": s.t0, "expr": h["face"], "blend": 0}
         if who == "c":
             fk["look"] = h["look"]
         else:
             fk["look"] = [0.1, 0]
         face.append(fk)
+        if who == "k" and _in(s.t0, CHORUS) and h["face"] in ("angry", "smug", "smile"):
+            face.append({"t": s.t0, "expr": "bark", "look": [0.1, 0]})
         move.append({"t": s.t0, "position": h["pos"], "ease": "step"})
         vis.append({"t": s.t0, "on": True})
     pose.sort(key=lambda k: k["t"])
+    face.sort(key=lambda k: k["t"])
     return pose, face, move or [{"t": 0, "position": [0, -5, 0]}], vis
 
 
@@ -470,6 +527,10 @@ def build_specs(width: int = 1080, height: int = 1920) -> tuple[dict[str, dict],
                 flashes.append({"t": s.t0, "amount": 0.85, "duration": 0.22})
             if s.shake:
                 shakes.append({"t": s.t0, "amp": s.shake, "duration": 0.6})
+            # Камера «дышит» на ударах припева: короткий толчок на каждый удар бочки.
+            for kt in kk:
+                if s.t0 + 0.05 < kt < s.t1 - 0.05 and _in(kt, CHORUS):
+                    shakes.append({"t": round(kt, 3), "amp": 0.0035, "duration": 0.28})
         cam.sort(key=lambda k: k["t"])
         sp = Wd.spec(loc, chars, extra, cam, DUR, width=width, height=height, flashes=flashes, shakes=shakes)
         out[loc_name] = sp
