@@ -1568,6 +1568,72 @@
 "cost": [
 "cpu"
 ]
+},
+{
+"name": "amv_analyze_song",
+"title": "Разбираю песню AMV",
+"description": "b41f589e373fc62f",
+"parameters": "c3f142adbb9de80b",
+"mutating": false,
+"scope": "global",
+"module": "amv",
+"handler": "h_amv_analyze_song",
+"label": true,
+"cost": [
+"cpu"
+]
+},
+{
+"name": "amv_index_sources",
+"title": "Собираю сцены исходников AMV",
+"description": "ad5334554485b752",
+"parameters": "32645019e1f104fd",
+"mutating": false,
+"scope": "global",
+"module": "amv",
+"handler": "h_amv_index_sources",
+"label": true,
+"cost": [
+"cpu",
+"ram"
+]
+},
+{
+"name": "amv_plan",
+"title": "Планирую AMV",
+"description": "8beea95af927c347",
+"parameters": "60bfb039dba80d8d",
+"mutating": false,
+"scope": "global",
+"module": "amv",
+"handler": "h_amv_plan",
+"label": true
+},
+{
+"name": "amv_render",
+"title": "Рендерю AMV",
+"description": "f7fe18598d38ea17",
+"parameters": "0a73dfb07bbdb572",
+"mutating": false,
+"scope": "global",
+"module": "amv",
+"handler": "h_amv_render",
+"label": true,
+"cost": [
+"cpu",
+"ram"
+]
+},
+{
+"name": "amv_status",
+"title": "Смотрю работу AMV",
+"description": "0d2e9142fd0eff12",
+"parameters": "3fd071ff9311bc32",
+"mutating": false,
+"scope": "global",
+"module": "amv",
+"handler": "h_amv_status",
+"label": true
 }
 ],
 "discovery": [

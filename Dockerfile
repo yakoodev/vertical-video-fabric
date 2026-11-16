@@ -148,6 +148,8 @@ COPY tools/meme3d_pilot.py /app/tools/meme3d_pilot.py
 # «Клип на песню» (app/music_video_job.py): разбор, план, текстуры и mp4 — этим инструментом; кадры Blender — на
 # компьютере с Blender (tools/render_worker.py), в образе его нет.
 COPY tools/music_video /app/tools/music_video
+# AMV (app/amv_job.py): разбор песни, сцены исходников, план и рендер — пакет tools/amv (python -m tools.amv.make).
+COPY tools/amv /app/tools/amv
 # Бренд-ассеты (значок Витубики для концовки историй, app/vtubika_endcard.py).
 COPY assets /app/assets
 # Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.

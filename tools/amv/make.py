@@ -5,7 +5,7 @@
   python -m tools.amv.make lib    --sources sources.json --work W              → W/lib/clips.json (+ scans)
   python -m tools.amv.make review --work W [--act bond]                         → W/review_<act>.jpg clip sheets
   python -m tools.amv.make plan   --work W --start 79.6 --end 99.9 --name sample  → W/plan_sample.json
-                                 [--story story.json] [--palette csm]
+                                 [--story story.json] [--palette csm] [--style reference]
   python -m tools.amv.make render --work W --name sample --song SONG.wav --out OUT.mp4 --size 720x1280
                                  [--captions captions.json]
   python -m tools.amv.make check  --video OUT.mp4 --work W                     → sheet + frozen-stretch report
@@ -36,6 +36,9 @@ def main(argv=None) -> int:
     ap.add_argument("--cpb", help="plan: cuts per bar for levels 0..3, e.g. 1,1,2,2 (default plan.CUTS_PER_BAR)")
     ap.add_argument("--gap", help="plan: minimum shot length in beats for levels 0..3, e.g. 2,2,1,1")
     ap.add_argument("--reuse", type=int, default=1, help="plan: uses per clip (a reuse continues the scene)")
+    ap.add_argument("--style", default="velocity", choices=["velocity", "reference"],
+                    help="plan: velocity (round-2 edit) or reference (style.py: sections, colour runs, native speed, "
+                         "source impacts, black breaths, final-drop strobe)")
     ap.add_argument("--work", required=True)
     ap.add_argument("--song")
     ap.add_argument("--bpm", type=float)
@@ -87,10 +90,16 @@ def main(argv=None) -> int:
         forced = [c["t"] for c in _load(Path(a.captions))] if a.captions else None
         story = _load(Path(a.story)) if a.story else None
         per_level = lambda s, f: {i: f(v) for i, v in enumerate(s.split(","))} if s else None
-        p = plan.build_plan(song, clips, a.start, end, seed=a.seed, forced=forced, story=story, palette=a.palette,
-                            cuts_per_bar=per_level(a.cpb, int), min_gap_beats=per_level(a.gap, float),
-                            max_uses=a.reuse)
-        p["stats"] = plan.plan_stats(p, song)
+        if a.style == "reference":
+            from . import style
+            p = plan.build_plan(song, clips, a.start, end, seed=a.seed, forced=forced, story=story,
+                                max_uses=a.reuse, style="reference", fps=a.fps)
+            p["stats"] = style.stats(p, song, fps=a.fps)
+        else:
+            p = plan.build_plan(song, clips, a.start, end, seed=a.seed, forced=forced, story=story,
+                                palette=a.palette, cuts_per_bar=per_level(a.cpb, int),
+                                min_gap_beats=per_level(a.gap, float), max_uses=a.reuse)
+            p["stats"] = plan.plan_stats(p, song)
         (work / f"plan_{a.name}.json").write_text(json.dumps(p, indent=1, ensure_ascii=False), encoding="utf-8")
         print(json.dumps(p["stats"], ensure_ascii=False))
     elif a.stage == "render":

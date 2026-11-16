@@ -27,7 +27,7 @@ import "@/styles/releases.css";
  * по прошлым роликам: настоящая сумма появится на карточке перед платным шагом. Без проекта можно только файл, ссылку и холст.
  */
 
-type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "frag" | "mv" | "canvas" | "top";
+type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "frag" | "amv" | "mv" | "canvas" | "top";
 type IconName = Parameters<typeof Icon>[0]["name"];
 type TypeCard = { key: TypeKey; title: string; text: string; price: string; icon: IconName; module?: string; paid?: boolean; project?: boolean };
 
@@ -39,6 +39,7 @@ const TYPES: TypeCard[] = [
   { key: "expl", title: "Объяснялка", text: "Маскот объясняет тему. Тема, сценарий, позы, озвучка.", price: "около 34 ₽", icon: "chat", module: "explainer", project: true },
   { key: "promo", title: "Промо приложения", text: "Телефон с записью экрана. Материалы, сборка.", price: "0 ₽", icon: "pad", module: "promo", project: true },
   { key: "frag", title: "Мувик под песню", text: "Бои записей игры под песню, текст песни по слогам. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "bolt", module: "frag_movie", project: true },
+  { key: "amv", title: "AMV", text: "Кадры одного аниме или фильма под песню: сюжет по актам, цвет, ритм. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "film", module: "amv", project: true },
   { key: "mv", title: "Клип на песню", text: "Своя песня, участок, комикс или рваная бумага. Слова в такт слогам, картинки в 2.5D.", price: "около 3 ₽ за картинку", icon: "play", module: "music_video", paid: true, project: true },
   { key: "canvas", title: "Пустой холст", text: "Собрать руками. Сразу клип.", price: "0 ₽", icon: "image" },
   { key: "top", title: "ТОП-N", text: "Лучшие клипы одного видео подряд с номерами. Новый клип.", price: "0 ₽", icon: "star", module: "compilation", project: true },
@@ -100,6 +101,8 @@ export function NewVideoPage() {
     form = <PromoForm projectId={projectId} />;
   } else if (current?.key === "frag" && projectId) {
     form = <FragMovieForm projectId={projectId} />;
+  } else if (current?.key === "amv" && projectId) {
+    form = <AmvForm projectId={projectId} />;
   } else if (current?.key === "mv" && projectId) {
     form = <MusicVideoForm projectId={projectId} />;
   } else if (current?.key === "top" && projectId) {
@@ -395,6 +398,130 @@ function FragMovieForm({ projectId }: { projectId: number }) {
         <span className="muted">
           Откроется чат проекта: агент соберёт хронику боёв, выровняет текст песни и пришлёт две 20-секундные пробы. Части для TikTok по 58 с и подписи
           «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ ᴀᴘᴇx ⨯ трек · N/M» — из настроек проекта.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- AMV ---------- */
+
+const AMV_ASPECTS: { value: "9:16" | "16:9"; label: string }[] = [
+  { value: "9:16", label: "9:16 (TikTok, Shorts)" },
+  { value: "16:9", label: "16:9 (YouTube)" },
+];
+
+/**
+ * Исходники проекта (фильм, серии, официальные трейлеры ОДНОГО тайтла) + песня (из музыки, файлом или ссылкой) + сюжет
+ * по актам (по желанию) → работа AMV и переписка чата проекта с плейбуком amv и первым заданием (app/amv.py).
+ */
+function AmvForm({ projectId }: { projectId: number }) {
+  const toast = useToast();
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const videos = useQuery({ queryKey: navKeys.videos(projectId), queryFn: () => navApi.videos(projectId) });
+  const tracks = useQuery({ queryKey: ["audio-tracks"], queryFn: audioTracksApi.list, staleTime: 60_000 });
+  const list = useMemo(() => (videos.data?.videos ?? []).filter((v) => v.has_file), [videos.data]);
+  const [picked, setPicked] = useState<number[]>([]);
+  const [title, setTitle] = useState("");
+  const [track, setTrack] = useState(0);
+  const [file, setFile] = useState<File | null>(null);
+  const [link, setLink] = useState("");
+  const [notes, setNotes] = useState("");
+  const [aspect, setAspect] = useState<"9:16" | "16:9">("9:16");
+  const toggle = (id: number) => setPicked(picked.includes(id) ? picked.filter((x) => x !== id) : [...picked, id]);
+  const hasSong = Boolean(track || file || link.trim());
+  const ready = title.trim() && picked.length > 0 && hasSong;
+  const start = useMutation({
+    mutationFn: async () => {
+      let trackId: number | null = track || null;
+      if (!trackId && file) trackId = (await audioTracksApi.upload(file, file.name.replace(/\.[^.]+$/, ""))).id;
+      return releasesApi.amv(projectId, {
+        title: title.trim(),
+        source_ids: picked,
+        track_id: trackId,
+        music_url: trackId ? "" : link.trim(),
+        notes: notes.trim(),
+        aspect,
+      });
+    },
+    onSuccess: (r) => {
+      toast.success(r.started ? "Агент начал: структура песни, сцены, сюжет по актам, проба 20 с" : "Переписка готова");
+      qc.invalidateQueries({ queryKey: ["audio-tracks"] });
+      navigate(r.to);
+    },
+    onError: (e) => toast.error(errText(e, "AMV не запустился")),
+  });
+  if (videos.isLoading) return <Loading />;
+  if (!list.length) {
+    return <EmptyState icon="🎬" title="Нет исходников" hint="Добавьте в проект фильм, серии или официальные трейлеры карточкой «Ссылка или файл», потом возвращайтесь сюда." />;
+  }
+  return (
+    <div className="series-col">
+      <div className="series-row">
+        <label className="field">
+          <span>Название</span>
+          <input className="input" value={title} maxLength={100} placeholder="Человек-бензопила · Pain" onChange={(e) => setTitle(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>Песня из музыки</span>
+          <select className="input" value={track} onChange={(e) => setTrack(Number(e.target.value))}>
+            <option value={0}>не из музыки</option>
+            {(tracks.data ?? []).map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      {!track ? (
+        <div className="series-row">
+          <label className="field">
+            <span>или файлом</span>
+            <input className="input" type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+          </label>
+          <label className="field">
+            <span>или ссылкой</span>
+            <input className="input" value={link} disabled={Boolean(file)} placeholder="https://…" onChange={(e) => setLink(e.target.value)} />
+          </label>
+        </div>
+      ) : null}
+      <div className="li-cap">Исходники: один тайтл — одна история. Только официальные: свой файл, официальные трейлеры и опенинги</div>
+      <ul className="nv-top">
+        {list.map((v) => (
+          <li key={v.id}>
+            <label className="aiv-check">
+              <input type="checkbox" checked={picked.includes(v.id)} onChange={() => toggle(v.id)} />
+              <span>{v.name}</span>
+              <small className="muted">{formatDuration(v.duration_sec)}</small>
+            </label>
+          </li>
+        ))}
+      </ul>
+      <label className="field">
+        <span>Сюжет по актам (по желанию): знакомство → сближение → предательство → бой → финал. Нет — агент предложит сам</span>
+        <textarea className="input" rows={4} value={notes} maxLength={1500} onChange={(e) => setNotes(e.target.value)} />
+      </label>
+      <div className="series-row">
+        <label className="field">
+          <span>Формат</span>
+          <select className="input" value={aspect} onChange={(e) => setAspect(e.target.value as "9:16" | "16:9")}>
+            {AMV_ASPECTS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="series-row">
+        <button className="btn primary sm" disabled={!ready || start.isPending} onClick={() => start.mutate()}>
+          {start.isPending ? "Запускаю…" : `Начать AMV из ${picked.length || "…"} видео`}
+        </button>
+        <span className="muted">
+          Откроется чат проекта: агент разберёт песню, соберёт сцены исходников, предложит сюжет по частям песни и пришлёт 20-секундную пробу. Полная версия —
+          после вашего «ок», она же попадёт в ленту.
         </span>
       </div>
     </div>
