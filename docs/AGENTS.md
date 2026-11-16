@@ -1679,7 +1679,9 @@ fix, t, until, final_t, layer, platforms}]`, `counts`, `by_check`, `skipped` (ч
   - `fit` — кусок шире окна: `{w 0.35..1, bg blur|aurora|grid|bokeh|waves|{фон}|black|#rrggbb}` (или просто число `w`), `null` —
     обычный кадр; не указан — без изменений. Через MCP — `set_focus` и `set_piece_fit`.
 - **Переходы** работают, только если кусков больше одного.
-  - Типы: `cut`, `fade`, `fadeblack`, `fadewhite`, `flash`, `slide`, `smooth`, `wipe`, `zoom`, `dissolve`.
+  - Типы: `cut`, `fade`, `fadeblack`, `fadewhite`, `flash`, `slide`, `smooth`, `wipe`, `zoom`, `dissolve`;
+    мувик игры — `slash` (срез по движению камеры, `angle`, `color`), `panels` (2–3 косые панели), `sparks`
+    (искры от прицела), `frag` (их смесь по склейкам, `kinds`).
   - `audio`: `smooth` (звук перетекает, на резкой склейке нет щелчка) или `hard`.
   - `sfx` — звук на каждом стыке: `none`, `whoosh`, `click`, `pop`.
 - **Обложка** (`render.cover`):

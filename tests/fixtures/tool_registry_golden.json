@@ -960,8 +960,8 @@
 {
 "name": "set_transition",
 "title": "Ставлю переход",
-"description": "a6648e8bbad08e86",
-"parameters": "10873bd6228e005d",
+"description": "c49d3d6f25fb190e",
+"parameters": "4a2876a572d31ae8",
 "mutating": true,
 "scope": "clip",
 "module": null,

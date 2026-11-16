@@ -23,7 +23,7 @@ from app.ai.gemini import GeminiClient, _extract_response_text
 from app.clip_spec import MAX_PIECES, SpecError, export_spec, validate_spec
 from app.settings import settings
 from app.store import MAX_SEGMENT_DURATION_SEC, MIN_SEGMENT_DURATION_SEC
-from app.transitions import SFX_KINDS, TRANSITIONS
+from app.transitions import FRAG_REJECTED, SFX_KINDS, TRANSITIONS
 
 CONTEXT_PAD_SEC = 10.0  # the model may extend a piece this far to finish a phrase
 # Клип короче этого не смотрят: агент любит резать «мусор» до огрызка на 15 с.
@@ -60,8 +60,8 @@ RULES = f"""\
 - куски берутся только из переданных окон реплик (исходный кусок ± {CONTEXT_PAD_SEC:.0f} с);
 - source_piece — номер исходного куска (с 0), из которого взят новый кусок.
 - transition.type: одно из {", ".join(TRANSITIONS)}; sfx: одно из {", ".join(SFX_KINDS)}.
-  Для одного куска переход не важен. Мемный монтаж — whip/zoompunch/glitch/flash + whoosh; бои игры
-  под песню (мувик) — whip по движению камеры, без flash и zoompunch;
+  Для одного куска переход не важен. Мемный монтаж — whip/zoompunch/glitch/flash + whoosh; запись
+  игры и бои под песню (мувик) — frag (срез по движению камеры, косые панели, искры), без flash и zoompunch;
   «прошло время» — fadeblack. Склейки внутри одной сцены (вырезанная пауза) всё равно
   останутся встык — эффект тратится только на смену сцены, так что бери резкий.
 - cover: номер НОВОГО куска и секунды от его начала — кадр с самой яркой эмоцией.
@@ -338,8 +338,11 @@ def _inserts_on_timeline(pieces: list[dict], render: dict, raw: Any, library_ids
     return normalize_inserts(out)
 
 
-def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> dict:
-    """Turn the model's answer into a full clip file (keeps render settings)."""
+def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None, gaming: bool = False) -> dict:
+    """Turn the model's answer into a full clip file (keeps render settings).
+
+    ``gaming`` — клип из записи игры: белую вспышку и зум-панч (владелец забраковал для мувиков) модель
+    не получит — вместо них ``frag`` (срез по движению камеры, панели, искры)."""
     old = spec["pieces"]
     used: set[int] = set()
     pieces = []
@@ -366,7 +369,7 @@ def to_spec(spec: dict, proposal: dict, library_ids: set[int] | None = None) -> 
     tr = proposal.get("transition") or {}
     if isinstance(tr, dict):
         if tr.get("type") in TRANSITIONS:
-            render["transition"]["type"] = tr["type"]
+            render["transition"]["type"] = "frag" if gaming and tr["type"] in FRAG_REJECTED else tr["type"]
         if tr.get("sfx") in SFX_KINDS:
             render["transition"]["sfx"] = tr["sfx"]
     if isinstance(proposal.get("subtitles"), bool):
@@ -475,6 +478,12 @@ def propose_montage(
     request += json.dumps(context, ensure_ascii=False)
     contents: list[dict] = [{"role": "user", "parts": [{"text": request}]}]
     problems: list[str] = []
+    try:
+        from app.cut_tools_pieces import gaming_hint_for
+
+        gaming = bool(gaming_hint_for(store, clip_plan_id))
+    except Exception:  # noqa: BLE001 - фейковые хранилища тестов: не игра
+        gaming = False
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = gemini.generate_content(
             used_model,
@@ -490,7 +499,7 @@ def propose_montage(
         text = _extract_response_text(response)
         try:
             proposal = json.loads(text)
-            new_spec = to_spec(spec, proposal, {a["asset_id"] for a in context["library"]})
+            new_spec = to_spec(spec, proposal, {a["asset_id"] for a in context["library"]}, gaming=gaming)
             problems = _in_windows(context, new_spec) + _length_problems(spec, new_spec)
             if not problems:
                 validate_spec(store, clip_plan_id, new_spec)

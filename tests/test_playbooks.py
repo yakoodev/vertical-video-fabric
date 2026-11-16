@@ -81,7 +81,7 @@ def test_frag_movie_and_meme_edit_carry_the_montage_journal_rules():
     movie = playbooks.get_playbook("frag-movie")["text"]
     for must in ("первого урона", "уничтожения отряда", "подряд и по времени", "0.87–1.15×", "Fps каждой записи",
                  "set_audio_joins", "−8…−10 дБ", "ВСЕ спетые строки", "только в паузах после киллов",
-                 "Без\n     белых вспышек", "≤ 58 с", "часть N/M", "20-секундные пробы", "≥ 0.6 с", "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯",
+                 "Без белых вспышек", '`type: "frag"`', "≤ 58 с", "часть N/M", "20-секундные пробы", "≥ 0.6 с", "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯",
                  "с телефона", "Никакой ИИ-музыки", "только на длинных версиях", "спрашивай прямо"):
         assert must in movie, must
     meme = playbooks.get_playbook("meme-edit")["text"]

@@ -178,10 +178,21 @@ def tools() -> list[Tool]:
             "(fadeblack — речь на чёрном) и как поправить; fit_speech=true — сам укоротит переход, чтобы он не "
             "заходил на речь. Наплыв сдвигает шкалу clip — слои, камера, вставки переезжают сами. "
             "motion_blur 0..1 — смаз сдвигового перехода (whip/slide/smooth) по горизонтали на окне перехода; "
-            "нет — как у клипа (set_motion_blur). / Transition between pieces.",
+            "нет — как у клипа (set_motion_blur). "
+            "Мувик игры (одобрено владельцем вместо flash и zoompunch): slash — диагональный срез со светящейся "
+            "кромкой по движению камеры (0.2 с), panels — 2–3 косые панели (0.4 с), sparks — сноп искр от прицела "
+            "(0.3 с), frag — смесь по склейкам (в основном срез, панели и искры акцентами; свой порядок — kinds). "
+            "angle — направление среза в градусах (0 вправо, 90 вниз; нет — по движению камеры), color — цвет "
+            "кромки #rrggbb, panels — 2 или 3. Середина перехода — точка склейки (snap_to_beats ставит её в долю). "
+            "/ Transition between pieces.",
             _obj({"type": {"type": "string"}, "duration": {"type": "number"}, "sfx": {"type": "string"},
                   "sfx_volume": {"type": "number"}, "audio": {"type": "string"}, "smart": {"type": "boolean"},
                   "motion_blur": {"type": "number", "description": "смаз whip/slide 0..1"},
+                  "angle": {"type": "number", "description": "slash: направление среза, градусы; нет — по камере"},
+                  "color": {"type": "string", "description": "slash/panels: цвет кромки #rrggbb"},
+                  "kinds": {"type": "array", "items": {"type": "string"},
+                            "description": "frag: виды по склейкам по кругу (slash/panels/sparks)"},
+                  "panels": {"type": "integer", "description": "panels: 2 или 3 полосы"},
                   "fit_speech": {"type": "boolean", "description": "укоротить переход, чтобы не задевал слова"}}),
             h_set_transition, mutating=True, label=lambda a: f"Переход {a.get('type') or ''} {a.get('sfx') or ''}".strip(),
         ),
