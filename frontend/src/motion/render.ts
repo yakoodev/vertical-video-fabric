@@ -51,6 +51,7 @@ import { waveformRenderer } from "./layers/waveform";
 import { textRenderer } from "./layers/text";
 import { videoRenderer } from "./layers/video";
 import { drawFx } from "./layers/fx";
+import { drawTrackedText, drawTrail } from "./layers/tracked";
 import { roundRectPath } from "./layers/common";
 import {
   flowGroups,
@@ -67,7 +68,7 @@ import {
   type GroupXf,
 } from "./flow";
 import type { Levels } from "./levels";
-import type { BlendMode, CameraKey, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, SceneLayer, ScratchCanvas, VoiceTrack } from "./types";
+import type { BlendMode, CameraKey, CaptionWord, ChatMessage, Composition, Ctx2D, FxLayer, Layer, LayerType, RenderEnv, SceneLayer, ScratchCanvas, TrackedTextLayer, TrailLayer, VoiceTrack } from "./types";
 import { layerUnit, refSize } from "./types";
 
 const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
@@ -212,6 +213,14 @@ export function drawFrame(
     if (part) {
       if (cam === undefined) cam = camAt(t);
       drawFlowPart(ctx, part, layer, t, env, data, cam, cam3, comp.camera);
+      continue;
+    }
+    if (layer.type === "tracked_text" || layer.type === "trail") {
+      // Слои «в мире» (layers/tracked.ts): трек — в координатах основы до камеры, наезд — сверху.
+      if (cam === undefined) cam = camAt(t);
+      const c = comp.camera?.length && cam && !isIdentityCamera(cam) ? cam : null;
+      if (layer.type === "tracked_text") drawTrackedText(ctx, layer as TrackedTextLayer, t, env, c);
+      else drawTrail(ctx, layer as TrailLayer, t, env, c);
       continue;
     }
     if (layer.type === "fx") {

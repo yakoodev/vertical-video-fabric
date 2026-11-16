@@ -191,6 +191,22 @@ def h_lyric_layers(ctx: ToolContext, args: dict) -> dict:
         layer["end"] = clock.final_to_clip(layer["end"])
     out: dict = {"ok": True, "lyrics_id": lyrics_id, "zone": built["zone"], "placed": len(built["placed"]),
                  "skipped": built["skipped"], "lines": len(lines), "offset_note": offset_note, "busy_note": busy_note}
+    tracked = args.get("tracked")
+    if tracked and not args.get("dry_run"):
+        # Строки словом «в мире игры» на поверхности, где трек держится (app/lyrics_world.py); остальные — на экране.
+        from app.heavy_queue import heavy_slot
+        from app.lyrics_world import DEFAULT_MAX_LINES, place_on_surfaces
+
+        opts = tracked if isinstance(tracked, dict) else {}
+        with heavy_slot("tracking", f"клип {ctx.plan_id}: текст песни на поверхностях"):
+            world = place_on_surfaces(
+                ctx.store, ctx.plan_id, built, clock.final_to_clip,
+                max_lines=int(_num(opts.get("max_lines"), DEFAULT_MAX_LINES) or DEFAULT_MAX_LINES),
+                style=opts.get("style") if isinstance(opts.get("style"), dict) else None,
+                min_held=_num(opts.get("min_held")))
+        built["layers"] = world["layers"]
+        out["world"] = world["world"]
+        out["screen"] = world["screen"]
     if args.get("dry_run"):
         out.update(dry_run=True, layers=built["layers"][:40], placed_lines=built["placed"])
         return out
@@ -252,7 +268,10 @@ def tools() -> list[Tool]:
             "weight, color, accent (цвет крупного куска; null — без), size (предел кегля), stroke, letterSpacing. "
             "Песня — музыка клипа (set_music, с music_start_sec) или song_offset (секунда трека в начале ролика). "
             "only — номера строк; unsure не ставятся (show_unsure — всё же). Прежние слои lyr_… заменяются; dry_run — "
-            "только план. / Place song lyrics as styled text layers between kills.",
+            "только план. tracked: true (или {max_lines, min_held, style}) — строки словом «в мире игры» на поверхности "
+            "у центра кадра (граффити 3D, слова по слогам; track_surface), где трек держится ≥ 60% строки; иначе строка "
+            "на экране, как обычно (ответ: world / screen с причиной). / Place song lyrics as styled text layers between "
+            "kills.",
             _obj({"lyrics_id": {"type": "string", "description": "из align_lyrics"},
                   "lines": {"type": "array", "items": {"type": "object"},
                             "description": "строки align_lyrics(words: true) вместо lyrics_id"},
@@ -264,7 +283,8 @@ def tools() -> list[Tool]:
                       "start": {"type": "number"}, "end": {"type": "number"}}}},
                   "zone": {"type": "string", "enum": ["bottom", "top", "center", "left", "right"]},
                   "style": {"type": "object"},
-                  "show_unsure": {"type": "boolean"}, "replace": {"type": "boolean"}, "dry_run": {"type": "boolean"}}),
+                  "show_unsure": {"type": "boolean"}, "replace": {"type": "boolean"}, "dry_run": {"type": "boolean"},
+                  "tracked": {"description": "true или {max_lines, min_held, style} — строки на поверхностях мира"}}),
             h_lyric_layers, mutating=True,
             label=lambda a: "Ставлю текст песни" + (" (план)" if a.get("dry_run") else ""),
         ),

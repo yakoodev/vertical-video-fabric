@@ -309,10 +309,11 @@ MODULES: list[Module] = [
         "frag_movie", "Мувик под песню", "montage",
         "Фраг-мувик: бои записей игры под песню — карточка «Новое видео» запускает агента проекта с плейбуком "
         "frag-movie; текст песни по слогам вокала (align_lyrics: demucs, если настроен DEMUCS_CMD, и Whisper) и слоем "
-        "строк в паузах между киллами (lyric_layers); части для TikTok и подписи — из настроек проекта.",
+        "строк в паузах между киллами (lyric_layers), слова «в мире игры» на поверхностях и след брошенной гранаты "
+        "(track_surface, track_object); части для TikTok и подписи — из настроек проекта.",
         cost=("cpu", "ram"), cost_note="Whisper large-v3-turbo и demucs — минута-две CPU на песню",
         depends=("transcription", "agent_chat"),
-        tools=("align_lyrics", "lyric_layers"),
+        tools=("align_lyrics", "lyric_layers", "suggest_surfaces", "track_surface", "track_object"),
         routes=("POST /api/projects/{id}/frag-movie",),
         ui=("карточка «Мувик под песню» в «Новом видео»",),
     ),

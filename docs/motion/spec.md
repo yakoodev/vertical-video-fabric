@@ -702,6 +702,35 @@ headless Chromium (CDP через `--remote-debugging-pipe`, без Puppeteer; �
 `POST /api/svg-to-webm {svg | asset_id, duration?, fps?, width?, height?, scale?, strip_bg?, label?}`, MCP
 `svg_to_webm`; SVG-баннер рендера (`POST /api/banners` с `.svg`) переводится в webm сам.
 
+### Слово на поверхности и след броска (`tracked_text`, `trail`)
+
+Слои «в мире игры» по треку сервиса (`app/world_track.py`; алгоритмы — `app/surface_track.py` и
+`app/object_track.py`; движок — `frontend/src/motion/layers/tracked.ts`). Трек считается по кадрам основы клипа
+(тот же граф, что у рендера и `view_frame`, размер детекции 540×960 у 9:16, шкала clip) и лежит файлом
+`data/tracks/<trk_…>.json`; слой ссылается на него `props.track`. Рендер и кадр агента кладут в слой компактные
+данные трека `props.trackData` (`motion_render.resolve_layer_assets` → `world_track.attach_track_data`; трека нет —
+слой пропущен с пометкой), превью берёт их `GET /api/motion/tracks/{id}`. Трек — в координатах основы ДО камеры:
+наезд камеры применяется сверху, как у `followCamera`.
+
+- **Плоскость** (`track_surface`): углы Ши — Томаси внутри четырёхугольника кадра-семени, LK вперёд и назад
+  (forward–backward ≤ 1 px), гомография якорь → кадр по MAGSAC, каждый кадр сверка выпрямленного кадра с семенем
+  (поправка дрейфа ≤ 6 px), проверка (выпуклость, площадь, скачок), прогноз в коротком пропуске, поиск ORB после
+  потери, добор точек, лёгкое симметричное сглаживание. Сэмпл — 4 угла (доли кадра) и статус o/w/p/l.
+- **Объект** (`track_object`): аффинное движение камеры (LK по фону, RANSAC) → `g` кадр → мир; шаблон 3 масштабов,
+  прогноз дуги в мире, «движется против фона»; подсказки `hints`; конец — упал (скорость в мире упала) или дуга
+  сломалась; `lead_in` — продолжение дуги назад до края кадра (статус e).
+
+`tracked_text`: `text` (строки — `\n`), `track`, `preset` (`graffiti3d` — синий→фиолетовый, белая обводка, объём;
+`plain`), `font`, `weight`, `color`, `gradient`, `stroke`, `extrude {color, depth, angle}`, `skew`, `uppercase`, `fit`
+(доля плоскости, 0.9), `lineHeight`, `words [{t}]` (время появления слов, шкала clip), `reveal` pop|fade|slam|none.
+x/y/scale/rotation слоя — место и размер НА плоскости (доли; rotation −90 — вертикально). Плоский рисунок
+переносится сеткой с перспективой (`space3d.warpImage`, `overlap: true` — без `copy`, иначе @napi-rs/canvas портит
+буфер при многих ячейках).
+
+`trail`: `track`, `color` (#ff3b5c), `glowColor`, `width` (опорн. px), `glow` 0..1.5, `style` solid|dashed|dotted,
+`tail` (с; 0 — весь путь), `fadeTail`, `head`, `from`/`to` (окно, шкала clip), `anchor` world|screen. Линия растёт
+до текущего момента; после падения объекта дуга остаётся и в `world` едет с фоном.
+
 ### Логотип, который пишется кистью (`logo_reveal`)
 
 Картинка логотипа (`asset_id`: PNG с прозрачностью или JPG на однотонном фоне) открывается **вдоль своих

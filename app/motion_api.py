@@ -158,6 +158,16 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
 
         return {"job_id": start_job(run)}
 
+    @router.get("/api/motion/tracks/{track_id}", summary="Трек «в мире игры» для превью слоёв tracked_text / trail")
+    def api_world_track(track_id: str, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
+        """Компактный трек (как ``props.trackData`` у рендера, app/world_track.engine_data): превью кладёт его в слой."""
+        from app.world_track import engine_data, load_track
+
+        track = load_track(track_id)
+        if not track:
+            raise HTTPException(status_code=404, detail="трека нет (track_surface / track_object)")
+        return engine_data(track)
+
     @router.get("/api/track-jobs/{job_id}", summary="Ход трекинга слоя")
     def api_track_job(job_id: str, _auth: auth_dep) -> dict:  # type: ignore[valid-type]
         from app.tracking import job_status

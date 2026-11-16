@@ -40,6 +40,9 @@ LAYER_TYPES = (
     "logo_reveal",
     # Перетекающий переход между сценами (app/motion_flow.py, frontend/src/motion/flow.ts): сам не рисуется.
     "transition",
+    # «В мире игры» по треку (app/world_track.py, frontend/src/motion/layers/tracked.ts): слово на поверхности,
+    # след броска.
+    "tracked_text", "trail",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t not in ("audio", "transition"))
 # logo_reveal: как открывается логотип и как уходит (LOGO_REVEALS / LOGO_EXITS в logoreveal.ts).

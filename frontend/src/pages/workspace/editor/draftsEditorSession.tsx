@@ -10,6 +10,7 @@ import { INSERT_GEOM, type InsertPreview } from "@/pages/workspace/preview/frame
 import { clipToSource, pieceBounds, type Selection } from "@/pages/workspace/ClipTimeline";
 import { clipTimeOf, captionWordsWithOriginal, FRAME_SEC, type InspTab } from "@/pages/workspace/editor/editorHelpers";
 import { type DraftsEditorState } from "@/pages/workspace/editor/useDraftsEditorState";
+import { withTrackData } from "@/pages/workspace/editor/useLayerPreviewData";
 import { layerCanvasHandlers } from "@/pages/workspace/editor/layerCanvasHandlers";
 
 /**
@@ -20,7 +21,7 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
   const {
     toast, videoRef, subLinesRef, subWordsRef, bannerGeomRef, subStyleRef, subPosPctRef, inspScrollRef,
     assetMediaRef, query, sourceMissing, subs, assetsQuery, view, playbackRef, playRanges, stopPlayback, openEditor,
-    backToMoments, reframedView, motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, clipNowRef,
+    backToMoments, reframedView, motionViewRef, inlineCancelRef, planChat, planVoice, planLevels, worldTracks, clipNowRef,
     reframeHintRef, layerDragRef, insertsPreviewRef, insertDragRef, hoverPlanRef, keyHandlerRef, planSubs, undoRef, redoRef,
     duplicateRef, copyLayerRef, pasteLayerRef, nudgeLayerRef, plans, flushSettings, undoEdit, redoEdit, pickPointRef,
     setPlanFlag, activePlan, planGroups, selectedPreset, editPieces, tlSelected, setTlSelected, inspTab, setInspTab,
@@ -146,7 +147,9 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
   const viewDuration = (activePlan?.segments ?? []).reduce((acc, seg) => acc + segLen(seg), 0);
   // Слои размечены в другом формате — превью рисует их перекомпоновку (как рендер); тянуть
   // мышью такие нельзя (сдвиг лёг бы не в те координаты) — сначала «Разметить слои в этом формате».
-  const shown = reframedView ?? { layers, camera };
+  const base = reframedView ?? { layers, camera };
+  // Слова на поверхности и след броска — с данными трека (как у рендера).
+  const shown = { ...base, layers: withTrackData(base.layers, worldTracks.data) };
   // Концовка-баннер (render.end_screen): начало — начало слоя end_banner, как в рендере.
   const endScreen = endScreenFor(activePlan?.render_settings?.end_screen, shown.layers, viewDuration);
   if (!layerDragRef.current)
