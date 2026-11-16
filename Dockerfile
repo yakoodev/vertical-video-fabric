@@ -101,6 +101,17 @@ RUN python3 /app/tools/fetch_sfx.py /app/vendor/packs
 
 RUN python3 -m venv /opt/venv
 
+# Отделение вокала (demucs htdemucs) для текста песни по слогам: app/lyrics_audio.py, «клип на песню». Отдельный venv,
+# чтобы torch не спорил с зависимостями сервиса; CPU-сборка torch. Веса (~80 МБ) качаются при первом запуске в том
+# данных (/data/torch-models), дальше без сети.
+RUN python3 -m venv /opt/demucs \
+    && /opt/demucs/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/demucs/bin/pip install --no-cache-dir torch torchaudio \
+        --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple \
+    && /opt/demucs/bin/pip install --no-cache-dir "demucs==4.1.0" soundfile
+ENV DEMUCS_CMD="/opt/demucs/bin/python|-m|demucs" \
+    TORCH_HOME=/data/torch-models
+
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 # Подбор видеомемов по смыслу (app/text_embed.py): ONNX multilingual-e5-small int8 (~135 МБ) не вшит в образ —
