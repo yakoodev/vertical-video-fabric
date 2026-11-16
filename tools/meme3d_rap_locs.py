@@ -337,7 +337,7 @@ def loc_inferno(bursts: list[float] | None = None) -> dict:
     ]
     racks = ["server/computer_large", "server/rack_mixed", "roof/q_computer_large", "server/rack_mixed"]  # без стойки с чужой эмблемой
     for side in (-1, 1):
-        for j in range(10):
+        for j in range(8):  # ряды заканчиваются за героями (последние стойки задевали Кодекса)
             z = -3.4 + j * 0.4
             x = side * 0.68
             objs.append(M(f"r{side}{j}", racks[(j + (side > 0)) % len(racks)], [x, 0, z], -side * 90, 0.36))
