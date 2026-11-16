@@ -292,6 +292,10 @@ def _make_recorder(store: Any, work: Path, cancel: threading.Event, source_overr
                           "overlaps": plan_joins(transition, durations, kw.get("gaps"), kw.get("jump_joins"))}
             return build_join_args(parts, durations, output_path, transition, **kw)
 
+        def _join_fx_clips(self, *_args: Any, **_kw: Any) -> dict:
+            # Заглушки картинки: окна мувика кадрами здесь не рисуются — трансляция показывает запасной xfade.
+            return {}
+
         def _apply_freezes(self, base: Path, preset: dict) -> None:
             self.freezes = list(preset.get("freezes") or [])
             ClipRenderService._apply_freezes(base, preset)

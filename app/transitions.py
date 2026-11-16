@@ -33,6 +33,16 @@ Settings (all optional, see ``normalize_transition``):
                   перехода); нет поля — резко, как раньше. Значение клипа ``render.motion_blur``
                   подставляет ``settings_to_render_kwargs``.
 
+Переходы фраг-мувика (одобрены владельцем 15.11 вместо белых вспышек и зум-панчей, реф
+``movie2/ref/ref_transitions.mp4``): ``slash`` — диагональный срез со светящейся кромкой по движению
+камеры, ``panels`` — 2–3 косые панели въезжают и забирают кадр, ``sparks`` — сноп искр от прицела, из него
+вырастает следующий кадр; ``frag`` — смесь по стыкам (``FRAG_PATTERN`` или свой ``kinds``). Их кадры
+рисует ``app/transitions_fx.py`` (numpy/OpenCV): окно перехода — отдельный короткий файл
+(``app/transitions_fx_render.py``), граф здесь только вклеивает его вместо xfade. Нет файла (предпросмотр-
+трансляция, сбой) — тот же стык простым xfade из ``TRANSITIONS``. Поля: ``angle`` — направление среза в
+градусах (0 — вправо, 90 — вниз; нет — по движению камеры, иначе по очереди), ``color`` — цвет кромки
+``#rrggbb``, ``kinds`` — виды по стыкам у ``frag``, ``panels`` — 2 или 3 панели.
+
 Pure functions only (argument builders): the caller runs ffmpeg. That keeps the
 filter graph testable without media.
 """
@@ -56,7 +66,23 @@ TRANSITIONS: dict[str, tuple[str, str | None]] = {
     "smooth": ("Плавный сдвиг", "smoothleft"),
     "wipe": ("Шторка", "wipeleft"),
     "zoom": ("Зум", "zoomin"),
+    # Мувик игры: кадры рисует app/transitions_fx.py; xfade — запасной вид того же стыка.
+    "slash": ("Слеш-вайп по движению", "wipetl"),
+    "panels": ("Диагональные панели", "vuslice"),
+    "sparks": ("Искры от прицела", "circleopen"),
+    "frag": ("Мувик: слеш, панели, искры", "wipetl"),
 }
+
+# Переходы мувика кадрами (app/transitions_fx.py) и их длина по умолчанию, с: срез — быстрый
+# (как в одобренном BURN v4: 9–14 кадров при 60 к/с), панелям нужны въезд, пауза и захват кадра.
+FX_DURATIONS: dict[str, float] = {"slash": 0.2, "panels": 0.4, "sparks": 0.3}
+FX_MIN_DURATION, FX_MAX_DURATION = 0.1, 0.6
+# ``frag`` по стыкам: в основном срез, панели и искры — акцентами (как в BURN v4).
+FRAG_PATTERN = ("slash", "slash", "panels", "slash", "slash", "sparks")
+# Цвет кромки по умолчанию — тёплый (белое ядро + янтарь + розовый ореол, как в одобренном мувике).
+FX_DEFAULT_COLOR = "#ffbe6e"
+# Белые вспышки и зум-панчи владелец забраковал для мувиков игры (журнал монтажа 15.11).
+FRAG_REJECTED = ("flash", "zoompunch", "fadewhite")
 
 SFX_KINDS: dict[str, str] = {
     "none": "Без звука",
@@ -111,6 +137,13 @@ def normalize_transition(raw: object) -> dict:
     out["duration"] = min(MAX_DURATION, max(MIN_DURATION, duration))
     if out["type"] in SNAP_DURATIONS:
         out["duration"] = SNAP_DURATIONS[out["type"]]
+    if out["type"] in FX_DURATIONS:
+        # Срез/панели/искры — 6–12 кадров: длиннее смотрится вялым, короче — не читается.
+        if src.get("duration") is None:
+            duration = FX_DURATIONS[out["type"]]
+        out["duration"] = round(min(FX_MAX_DURATION, max(FX_MIN_DURATION, duration)), 3)
+    if out["type"] in FX_DURATIONS or out["type"] == "frag":
+        out.update(_fx_options(src))
     out["smart"] = bool(src.get("smart", True))
     audio = str(src.get("audio") or "smooth")
     out["audio"] = audio if audio in AUDIO_MODES else "smooth"
@@ -129,6 +162,63 @@ def normalize_transition(raw: object) -> dict:
         # Только если задан: прежние настройки перехода остаются ровно прежними.
         out["motion_blur"] = round(min(1.0, blur), 3)
     return out
+
+
+def _fx_options(src: dict) -> dict:
+    """Поля переходов мувика — только заданные и годные (прежние настройки не меняются)."""
+    import math
+    import re
+
+    out: dict = {}
+    angle = src.get("angle")
+    if angle not in (None, "", "auto"):
+        try:
+            value = float(angle)
+        except (TypeError, ValueError):
+            value = math.nan
+        if math.isfinite(value):
+            out["angle"] = round(value % 360.0, 1)
+    color = str(src.get("color") or "").strip()
+    if re.fullmatch(r"#?[0-9a-fA-F]{6}", color):
+        out["color"] = "#" + color.lstrip("#").lower()
+    kinds = src.get("kinds")
+    if isinstance(kinds, (list, tuple)):
+        clean = [str(k) for k in kinds if str(k) in FX_DURATIONS][:64]
+        if clean:
+            out["kinds"] = clean
+    panels = src.get("panels")
+    if panels is not None:
+        try:
+            out["panels"] = 2 if int(panels) <= 2 else 3
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def join_kind(transition: dict, index: int) -> str:
+    """Вид перехода на склейке ``index``: у ``frag`` — по ``kinds`` (или ``FRAG_PATTERN``) по кругу."""
+    kind = str(transition.get("type") or "cut")
+    if kind != "frag":
+        return kind
+    kinds = [k for k in transition.get("kinds") or [] if k in FX_DURATIONS] or list(FRAG_PATTERN)
+    return kinds[index % len(kinds)]
+
+
+def join_duration(transition: dict, index: int) -> float:
+    """Желаемая длина перехода на склейке ``index`` (до урезания соседними частями)."""
+    if transition.get("type") == "frag":
+        return FX_DURATIONS[join_kind(transition, index)]
+    return float(transition["duration"])
+
+
+def is_fx(kind: str) -> bool:
+    """Этот вид рисуется кадрами (app/transitions_fx.py), а не xfade."""
+    return kind in FX_DURATIONS
+
+
+def fx_frames(overlap: float, fps: float) -> int:
+    """Окно перехода мувика в целых кадрах (≥ 2): файл окна и обрезки частей — ровно по кадрам."""
+    return max(2, int(round(float(overlap) * float(fps or 30.0))))
 
 
 # Переходы-сдвиги: картинка едет по горизонтали — их и смазывает motion_blur.
@@ -196,7 +286,7 @@ def plan_joins(
             continue
         # Переход не должен съедать больше 40% ни одной из двух соседних частей.
         room = min(durations[index], durations[index + 1]) * 0.4
-        out.append(max(0.0, min(float(transition["duration"]), room)))
+        out.append(max(0.0, min(join_duration(transition, index), room)))
     return out
 
 
@@ -349,9 +439,15 @@ def join_picture_filters(
     transition: dict,
     width: int = 1080,
     fps: float = 30.0,
+    fx_inputs: dict[int, int] | None = None,
 ) -> list[str]:
-    """Граф картинки склейки: входы ``[0:v]…[n-1:v]`` → ``[vout]``. Его же читает предпросмотр-трансляция."""
+    """Граф картинки склейки: входы ``[0:v]…[n-1:v]`` → ``[vout]``. Его же читает предпросмотр-трансляция.
+
+    ``fx_inputs`` — склейка → номер входа ffmpeg с готовым окном перехода мувика (``slash``/``panels``/
+    ``sparks``, app/transitions_fx_render.py, ровно ``overlap`` секунд целыми кадрами): на такой склейке
+    вместо xfade — конец части A до окна, окно, часть B после окна. Остальные склейки — как всегда."""
     xfade_name = TRANSITIONS[transition["type"]][1]
+    fx_inputs = fx_inputs or {}
     filters: list[str] = []
     if xfade_name and n > 1 and any(o > 0 for o in overlaps):
         # Одна шкала времени у всех входов: concat (встык) отдаёт 1/1000000, а
@@ -363,12 +459,22 @@ def join_picture_filters(
         # Motion blur сдвигового перехода (whip): горизонтальный gblur только на окнах переходов.
         shutter = float(transition.get("motion_blur") or 0) if xfade_name in SLIDE_XFADES else 0.0
         windows: list[tuple[float, float, float]] = []
+        half = 0.5 / float(fps or 30.0)  # обрезка по середине между кадрами — без дрожи округления
         for k in range(1, n):
             overlap = overlaps[k - 1]
             label = ("vx" if shutter > 0 else "vout") if k == n - 1 else f"v{k}"
-            if overlap > 0:
+            if overlap > 0 and (k - 1) in fx_inputs:
+                cut = elapsed - overlap
+                filters.append(f"[{previous}]trim=end={cut - half:.4f},setpts=PTS-STARTPTS[fa{k}]")
+                filters.append(f"[{fx_inputs[k - 1]}:v]settb=AVTB,setpts=PTS-STARTPTS[fx{k}]")
+                filters.append(f"[p{k}]trim=start={overlap - half:.4f},setpts=PTS-STARTPTS[fb{k}]")
+                filters.append(f"[fa{k}][fx{k}][fb{k}]concat=n=3:v=1:a=0[{label}]")
+                elapsed += durations[k] - overlap
+            elif overlap > 0:
+                # У «frag» вид свой на каждой склейке: без окна-файла — его запасной xfade.
+                name = TRANSITIONS.get(join_kind(transition, k - 1), (None, xfade_name))[1] or xfade_name
                 filters.append(
-                    f"[{previous}][p{k}]xfade=transition={xfade_name}:"
+                    f"[{previous}][p{k}]xfade=transition={name}:"
                     f"duration={overlap:.3f}:offset={elapsed - overlap:.3f}[{label}]"
                 )
                 windows.append((elapsed - overlap, elapsed, overlap))
@@ -411,6 +517,7 @@ def build_join_args(
     jl: dict | None = None,
     width: int = 1080,
     fps: float = 30.0,
+    fx_clips: dict[int, Path] | None = None,
 ) -> list[str]:
     """ffmpeg args joining ``parts`` with the given transition settings.
 
@@ -418,12 +525,17 @@ def build_join_args(
     звука стыка и всегда с коротким фейдом звука против щелчка.
     ``jl`` — J/L-склейки (app/audio_edit.py): ``{plan: plan_jl(...), handles: [(часть, "head"|"tail",
     путь)]}`` — звук собирается по плану, ручки звука — дополнительные входы; картинка как всегда.
+    ``fx_clips`` — склейка → файл окна перехода мувика (``render_fx_joins``): его длина — целые кадры
+    (``fx_frames``), и наплыв этой склейки (картинка и звук) берётся ровно такой же.
     """
     if len(parts) != len(durations) or not parts:
         raise ValueError("parts and durations must be non-empty and the same length")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     n = len(parts)
     overlaps = plan_joins(transition, durations, gaps, jump_joins)
+    fx = {int(i): Path(p) for i, p in (fx_clips or {}).items() if 0 <= int(i) < n - 1 and overlaps[int(i)] > 0}
+    for i in fx:
+        overlaps[i] = fx_frames(overlaps[i], fps) / float(fps or 30.0)
 
     args = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error"]
     for part in parts:
@@ -432,8 +544,12 @@ def build_join_args(
     for k, side, path in (jl or {}).get("handles") or []:
         handle_inputs[(int(k), str(side))] = n + len(handle_inputs)
         args.extend(["-i", str(path)])
+    fx_inputs: dict[int, int] = {}
+    for i in sorted(fx):
+        fx_inputs[i] = n + len(handle_inputs) + len(fx_inputs)
+        args.extend(["-i", str(fx[i])])
 
-    filters = join_picture_filters(n, durations, overlaps, transition, width, fps)
+    filters = join_picture_filters(n, durations, overlaps, transition, width, fps, fx_inputs)
 
     # ---- sound -----------------------------------------------------------
     audio_label = None
@@ -540,4 +656,7 @@ def transition_options() -> dict:
         "sfx": [{"key": k, "label": v} for k, v in SFX_KINDS.items()],
         "snap": dict(SNAP_DURATIONS),
         "default": dict(DEFAULT_TRANSITION),
+        # Переходы мувика: своя длина по умолчанию; у «frag» длина у каждого вида своя (ползунка нет).
+        "fx": {"durations": dict(FX_DURATIONS), "min": FX_MIN_DURATION, "max": FX_MAX_DURATION,
+               "color": FX_DEFAULT_COLOR, "frag_pattern": list(FRAG_PATTERN), "fixed": ["frag"]},
     }

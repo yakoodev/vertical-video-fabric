@@ -179,6 +179,14 @@ class MontageRender:
     def _build_join_args(self, *args: Any, **kwargs: Any) -> list[str]:
         return build_join_args(*args, **kwargs)
 
+    def _join_fx_clips(self, parts: list[Path], durations: list[float], transition: dict,
+                       gaps: list[float | None] | None, jumps: list[bool] | None, temp_dir: Path,
+                       fps: float) -> dict[int, Path]:
+        """Окна переходов мувика (slash/panels/sparks) кадрами — app/transitions_fx_render.py; нет — пусто."""
+        from app.transitions_fx_render import render_fx_joins
+
+        return render_fx_joins(parts, durations, transition, work_dir=temp_dir, gaps=gaps, jump_joins=jumps, fps=fps)
+
     @heavy("render")
     def render_montage(
         self,
@@ -327,6 +335,8 @@ class MontageRender:
                 if has_audio and any(shifts or []):
                     jl = self._jl_handles(source, base_preset, parts, durations, join, jumps, shifts,
                                           audio_edit, temp_dir)
+                fx_clips = self._join_fx_clips(rendered_parts, durations, join, _source_gaps(parts), jumps,
+                                               temp_dir, float(preset.get("fps") or 30))
                 _run_ffmpeg(
                     self._build_join_args(
                         rendered_parts,
@@ -344,6 +354,7 @@ class MontageRender:
                         fps=float(preset.get("fps") or 30),
                         jump_joins=jumps,
                         jl=jl,
+                        fx_clips=fx_clips,
                     ),
                     timeout=60 * 30,
                 )
