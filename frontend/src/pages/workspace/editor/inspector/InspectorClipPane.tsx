@@ -13,6 +13,14 @@ import { focusWindowPos, focusXAt } from "@/pages/workspace/editor/editorHelpers
 import { LookPicker } from "@/pages/workspace/editor/LookPicker";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
 
+/** Переходы мувика, которые рендер рисует кадрами: у них своя длина 0.1–0.6 с. */
+const FX_KINDS: TransitionSettings["type"][] = ["slash", "panels", "sparks"];
+/** Направление среза (градусы, 0 — вправо, 90 — вниз; ось Y кадра вниз). */
+const SLASH_ANGLES: [number, string][] = [
+  [0, "→ вправо"], [45, "↘ вправо-вниз"], [90, "↓ вниз"], [135, "↙ влево-вниз"],
+  [180, "← влево"], [225, "↖ влево-вверх"], [270, "↑ вверх"], [315, "↗ вправо-вверх"],
+];
+
 /** Вкладка «Клип»: формат, быстрые действия, лук, раскладка, переходы, обложка, баннер, паузы, «Ещё». */
 export function InspectorClipPane({ session }: { session: DraftsEditorSession }) {
   const {
@@ -194,7 +202,12 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
           <select
             className="input"
             value={transition.type}
-            onChange={(e) => patchTransition({ type: e.target.value as TransitionSettings["type"] })}
+            onChange={(e) => {
+              const type = e.target.value as TransitionSettings["type"];
+              // У переходов мувика своя длина по умолчанию (срез 0.2 с, панели 0.4 с, искры 0.3 с).
+              const fxDuration = (transitionOpts.data?.fx?.durations as Record<string, number> | undefined)?.[type];
+              patchTransition(fxDuration ? { type, duration: fxDuration } : { type });
+            }}
           >
             {(transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]).map((t) => (
               <option key={t.key} value={t.key}>{t.label}</option>
@@ -212,16 +225,43 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
             <span>умные склейки: внутри сцены — встык</span>
           </label>
         ) : null}
-        {transition.type !== "cut" && !(transitionOpts.data?.snap ?? {})[transition.type] ? (
+        {transition.type !== "cut" && !(transitionOpts.data?.snap ?? {})[transition.type]
+          && !(transitionOpts.data?.fx?.fixed ?? []).includes(transition.type) ? (
           <label className="field">
             <span>Длительность — {transition.duration.toFixed(2)} с</span>
             <input
               type="range"
-              min={0.1}
-              max={1.2}
-              step={0.05}
+              min={FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.min ?? 0.1) : 0.1}
+              max={FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.max ?? 0.6) : 1.2}
+              step={FX_KINDS.includes(transition.type) ? 0.02 : 0.05}
               value={transition.duration}
               onChange={(e) => patchTransition({ duration: Number(e.target.value) })}
+            />
+          </label>
+        ) : null}
+        {transition.type === "slash" || transition.type === "frag" ? (
+          <label className="field" title="Срез идёт по движению камеры на склейке; камера стоит — направления по очереди.">
+            <span>Направление среза</span>
+            <select
+              className="input"
+              value={transition.angle === undefined ? "auto" : String(transition.angle)}
+              onChange={(e) => patchTransition({ angle: e.target.value === "auto" ? undefined : Number(e.target.value) })}
+            >
+              <option value="auto">по движению камеры</option>
+              {SLASH_ANGLES.map(([deg, label]) => (
+                <option key={deg} value={String(deg)}>{label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {transition.type === "slash" || transition.type === "panels" || transition.type === "frag" ? (
+          <label className="field">
+            <span>Цвет кромки</span>
+            <input
+              type="color"
+              className="input"
+              value={transition.color ?? transitionOpts.data?.fx?.color ?? "#ffbe6e"}
+              onChange={(e) => patchTransition({ color: e.target.value })}
             />
           </label>
         ) : null}

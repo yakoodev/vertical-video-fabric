@@ -233,7 +233,11 @@ export interface ClipPlan {
 export type TransitionType =
   | "cut" | "whip" | "zoompunch" | "glitch" | "flash"
   | "fade" | "fadeblack" | "fadewhite"
-  | "slide" | "smooth" | "wipe" | "zoom" | "dissolve";
+  | "slide" | "smooth" | "wipe" | "zoom" | "dissolve"
+  | "slash" | "panels" | "sparks" | "frag";
+
+/** Переходы мувика, которые рендер рисует кадрами (app/transitions_fx.py). */
+export type FxTransitionKind = "slash" | "panels" | "sparks";
 
 export interface TransitionSettings {
   type: TransitionType;
@@ -243,6 +247,14 @@ export interface TransitionSettings {
   audio: "smooth" | "hard";
   sfx: "none" | "whoosh" | "click" | "pop" | "boom";
   sfx_volume: number;
+  /** slash: направление среза в градусах (0 — вправо, 90 — вниз); нет — по движению камеры. */
+  angle?: number;
+  /** slash/panels: цвет светящейся кромки #rrggbb. */
+  color?: string;
+  /** frag: виды по склейкам по кругу. */
+  kinds?: FxTransitionKind[];
+  /** panels: 2 или 3 полосы. */
+  panels?: 2 | 3;
 }
 
 /** Clip cover: a frame of the clip or an uploaded picture, optionally burned in first. */
@@ -370,6 +382,15 @@ export interface TransitionOptions {
   /** Переходы с фиксированной длиной — для них ползунок длительности не нужен. */
   snap: Partial<Record<TransitionType, number>>;
   default: TransitionSettings;
+  /** Переходы мувика (slash/panels/sparks/frag): длины по умолчанию, цвет кромки; у fixed — ползунка нет. */
+  fx?: {
+    durations: Partial<Record<FxTransitionKind, number>>;
+    min: number;
+    max: number;
+    color: string;
+    frag_pattern: FxTransitionKind[];
+    fixed: TransitionType[];
+  };
 }
 
 export interface SourceDetail extends Source {
