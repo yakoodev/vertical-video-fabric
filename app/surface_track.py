@@ -50,6 +50,7 @@ REACQUIRE_MIN = 14
 OK_CONF = 0.5
 WEAK_CONF = 0.25
 CORRECT_MAX_PX = 6.0
+ECC_MIN = 0.9  # корреляция ECC, с которой гладкая поверхность считается найденной
 MIN_FLAT = 0.7  # доля точек окна, что ложатся одной гомографией по соседним кадрам
 LK_WIN = (21, 21)
 LK_LEVELS = 4
@@ -324,6 +325,18 @@ class _PlaneRun:
                 self.missed = 0.0
             else:
                 self.anchor, self.cur = anchor, cur.astype(np.float32)
+        if status == "lost" and len(self.cur) < MIN_POINTS * 2:
+            # Точек мало (гладкое дерево, штукатурка) — прямое выравнивание ECC с семенем от прежнего места.
+            got = self._reacquire_ecc(gray)
+            if got is not None and P.reject_reason(self.quad0, prev_q, apply_h(got[0], self.quad0), dt,
+                                                   1 + int(round(self.missed / max(dt, 1e-3)))) is None:
+                q = apply_h(got[0], self.quad0)
+                if dt > 0 and self.missed <= 0:
+                    self.vel = 0.5 * self.vel + 0.5 * (q - prev_q) / dt
+                self.H, conf = got
+                status, self.missed = "weak", 0.0
+                self.rejects["ecc_used"] = self.rejects.get("ecc_used", 0) + 1  # не отказ — шаг по ECC
+                self._reseed_points(gray)
         if status == "lost":
             self.missed += dt
             if self.missed <= MAX_GAP_SEC:
@@ -373,33 +386,75 @@ class _PlaneRun:
         self.cur = new.astype(np.float32)
 
     def _reacquire(self, gray: np.ndarray) -> tuple[np.ndarray, float] | None:
-        """Потерянную плоскость — дескрипторами ORB семени (камера ушла и вернулась)."""
+        """Потерянную плоскость — дескрипторами семени (камера ушла и вернулась, меню закрыло кадр): SIFT, если
+        есть (на дереве и камне держится лучше ORB), иначе ORB; поиск — в окне вокруг последнего места."""
         cv2 = self.cv2
         if self.orb is None:
-            orb = cv2.ORB_create(nfeatures=600, fastThreshold=10)
+            det = cv2.SIFT_create(nfeatures=800, contrastThreshold=0.01) if hasattr(cv2, "SIFT_create") else cv2.ORB_create(nfeatures=600,
+                                                                                                    fastThreshold=10)
+            norm = cv2.NORM_L2 if hasattr(cv2, "SIFT_create") else cv2.NORM_HAMMING
             mask = _mask_poly((self.h, self.w), self.quad0)
-            kp, des = orb.detectAndCompute(self.seed, mask)
-            self.orb = (orb, kp, des)
-        orb, kp0, des0 = self.orb
+            kp, des = det.detectAndCompute(self.seed, mask)
+            self.orb = (det, norm, kp, des)
+        det, norm, kp0, des0 = self.orb
         if des0 is None or len(kp0) < REACQUIRE_MIN:
-            return None
-        kp1, des1 = orb.detectAndCompute(gray, None)
+            return self._reacquire_ecc(gray)
+        q_last = self.quad()
+        c = q_last.mean(axis=0)
+        win = _mask_poly((self.h, self.w), c + (q_last - c) * 2.2)
+        kp1, des1 = det.detectAndCompute(gray, win)
         if des1 is None or len(kp1) < REACQUIRE_MIN:
-            return None
-        matches = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(des0, des1, k=2)
+            return self._reacquire_ecc(gray)
+        matches = cv2.BFMatcher(norm).knnMatch(des0, des1, k=2)
         good = [m for m, *rest in matches if rest and m.distance < 0.75 * rest[0].distance]
         if len(good) < REACQUIRE_MIN:
-            return None
+            return self._reacquire_ecc(gray)
         src = np.float64([kp0[m.queryIdx].pt for m in good])
         dst = np.float64([kp1[m.trainIdx].pt for m in good])
         H, inl = _homography(src, dst)
         if H is None or inl.sum() < REACQUIRE_MIN:
-            return None
+            return self._reacquire_ecc(gray)
+        H = self._constrain(H, src[inl], dst[inl])
+        if H is None:
+            return self._reacquire_ecc(gray)
         q = apply_h(H, self.quad0)
         if not is_convex(q) or abs(_area(q)) < 0.05 * abs(_area(self.quad0)):
-            return None
+            return self._reacquire_ecc(gray)
         err = _rms(H, src[inl], dst[inl])
         return H, _confidence(int(inl.sum()), len(good), err)
+
+    def _reacquire_ecc(self, gray: np.ndarray) -> tuple[np.ndarray, float] | None:
+        """Гладкая поверхность (дерево, штукатурка), точек мало: прямое выравнивание ECC — участок семени против
+        кадра, от последнего места, в половинном размере. Корреляция < ``ECC_MIN`` — не нашлась."""
+        cv2 = self.cv2
+        x0, y0 = np.floor(self.quad0.min(axis=0)).astype(int)
+        x1, y1 = np.ceil(self.quad0.max(axis=0)).astype(int)
+        x0, y0, x1, y1 = max(0, x0), max(0, y0), min(self.w, x1), min(self.h, y1)
+        if x1 - x0 < 24 or y1 - y0 < 16:
+            return None
+        k = 0.5
+        S = np.diag([k, k, 1.0])
+        T = np.array([[1, 0, x0], [0, 1, y0], [0, 0, 1]], np.float64)
+        tpl = cv2.resize(self.seed[y0:y1, x0:x1], None, fx=k, fy=k, interpolation=cv2.INTER_AREA).astype(np.float32)
+        img = cv2.resize(gray, None, fx=k, fy=k, interpolation=cv2.INTER_AREA).astype(np.float32)
+        # Маска ECC — по кадру (inputMask), не по шаблону: окно семени берём целиком (рамка четырёхугольника).
+        # Варп: точка шаблона (полуразмер, от угла окна) → точка кадра (полуразмер).
+        init = (S @ self.H @ T @ np.linalg.inv(S)).astype(np.float32)
+        init /= init[2, 2]
+        try:
+            cc, warp = cv2.findTransformECC(tpl, img, init, cv2.MOTION_HOMOGRAPHY,
+                                            (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 60, 1e-5), None, 5)
+        except cv2.error:
+            return None
+        if cc < ECC_MIN:
+            return None
+        H = np.linalg.inv(S) @ warp.astype(np.float64) @ S @ np.linalg.inv(T)
+        H /= H[2, 2]
+        q = P.constrain(self.quad0, apply_h(H, self.quad0), None)
+        H = self._quad_h(q)
+        if H is None:
+            return None
+        return H, round(float(min(0.6, (cc - ECC_MIN) / (1 - ECC_MIN) + 0.3)), 3)
 
 
 # ---------------------------------------------------------------- плоскость: весь трек

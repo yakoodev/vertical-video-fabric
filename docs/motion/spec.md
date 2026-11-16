@@ -727,8 +727,15 @@ x/y/scale/rotation слоя — место и размер НА плоскост
 переносится сеткой с перспективой (`space3d.warpImage`, `overlap: true` — без `copy`, иначе @napi-rs/canvas портит
 буфер при многих ячейках).
 
+Наложение слова `blend` (`layers/trackedblend.ts`): `paint` (по умолчанию) — по пикселям рамки слова: кадр под
+слоем (рендер — тот же холст, превью — `env.underlay`) → яркость, её низкие частоты (свет/тени) множат краску,
+высокие (фактура) добавляются, экспозиция и цвет — по среднему участка под буквами, мягкий край (`soften`), зерно;
+`normal` / `multiply` / `screen` / `overlay` / `soft-light` — режимы холста. Смаз по движению плоскости: подкадры
+затвора (`layer.motionBlur`, иначе клипа, иначе 0.5), до 8 положений, накопление `lighter`.
+
 `trail`: `track`, `color` (#ff3b5c), `glowColor`, `width` (опорн. px), `glow` 0..1.5, `style` solid|dashed|dotted,
-`tail` (с; 0 — весь путь), `fadeTail`, `head`, `from`/`to` (окно, шкала clip), `anchor` world|screen. Линия растёт
+`tail` (с; 0 — весь путь), `fadeTail`, `head`, `from`/`to` (окно, шкала clip), `anchor` world|screen, `blend`
+(нет — свечение screen, ядро normal; screen | add | normal — всё этим режимом). Линия растёт
 до текущего момента; после падения объекта дуга остаётся и в `world` едет с фоном.
 
 ### Логотип, который пишется кистью (`logo_reveal`)

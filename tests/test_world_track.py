@@ -334,3 +334,18 @@ def test_tools_track_surface_and_object_end_to_end(tmp_path, monkeypatch):
     kept, _assets, notes = resolve_layer_assets(store, layers)
     assert all(l["props"].get("trackData", {}).get("t") for l in kept if l["type"] in ("tracked_text", "trail"))
     assert len(kept) == len(layers) and not notes
+
+
+def test_schema_blend_modes_for_tracked_text_and_trail():
+    from app import motion
+
+    layers = [{"id": "w", "type": "tracked_text", "start": 0, "end": 1,
+               "props": {"text": "HI", "track": "trk_0123456789ab", "blend": "soft-light",
+                         "paint": {"shade": 0.5, "texture": 1.2, "grain": 0.1, "soften": 1.5}}},
+              {"id": "t", "type": "trail", "start": 0, "end": 1, "props": {"track": "trk_0123456789ab", "blend": "add"}}]
+    assert motion.validate_layers(layers) == []
+    out = motion.normalize_layers(layers)
+    assert out[0]["props"]["blend"] == "soft-light" and out[0]["props"]["paint"]["texture"] == 1.2
+    assert out[1]["props"]["blend"] == "add"
+    bad = [{**layers[0], "props": {**layers[0]["props"], "blend": "dissolve"}}]
+    assert motion.validate_layers(bad)

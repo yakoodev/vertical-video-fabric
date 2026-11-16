@@ -22,6 +22,7 @@ import type { CameraMatrix } from "../camera";
 import type { Ctx2D, RenderEnv, TrackData, TrackedTextLayer, TrailLayer } from "../types";
 import { layerUnit, refSize } from "../types";
 import { rgba } from "./common";
+import { blendOnto, frameScratch, SURFACE_BLENDS, type SurfaceBlend } from "./trackedblend";
 
 type Mat3 = [number, number, number, number, number, number, number, number, number];
 type Pt = [number, number];
@@ -162,7 +163,7 @@ function wordIn(kind: string, local: number): { a: number; s: number } {
 }
 
 /** Нарисовать слой tracked_text в кадре (px кадра, с камерой). */
-export function drawTrackedText(ctx: Ctx2D, layer: TrackedTextLayer, t: number, env: RenderEnv, cam: CameraMatrix | null): void {
+export function drawTrackedText(ctx: Ctx2D, layer: TrackedTextLayer, t: number, env: RenderEnv, cam: CameraMatrix | null, fps = 30, shutter = 0.5): void {
   const P = layer.props || ({} as TrackedTextLayer["props"]);
   const track = P.trackData;
   if (!track || track.kind !== "surface") return;
@@ -199,22 +200,95 @@ export function drawTrackedText(ctx: Ctx2D, layer: TrackedTextLayer, t: number, 
   b.translate(pw * MARGIN, ph * MARGIN);
   paintPlaneText(b, layer, st, t, pw, ph);
   b.restore();
+  const alpha = clamp01(st.opacity * at.vis);
+  const mode = surfaceBlend(layer);
+  // Моменты подкадров: смаз по движению плоскости за затвор (слово едет вместе с кадром — и смазано, как он).
+  const shots = blurShots(track, t, at.q, fps, shutter, W, H);
+  if (mode === "normal" && shots.length === 1) {
+    warpPlane(ctx, env, buf.canvas, BW, BH, pw, ph, Hq, cam, { alpha, maxErr: 0.6, overlap: true });
+    return;
+  }
+  const L = frameScratch(env, "L");
+  if (!L) {
+    warpPlane(ctx, env, buf.canvas, BW, BH, pw, ph, Hq, cam, { alpha, maxErr: 0.6, overlap: true });
+    return;
+  }
+  L.ctx.save();
+  L.ctx.setTransform(1, 0, 0, 1, 0, 0);
+  L.ctx.globalCompositeOperation = "source-over";
+  L.ctx.globalAlpha = 1;
+  L.ctx.clearRect(0, 0, W, H);
+  L.ctx.restore();
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const q of shots) {
+    const Hs = squareToQuad(q);
+    if (!Hs) continue;
+    const box = warpPlane(L.ctx, env, buf.canvas, BW, BH, pw, ph, Hs, cam, {
+      alpha: 1 / shots.length, composite: shots.length > 1 ? "lighter" : "source-over", maxErr: 0.6, overlap: true });
+    if (!box) continue;
+    x0 = Math.min(x0, box[0]);
+    y0 = Math.min(y0, box[1]);
+    x1 = Math.max(x1, box[2]);
+    y1 = Math.max(y1, box[3]);
+  }
+  const pad = 4;
+  const rx = Math.max(0, Math.floor(x0) - pad);
+  const ry = Math.max(0, Math.floor(y0) - pad);
+  const rw = Math.min(W, Math.ceil(x1) + pad) - rx;
+  const rh = Math.min(H, Math.ceil(y1) + pad) - ry;
+  if (!(rw > 0 && rh > 0)) return;
+  blendOnto(ctx, env, L, { x: rx, y: ry, w: rw, h: rh }, mode, P.paint, alpha, t);
+}
+
+/** Режим наложения слова: props.blend; нет — у «граффити 3D» без своей настройки «краска», как у всех (paint). */
+export function surfaceBlend(layer: TrackedTextLayer): SurfaceBlend {
+  const b = layer.props?.blend;
+  return b && (SURFACE_BLENDS as readonly string[]).includes(b) ? (b as SurfaceBlend) : "paint";
+}
+
+/**
+ * Четырёхугольники подкадров затвора: движение углов за затвор `shutter/fps` больше 1.5 px — до 8 положений
+ * (накопление «lighter» с весом 1/n — точное среднее), иначе одно.
+ */
+export function blurShots(track: TrackData, t: number, q: number[], fps: number, shutter: number, W: number, H: number): number[][] {
+  if (!(shutter > 0) || !(fps > 0)) return [q];
+  const half = shutter / fps / 2;
+  const a = quadAt(track, t - half)?.q ?? q;
+  const b = quadAt(track, t + half)?.q ?? q;
+  let travel = 0;
+  for (let i = 0; i < 4; i++) travel = Math.max(travel, Math.hypot((b[i * 2] - a[i * 2]) * W, (b[i * 2 + 1] - a[i * 2 + 1]) * H));
+  if (travel < 1.5) return [q];
+  const n = Math.min(8, Math.max(2, Math.ceil(travel / 2)));
+  const out: number[][] = [];
+  for (let k = 0; k < n; k++) {
+    const tt = t - half + (2 * half * (k + 0.5)) / n;
+    out.push(quadAt(track, tt)?.q ?? q);
+  }
+  return out;
+}
+
+/** Плоский рисунок плоскости → кадр по гомографии единичного квадрата `Hq`. Рамка в px кадра или null. */
+function warpPlane(
+  target: Ctx2D, env: RenderEnv, src: unknown, BW: number, BH: number, pw: number, ph: number, Hq: Mat3,
+  cam: CameraMatrix | null, opts: { alpha: number; composite?: GlobalCompositeOperation; maxErr: number; overlap: boolean },
+): [number, number, number, number] | null {
+  const W = env.width;
+  const H = env.height;
   const map = (x: number, y: number): Pt | null => {
     const p = project(Hq, x / pw - MARGIN, y / ph - MARGIN);
     return p ? camPt(cam, p[0] * W, p[1] * H) : null;
   };
   const wAt = (u: number, v: number) => Hq[6] * u + Hq[7] * v + 1;
   const ws = [wAt(-MARGIN, -MARGIN), wAt(1 + MARGIN, -MARGIN), wAt(1 + MARGIN, 1 + MARGIN), wAt(-MARGIN, 1 + MARGIN)];
-  if (ws.some((w) => !(w > 1e-3))) return;
+  if (ws.some((w) => !(w > 1e-3))) return null;
   const skX = Math.max(Math.abs(ws[1] - ws[0]), Math.abs(ws[2] - ws[3])) / Math.min(...ws);
   const skY = Math.max(Math.abs(ws[3] - ws[0]), Math.abs(ws[2] - ws[1])) / Math.min(...ws);
-  const blend = layer.blend && layer.blend !== "normal" ? ({ multiply: "multiply", screen: "screen", overlay: "overlay", add: "lighter" } as const)[layer.blend] : undefined;
-  warpImage(ctx, env, buf.canvas as unknown as CanvasImageSource, 0, 0, BW, BH, map, skX, skY, {
-    alpha: clamp01(st.opacity * at.vis),
-    composite: blend,
-    maxErr: 0.6,
-    overlap: true,
-  });
+  if (!warpImage(target, env, src as CanvasImageSource, 0, 0, BW, BH, map, skX, skY, opts)) return null;
+  const cs = [map(0, 0), map(BW, 0), map(BW, BH), map(0, BH)].filter((p): p is Pt => !!p);
+  return [Math.min(...cs.map((p) => p[0])), Math.min(...cs.map((p) => p[1])), Math.max(...cs.map((p) => p[0])), Math.max(...cs.map((p) => p[1]))];
 }
 
 /** Слова слоя на плоскости `pw×ph` (px буфера): раскладка по строкам, объём, обводка, заливка. */
@@ -454,6 +528,10 @@ export function drawTrail(ctx: Ctx2D, layer: TrailLayer, t: number, env: RenderE
   ctx.globalAlpha = clamp01(st.opacity);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  // Свечение — screen (светится поверх сцены, не мутнит её), ядро — как есть; blend задан — всё им.
+  const OPS = { normal: "source-over", screen: "screen", add: "lighter" } as const;
+  const glowOp: GlobalCompositeOperation = OPS[P.blend ?? "screen"] ?? "screen";
+  const coreOp: GlobalCompositeOperation = P.blend ? OPS[P.blend] ?? "source-over" : "source-over";
   const dash = (style === "dashed" ? [width * 2.6, width * 1.8] : style === "dotted" ? [0.01, width * 2.1] : []) as number[];
   // Дорожка разбита на куски: к хвосту тоньше и прозрачнее (fadeTail).
   const n = pts.length;
@@ -472,6 +550,7 @@ export function drawTrail(ctx: Ctx2D, layer: TrailLayer, t: number, env: RenderE
       smoothPath(ctx, seg);
       ctx.setLineDash(dash);
       ctx.lineDashOffset = -((t - from) * width * 8);
+      ctx.globalCompositeOperation = pass === "glow" ? glowOp : coreOp;
       if (pass === "glow") {
         ctx.strokeStyle = rgba(glowColor, 0.35 * k * Math.min(1.5, glow));
         ctx.lineWidth = width * (1.6 + 1.2 * Math.min(1.5, glow)) * (0.5 + 0.5 * k);

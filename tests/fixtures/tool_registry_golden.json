@@ -1544,8 +1544,8 @@
 {
 "name": "track_surface",
 "title": "Веду поверхность",
-"description": "fcf7dffd0fc19474",
-"parameters": "a8dce1957f6ba34e",
+"description": "747975a5f02a5806",
+"parameters": "1171bf4b375073ac",
 "mutating": true,
 "scope": "clip",
 "module": "frag_movie",
@@ -1558,8 +1558,8 @@
 {
 "name": "track_object",
 "title": "Веду брошенный предмет",
-"description": "67c15fdf1dc5921c",
-"parameters": "749221a0966054fc",
+"description": "91801b4b5d111ba7",
+"parameters": "7177f07451e159a7",
 "mutating": true,
 "scope": "clip",
 "module": "frag_movie",

@@ -790,6 +790,13 @@ export type TrackedTextProps = {
   /** Время появления каждого слова (клип), по порядку слов текста. */
   words?: { t: number; w?: string }[];
   reveal?: "pop" | "fade" | "slam" | "none";
+  /**
+   * Как слово ложится в кадр (layers/trackedblend.ts): paint (по умолчанию) — «краска»: свет, тени и фактура
+   * поверхности проступают в буквах, экспозиция и температура участка; normal — наклейка (пресет graffiti3d как в
+   * референсе); multiply / screen / overlay / soft-light — режимы холста. Смаз по движению — layer.motionBlur.
+   */
+  blend?: "paint" | "normal" | "multiply" | "screen" | "overlay" | "soft-light";
+  paint?: import("./layers/trackedblend").PaintLook | null;
 };
 
 /** След летящего объекта по треку точки (layers/tracked.ts). */
@@ -811,6 +818,8 @@ export type TrailProps = {
   from?: number;
   to?: number;
   anchor?: "world" | "screen";
+  /** Наложение: свечение по умолчанию screen (светится поверх сцены), ядро — normal; add/screen/normal — всё сразу. */
+  blend?: "normal" | "screen" | "add";
 };
 
 export type LayerPropsMap = {
