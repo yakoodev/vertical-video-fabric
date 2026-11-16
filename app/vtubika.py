@@ -72,9 +72,15 @@ SFX = {
     "cheer": ("sfx:freesound/cheer.ogg", 0.4),
     "applause": ("sfx:freesound/applause.ogg", 0.38),
     "riser": ("sfx:freesound/riser-subtle.ogg", 0.3),
+    # Серия 10 «Трекинг отвалился»: сбой трекинга, клип чата (затвор), горячая клавиша, смех зала.
+    "glitch": ("sfx:freesound/glitch.ogg", 0.28),
+    "scratch": ("sfx:freesound/record-scratch.ogg", 0.32),
+    "shutter": ("sfx:freesound/camera-2.ogg", 0.4),
+    "toggle": ("sfx:kenney-interface/switch_002.ogg", 0.55),
+    "laugh": ("sfx:freesound/laugh-crowd.ogg", 0.3),
 }
 # Звуки длиннее обычных 2.5 с (крики и аплодисменты зала — записи по 4 с): звучат целиком, без обрыва.
-SFX_DUR = {"cheer": 4.0, "applause": 4.0}
+SFX_DUR = {"cheer": 4.0, "applause": 4.0, "laugh": 3.5}
 
 # Концовка каждой истории (app/vtubika_endcard.py): значок, «vtubika», сайт и слоган сайта — без других обещаний.
 # План: "end_card": false — без неё, dict — поверх. Звук — мягкий стинг паков kenney, музыка затихает под карточкой.
