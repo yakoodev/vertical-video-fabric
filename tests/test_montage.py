@@ -53,6 +53,20 @@ def test_to_spec_splits_piece_reuses_segment_once_and_sets_render():
     assert "вырезал паузу" in out["notes"]
 
 
+def test_to_spec_game_clip_gets_frag_instead_of_flash_and_zoompunch():
+    """Запись игры: белую вспышку и зум-панч владелец забраковал для мувиков — вместо них frag."""
+    base = {"pieces": [{"source_piece": 0, "start_sec": 100, "end_sec": 110, "title": "A"},
+                       {"source_piece": 1, "start_sec": 200, "end_sec": 210, "title": "B"}],
+            "subtitles": False, "cover": {"piece": 0, "offset": 1}, "rationale": ["x"]}
+    for kind in ("flash", "zoompunch", "fadewhite"):
+        out = to_spec(_spec(), {**base, "transition": {"type": kind, "sfx": "none"}}, gaming=True)
+        assert out["render"]["transition"]["type"] == "frag"
+    keep = to_spec(_spec(), {**base, "transition": {"type": "slash", "sfx": "none"}}, gaming=True)
+    assert keep["render"]["transition"]["type"] == "slash"
+    meme = to_spec(_spec(), {**base, "transition": {"type": "zoompunch", "sfx": "whoosh"}})
+    assert meme["render"]["transition"]["type"] == "zoompunch"  # не игра — прежний набор
+
+
 class LoopClient:
     """First answer strays outside the shown material; after feedback it fixes it."""
 

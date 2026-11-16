@@ -35,20 +35,35 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
             transition[key] = args[key]
     if args.get("smart") is not None:
         transition["smart"] = bool(args["smart"])
+    from app.transitions import FX_DURATIONS
+
+    if args.get("type") in FX_DURATIONS and args["type"] != (render.get("transition") or {}).get("type") \
+            and args.get("duration") is None:
+        transition.pop("duration", None)  # у вида мувика — его длина по умолчанию (срез 0.2 с, панели 0.4 с)
+    problems += _fx_args(args, transition)
     if problems:
         raise ToolError("переход не принят", problems)
-    from app.transitions import MIN_DURATION, SNAP_DURATIONS, normalize_transition, speech_join_warnings, \
-        speech_under_joins
+    from app.transitions import FRAG_REJECTED, MIN_DURATION, SNAP_DURATIONS, normalize_transition, \
+        speech_join_warnings, speech_under_joins
 
     plan = ctx.store.get_clip_plan(ctx.plan_id)
     segments = plan.get("segments") or []
     words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
     notes = []
+    kind = normalize_transition(transition)["type"]
+    rule = []
+    if kind in FRAG_REJECTED:
+        game = gaming_hint(ctx)
+        if game:
+            rule.append(f"{kind} в записи игры ({game}): белые вспышки и зум-панчи владелец забраковал для мувиков "
+                        "(журнал монтажа 15.11) — type frag (срез по движению камеры, панели, искры) или slash")
     if args.get("fit_speech"):
         # Наплыв не должен уводить слова под переход: длину — по самому тесному стыку.
         report = speech_under_joins(segments, transition, words)
-        kind = normalize_transition(transition)["type"]
-        if report["hit"] and kind not in SNAP_DURATIONS:
+        if report["hit"] and kind == "frag":
+            notes.append("у frag длина у каждого вида своя — fit_speech её не меняет: подрежь куски (см. warnings) "
+                         "или поставь slash с duration")
+        elif report["hit"] and kind not in SNAP_DURATIONS:
             if report["safe_duration"] >= MIN_DURATION:
                 transition["duration"] = report["safe_duration"]
                 notes.append(f"длина перехода {report['safe_duration']:.2f} с — наплыв не заходит на речь")
@@ -57,12 +72,43 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
                              "подрежь куски (см. warnings) или поставь type cut")
     fresh = _save_render(ctx, {**render, "transition": transition})
     out: dict = {"ok": True, "transition": fresh["transition"]}
-    warnings = speech_join_warnings(speech_under_joins(segments, fresh["transition"], words), fresh["transition"])
+    warnings = rule + speech_join_warnings(speech_under_joins(segments, fresh["transition"], words),
+                                           fresh["transition"])
     if warnings:
         out["warnings"] = warnings
     if notes:
         out["note"] = "; ".join(notes)
     return out
+
+
+def _fx_args(args: dict, transition: dict) -> list[str]:
+    """Поля переходов мувика (angle, color, kinds, panels) → в ``transition``; ответ — что не так."""
+    from app.transitions import FX_DURATIONS
+
+    problems = []
+    if args.get("angle") is not None:
+        if args["angle"] in ("", "auto"):
+            transition.pop("angle", None)
+        elif _num(args["angle"]) is None:
+            problems.append("angle: градусы (0 — вправо, 90 — вниз) или \"auto\" — по движению камеры")
+        else:
+            transition["angle"] = _num(args["angle"])
+    if args.get("color") is not None:
+        text = str(args["color"]).strip()
+        if len(text.lstrip("#")) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in text.lstrip("#")):
+            problems.append("color: #rrggbb")
+        transition["color"] = text
+    if args.get("kinds") is not None:
+        kinds = args["kinds"] if isinstance(args["kinds"], list) else []
+        bad = [str(k) for k in kinds if str(k) not in FX_DURATIONS]
+        if bad or not kinds:
+            problems.append(f"kinds: список из {', '.join(FX_DURATIONS)}")
+        transition["kinds"] = kinds
+    if args.get("panels") is not None:
+        if args["panels"] not in (2, 3):
+            problems.append("panels: 2 или 3")
+        transition["panels"] = args["panels"]
+    return problems
 
 
 def ending_warning(store: Any, source_id: int, end_sec: float) -> str | None:
@@ -142,9 +188,14 @@ def gaming_hint(ctx: ToolContext) -> str | None:
     """Клип — запись игры или мувик? Что нашлось (для текста предупреждения) или None: игра от первого лица в
     имени файла/тегах/названии (``first_person_hint``), слово «мувик»/«фраг» в названии клипа, события игры
     в кэше (``game_events`` уже разбирал запись — только Apex)."""
+    return gaming_hint_for(ctx.store, ctx.plan_id)
+
+
+def gaming_hint_for(store: Any, plan_id: int) -> str | None:
+    """``gaming_hint`` по хранилищу и номеру клипа (для ИИ-монтажа вне инструментов)."""
     try:
-        plan = ctx.store.get_clip_plan(ctx.plan_id, include_segments=False)
-        source = ctx.store.get_source(int(plan["source_id"]))
+        plan = store.get_clip_plan(plan_id, include_segments=False)
+        source = store.get_source(int(plan["source_id"]))
     except (KeyError, TypeError, ValueError):
         return None
     from app.first_person import first_person_hint, source_texts
@@ -159,7 +210,7 @@ def gaming_hint(ctx: ToolContext) -> str | None:
     try:
         from app.game_events_job import cached
 
-        if cached(ctx.store, int(source["id"])):
+        if cached(store, int(source["id"])):
             return "события игры"
     except Exception:  # noqa: BLE001 - нет кэша/файла — не игра по этому признаку
         pass
