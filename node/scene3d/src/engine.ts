@@ -665,6 +665,8 @@ class Engine {
       for (const k of s.state || []) if (t >= k.t) Object.assign(state, k);
       o.prop.update(t, state);
     }
+    // Поводок и прочие «связки» между героями (meme_props_rap.ts): концы — кости персонажей на этот t.
+    if ((o.prop as any)?.link) (o.prop as any).link(this.characters, t, o.node);
     // Крепление к кости персонажа: вес w смешивает «свободное» положение и «в руке».
     if (s.attach && s.attach.length) {
       o.node.updateMatrixWorld(true);
@@ -724,6 +726,15 @@ class Engine {
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
     const roll = sampleAngle(keys, t, "roll") ?? 0;
     this.dof = sampleNumber(keys, t, "dof") ?? 0;
+    // Фишай и вспышка удара (post.ts, LensShader): ключи камеры; flash — ещё и затухающие вспышки camera.flashes.
+    {
+      let fl = sampleNumber(keys, t, "flash") ?? 0;
+      for (const f of (cs as any).flashes || []) {
+        const d = t - f.t;
+        if (d >= 0 && d < (f.duration ?? 0.25)) fl = Math.max(fl, (f.amount ?? 0.85) * Math.pow(1 - d / (f.duration ?? 0.25), 2));
+      }
+      this.post?.setLens(sampleNumber(keys, t, "fisheye") ?? 0, fl);
+    }
     // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false, и кадров free).
     let active: CameraKey | undefined;
     for (const k of cs.keys) if (k.t <= t + 1e-9) active = k;

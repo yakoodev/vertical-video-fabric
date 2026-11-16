@@ -14,15 +14,17 @@
  */
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
+import { addBling, type BlingHandle, type BlingSpec } from "./meme_bling.ts";
 
-export interface CostumeSpec {
+/** Плюс рэп-флекс (meme_bling.ts): ``chain``, ``shades``, ``cap``, ``collar``. */
+export interface CostumeSpec extends BlingSpec {
   apron?: { color?: string; trim?: string; frill?: string; waist?: string; bow?: string; pocket?: string };
   headband?: { color?: string; ribbon?: string };
   glasses?: { color?: string };
   curlers?: string;
 }
 
-export interface CostumeDims { bodyW: number; bodyH: number; bodyD: number; eyeX: number; eyeY: number }
+export interface CostumeDims { bodyW: number; bodyH: number; bodyD: number; eyeX: number; eyeY: number; radius?: number }
 
 function mat(c: string, glow = 0.06) {
   const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(c), roughness: 0.6, metalness: 0 });
@@ -94,7 +96,7 @@ function frame(w: number, h: number, th: number, d: number, r: number, m: THREE.
 }
 
 /** Надеть костюм. ``S`` — ширина корпуса (м), ``P`` — пропорции корпуса (доли ширины). */
-export function addCostume(squash: THREE.Group, S: number, P: CostumeDims, c: CostumeSpec) {
+export function addCostume(squash: THREE.Group, S: number, P: CostumeDims, c: CostumeSpec): BlingHandle {
   const W = P.bodyW * S, H = P.bodyH * S, D = P.bodyD * S;
   const front = D / 2;
   if (c.apron) {
@@ -219,4 +221,5 @@ export function addCostume(squash: THREE.Group, S: number, P: CostumeDims, c: Co
       squash.add(cyl);
     }
   }
+  return addBling(squash, S, P, c);
 }

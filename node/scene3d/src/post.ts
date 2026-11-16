@@ -107,6 +107,37 @@ const GradeShader = {
     }`,
 };
 
+/** Последний проход: «фишай» (бочка: центр крупнее, края сжаты, углы кадра на месте) и белая вспышка удара. */
+const LensShader = {
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    resolution: { value: new THREE.Vector2(1080, 1920) },
+    fisheye: { value: 0 },
+    flash: { value: 0 },
+    flashColor: { value: new THREE.Color(1, 1, 1) },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform vec2 resolution;
+    uniform float fisheye, flash;
+    uniform vec3 flashColor;
+    varying vec2 vUv;
+    void main() {
+      vec2 asp = vec2(resolution.x / resolution.y, 1.0);
+      vec2 c = (vUv - 0.5) * asp;
+      float R2 = dot(0.5 * asp, 0.5 * asp);
+      float r2 = dot(c, c);
+      vec2 uv = vUv;
+      if (fisheye > 0.0) uv = 0.5 + (c * (1.0 - fisheye * R2 + fisheye * r2)) / asp;
+      vec3 col = texture2D(tDiffuse, clamp(uv, 0.0, 1.0)).rgb;
+      col = mix(col, flashColor, clamp(flash, 0.0, 1.0));
+      gl_FragColor = vec4(col, 1.0);
+    }`,
+};
+
 export class PostFX {
   composer: EffectComposer;
   grade: ShaderPass;
@@ -114,6 +145,7 @@ export class PostFX {
   gtao: GTAOPass | null = null;
   bloom: UnrealBloomPass | null = null;
   depthCam: THREE.PerspectiveCamera;
+  lens: ShaderPass;
 
   /** ``extra`` — проходы после цветокоррекции (в sRGB): toon-«бумага» (toon.ts) и подобные. */
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, camera: THREE.PerspectiveCamera, W: number, H: number, spec: PostSpec, samples = 4,
@@ -154,6 +186,18 @@ export class PostFX {
     u.ca.value = spec.ca ?? 1.2;
     this.composer.addPass(this.grade);
     for (const p of extra) this.composer.addPass(p);
+    this.lens = new ShaderPass(LensShader);
+    this.lens.uniforms.resolution.value.set(W, H);
+    this.lens.enabled = false;
+    this.composer.addPass(this.lens);
+  }
+
+  /** Фишай (0 — выкл., 0.6–1.2 — сильный) и вспышка 0..1 на этот кадр (ключи камеры ``fisheye`` / ``flash``). */
+  setLens(fisheye: number, flash: number) {
+    const u = this.lens.uniforms;
+    u.fisheye.value = Math.max(0, fisheye);
+    u.flash.value = Math.max(0, flash);
+    this.lens.enabled = fisheye > 0.001 || flash > 0.001;
   }
 
   /** Цветокоррекция, виньетка и сила свечения — сменить на лету (фаза окружения: другая локация после склейки). */

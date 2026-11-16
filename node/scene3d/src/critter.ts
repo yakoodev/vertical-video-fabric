@@ -568,7 +568,7 @@ export function createCritter(spec: CritterSpec): Character {
 
   if (look.badge) addBadge(squash, S, look.badge);
   const gear = spec.gear ? addGear(squash, arms, S, CP, spec.gear) : null;
-  if (spec.costume) addCostume(squash, S, CP, spec.costume);
+  const costume = spec.costume ? addCostume(squash, S, CP, spec.costume) : null;
 
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
@@ -689,6 +689,7 @@ export function createCritter(spec: CritterSpec): Character {
         setNub(a, n, S, t0, raise);
       }
       gear?.update(t, (fld, d) => num(t, fld, d));
+      costume?.update((fld, d) => num(t, fld, d));
       const f = drawFace(t, v);
       if (f.tint > 0.01) {
         const k = Math.min(1, f.tint) * (0.75 + 0.25 * Math.sin(t0 * 12));
