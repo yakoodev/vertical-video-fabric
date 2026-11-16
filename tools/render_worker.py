@@ -1,4 +1,5 @@
-"""Хост-воркер 3D-рендера: берёт у сервиса задания 3D-серий, рендерит Blender'ом на этом компьютере, отдаёт mp4.
+"""Хост-воркер 3D-рендера: берёт у сервиса задания 3D-серий и «клипа на песню» (kind ``music_video``,
+tools/music_video/remote.py), рендерит Blender'ом на этом компьютере, отдаёт mp4.
 
 В Docker сервиса нет GPU и Blender — поэтому рендер идёт здесь (Windows-хост, RTX). Сервис ставит задание
 («Истории» → 3D-серия → Blender), воркер забирает его, шлёт пульс с процентом (в UI: «рендер на компьютере… N%»),
@@ -31,6 +32,8 @@ sys.path.insert(0, str(ROOT))
 from app import series3d_blender as SB  # noqa: E402
 
 DEFAULT_TOKEN_FILE = Path(os.environ.get("TEMP", "/tmp")) / "vvtok.txt"
+# Какие задания берёт воркер: 3D-серии и «клип на песню» (tools/music_video/remote.py).
+KINDS = ("series3d", "music_video")
 
 
 class Api:
@@ -49,7 +52,18 @@ class Api:
         return r.json()
 
     def claim(self, worker: str, info: dict) -> dict | None:
-        return self._post("/api/render3d/claim", json={"worker": worker, "info": info}).get("job")
+        return self._post("/api/render3d/claim", json={"worker": worker, "info": info, "kinds": list(KINDS)}).get("job")
+
+    def download(self, path: str, dest: Path) -> None:
+        """Файл сервиса (архив задания «клип на песню») — на диск, частями."""
+        tmp = dest.with_suffix(dest.suffix + ".part")
+        with self.http.stream("GET", self.base + path, timeout=600) as r:
+            if r.status_code >= 400:
+                raise RuntimeError(f"{path}: HTTP {r.status_code}")
+            with tmp.open("wb") as fh:
+                for chunk in r.iter_bytes(1 << 20):
+                    fh.write(chunk)
+        tmp.replace(dest)
 
     def heartbeat(self, job_id: int, worker: str, progress: float | None, note: str = "") -> dict:
         return self._post(f"/api/render3d/jobs/{job_id}/heartbeat",
@@ -101,7 +115,43 @@ class Pulse:
         self._done.set()
 
 
+def run_music_video(api: Api, job: dict, worker: str, work_root: Path, blender: str) -> dict:
+    """«Клип на песню»: архив задания → кадры Blender → mp4 (tools/music_video/remote.py)."""
+    sys.path.insert(0, str(ROOT / "tools" / "music_video"))
+    import remote as MV  # noqa: E402 - модуль инструмента клипа на песню
+
+    jid = int(job["id"])
+    payload = job["payload"]
+    out = work_root / f"mv-{payload.get('mv_job')}-job-{jid}"
+    pulse = Pulse(api, jid, worker)
+    t0 = time.time()
+    try:
+        print(f"задание {jid}: {job.get('title') or ''} — {payload.get('nf')} кадров", flush=True)
+        video = MV.render_bundle(api.download, payload, out, blender,
+                                 progress=lambda p, note: (pulse.update(p, note), print(f"  {p * 100:5.1f}% {note}",
+                                                                                          flush=True)),
+                                 should_stop=lambda: pulse.stop)
+        pulse.update(1.0, "загрузка mp4")
+        result = {"frames": payload.get("nf"), "worker": worker, "wall_sec": round(time.time() - t0, 1)}
+        api.complete(jid, worker, video, result)
+        print(f"задание {jid} готово за {result['wall_sec']} с", flush=True)
+        return result
+    except Exception as exc:  # noqa: BLE001 - любое падение — в сервис, воркер живёт дальше
+        err = f"{type(exc).__name__}: {exc}"
+        print(f"задание {jid} упало: {err}\n{traceback.format_exc()[-1500:]}", flush=True)
+        if not pulse.stop:
+            try:
+                api.fail(jid, worker, err[:1800], retry=isinstance(exc, OSError))
+            except Exception as exc2:  # noqa: BLE001
+                print(f"не сообщил об ошибке: {exc2}", flush=True)
+        return {"error": err}
+    finally:
+        pulse.close()
+
+
 def run_job(api: Api, job: dict, worker: str, work_root: Path, cache: Path) -> dict:
+    if job.get("kind") == "music_video":
+        return run_music_video(api, job, worker, work_root, SB.find_blender() or "")
     jid = int(job["id"])
     payload = job["payload"]
     work = work_root / f"job-{jid}"

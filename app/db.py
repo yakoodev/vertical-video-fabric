@@ -638,6 +638,10 @@ class Database:
             from app.s3d_store import ensure_schema as ensure_series3d_schema
 
             ensure_series3d_schema(conn)
+            # Клип на песню: задания (разбор песни → план → картинки по карточке → кадры → клип), app/music_video.py.
+            from app.music_video import ensure_music_video_schema
+
+            ensure_music_video_schema(conn)
             # Варианты обложек готовых клипов (app/cover_variants.py).
             from app.cover_variants import ensure_cover_variants_schema
 

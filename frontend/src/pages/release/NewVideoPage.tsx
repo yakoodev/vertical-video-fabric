@@ -15,6 +15,7 @@ import { clipPath, projectPath, releasePath } from "@/lib/paths";
 import { AiVideoNew } from "@/pages/AiVideoTab";
 import { ExplainerNew } from "@/pages/ExplainerTab";
 import { AddSource } from "@/pages/VideoListPage";
+import { MusicVideoForm } from "@/pages/release/MusicVideoForm";
 import { StoryNew } from "@/pages/StoriesTab";
 import "@/styles/aivideo.css";
 import "@/styles/explainer.css";
@@ -26,7 +27,7 @@ import "@/styles/releases.css";
  * по прошлым роликам: настоящая сумма появится на карточке перед платным шагом. Без проекта можно только файл, ссылку и холст.
  */
 
-type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "frag" | "canvas" | "top";
+type TypeKey = "link" | "story" | "aiv" | "3d" | "expl" | "promo" | "frag" | "mv" | "canvas" | "top";
 type IconName = Parameters<typeof Icon>[0]["name"];
 type TypeCard = { key: TypeKey; title: string; text: string; price: string; icon: IconName; module?: string; paid?: boolean; project?: boolean };
 
@@ -38,6 +39,7 @@ const TYPES: TypeCard[] = [
   { key: "expl", title: "Объяснялка", text: "Маскот объясняет тему. Тема, сценарий, позы, озвучка.", price: "около 34 ₽", icon: "chat", module: "explainer", project: true },
   { key: "promo", title: "Промо приложения", text: "Телефон с записью экрана. Материалы, сборка.", price: "0 ₽", icon: "pad", module: "promo", project: true },
   { key: "frag", title: "Мувик под песню", text: "Бои записей игры под песню, текст песни по слогам. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "bolt", module: "frag_movie", project: true },
+  { key: "mv", title: "Клип на песню", text: "Своя песня, участок, комикс или рваная бумага. Слова в такт слогам, картинки в 2.5D.", price: "около 3 ₽ за картинку", icon: "play", module: "music_video", paid: true, project: true },
   { key: "canvas", title: "Пустой холст", text: "Собрать руками. Сразу клип.", price: "0 ₽", icon: "image" },
   { key: "top", title: "ТОП-N", text: "Лучшие клипы одного видео подряд с номерами. Новый клип.", price: "0 ₽", icon: "star", module: "compilation", project: true },
 ];
@@ -98,6 +100,8 @@ export function NewVideoPage() {
     form = <PromoForm projectId={projectId} />;
   } else if (current?.key === "frag" && projectId) {
     form = <FragMovieForm projectId={projectId} />;
+  } else if (current?.key === "mv" && projectId) {
+    form = <MusicVideoForm projectId={projectId} />;
   } else if (current?.key === "top" && projectId) {
     form = <TopForm projectId={projectId} />;
   }

@@ -101,6 +101,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "story_overview", "story_save_world", "story_save_character", "story_save_location", "story_add_scene",
         "story_generate_image", "story_delete", "story_sfx", "story_create", "story_status", "story_set_script",
         "story_update_beats", "story_continue", "story_cancel", "story_draft", "story_start", "tts_preview")),
+    "music_video": ("клип на песню владельца: разбор песни по слогам, план сцен, карточка на картинки, кадры, клип", (
+        "music_video_create", "music_video_status", "music_video_plan", "music_video_continue", "list_music",
+        "add_music_from_url")),
 }
 
 # Слова владельца → какие группы сразу дать модели (экономит лишний круг load_tools).
@@ -119,6 +122,8 @@ _PRELOAD = {
     "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
     "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота", "темы канала", "очередь тем"),
     "stories": ("истори", "рассказчик", "эпизод", "библиотек сцен", "актёр", "актер"),
+    "music_video": ("клип на песню", "музыкальн клип", "музыкальный клип", "клип под песню", "music video",
+                    "music_video"),
     "feed": ("лент", "запощ", "выложил", "выложено", "выложен", "сдай работ", "сдать работ", "вердикт"),
 }
 

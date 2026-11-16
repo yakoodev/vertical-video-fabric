@@ -2738,6 +2738,55 @@
 "module": null,
 "handler": "h_feed_list",
 "label": true
+},
+{
+"name": "music_video_create",
+"title": "Клип на песню",
+"description": "0ae8ff6bf9b67742",
+"parameters": "048683b78b320125",
+"mutating": true,
+"scope": "project",
+"module": "music_video",
+"handler": "h_create",
+"label": true,
+"cost": [
+"cpu",
+"ram",
+"paid"
+]
+},
+{
+"name": "music_video_status",
+"title": "Клип на песню: статус",
+"description": "733a21d2bc0c5514",
+"parameters": "712fd59d4ea7f5c3",
+"mutating": false,
+"scope": "project",
+"module": "music_video",
+"handler": "h_status",
+"label": false
+},
+{
+"name": "music_video_plan",
+"title": "Клип на песню: план",
+"description": "faf1190aadd5aa7b",
+"parameters": "1ba9800fb9580310",
+"mutating": true,
+"scope": "project",
+"module": "music_video",
+"handler": "h_plan",
+"label": false
+},
+{
+"name": "music_video_continue",
+"title": "Клип на песню: дальше",
+"description": "72929220444bf731",
+"parameters": "e546e0b2732c3097",
+"mutating": true,
+"scope": "project",
+"module": "music_video",
+"handler": "h_continue",
+"label": false
 }
 ]
 }

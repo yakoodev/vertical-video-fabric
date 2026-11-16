@@ -316,6 +316,19 @@ MODULES: list[Module] = [
         ui=("карточка «Мувик под песню» в «Новом видео»",),
     ),
     Module(
+        "music_video", "Клип на песню", "ai",
+        "Клип на свою песню владельца (пресет 13.11: плоский комикс или рваная бумага, 2.5D): большие слова бьют в "
+        "атаки слогов вокала, склейки на долях, сцены — картинки nano-banana. Разбор песни, план, текстуры и mp4 — в "
+        "сервисе; картинки — Polza, только по одобренной карточке (или настройке «Тратить без подтверждения»); "
+        "кадры рисует Blender — здесь или на компьютере с Blender через очередь рендера.",
+        cost=("cpu", "ram", "paid"), cost_note="картинка ≈ 3 ₽ (Polza, по карточке); Whisper и Blender — CPU/GPU минуты",
+        depends=("ai_video", "transcription"),
+        tools=("music_video_create", "music_video_status", "music_video_plan", "music_video_continue"),
+        routes=("/api/music-video/*", "/api/projects/{id}/music-video"),
+        ui=("карточка «Клип на песню» в «Новом видео»",),
+        workers=("music-video",),
+    ),
+    Module(
         "promo", "Промо приложений", "montage",
         "Шаблон промо: телефон с записью экрана, подписи, музыка — одним вызовом build_app_promo.",
         cost=("cpu",), cost_note="рендер моушн-слоёв",

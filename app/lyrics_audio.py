@@ -179,14 +179,17 @@ def transcribe(path: Path, lang: str, model: str, prompt: str = "") -> tuple[lis
 
 
 def align_audio(path: Path, lyrics: str = "", lang: str = "", start: float = 0.0, end: float | None = None,
-                model: str | None = None, hint: bool = True, progress: Any = None) -> dict:
-    """Звук + текст → выравнивание (секунды трека). Без текста — строки из того, что распознал Whisper."""
+                model: str | None = None, hint: bool = True, progress: Any = None, keep_dir: Path | None = None) -> dict:
+    """Звук + текст → выравнивание (секунды трека). Без текста — строки из того, что распознал Whisper.
+
+    ``keep_dir`` — рабочая папка, которая остаётся после прохода (участок ``mix.wav``, вокал ``vocals.wav``, стем demucs
+    в ``sep/``): «Клип на песню» (app/music_video_job.py) берёт их дальше. Без неё — временная папка, удаляется."""
     from app.settings import settings
 
     model = model or lyrics_model()
     stage = progress or (lambda _s: None)
     lines_in = LA.parse_lyrics(lyrics)
-    work = Path(settings.tmp_dir) / f"lyrics-{os.getpid()}-{time.monotonic_ns()}"
+    work = Path(keep_dir) if keep_dir else Path(settings.tmp_dir) / f"lyrics-{os.getpid()}-{time.monotonic_ns()}"
     work.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     try:
@@ -214,7 +217,8 @@ def align_audio(path: Path, lyrics: str = "", lang: str = "", start: float = 0.0
             fixed = {"moved": 0}
             snap = {"snapped": 0, "words": sum(len(line["words"]) for line in result["lines"]), "mean_shift": 0.0}
     finally:
-        shutil.rmtree(work, ignore_errors=True)
+        if not keep_dir:
+            shutil.rmtree(work, ignore_errors=True)
     notes = [method_note] if method_note else []
     stats = {**result["stats"], **{f"snap_{k}": v for k, v in snap.items()}, "onsets": len(onsets),
              "silent_starts_fixed": fixed["moved"]}
