@@ -526,9 +526,11 @@ function rain(p: Record<string, any>): Prop {
 function chalkboard(p: Record<string, any>): Prop {
   const [w, h] = p.size || [3, 1.3];
   const grp = new THREE.Group();
-  const frame = rbox(w + 0.12, h + 0.12, 0.05, std("#7a5232"), 0.02);
-  frame.position.y = h / 2;
-  grp.add(frame);
+  if (p.frame !== false) {
+    const frame = rbox(w + 0.12, h + 0.12, 0.05, std("#7a5232"), 0.02);
+    frame.position.y = h / 2;
+    grp.add(frame);
+  }
   const lines = [
     "∑ токенов → ∞", "БД = ∅ ✓", "rm -rf / ≈ быстро", "f(юзер) = платит²", "лимит(t) → 0", "эссе: 20 стр.", "∫ бюджет dt = −5000",
     "prod ⟂ тесты", "кот × мувик = ?", "Δ мозг < 0", "push --force ✓", "2 + 2 = 5 (подробно)",

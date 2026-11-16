@@ -23,9 +23,11 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
 import meme3d_pilot as P1  # noqa: E402
+import meme3d_rap_locs as Lc  # noqa: E402
 import meme3d_rap_world as Wd  # noqa: E402
 
 FY = Wd.FY
+MODELS = Path("D:/vvf-data/runtime/models3d")
 
 
 def render_frames(spec: dict, times: list[float], work: Path, name: str, gl: str = "gpu") -> list[Path]:
@@ -36,7 +38,7 @@ def render_frames(spec: dict, times: list[float], work: Path, name: str, gl: str
     shutil.rmtree(prev, ignore_errors=True)
     P1.wait_ram(5.0)
     P1._run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(sp), "--packs", str(P1.PACKS),
-             "--gl", gl, "--workers", "1", "--preview", ",".join(f"{t:.2f}" for t in times), "--preview-dir", str(prev)], name)
+             "--gl", gl, "--workers", "1", "--models", str(MODELS), "--preview", ",".join(f"{t:.2f}" for t in times), "--preview-dir", str(prev)], name)
     return [prev / (f"frame_{t:.2f}".replace(".", "_") + ".png") for t in times]
 
 
@@ -87,7 +89,7 @@ def still_spec(loc_name: str, *, c_pos, c_yaw=0.0, c_pose=None, c_face="smug", c
                k_face="angry", leash_len=0.44, cam=None, dof=0.0, extra=None, focus=None) -> dict:
     """Один кадр локации (t = 0.5): герои в позе, камера ``cam`` = (цель, ширина м, fov, азимут, угол сверху, фишай, крен)
     или готовые (pos, tgt, fov, fish, roll)."""
-    loc = Wd.LOCATIONS[loc_name]()
+    loc = Lc.LOCATIONS[loc_name]()
     chars = [Wd.claude([{"t": 0, "ease": "step", **BASE_C, **(c_pose or {})}], [{"t": 0, "expr": c_face, "blend": 0, "look": list(c_look)}],
                        move=[{"t": 0, "position": c_pos, "ease": "step"}], yaw=c_yaw)]
     ex = list(extra or [])
@@ -112,46 +114,33 @@ def still_spec(loc_name: str, *, c_pos, c_yaw=0.0, c_pose=None, c_face="smug", c
 
 
 def location_stills() -> list[tuple[str, dict]]:
-    S = Wd.loc_skyline()["spot"]
+    S = Lc.loc_skyline()["spot"]
     th = S["throne"]
     fy = FY
-    out = [
+    return [
         ("1. открытие: кран над городом", still_spec(
-            "skyline", c_pos=th, k_pos=[-0.28, 0, -0.05], k_face="angry",
-            cam=([1.6, 1.1, 5.2], [-0.3, 0.6, -4.0], 50, 0.0, 0))),
+            "skyline", c_pos=th, k_pos=[-0.3, 0, -0.2], k_face="angry", cam=([4.5, 3.6, 7.5], [-0.6, -1.6, -7.0], 50, 0.0, 0))),
         ("2. открытие: Клод на троне", still_spec(
             "skyline", c_pos=th, c_pose={"armL": "hips", "armR": [-10, 25, 0.3, 0], "lean": -4}, c_face="smug",
-            k_pos=[-0.3, 0, -0.02], k_pose={"lean": 18, "turn": 20}, k_face="snarl",
-            cam=([-0.08, th[1] + fy + 0.05, -0.2], 0.62, 34, -15, -6, 0.0, 0), dof=1.6)),
-        ("3. серверная-купол", still_spec(
-            "dome", c_pos=[0, 0, 0], c_pose={"lean": -16, "tilt": 4, "turn": 10, "armL": [30, -20, 0.3, 0], "armR": [6, 45, 0.8, 0]},
-            k_pos=[-0.4, 0, 0.3], k_pose={"lean": 28, "turn": 30, "hop": 0.012, "squash": 0.92}, k_face="snarl",
-            cam=([-0.18, 0.2, 0.12], 0.62, 60, 16, -4, 0.45, -6))),
-        ("4. неоновая сцена с толпой", still_spec(
-            "stage", c_pos=[0, 0.14, 0], c_pose={"lean": -6, "armL": [70, -10, 0.6, 0], "armR": [70, -10, 0.6, 0], "squash": 1.06}, c_face="happy",
-            k_pos=[-0.34, 0.14, 0.12], k_pose={"lean": 15, "turn": 30, "hop": 0.01}, k_face="bark",
-            cam=([0.0, 0.3, 0.0], 1.5, 55, 6, 4, 0.3, 0))),
-        ("5. пентхаус, дождь жетонов", still_spec(
-            "penthouse", c_pos=[0, 0, 0.1], c_pose={"lean": 10, "armL": [55, 40, 0.6, 0.4], "armR": [55, 40, 0.6, 0.4], "shades": 0}, c_face="happy",
-            k_pos=[-0.34, 0, 0.2], k_pose={"turn": 30}, k_face="angry",
-            cam=([-0.05, 0.16, 0.1], 0.55, 72, -10, 6, 0.7, 0))),
-        ("6. улица, доставка фури-аниме", still_spec(
+            k_pos=[-0.3, 0, -0.15], k_pose={"lean": 18, "turn": 20}, k_face="snarl", leash_len=0.5,
+            cam=([-0.08, th[1] + fy + 0.05, -0.3], 0.62, 34, -15, -6, 0.0, 0), dof=1.6)),
+        ("3. сцена с толпой", still_spec(
+            "stage", c_pos=[0, 0.18, 0], c_pose={"lean": -6, "armL": [70, -10, 0.6, 0], "armR": [70, -10, 0.6, 0], "squash": 1.06}, c_face="happy",
+            k_pos=[-0.34, 0.18, 0.12], k_pose={"lean": 15, "turn": 30, "hop": 0.01}, k_face="bark",
+            cam=([0.0, 0.42, 0.3], 1.5, 52, 4, 3, 0.25, 0))),
+        ("4. пентхаус, дождь жетонов", still_spec(
+            "penthouse", c_pos=[0, 0, 0.3], c_pose={"lean": 8, "armL": [55, 40, 0.6, 0.4], "armR": [55, 40, 0.6, 0.4], "shades": 0}, c_face="happy",
+            k_pos=[-0.34, 0, 0.4], k_pose={"turn": 30}, k_face="angry", cam=([0.0, 0.3, 0.0], 1.1, 50, -14, 4, 0.2, 0), dof=0.6)),
+        ("5. улица, доставка", still_spec(
             "street", c_pos=[0.05, 0, 0.35], c_yaw=-10, c_pose={"armL": "hips", "armR": "point", "turn": -10}, c_face="smug",
-            k_pos=[-0.3, 0, 0.45], k_face="angry",
-            cam=([0.1, 0.42, 0.2], 1.0, 50, 14, -10, 0.25, 0))),
-        ("7. класс, доска с формулами", still_spec(
+            k_pos=[-0.3, 0, 0.45], k_face="angry", cam=([-0.2, 0.45, 0.4], 1.8, 50, 28, -2, 0.0, 0), dof=0.3)),
+        ("6. класс", still_spec(
             "classroom", c_pos=[0.3, 0, -0.85], c_yaw=-25, c_pose={"armR": [40, 60, 0.7, 0.3], "lean": 6}, c_face="focused",
-            cam=([0.1, 0.3, -0.95], 0.95, 42, 18, 4, 0.0, 0))),
-        ("8. горящий дата-центр", still_spec(
+            cam=([0.15, 0.25, -0.95], 0.7, 40, 24, 4, 0.0, 0), dof=0.3)),
+        ("7. горящий дата-центр", still_spec(
             "inferno", c_pos=[0, 0, 0.2], c_pose={"lean": -8, "armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, c_face="smug",
-            k_pos=[-0.34, 0, 0.32], k_pose={"lean": 20, "turn": 25}, k_face="bark",
-            cam=([0.0, 0.32, 0.1], 0.95, 58, 0, -2, 0.35, 0))),
-        ("9. мост: студия, гладит Кодекса", still_spec(
-            "studio", c_pos=[0.1, 0.16, 0], c_pose={"armR": [30, 50, 0.6, 0.6], "turn": 15, "shades": 1}, c_face="deadpan",
-            k_pos=[-0.17, 0.16, 0.02], k_yaw=20, k_face="smile", leash_len=0.3,
-            cam=([-0.03, 0.27, 0.0], 0.7, 32, 0, 4, 0.0, 0))),
+            k_pos=[-0.34, 0, 0.32], k_pose={"lean": 20, "turn": 25}, k_face="bark", cam=([0.0, 0.4, -0.2], 1.4, 56, 0, 0, 0.3, 0))),
     ]
-    return out
 
 
 def stage_locations(out: Path, gl: str) -> Path:
@@ -160,7 +149,7 @@ def stage_locations(out: Path, gl: str) -> Path:
         files += render_frames(sp, [0.5], out / "work", f"loc{i}", gl)
         labels.append(lab)
     dst = out / "stage1b_locations.jpg"
-    sheet(files, labels, dst, cols=3, w=540)
+    sheet(files, labels, dst, cols=4, w=540)
     return dst
 
 

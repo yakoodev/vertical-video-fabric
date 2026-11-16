@@ -404,10 +404,12 @@ LOCATIONS = {
 
 def spec(loc: dict, chars: list[dict], extra: list[dict], cam_keys: list[dict], duration: float, *, width: int = 1080, height: int = 1920,
          flashes: list[dict] | None = None, shakes: list[dict] | None = None) -> dict:
-    cam = {"fov": 40, "keys": cam_keys, "clamp": False}
+    cam = {"fov": 40, "keys": cam_keys, "clamp": False, "far": 220}
     if flashes:
         cam["flashes"] = flashes
     if shakes:
         cam["shake"] = shakes
     return {"width": width, "height": height, "fps": 30, "duration": duration, "environment": loc["env"], "lights": loc["lights"],
-            "objects": loc["objects"] + extra, "characters": chars, "camera": cam, "quality": {"shadows": True, "shadowSize": 2048, "antialias": True}}
+            "objects": loc["objects"] + extra, "characters": chars, "camera": cam, "quality": {"shadows": True, "shadowSize": 2048, "antialias": True},
+            # Модели библиотеки (в т.ч. CC BY — строки атрибуции клипа: credits.txt рядом с роликом).
+            "models": {"attribution": True, "seed": 7}}

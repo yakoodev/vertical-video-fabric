@@ -156,7 +156,8 @@ export interface SceneSpec {
     keepInFrame?: { ids?: string[]; margin?: number; feet?: boolean }; shake?: { t: number; amp?: number; duration?: number }[] };
   quality?: { shadows?: boolean; shadowSize?: number; antialias?: boolean };
   /** Библиотека вещей: seed — засев выбора вариантов, off — всё из процедурной замены (сравнение «до/после»). */
-  models?: { seed?: number | string; off?: boolean };
+  /** attribution: true — можно брать модели CC BY (строки атрибуции ролик кладёт в описание). */
+  models?: { seed?: number | string; off?: boolean; attribution?: boolean };
 }
 
 type Loaded = { scene: THREE.Group; animations: THREE.AnimationClip[] };
@@ -423,7 +424,9 @@ class Engine {
   /** Модель библиотеки для объекта или null (нет библиотеки, варианта, якоря для деталей, файла) — тогда замена. */
   async libraryModel(o: ObjectSpec): Promise<{ entry: LibModel; g: Loaded } | null> {
     if (this.spec.models?.off) return null;
-    const entry = pickModel(this.library, o.model!, { seed: `${this.modelSeed()}|${o.variantSeed ?? ""}`, key: o.id, tags: o.modelTags });
+    // CC BY — только когда сцена обещает подпись авторов (models.attribution: клип пишет строки атрибуции в описание).
+    const entry = pickModel(this.library, o.model!, { seed: `${this.modelSeed()}|${o.variantSeed ?? ""}`, key: o.id, tags: o.modelTags,
+      allowAttribution: !!this.spec.models?.attribution });
     if (!entry) {
       if (this.library) this.warnings.push(`объект ${o.id}: в библиотеке нет «${o.model}» — процедурная замена`);
       return null;
