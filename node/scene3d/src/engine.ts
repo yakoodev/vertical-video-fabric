@@ -935,6 +935,15 @@ class Engine {
    * (сжатые на 15%), звенья поводка (без крайних) — внутри героя.
    */
   penetration(c: Character) {
+    return this.penetrationOf(c.root, true);
+  }
+
+  /**
+   * То же для любого узла (едущая машина, катящаяся крышка): лучи из центра его габарита на 85% полуразмера —
+   * упёрлись в чужой твёрдый меш → вещь проходит сквозь мир. ``heroes`` — проверять и пересечение с героями/поводком.
+   */
+  penetrationOf(root: THREE.Object3D, heroes = false, skip: THREE.Object3D[] = []) {
+    const c = { root } as Character;
     const out: string[] = [];
     const box = new THREE.Box3().setFromObject(c.root, true);
     const ctr = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
@@ -942,7 +951,7 @@ class Engine {
     const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
     const solid = (o: THREE.Object3D) => {
       for (let p: THREE.Object3D | null = o; p; p = p.parent) {
-        if (!p.visible || p === c.root || soft.has(prim.get(p) || "")) return false;
+        if (!p.visible || p === c.root || skip.includes(p) || soft.has(prim.get(p) || "")) return false;
       }
       const m = o as THREE.Mesh;
       return !!m.isMesh && !(m as any).isSprite && !((m.material as any)?.transparent && (m.material as any).opacity < 0.6);
@@ -964,9 +973,10 @@ class Engine {
       const cc = b.getCenter(new THREE.Vector3()), hh = b.getSize(new THREE.Vector3()).multiplyScalar(0.5 * k);
       return new THREE.Box3(cc.clone().sub(hh), cc.clone().add(hh));
     };
+    if (!heroes) return out;
     const mine = shrunk(box, 0.85);
     for (const [id, o] of Object.entries(this.characters)) {
-      if (o === c || !o.root.visible) continue;
+      if (o.root === root || !o.root.visible) continue;
       if (mine.intersectsBox(shrunk(new THREE.Box3().setFromObject(o.root, true), 0.85))) out.push(`hero:${id}`);
     }
     for (const ob of this.objects) {
@@ -986,12 +996,18 @@ class Engine {
 
   inspect(t: number) {
     this.update(t);
+    this.scene.updateMatrixWorld(true); // лучи проверок — по свежим матрицам всех вещей (первый кадр тоже)
     const dirv = this.camera.getWorldDirection(new THREE.Vector3());
     const out: Record<string, any> = { camera: this.camera.position.toArray(), cameraDir: dirv.toArray().map(r3), objects: {}, characters: {}, models: this.modelChoice };
     for (const o of this.objects) {
       o.node.updateMatrixWorld(true);
       const b = new THREE.Box3().setFromObject(o.node);
       out.objects[o.spec.id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3) };
+      // Едущие вещи (ключи позиции) — не сквозь мир: свои прицепы (вещи-дети или с тем же «родителем») не считаются.
+      if (o.node.visible && o.spec.keys?.some((k: any) => k.position) && (o.spec.model || ["mochi_user", "cylinder", "delivery_box"].includes(o.spec.primitive || ""))) {
+        const mates = this.objects.filter((x) => x !== o && x.spec.keys === o.spec.keys).map((x) => x.node as THREE.Object3D);
+        (out.objects[o.spec.id] as any).pen = this.penetrationOf(o.node, true, mates);
+      }
     }
     for (const [id, c] of Object.entries(this.characters)) {
       const b = new THREE.Box3().setFromObject(c.root, true);

@@ -89,8 +89,8 @@ def arc_keys(t0: float, t1: float, p0: list[float], p1: list[float], h: float, n
 
 # --------------------------------------------------------------------------- раскадровка
 
-TH = [0, 0.345, -0.4]  # Клод на сиденье огромного трона (skyline)
-CAR = [0.95, 0.311, 0.15]  # на крыше спорткара «PROD»
+TH = [0, 0.29, -0.45]  # Клод на сиденье кресла-трона (skyline): сиденье 0.58 м × 0.5
+CAR = [0.5, 0.311, 1.0]  # на крыше спорткара «PROD»
 POD = 0.18  # пол сцены
 
 
@@ -162,16 +162,21 @@ def shots() -> list[Shot]:
                   c=ch([0, 0, 0], {"lean": 20, "armR": [70, 80, 1.0, 0], "armL": "hips"}, "smug", end={"armR": [60, 88, 1.0, 0]}), k=None, leash=None,
                   lab="ладонь в объектив, «Отличный вопрос!»"))
     # Машина катится НОСОМ вперёд (курс = касательная пути): разгон к краю, клевок носом, кувырок вниз.
-    car_roll = [{"t": 29.5, "position": [0.95, 0, 0.15], "rotation": [0, 35, 0], "ease": "linear"},
-                {"t": 31.0, "position": [1.85, 0, 1.45], "rotation": [0, 35, 0], "ease": "inQuad"},
-                {"t": 31.6, "position": [2.3, -0.3, 2.1], "rotation": [45, 35, 0], "ease": "linear"},
-                {"t": 32.5, "position": [3.0, -7.0, 3.1], "rotation": [200, 35, 25], "ease": "inQuad"}]
-    sign_roll = [{**k, "position": [k["position"][0] + 0.11, k["position"][1] + 0.27, k["position"][2] + 0.156]} for k in car_roll]
-    S.append(Shot(29.5, 31.0, "skyline", C([0.55, 0.2, 0.3], 1.4, 44, -55, 10), C([0.75, 0.18, 0.55], 1.3, 44, -45, 8),
-                  c=ch([0.3, 0, 0.0], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=40, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
-                  k=ch([-0.15, 0, 0.3], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}, {"id": "_mod_prodsign", "keys": sign_roll}]))
-    S.append(Shot(31.0, 32.53, "skyline", C([0.7, 0.05, 0.5], 0, 58, pos=[2.5, 0.5, 2.3]), C([1.2, -0.25, 1.0], 0, 62, pos=[2.55, 0.42, 2.4], roll=-14), ease="inCubic",
-                  c=ch([0.3, 0, 0.0], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=40), k=ch([-0.15, 0, 0.3], {"turn": 30}, "bark"),
+    # Машина едет носом к краю по свободной крыше, на парапете подпрыгивает (не сквозь него), за краем — кувырком вниз.
+    # Путь проверен картой высот крыши: стоит на чистом, едет по диагонали к углу мимо световых коробов, у парапета
+    # подпрыгивает (кузов выше 0.267 м, пока над парапетом), за углом — пустота до земли (соседний дом убран).
+    car_roll = [{"t": 29.5, "position": [0.5, 0, 1.0], "rotation": [0, 45, 0], "ease": "linear"},
+                {"t": 30.9, "position": [0.86, 0, 1.36], "rotation": [0, 45, 0], "ease": "inQuad"},
+                {"t": 31.05, "position": [0.95, 0.3, 1.45], "rotation": [-14, 45, 0], "ease": "outQuad"},
+                {"t": 31.2, "position": [1.17, 0.38, 1.67], "rotation": [-8, 45, 0], "ease": "linear"},
+                {"t": 31.4, "position": [1.5, 0.36, 2.0], "rotation": [0, 45, 0], "ease": "linear"},
+                {"t": 31.6, "position": [1.95, 0.05, 2.45], "rotation": [40, 45, 0], "ease": "inQuad"},
+                {"t": 32.5, "position": [2.6, -7.0, 3.0], "rotation": [200, 45, 25], "ease": "inQuad"}]
+    S.append(Shot(29.5, 31.0, "skyline", C([0.32, 0.15, 0.78], 1.6, 44, -45, 26), C([0.48, 0.15, 0.92], 1.75, 44, -40, 22),
+                  c=ch([0.05, 0, 0.5], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=45, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
+                  k=ch([-0.3, 0, 0.3], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}]))
+    S.append(Shot(31.0, 32.53, "skyline", C([0.7, 0.05, 0.9], 0, 58, pos=[3.2, 0.5, 3.2]), C([1.6, -0.6, 1.8], 0, 62, pos=[3.25, 0.45, 3.3], roll=-14), ease="inCubic",
+                  c=ch([0.05, 0, 0.5], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=45), k=ch([-0.3, 0, 0.3], {"turn": 30}, "bark"),
                   leash=0.5, lab="«прод под откос»"))
     # ================= CHORUS 1
     ck = [t for t in kicks() if 32.5 <= t <= 44.7]
@@ -246,7 +251,7 @@ def shots() -> list[Shot]:
                   c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), fx=gauge, lab="лимиты в ноль"))
     crawl = []
     for i in range(37):  # часто: курс по касательной без «шагов»
-        a = math.radians(200 - i * 6.25)
+        a = math.radians(160 - i * 5.0)  # выползает справа от стойки MASTER и обходит Клода, не доходя до Кодекса
         crawl.append({"t": round(59.3 + i * 0.08, 3), "position": [round(math.sin(a) * 0.65, 3), 0, round(math.cos(a) * 0.65, 3)],
                       "rotation": [0, round(math.degrees(a) - 90, 1), 0], "ease": "linear"})
     S.append(Shot(59.3, 61.95, "datacenter", C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 2.2, 0.02]), C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 1.8, 0.02], roll=40),
@@ -327,9 +332,12 @@ def shots() -> list[Shot]:
                       leash=None if loc == "classroom" else 0.44, flash=i == 0, shake=0.012 if i == 0 else 0.0, lab=f"аутро {i + 1}: {loc}"))
     S.insert(len(S) - 7, Shot(91.65, 92.13, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch([0.1, 0.16, 0], {"shades": 1}, "deadpan", nod=False),
                               k=None, leash=None, lab="стоп-кадр перед аутро"))
+    # Крышка подлетает над кнопкой (не сквозь неё), встаёт на ребро (центр на радиусе 0.13 над полом сцены) и катится
+    # вдоль края сцены (z ≤ 0.64), не съезжая в воздух.
     cap_roll = [{"t": 101.0, "position": [0.32, POD + 0.14, 0.25], "rotation": [0, 0, 0]},
-                {"t": 101.5, "position": [0.42, POD - 0.02, 0.4], "rotation": [70, 0, 20], "ease": "inQuad"},
-                {"t": 104.4, "position": [1.6, POD - 0.02 + 0.13, 1.4], "rotation": [90, 0, 720], "ease": "outQuad"}]
+                {"t": 101.25, "position": [0.38, POD + 0.38, 0.4], "rotation": [45, 0, 0], "ease": "outQuad"},
+                {"t": 101.55, "position": [0.5, POD + 0.13, 0.48], "rotation": [90, 0, 0], "ease": "inQuad"},
+                {"t": 104.4, "position": [1.3, POD + 0.13, 0.48], "rotation": [90, 0, -350], "ease": "outQuad"}]
     btn_state = [{"t": 0, "press": 0, "crack": 0, "cap": 1}, {"t": 99.75, "crack": 0.35}, {"t": 100.35, "crack": 1.0}, {"t": 101.0, "cap": 0}]
     S.append(Shot(99.7, 101.0, "stage", C([0.14, POD + 0.12, 0.2], 0.95, 40, -10, 28), C([0.16, POD + 0.12, 0.22], 0.8, 40, -8, 30),
                   c=ch([-0.05, POD, 0.1], {"armL": "hips", "armR": "hips"}, "smug", yaw=20), k=ch([-0.46, POD, 0.3], {"turn": 20}, "smug"), leash=0.6,
@@ -338,7 +346,7 @@ def shots() -> list[Shot]:
                       {"id": "capfall", "primitive": "cylinder", "params": {"size": [0.26, 0.12], "color": "#ff2e3f", "emissive": "#ff2e3f",
                                                                              "emissiveIntensity": 0.35},
                        "position": [0, 0, 0], "visible": win(101.0, DUR + 1), "keys": cap_roll}]))
-    S.append(Shot(101.0, 104.4, "stage", C([0.5, POD + 0.15, 0.4], 1.2, 44, 20, 12), C([0.7, POD + 0.12, 0.7], 1.3, 44, 30, 10),
+    S.append(Shot(101.0, 104.4, "stage", C([0.55, POD + 0.15, 0.35], 1.2, 44, 20, 12), C([0.85, POD + 0.12, 0.4], 1.3, 44, 30, 10),
                   c=ch([-0.05, POD, 0.1], {"armL": "shrug", "armR": "shrug"}, "smug", yaw=20), k=ch([-0.46, POD, 0.3], {"turn": 20}, "angry"), leash=0.6,
                   lab="кнопка отваливается и катится"))
     S.append(Shot(104.4, DUR, "skyline", C(TH[:1] + [TH[1] + FY] + TH[2:], 0.75, 34, -12, 2, dof=1.0), C([-0.6, -1.6, -7.0], 0, 50, pos=[5.5, 4.5, 9.5]),

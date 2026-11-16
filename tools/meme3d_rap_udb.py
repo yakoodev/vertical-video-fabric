@@ -300,7 +300,7 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
     probs = []
     for loc, sp in specs.items():
         mine = [s for s in shots if s.loc == loc]
-        ts = sorted({round(t, 3) for s in mine for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1, *[s.t0 + 0.05 + 0.2 * i for i in range(int((s.t1 - s.t0) / 0.2))])})
+        ts = sorted({round(t, 3) for s in mine for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1, s.t1 - 0.04, *[s.t0 + 0.05 + 0.2 * i for i in range(int((s.t1 - s.t0) / 0.2))])})
         f = work / f"{loc}.json"
         f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
         res = subprocess.run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(f), "--models", str(MODELS), "--gl", gl,
@@ -335,6 +335,10 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
                         continue
                     for hit in (by_t[t]["characters"].get(cid) or {}).get("pen") or []:
                         seen.setdefault(f"{cid} ↔ {hit}", t)
+                # Едущие/летящие вещи (машина, тележка, ящики) — тоже лучами по окружению.
+                for oid, ob in (by_t[t].get("objects") or {}).items():
+                    for hit in (ob or {}).get("pen") or []:
+                        seen.setdefault(f"{oid} ↔ {hit}", t)
             for k, t in seen.items():
                 probs.append(f"{s.t0:6.2f} {s.lab}: проникновение {k} (с t={t:.2f})")
     probs += heading_check(specs)
@@ -446,8 +450,11 @@ def credits(specs: dict, out: Path) -> Path:
     used = sorted({o["model"] for sp in specs.values() for o in sp["objects"] if o.get("model") in man})
     by = [man[m]["attribution"] for m in used if man[m]["license"].startswith("CC-BY")]
     cc0 = sorted({f"{man[m]['author']}" for m in used if not man[m]["license"].startswith("CC-BY")})
-    txt = ("3D-модели (CC BY 3.0):\n" + "\n".join(f"— {a}" for a in by) + "\n\nCC0: " + ", ".join(cc0) +
-           " (Kenney, Quaternius, iPoly3D и др.; источники — tools/models3d/sources.json)\n")
+    if by:
+        head = "3D-модели (CC BY 3.0) — указать в описании ролика:\n" + "\n".join(f"— {a}" for a in by) + "\n\n"
+    else:
+        head = "Все 3D-модели клипа — CC0 (общественное достояние): указывать авторов в описании не нужно.\n\n"
+    txt = (head + "CC0, для порядка: " + ", ".join(cc0) + f" — {len(used)} моделей; источники — tools/models3d/sources.json\n")
     out.write_text(txt, "utf-8")
     return out
 
