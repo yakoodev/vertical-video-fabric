@@ -298,7 +298,7 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
     probs = []
     for loc, sp in specs.items():
         mine = [s for s in shots if s.loc == loc]
-        ts = sorted({round(t, 3) for s in mine for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1)})
+        ts = sorted({round(t, 3) for s in mine for t in (s.t0 + 0.1, (s.t0 + s.t1) / 2, s.t1 - 0.1, *[s.t0 + 0.05 + 0.2 * i for i in range(int((s.t1 - s.t0) / 0.2))])})
         f = work / f"{loc}.json"
         f.write_text(json.dumps(sp, ensure_ascii=False), "utf-8")
         res = subprocess.run(["node", str(ROOT / "node" / "scene3d" / "render.mjs"), "--spec", str(f), "--models", str(MODELS), "--gl", gl,
@@ -325,6 +325,16 @@ def check_sight(out: Path, gl: str = "gpu") -> list[str]:
                         probs.append(f"{s.t0:6.2f} {s.lab}: {cid} вне кадра (t={t:.2f})")
                     elif sg["occluded"] and cid == main:
                         probs.append(f"{s.t0:6.2f} {s.lab}: {cid} заслонён «{sg['blocker']}» (t={t:.2f})")
+            # Проникновения — каждые 0.2 с плана: герой в мебели/полу/друг в друге, цепь сквозь тело.
+            seen: dict[str, float] = {}
+            for t in [x for x in by_t if s.t0 <= x < s.t1]:
+                for cid, want in (("claude", s.c), ("codex", s.k)):
+                    if not want:
+                        continue
+                    for hit in (by_t[t]["characters"].get(cid) or {}).get("pen") or []:
+                        seen.setdefault(f"{cid} ↔ {hit}", t)
+            for k, t in seen.items():
+                probs.append(f"{s.t0:6.2f} {s.lab}: проникновение {k} (с t={t:.2f})")
     (out / "check_sight.txt").write_text("\n".join(probs) + "\n", "utf-8")
     return probs
 
@@ -380,6 +390,34 @@ def mouth_test(out: Path, gl: str, t0: float = 32.5, t1: float = 37.6, style: st
     return raw
 
 
+SECTIONS = [(0.0, 32.53, "stage3_s1_intro_verse1"), (32.53, 44.66, "stage3_s2_chorus1"), (44.66, 66.0, "stage3_s3_verse2"),
+            (66.0, 76.09, "stage3_s4_bridge"), (76.09, 109.6, "stage3_s5_final_outro")]
+
+
+def assemble_final(out: Path, tiktok: tuple[float, float] = (66.0, 109.6)) -> list[Path]:
+    """Финал из готовых участков: видео участков подряд + вся песня одной дорожкой, подписи на весь ролик; копия для
+    Telegram (≤ 19 МБ) и нарезка для TikTok (≤ 58 с, вокруг финального припева)."""
+    import meme3d_rap_shots as Sh
+
+    work = out / "work" / "final"
+    work.mkdir(parents=True, exist_ok=True)
+    raws = [out / "work" / name / f"{name}_raw.mp4" for _, _, name in SECTIONS]
+    lst = work / "final.txt"
+    lst.write_text("".join(f"file '{r.as_posix()}'\n" for r in raws), "utf-8")
+    full_raw = work / "final_raw.mp4"
+    P1._run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(lst), "-i", str(SONG), "-map", "0:v", "-map", "1:a",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-t", f"{Sh.DUR:.3f}", str(full_raw)], "финал: склейка")
+    final = add_captions(full_raw, lyric_words(0, Sh.DUR), out / "claude_rap_uronyu_bd.mp4", work, Sh.DUR, title="Уроню БД")
+    tg = tg_copy(final, out / "claude_rap_uronyu_bd_tg.mp4", Sh.DUR)
+    a, b = tiktok
+    tt_raw = work / "tiktok_raw.mp4"
+    P1._run(["ffmpeg", "-y", "-v", "error", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", str(full_raw), "-c:v", "libx264", "-preset", "medium",
+             "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", str(tt_raw)], "tiktok")
+    tt = add_captions(tt_raw, lyric_words(a, b), out / "claude_rap_uronyu_bd_tiktok.mp4", work, b - a, title="Уроню БД")
+    tt_tg = tg_copy(tt, out / "claude_rap_uronyu_bd_tiktok_tg.mp4", b - a)
+    return [final, tg, tt, tt_tg]
+
+
 def credits(specs: dict, out: Path) -> Path:
     """Строки атрибуции моделей клипа (CC BY — обязательны в описании ролика; CC0 — для порядка)."""
     man = json.loads((MODELS / "manifest.json").read_text("utf-8"))["models"]
@@ -430,17 +468,18 @@ def main() -> int:
     if a.cmd == "locations":
         print(stage_locations(out, a.gl))
     elif a.cmd == "mouth":
-        # Сравнение: рот-эквалайзер слева, без рта справа; песня — тот же участок.
-        eq = mouth_test(out, a.gl, style="eq")
-        no = mouth_test(out, a.gl, style="")
-        dst = out / "stage2c_mouth_eq_vs_none.mp4"
-        font = "fontfile='C\\:/Windows/Fonts/arialbd.ttf'"
-        lab = "drawtext=text='{}':x=(w-tw)/2:y=60:fontsize=58:fontcolor=white:box=1:boxcolor=black@0.6:boxborderw=14:" + font
-        P1._run(["ffmpeg", "-y", "-v", "error", "-i", str(eq), "-i", str(no), "-filter_complex",
-                 f"[0:v]scale=540:960,{lab.format('ЭКВАЛАЙЗЕР')}[a];[1:v]scale=540:960,{lab.format('БЕЗ РТА')}[b];[a][b]hstack[v]",
-                 "-map", "[v]", "-map", "0:a", "-c:v", "libx264", "-crf", "20", "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
-                 "-movflags", "+faststart", str(dst)], "сравнение рта")
-        print(dst)
+        # Проба рта (виземы по слогам) с песней + проверочная копия с волной вокала внизу (сверка губ с голосом).
+        import meme3d_rap_shots as Sh
+
+        t0, t1 = 32.5, 37.6
+        raw = mouth_test(out, a.gl, t0, t1, style="cartoon")
+        clean = add_captions(raw, lyric_words(t0, t1), out / "stage2d_mouth_visemes.mp4", out / "work" / "mouthtest_cartoon", t1 - t0)
+        chk = out / "work" / "mouth_wave_check.mp4"
+        voc = Sh.DATA / "align" / "vocals.wav"
+        P1._run(["ffmpeg", "-y", "-v", "error", "-i", str(clean), "-ss", f"{t0:.3f}", "-t", f"{t1 - t0:.3f}", "-i", str(voc), "-filter_complex",
+                 "[1:a]showwaves=s=1080x260:mode=cline:rate=30:colors=#3cf2ff[w];[0:v][w]overlay=0:H-300[v]", "-map", "[v]", "-map", "0:a",
+                 "-c:v", "libx264", "-crf", "22", "-preset", "fast", "-c:a", "aac", str(chk)], "волна")
+        print(clean, chk)
     elif a.cmd == "check":
         probs = check_sight(out, a.gl)
         print("\n".join(probs) or "все планы: герои в кадре и не заслонены")

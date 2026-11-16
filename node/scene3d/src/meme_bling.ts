@@ -15,7 +15,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 
 export interface BlingSpec {
-  chain?: { color?: string; pendant?: "db" | "coin" | "none"; text?: string; size?: number; drop?: number };
+  chain?: { color?: string; pendant?: "db" | "coin" | "none"; text?: string; size?: number; drop?: number; top?: number };
   shades?: { color?: string; lens?: string; on?: number };
   cap?: { color?: string; brim?: string; accent?: string; back?: boolean };
   collar?: { color?: string; spike?: string; ring?: string; y?: number; tag?: string; radius?: number };
@@ -145,7 +145,7 @@ export function addBling(squash: THREE.Group, S: number, P: BlingDims, c: BlingS
     const sz = ch.size ?? 1;
     const drop = ch.drop ?? 0.13;
     // Дуга: от боков у верха через угол на морду, провисает к центру (ниже глаз).
-    const yTop = H * 0.62, yLow = drop * S;
+    const yTop = H * (ch.top ?? 0.62), yLow = drop * S;
     const curve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(-W / 2 - 0.004 * S, yTop, -D * 0.1),
       new THREE.Vector3(-W / 2 + 0.02 * S, yTop - 0.05 * S, front + 0.01 * S),

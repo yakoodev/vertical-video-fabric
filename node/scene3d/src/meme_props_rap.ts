@@ -94,6 +94,11 @@ function leash(p: Record<string, any>): LinkProp {
       const okA = end(p.from || "kodex:collar", a), okB = end(p.to || "claude:hand_r", b);
       grp.visible = okA && okB;
       if (!grp.visible) return;
+      if (p.fromRadius) {
+        // Поводок от ошейника — с той стороны ремня, где хозяин: цепь не идёт сквозь пса.
+        const d = new THREE.Vector3(b.x - a.x, 0, b.z - a.z);
+        if (d.lengthSq() > 1e-8) a.add(d.normalize().multiplyScalar(p.fromRadius));
+      }
       const sig = [a, b].map((v) => v.toArray().map((x) => Math.round(x * 2000)).join(",")).join("|");
       if (sig === lastSig) return;
       lastSig = sig;

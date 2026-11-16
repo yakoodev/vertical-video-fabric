@@ -57,6 +57,8 @@ export interface Kodex2Spec {
   decoColor?: string;
   /** F/G: костюм (meme_costume.ts) — в т.ч. ошейник с шипами ``collar`` (кость ``collar`` — кольцо для поводка). */
   costume?: CostumeSpec;
+  /** Ножки не наклоняются с корпусом (не уходят в пол). */
+  plantFeet?: boolean;
 }
 
 const D2R = Math.PI / 180;
@@ -270,6 +272,7 @@ interface Rig {
   /** Анимация детали-приметы (звёздочка крутится, костыли). */
   tick?: (t: number) => void;
   costume?: BlingHandle | null;
+  legs?: THREE.Object3D[];
 }
 
 /** A и B — корпус зверька (buildCritter) с другими пропорциями и деталями. */
@@ -676,7 +679,7 @@ function softRig(variant: "f" | "g", S: number, badge: string, spec: Kodex2Spec 
     if (snarl) paintSnarl(g, W, H, parts.faceU, look, expr === "bark" ? 0.6 + 0.4 * Math.abs(Math.sin(t * 14)) : 0.35 + talk * 0.65);
   };
   return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: parts.faceCanvas, tex: parts.faceTex, paint,
-    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update, costume };
+    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update, costume, legs: parts.legs };
 }
 
 export function createKodex2(spec: Kodex2Spec): Character {
@@ -785,6 +788,14 @@ export function createKodex2(spec: Kodex2Spec): Character {
       if (name === "hand_r") return handR.getWorldPosition(out);
       if (name === "hand_l") return handL.getWorldPosition(out);
       if (name === "collar" && rig.costume?.ring) return rig.costume.ring.getWorldPosition(out);
+      if (name === "collar_center" && rig.costume?.ring) {
+        // Центр ошейника: высота кольца, по оси корпуса (поводок крепится к ближней к хозяину точке ремня).
+        rig.costume.ring.getWorldPosition(out);
+        const c = squash.getWorldPosition(new THREE.Vector3());
+        out.x = c.x;
+        out.z = c.z;
+        return out;
+      }
       return squash.getWorldPosition(out);
     },
     update(t0: number) {
@@ -794,6 +805,7 @@ export function createKodex2(spec: Kodex2Spec): Character {
       const breathe = 1 + 0.012 * Math.sin(t * 2 * Math.PI * 0.45);
       hopG.position.y = Math.max(0, num(t, "hop", 0)) * (S / 0.3) + v * 0.01 * S;
       lean.rotation.set(num(t, "lean", 0) * D2R, 0, -num(t, "tilt", 0) * D2R);
+      if (spec.plantFeet && rig.legs) for (const l of rig.legs) l.rotation.set(-lean.rotation.x, 0, -lean.rotation.z);
       const sq = num(t, "squash", 1) * breathe * (1 + 0.04 * v);
       const side = 1 / Math.sqrt(Math.max(0.3, sq));
       squash.scale.set(side, sq, side);
@@ -801,6 +813,11 @@ export function createKodex2(spec: Kodex2Spec): Character {
       gear?.update(t, (fld, d) => num(t, fld, d));
       rig.tick?.(t0);
       rig.costume?.update((fld, d) => num(t, fld, d));
+      if (spec.plantFeet) {
+        root.updateMatrixWorld(true);
+        const low = new THREE.Box3().setFromObject(lean, true).min.y;
+        if (low < root.position.y) hopG.position.y += root.position.y - low;
+      }
       root.updateMatrixWorld(true);
       root.getWorldQuaternion(tmpQ2);
       // Кружка — в левой ручке (holdL: mug | none), карандаш — в правой (holdR: pencil | none).

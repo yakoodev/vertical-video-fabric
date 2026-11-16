@@ -42,7 +42,7 @@ GOLD = "#f6c445"
 VIOLET = "#8a4dff"
 
 LOOKS = {
-    "A": {"headset": True, "costume": {"chain": {"pendant": "db", "drop": 0.0}, "shades": {"on": 1}}},
+    "A": {"headset": True, "costume": {"chain": {"pendant": "db", "drop": -0.04, "top": 0.42}, "shades": {"on": 1}}},
     "B": {"headset": False, "costume": {"chain": {"pendant": "db"}, "cap": {"color": "#1d1b24", "accent": GOLD}}},
     "C": {"headset": False, "costume": {"chain": {"pendant": "db"}, "cap": {"color": "#1d1b24", "accent": GOLD}, "shades": {"on": 1}}},
 }
@@ -55,10 +55,10 @@ import os  # noqa: E402
 
 # Рот Клода — переключатель (владелец выбирает): "" — без рта (как в канале), "eq" — экранный эквалайзер,
 # "cartoon" — рисованный рот по слогам (забракован 16.11). Переменная окружения RAP_MOUTH.
-MOUTH = os.environ.get("RAP_MOUTH", "")
+MOUTH = os.environ.get("RAP_MOUTH", "cartoon")
 MOUTH_STYLES = {
     "eq": {"style": "eq", "width": 0.34, "y": 0.105, "glow": "#3cf2ff", "panel": "#14121c", "bars": 11},
-    "cartoon": {"width": 0.21, "y": 0.11, "color": "#1b1214"},
+    "cartoon": {"width": 0.28, "y": 0.125, "color": "#1b1214"},
 }
 
 
@@ -72,6 +72,7 @@ def claude(pose: list[dict], face: list[dict], *, look: str = "A", move: list[di
     if style:
         ch["critter"]["mouth"] = MOUTH_STYLES[style]
     ch["costume"] = lk["costume"]
+    ch["plantFeet"] = True
     ch["move"] = move
     if visible:
         ch["visible"] = visible
@@ -83,15 +84,15 @@ def codex(pose: list[dict], face: list[dict], *, move: list[dict], visible: list
     ch = {"id": char_id, "style": "kodex2", "variant": "g", "width": width, "position": move[0]["position"], "yaw": yaw, "badge": "Codex",
           "pose": [{"t": 0, "holdL": "none", "holdR": "none"}, *pose], "face": face, "stepFps": 15, "seed": 21,
           "costume": {"collar": {"tag": "Codex", "color": "#1f1b24", "spike": "#b9c0cc"}}, "move": move,
-          "tone": {"body": "#cdd4de", "shade": "#9aa4b3"}}
+          "tone": {"body": "#cdd4de", "shade": "#9aa4b3"}, "plantFeet": True}
     if visible:
         ch["visible"] = visible
     return ch
 
 
 def leash(length: float = 0.5, from_id: str = "codex", to_id: str = "claude", vis: list[dict] | None = None, oid: str = "leash") -> dict:
-    o = {"id": oid, "primitive": "leash", "params": {"from": f"{from_id}:collar", "to": f"{to_id}:hand_r", "length": length, "link": 0.026,
-                                                     "color": "#d8dce6", "floor": -50}}
+    o = {"id": oid, "primitive": "leash", "params": {"from": f"{from_id}:collar_center", "fromRadius": 0.135, "to": f"{to_id}:hand_r",
+                                                     "length": length, "link": 0.026, "color": "#d8dce6", "floor": -50}}
     if vis:
         o["visible"] = vis
     return o

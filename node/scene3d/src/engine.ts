@@ -590,13 +590,14 @@ class Engine {
   update(t: number) {
     this.applyPhase(t);
     if (this.toon) this.toon.update(t);
-    for (const ch of Object.values(this.characters)) ch.update(t);
+    // Сначала где стоит (move), потом поза: прижим к полу героя считает от его основания на этот t.
     for (const [id, k] of Object.entries(this.charKeys)) {
       const ch = this.characters[id];
       const pos = k.move ? sampleVec(k.move, t, "position") : undefined;
       if (pos) ch.root.position.set(pos[0], pos[1], pos[2]);
       if (k.visible) ch.root.visible = sampleKeys<boolean>(k.visible, t, "on", (a, b, kk) => (kk < 1 ? a : b)) !== false;
     }
+    for (const ch of Object.values(this.characters)) ch.update(t);
     for (const l of this.lights) {
       let k = 1;
       for (const f of l.spec.flicker || []) {
@@ -908,7 +909,7 @@ class Engine {
     const dist = dir.length();
     const ray = new THREE.Raycaster(from, dir.normalize(), this.camera.near, dist);
     ray.camera = this.camera; // спрайты (ярлыки, частицы) без камеры луча падают
-    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet"]);
+    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet", "credit_card", "token", "db_icon"]);
     const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
     const solid = (o: THREE.Object3D) => {
       for (let p: THREE.Object3D | null = o; p; p = p.parent) {
@@ -928,6 +929,61 @@ class Engine {
     return { inFrame, occluded: !!hit, blocker: hit ? owner || hit.object.name || "?" : null, dist: r3(dist) };
   }
 
+  /**
+   * Проникновения героя в мир (проверка клипа): лучи из центра его габарита на 85% полуразмера в ±x, ±z, вверх и вниз —
+   * упёрлись в чужой твёрдый меш (мебель, пол, другой герой) → он «внутри». Плюс: габариты героев пересекаются
+   * (сжатые на 15%), звенья поводка (без крайних) — внутри героя.
+   */
+  penetration(c: Character) {
+    const out: string[] = [];
+    const box = new THREE.Box3().setFromObject(c.root, true);
+    const ctr = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet", "credit_card", "token", "db_icon"]);
+    const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
+    const solid = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+        if (!p.visible || p === c.root || soft.has(prim.get(p) || "")) return false;
+      }
+      const m = o as THREE.Mesh;
+      return !!m.isMesh && !(m as any).isSprite && !((m.material as any)?.transparent && (m.material as any).opacity < 0.6);
+    };
+    const owner = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (/^(obj:|critter:|kodex2:)/.test(String(p.name))) return p.name;
+      return o.name || "?";
+    };
+    const dirs: [string, THREE.Vector3, number][] = [["+x", new THREE.Vector3(1, 0, 0), half.x], ["-x", new THREE.Vector3(-1, 0, 0), half.x],
+      ["+z", new THREE.Vector3(0, 0, 1), half.z], ["-z", new THREE.Vector3(0, 0, -1), half.z], ["up", new THREE.Vector3(0, 1, 0), half.y],
+      ["down", new THREE.Vector3(0, -1, 0), half.y]];
+    for (const [name, d, len] of dirs) {
+      const ray = new THREE.Raycaster(ctr, d, 0, len * 0.85);
+      ray.camera = this.camera;
+      const hit = ray.intersectObjects(this.scene.children, true).find((h) => solid(h.object));
+      if (hit) out.push(`${name}:${owner(hit.object)}`);
+    }
+    const shrunk = (b: THREE.Box3, k: number) => {
+      const cc = b.getCenter(new THREE.Vector3()), hh = b.getSize(new THREE.Vector3()).multiplyScalar(0.5 * k);
+      return new THREE.Box3(cc.clone().sub(hh), cc.clone().add(hh));
+    };
+    const mine = shrunk(box, 0.85);
+    for (const [id, o] of Object.entries(this.characters)) {
+      if (o === c || !o.root.visible) continue;
+      if (mine.intersectsBox(shrunk(new THREE.Box3().setFromObject(o.root, true), 0.85))) out.push(`hero:${id}`);
+    }
+    for (const ob of this.objects) {
+      if (ob.spec.primitive !== "leash" || !ob.node.visible) continue;
+      const links = (ob.prop?.object.children || []) as THREE.Object3D[];
+      const inner = shrunk(box, 0.7);
+      for (let i = 3; i < links.length - 3; i++) {
+        const w = links[i].getWorldPosition(new THREE.Vector3());
+        if (inner.containsPoint(w)) {
+          out.push(`chain:${ob.spec.id}`);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
   inspect(t: number) {
     this.update(t);
     const dirv = this.camera.getWorldDirection(new THREE.Vector3());
@@ -940,7 +996,8 @@ class Engine {
     for (const [id, c] of Object.entries(this.characters)) {
       const b = new THREE.Box3().setFromObject(c.root, true);
       out.characters[id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3), hand_r: c.boneWorld("hand_r").toArray().map(r3), hand_l: c.boneWorld("hand_l").toArray().map(r3), head: c.boneWorld("Head").toArray().map(r3),
-        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r), shown: c.root.visible, sight: c.root.visible ? this.sightline(c) : null };
+        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r), shown: c.root.visible, sight: c.root.visible ? this.sightline(c) : null,
+        pen: c.root.visible ? this.penetration(c) : [] };
     }
     return out;
   }

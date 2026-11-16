@@ -65,6 +65,8 @@ export interface CritterSpec {
   seed?: number;
   /** false — моргать только по ``blinks``. */
   autoBlink?: boolean;
+  /** Ножки не наклоняются с корпусом (не уходят в пол на наклонах). */
+  plantFeet?: boolean;
   /** Доспехи и меч (meme_gear.ts): шлем, нагрудник с именем, наплечники, меч — поза меча ключом ``swing``. */
   gear?: GearSpec;
   /** Костюм (meme_costume.ts): фартук, ободок горничной, очки, бигуди. */
@@ -492,6 +494,91 @@ const REST_MOUTH: Record<string, string> = {
  * Рот зверька: под глазами, по центру морды, цветом глаз. ``shape`` — open | o | wide | closed (поёт) или smirk | grin |
  * teeth | flat | frown | o (покой), ``open`` 0..1 — раскрытие (громкость слога).
  */
+/** Виземы рта — параметры фигуры: ширина w, раскрытие h (0..1), округлость r, зубы th. Между ключами — плавно. */
+export interface Viseme { w: number; h: number; r: number; th: number }
+
+/** Линия рта в покое по выражению: изгиб (+ — уголки вверх), наклон-ухмылка, зубы (оскал). */
+const REST_LINE: Record<string, { curve: number; smirk: number; teeth: number }> = {
+  smug: { curve: 0.2, smirk: 1, teeth: 0 }, happy: { curve: 1, smirk: 0, teeth: 0 }, cute: { curve: 1, smirk: 0, teeth: 0 },
+  angry: { curve: -0.2, smirk: 0, teeth: 1 }, rage: { curve: -0.3, smirk: 0, teeth: 1 }, sad: { curve: -1, smirk: 0, teeth: 0 },
+  hurt: { curve: -0.8, smirk: 0, teeth: 0 }, surprised: { curve: 0, smirk: 0, teeth: 0 }, deadpan: { curve: 0, smirk: 0, teeth: 0 },
+  focused: { curve: -0.1, smirk: 0.3, teeth: 0 },
+};
+
+/**
+ * Рот по виземе: при малом раскрытии — линия покоя по выражению (ухмылка, улыбка, оскал), иначе — залитая пасть:
+ * скруглённый прямоугольник → овал по округлости r, сверху полоса зубов (th), язык при сильном раскрытии.
+ */
+export function paintVisemeMouth(g: CanvasRenderingContext2D, W: number, H: number, u: number, v: Viseme, expr: string, lk: number[],
+  opt: CritterMouth = {}) {
+  const ink = opt.color || "#1b1214";
+  const cx = W / 2 + lk[0] * u * 0.03;
+  const cy = H - (opt.y ?? 0.12) * u - lk[1] * u * 0.02;
+  const base = (opt.width ?? 0.24) * u;
+  const mw = base * Math.max(0.3, v.w);
+  const mh = u * 0.13 * Math.max(0, v.h);
+  g.save();
+  g.fillStyle = ink;
+  g.strokeStyle = ink;
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  const rest = REST_LINE[expr] || { curve: 0, smirk: 0, teeth: 0 };
+  const lineK = Math.max(0, 1 - mh / (u * 0.018)); // 1 — чистая линия, 0 — пасть
+  if (lineK > 0.001) {
+    g.globalAlpha = lineK;
+    const half = base * 0.36;
+    if (rest.teeth > 0.5) {
+      const w = base * 0.62, h = u * 0.036;
+      g.beginPath();
+      g.roundRect(cx - w / 2 - u * 0.007, cy - h / 2 - u * 0.007, w + u * 0.014, h + u * 0.014, u * 0.012);
+      g.fill();
+      g.fillStyle = "#ffffff";
+      g.fillRect(cx - w / 2, cy - h / 2, w, h);
+      g.lineWidth = u * 0.005;
+      g.beginPath();
+      g.moveTo(cx - w / 2, cy);
+      g.lineTo(cx + w / 2, cy);
+      for (let i = 1; i < 5; i++) {
+        g.moveTo(cx - w / 2 + (w * i) / 5, cy - h / 2);
+        g.lineTo(cx - w / 2 + (w * i) / 5, cy + h / 2);
+      }
+      g.stroke();
+    } else {
+      g.lineWidth = u * 0.022;
+      const yl = cy - rest.curve * 0 - rest.smirk * u * 0.004, yr = cy - rest.smirk * u * 0.03;
+      g.beginPath();
+      g.moveTo(cx - half, yl - rest.curve * u * 0.018);
+      g.quadraticCurveTo(cx, cy + rest.curve * u * 0.03, cx + half, yr - rest.curve * u * 0.018);
+      g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  if (mh > u * 0.004) {
+    g.globalAlpha = 1 - lineK * 0.85;
+    const r = Math.min(mw, mh) / 2;
+    const rad = r * (0.45 + 0.55 * v.r);
+    g.beginPath();
+    if (v.r > 0.75) g.ellipse(cx, cy, mw / 2, mh / 2, 0, 0, Math.PI * 2);
+    else g.roundRect(cx - mw / 2, cy - mh / 2, mw, mh, rad);
+    g.fill();
+    g.save();
+    g.clip();
+    if (v.th > 0.05) {
+      g.fillStyle = "#ffffff";
+      g.fillRect(cx - mw * 0.42, cy - mh / 2, mw * 0.84, mh * 0.24 * Math.min(1, v.th));
+    }
+    if (mh > u * 0.045) {
+      g.fillStyle = opt.tongue || "#ff6f86";
+      g.beginPath();
+      g.ellipse(cx, cy + mh * 0.4, mw * 0.3, mh * 0.3, 0, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.restore();
+    g.globalAlpha = 1;
+  }
+  g.restore();
+}
+
 export interface CritterMouth {
   /** cartoon — рисованный рот (формы по слогам); eq — экранный «эквалайзер»: светящиеся столбики пульсируют с голосом. */
   style?: "cartoon" | "eq";
@@ -811,16 +898,27 @@ export function createCritter(spec: CritterSpec): Character {
     }
     return { shape: REST_MOUTH[exprAt(t)] || "flat", open: 0 };
   }
-  function drawFace(t: number, talk: number) {
+  // Виземы (ключи с полями w/h/r/th): по полному времени (не «по двойкам»), плавно между ключами; раскрытие ×
+  // сглаженная громкость вокала — в тишине рот закрывается в линию покоя.
+  const visemeKeys = mouthKeys.some((k) => k.h !== undefined);
+  function visemeAt(t: number): Viseme {
+    const num = (f: string, d: number) => sampleNumber(mouthKeys, t, f) ?? d;
+    const env = (voiceAt(t - 0.04) + voiceAt(t) + voiceAt(t + 0.04)) / 3;
+    const amp = env < 0.02 ? (env / 0.02) * 0.5 : Math.min(1, 0.5 + env * 1.0);
+    return { w: num("w", 0.55), h: num("h", 0) * amp, r: num("r", 0), th: num("th", 0) };
+  }
+  function drawFace(t: number, talk: number, tFull = t) {
     const f = faceParams(t);
     const lk = lookAt(t);
     const bl = blinkAt(t) * (1 - f.closed) * (1 - f.happy) * (1 - f.squint);
-    const ms = mouthOn ? mouthAt(t, talk) : { shape: "", open: 0 };
-    const sig = [Math.round(t * 30), ...Object.values(f).map((v) => Math.round(v * 100)), Math.round(lk[0] * 100), Math.round(lk[1] * 100), Math.round(talk * 30), Math.round(bl * 20), ms.shape, Math.round(ms.open * 20)].join(",");
+    const ms = mouthOn && !visemeKeys ? mouthAt(t, talk) : { shape: "", open: 0 };
+    const vm = mouthOn && visemeKeys ? visemeAt(tFull) : null;
+    const sig = [Math.round(tFull * 30), ...Object.values(f).map((v) => Math.round(v * 100)), Math.round(lk[0] * 100), Math.round(lk[1] * 100), Math.round(talk * 30), Math.round(bl * 20), ms.shape, Math.round(ms.open * 20), vm ? [vm.w, vm.h, vm.r, vm.th].map((x) => Math.round(x * 40)).join("/") : ""].join(",");
     if (sig === lastSig) return f;
     lastSig = sig;
     paintCritterFace(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, f, lk, bl, talk, t, look);
-    if (mouthOn) paintCritterMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, ms.shape, ms.open, lk, mouthOpt, t);
+    if (vm) paintVisemeMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, vm, exprAt(t), lk, mouthOpt);
+    else if (mouthOn) paintCritterMouth(g, parts.faceCanvas.width, parts.faceCanvas.height, parts.faceU, ms.shape, ms.open, lk, mouthOpt, t);
     parts.faceTex.needsUpdate = true;
     return f;
   }
@@ -852,6 +950,8 @@ export function createCritter(spec: CritterSpec): Character {
       const defl = num(t, "deflate", 0);
       hopG.position.y = Math.max(0, num(t, "hop", 0)) * (S / 0.3) + punch * 0.022 * S;
       lean.rotation.set((num(t, "lean", 0) + v * 2.5) * D2R, 0, -num(t, "tilt", 0) * D2R);
+      // Ножки стоят: наклон корпуса не утапливает их в пол (plantFeet; старые серии — как было).
+      if (spec.plantFeet) for (const l of parts.legs) l.rotation.set(-lean.rotation.x, 0, -lean.rotation.z);
       turn.rotation.y = num(t, "turn", 0) * D2R;
       // Сжатие-растяжение с сохранением объёма: поза × дыхание × речь (тянется на ударных) × вздох (оседает).
       const breathe = 1 + 0.014 * Math.sin(t * 2 * Math.PI * 0.5);
@@ -877,12 +977,18 @@ export function createCritter(spec: CritterSpec): Character {
       }
       gear?.update(t, (fld, d) => num(t, fld, d));
       costume?.update((fld, d) => num(t, fld, d));
-      const f = drawFace(t, v);
+      const f = drawFace(t, v, t0);
       if (f.tint > 0.01) {
         const k = Math.min(1, f.tint) * (0.75 + 0.25 * Math.sin(t0 * 12));
         tmpC.copy(baseCol).lerp(rageCol, k * 0.75);
       } else tmpC.copy(baseCol);
       for (const m of parts.tinted) (m.material as any).color?.copy(tmpC);
+      // Не ниже пола (plantFeet): самая низкая точка героя (ножки, кулон на цепи при наклоне) — не под основанием.
+      if (spec.plantFeet) {
+        root.updateMatrixWorld(true);
+        const low = new THREE.Box3().setFromObject(lean, true).min.y;
+        if (low < root.position.y) hopG.position.y += root.position.y - low;
+      }
     },
   };
   ch.update(0);

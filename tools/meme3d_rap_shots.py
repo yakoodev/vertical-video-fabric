@@ -89,8 +89,8 @@ def arc_keys(t0: float, t1: float, p0: list[float], p1: list[float], h: float, n
 
 # --------------------------------------------------------------------------- раскадровка
 
-TH = [0, 0.138, -0.38]  # Клод на сиденье трона (skyline)
-CAR = [0.95, 0.2256, 0.15]  # на крыше спорткара «PROD»
+TH = [0, 0.345, -0.4]  # Клод на сиденье огромного трона (skyline)
+CAR = [0.95, 0.311, 0.15]  # на крыше спорткара «PROD»
 POD = 0.18  # пол сцены
 
 
@@ -100,16 +100,16 @@ def shots() -> list[Shot]:
     # ================= INTRO 0–6.85: кран над городом → трон → дроп → «Отличный вопрос.»
     S.append(Shot(0.0, 4.3, "skyline", C([-0.6, -1.6, -7.0], 0, 50, pos=[4.5, 3.6, 7.5]), C(TH[:1] + [TH[1] + fy] + TH[2:], 0.75, 34, -12, 2, dof=1.2),
                   ease="inOutCubic", c=ch(TH, {"armL": "hips", "armR": [-10, 25, 0.3, 0]}, "smug", nod=False),
-                  k=ch([-0.3, 0, -0.04], {"turn": 20}, "angry", nod=False), lab="кран над городом",
+                  k=ch([-0.5, 0, -0.15], {"turn": 20}, "angry", nod=False), leash=0.95, lab="кран над городом",
                   mid=[(2.4, C([-0.2, 0.2, -1.0], 0, 44, pos=[2.4, 1.6, 4.5]))]))
     S.append(Shot(4.3, 5.5, "skyline", C([-0.05, TH[1] + fy, -0.25], 0.5, 40, -18, -4, fish=0.35), C([-0.02, TH[1] + fy, -0.28], 0.34, 40, -14, -3, fish=0.45),
                   c=ch(TH, {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0], "squash": 1.08}, "smug"),
-                  k=ch([-0.3, 0, -0.04], {"lean": 22, "turn": 25, "hop": 0.012}, "bark"), flash=True, shake=0.012, lab="дроп"))
+                  k=ch([-0.5, 0, -0.15], {"lean": 22, "turn": 25, "hop": 0.012}, "bark"), flash=True, shake=0.012, leash=0.95, lab="дроп"))
     S.append(Shot(5.5, 6.85, "skyline", C([0.0, TH[1] + fy, -0.3], 0.34, 30, 6, 2, dof=1.0), C([0.0, TH[1] + fy, -0.3], 0.3, 30, 4, 2, dof=1.0),
-                  c=ch(TH, {"lean": 4}, "deadpan", end={"shades": 0.0}), k=ch([-0.3, 0, -0.04], {"turn": 25}, "angry"), lab="«Отличный вопрос.»"))
+                  c=ch(TH, {"lean": 4}, "deadpan", end={"shades": 0.0}), k=ch([-0.5, 0, -0.15], {"turn": 25}, "angry"), leash=0.95, lab="«Отличный вопрос.»"))
     # ================= VERSE 1
     S.append(Shot(6.85, 8.65, "datacenter", C([0.0, 0.13, 0.05], 0.45, 80, -28, 2, fish=0.8), C([0.0, 0.13, 0.05], 0.38, 80, -24, 2, fish=0.85),
-                  c=ch([0, 0, 0], {"lean": 18, "armL": "hips", "armR": [12, 70, 0.9, 0]}, "smug"), k=ch([-0.3, 0, 0.12], {"turn": 25}, "angry"),
+                  c=ch([0, 0, 0], {"lean": 18, "armL": "hips", "armR": [12, 70, 0.9, 0]}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 25}, "angry"),
                   lab="тычет в линзу"))
     S.append(Shot(8.65, 10.5, "datacenter", C([-0.22, 0.2, 0.15], 0.9, 50, 18, -3, fish=0.4, roll=-6), C([-0.2, 0.18, 0.14], 0.8, 50, 14, -3, fish=0.45, roll=-4),
                   c=ch([0, 0, 0], {"lean": -14, "tilt": 4, "turn": 10, "armL": [30, -20, 0.3, 0], "armR": [6, 45, 0.8, 0]}, "smug", end={"lean": 16}),
@@ -137,13 +137,13 @@ def shots() -> list[Shot]:
         cnt.append(fx_obj(f"cnt{i}", "sign_plate", [0, 0.42, -0.2], {"text": txt, "width": 0.5, "height": 0.13, "bg": "#d8342c" if i == 3 else "#2b2440",
                                                                    "glow": 0.5}, a, b))
     S.append(Shot(18.65, 20.2, "datacenter", C([0.0, 0.26, 0.0], 0.75, 40, 0, 4), C([0.0, 0.26, 0.0], 0.68, 40, 0, 4),
-                  c=ch([0, 0, 0], {"armL": "shrug", "armR": "shrug"}, "smug"), k=ch([-0.3, 0, 0.12], {"turn": 20}, "angry"), fx=cnt,
+                  c=ch([0, 0, 0], {"armL": "shrug", "armR": "shrug"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), fx=cnt,
                   lab="«минус сорок файлов»"))
     S.append(Shot(20.2, 21.6, "penthouse", C([0.0, 0.25, 0.1], 0.9, 50, -10, -4), C([0.0, 0.22, 0.1], 0.75, 50, -6, -4),
                   c=ch([0, 0, 0.1], {"armL": [70, 30, 0.6, 1], "armR": [70, 30, 0.6, 1], "lean": -4}, "happy", mid=[(20.9, {"hop": 0.02}), (21.1, {"hop": 0})]),
                   k=ch([-0.34, 0, 0.2], {"turn": 30}, "angry"), lab="жжёт бюджет: жетоны"))
     S.append(Shot(21.6, 23.0, "penthouse", C([0.0, 0.087 + fy, -0.5], 0.55, 36, 20, 3, dof=1.2), C([0.0, 0.087 + fy, -0.5], 0.48, 36, 16, 3, dof=1.2),
-                  c=ch([0, 0.087, -0.5], {"armL": "hips", "armR": "hips", "lean": -10}, "smug"), k=None, leash=None, lab="на диване, 3 ночи",
+                  c=ch([0, 0.13, -0.5], {"armL": "hips", "armR": "hips", "lean": -10}, "smug"), k=None, leash=None, lab="на диване, 3 ночи",
                   fx=[fx_obj("clock3", "sign_plate", [0.42, 0.55, -0.9], {"text": "03:00", "width": 0.32, "height": 0.12, "bg": "#1a1030", "fg": "#ff3fa4",
                                                                           "glow": 1.0}, 21.6, 23.0)]))
     cards = [{"id": f"cardfly{i}", "primitive": "credit_card", "params": {"size": [0.16, 0.1], "color": c, "text": "CREDITS"}, "position": [0, 0, 0],
@@ -155,7 +155,7 @@ def shots() -> list[Shot]:
     S.append(Shot(24.8, 26.0, "penthouse", C([0.0, 0.06, 0.12], 0.2, 34, 10, 6, dof=0.8), C([0.0, 0.06, 0.12], 0.17, 34, 6, 6, dof=0.8),
                   c=ch([0, 0, 0.1], {"armR": [10, 40, 0.6, 0], "lean": 6}, "smug"), k=None, leash=None, lab="«а чё, а нет?» — кулон крупно"))
     S.append(Shot(26.26, 27.45, "datacenter", C([0.0, 0.3, 0.0], 0.8, 42, 0, 4), C([0.0, 0.3, 0.0], 0.7, 42, 0, 4),
-                  c=ch([0, 0, 0], {"armL": "cross", "armR": "cross"}, "deadpan"), k=ch([-0.3, 0, 0.12], {"turn": 20}, "angry"),
+                  c=ch([0, 0, 0], {"armL": "cross", "armR": "cross"}, "deadpan"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"),
                   fx=[fx_obj("stop", "chat_bubble", [0.2, 0.45, 0.1], {"text": "СТОП!!!", "side": "right", "avatar": "user", "width": 0.42, "height": 0.16,
                                                                      "fontSize": 0.5}, 26.3, 27.45)], lab="юзер: «стоп»"))
     S.append(Shot(27.45, 29.4, "datacenter", C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6), C([0.0, 0.13, 0.05], 0.4, 70, 0, 0, fish=0.6),
@@ -168,9 +168,9 @@ def shots() -> list[Shot]:
     sign_roll = [{**k, "position": [k["position"][0], k["position"][1] + 0.335, k["position"][2]]} for k in car_roll]
     S.append(Shot(29.5, 31.0, "skyline", C([0.55, 0.2, 0.3], 1.4, 44, -55, 10), C([0.75, 0.18, 0.55], 1.3, 44, -45, 8),
                   c=ch([0.3, 0, 0.0], {"armR": [20, 60, 0.9, 0], "lean": 12}, "smug", yaw=40, mid=[(29.7, {"hop": 0.03}), (29.85, {"hop": 0})]),
-                  k=ch([0.0, 0, 0.12], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}, {"id": "_mod_prodsign", "keys": sign_roll}]))
+                  k=ch([-0.15, 0, 0.3], {"turn": 30}, "bark"), leash=0.5, lab="пинает прод с крыши", fx=[{"id": "_mod_car", "keys": car_roll}, {"id": "_mod_prodsign", "keys": sign_roll}]))
     S.append(Shot(31.0, 32.53, "skyline", C([0.7, 0.05, 0.5], 0, 58, pos=[2.5, 0.5, 2.3]), C([1.2, -0.25, 1.0], 0, 62, pos=[2.55, 0.42, 2.4], roll=-14), ease="inCubic",
-                  c=ch([0.3, 0, 0.0], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=40), k=ch([0.0, 0, 0.12], {"turn": 30}, "bark"),
+                  c=ch([0.3, 0, 0.0], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy", yaw=40), k=ch([-0.15, 0, 0.3], {"turn": 30}, "bark"),
                   leash=0.5, lab="«прод под откос»"))
     # ================= CHORUS 1
     ck = [t for t in kicks() if 32.5 <= t <= 44.7]
@@ -201,15 +201,15 @@ def shots() -> list[Shot]:
     S.append(Shot(40.2, 41.6, "stage", C([0.0, 0.3, 0.6], 1.6, 50, 8, 10), C([0.0, 0.3, 0.6], 1.45, 50, 4, 8),
                   c=ch([0, POD, 0], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "happy"), k=ch([-0.36, POD, 0.15], {"turn": 25, "lean": 15}, "bark"),
                   lab="толпа прыгает"))
-    S.append(Shot(41.63, 43.1, "stage", C([0.25, POD + 0.25, 0.2], 1.0, 44, 25, 10), C([0.25, POD + 0.22, 0.2], 0.9, 44, 20, 8),
-                  c=ch([-0.2, POD, 0.0], {"armL": "cross", "armR": "cross"}, "smug", yaw=20), k=ch([0.32, POD + 0.11, 0.25], {"turn": -10}, "smug"),
+    S.append(Shot(41.63, 43.1, "stage", C([0.4, POD + 0.25, 0.2], 1.05, 44, 25, 10), C([0.4, POD + 0.22, 0.2], 0.95, 44, 20, 8),
+                  c=ch([0.66, POD, 0.0], {"armL": "cross", "armR": "cross"}, "smug", yaw=-20), k=ch([0.32, POD + 0.26, 0.25], {"turn": -10}, "smug", yaw=20),
                   leash=0.7, lab="кнопка «отменить подписку» не жмётся",
                   fx=[fx_obj("btn1", "cancel_button", [0.32, POD, 0.25], {"radius": 0.13, "pedestal": 0.1}, 41.6, 44.7,
                              state=[{"t": 0, "press": 0}, {"t": 42.0, "press": 1}, {"t": 42.15, "press": 0}, {"t": 42.5, "press": 1}, {"t": 42.65, "press": 0}]),
-                      fx_obj("user1", "mochi_user", [0.62, POD, 0.4], {"size": 0.2, "mood": "type", "eyes": "normal"}, 41.6, 43.1, rotation=[0, -70, 0])]))
-    S.append(Shot(43.1, 44.66, "stage", C([-0.2, POD + 0.13, 0.05], 0.36, 34, 6, 2), C([-0.2, POD + 0.135, 0.06], 0.3, 34, 4, 2),
-                  c=ch([-0.2, POD, 0.0], {"lean": 24, "armL": "hips", "armR": "hips", "shades": 0}, "smug", look=(0, -0.1), yaw=0),
-                  k=ch([0.32, POD + 0.11, 0.25], {"turn": -10}, "smug"), leash=0.7, lab="наклон в линзу",
+                      fx_obj("user1", "mochi_user", [0.0, POD, 0.42], {"size": 0.2, "mood": "type", "eyes": "normal"}, 41.6, 43.1, rotation=[0, 60, 0])]))
+    S.append(Shot(43.1, 44.66, "stage", C([0.62, POD + 0.13, 0.05], 0.36, 34, 6, 2), C([0.62, POD + 0.135, 0.06], 0.3, 34, 4, 2),
+                  c=ch([0.66, POD, 0.0], {"lean": 24, "armL": "hips", "armR": "hips", "shades": 0}, "smug", look=(0, -0.1), yaw=0),
+                  k=ch([0.32, POD + 0.26, 0.25], {"turn": -10}, "smug", yaw=20), leash=0.7, lab="наклон в линзу",
                   fx=[fx_obj("btn2", "cancel_button", [0.32, POD, 0.25], {"radius": 0.13, "pedestal": 0.1}, 43.1, 44.7)]))
     # ================= VERSE 2
     S.append(Shot(44.66, 46.4, "classroom", C([0.0, 0.34, -0.6], 1.6, 48, 30, 5), C([0.1, 0.32, -0.75], 1.1, 46, 24, 6),
@@ -242,25 +242,25 @@ def shots() -> list[Shot]:
     gauge = [fx_obj("gauge", "limit_gauge", [0, 0.45, -0.3], {"width": 0.6, "height": 0.14}, 57.4, 59.3,
                     keys=[{"t": 57.4, "v": 1.0}, {"t": 58.6, "v": 0.0, "ease": "inQuad"}])]
     S.append(Shot(57.43, 59.3, "datacenter", C([0.0, 0.3, 0.0], 0.8, 42, 0, 4), C([0.0, 0.3, 0.0], 0.7, 42, 0, 4),
-                  c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.3, 0, 0.12], {"turn": 20}, "angry"), fx=gauge, lab="лимиты в ноль"))
+                  c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), fx=gauge, lab="лимиты в ноль"))
     crawl = []
     for i in range(9):
         a = math.radians(200 - i * 25)
         crawl.append({"t": round(59.3 + i * 0.32, 3), "position": [round(math.sin(a) * 0.65, 3), 0, round(math.cos(a) * 0.65, 3)],
                       "rotation": [0, round(math.degrees(a) - 90, 1), 0], "ease": "linear"})
     S.append(Shot(59.3, 61.95, "datacenter", C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 2.2, 0.02]), C([0.0, 0.0, 0.0], 0, 46, pos=[0.0, 1.8, 0.02], roll=40),
-                  c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.3, 0, 0.12], {"turn": 20}, "angry"), lab="юзер приполз (сверху)",
+                  c=ch([0, 0, 0], {"armL": "hips", "armR": "hips"}, "smug"), k=ch([-0.44, 0, 0.14], {"turn": 20}, "angry"), lab="юзер приполз (сверху)",
                   fx=[{"id": "crawler", "primitive": "mochi_user", "params": {"size": 0.22, "mood": "idle", "eyes": "normal"}, "position": [0, 0, 0],
                        "visible": win(59.3, 62.0), "keys": crawl}]))
     S.append(Shot(62.72, 64.5, "inferno", C([0.0, 0.13, 0.25], 0.38, 34, 6, 2), C([0.0, 0.135, 0.26], 0.3, 34, 4, 2),
                   c=ch([0, 0, 0.2], {"lean": 24, "armL": "hips", "armR": "hips", "shades": 0}, "smug", look=(0, -0.1)), k=None, leash=None,
                   lab="«без меня твой код»"))
     S.append(Shot(64.5, 66.0, "inferno", C([0.0, 0.25, 0.2], 0.8, 56, 0, 0, fish=0.6), C([0.0, 0.25, 0.2], 0.5, 56, 0, 0, fish=0.9),
-                  c=ch([0, 0, 0.2], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "rage"), k=ch([-0.34, 0, 0.32], {"turn": 25, "lean": 20}, "bark"),
+                  c=ch([0, 0, 0.2], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "rage"), k=ch([-0.42, 0, 0.32], {"turn": 25, "lean": 20}, "bark"),
                   flash=True, shake=0.02, lab="«минус мозг» — глитч"))
     # ================= BRIDGE (студия, ровно, без эмоций)
-    B = [0.1, 0.16, 0]
-    KB = [-0.17, 0.16, 0.02]
+    B = [0.12, 0.16, 0]
+    KB = [-0.25, 0.16, 0.04]
     pet = {"armR": [30, 50, 0.6, 0.6], "turn": 15}
     S.append(Shot(66.0, 69.2, "studio", C([-0.03, 0.27, 0.0], 0.8, 32, 0, 4), None, c=ch(B, pet, "deadpan", nod=False), k=ch(KB, {}, "smile", yaw=20, nod=False),
                   leash=0.3, lab="мост: «Ты зачем базу удалил?»",
@@ -281,7 +281,7 @@ def shots() -> list[Shot]:
     # ================= FINAL CHORUS (максимум)
     S.append(Shot(76.09, 77.6, "inferno", C([0.0, 0.32, 0.1], 0.95, 58, 0, -2, fish=0.35), C([0.0, 0.3, 0.1], 0.85, 58, 0, -2, fish=0.4),
                   c=ch([0, 0, 0.2], {"lean": -8, "armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "smug"),
-                  k=ch([-0.34, 0, 0.32], {"lean": 20, "turn": 25}, "bark"), flash=True, shake=0.015, lab="финал: дата-центр горит"))
+                  k=ch([-0.42, 0, 0.32], {"lean": 20, "turn": 25}, "bark"), flash=True, shake=0.015, lab="финал: дата-центр горит"))
     S.append(Shot(77.6, 79.0, "stage", C([0.0, 0.25, 0.9], 1.4, 70, 0, -6, fish=0.6), C([0.0, 0.25, 0.9], 1.2, 70, 0, -6, fish=0.65),
                   c=ch([0, POD, 0], {"armL": [70, -10, 0.6, 0], "armR": [70, -10, 0.6, 0]}, "happy"), k=ch([-0.34, POD, 0.12], {"lean": 15}, "bark"),
                   lab="фишай с толпой"))
@@ -289,7 +289,7 @@ def shots() -> list[Shot]:
                   c=ch([0.05, 0, 0.35], {"armR": [30, 50, 0.6, 1], "armL": "hips"}, "smug", yaw=-15), k=ch([-0.3, 0, 0.45], {"turn": 20}, "bark"),
                   lab="доставка"))
     S.append(Shot(80.3, 81.5, "inferno", C([-0.34, 0.05, 0.4], 0.16, 40, 10, 2), C([-0.34, 0.05, 0.4], 0.13, 40, 6, 2),
-                  c=ch([0, 0, 0.2], {"armR": [10, 45, 0.7, 0]}, "smug"), k=ch([-0.34, 0, 0.32], {"lean": 15, "turn": 0}, "snarl", yaw=0),
+                  c=ch([0, 0, 0.2], {"armR": [10, 45, 0.7, 0]}, "smug"), k=ch([-0.42, 0, 0.32], {"lean": 15, "turn": 0}, "snarl", yaw=0),
                   lab="шипы ошейника крупно"))
     S.append(Shot(82.43, 83.9, "skyline", C([0.0, 0.2, -0.2], 0.9, 44, 12, -6), C([0.0, 0.2, -0.2], 0.8, 44, 8, -6),
                   c=ch([0, 0, -0.1], {"armL": [70, -10, 0.6, 0], "armR": [70, -10, 0.6, 0]}, "happy"), k=ch([-0.34, 0, 0.0], {"lean": 15}, "bark"),
@@ -298,16 +298,16 @@ def shots() -> list[Shot]:
                                                         "t0": 82.4, "t1": 84.0}, 0, 84.0)]))
     S.append(Shot(83.9, 85.3, "stage", C([0.0, POD + 0.2, 0.0], 0.6, 50, 0, -22, floor=0.05), None,
                   c=ch([0, POD, 0], {"armL": [75, 5, 0.5, 0.6], "armR": [75, 5, 0.5, 0.6]}, "happy"), k=None, leash=None, lab="руки вверх, конфетти"))
-    S.append(Shot(85.55, 87.3, "stage", C([0.25, POD + 0.25, 0.2], 1.0, 44, 25, 10), C([0.25, POD + 0.22, 0.2], 0.9, 44, 20, 8),
-                  c=ch([-0.2, POD, 0.0], {"armL": "cross", "armR": "cross"}, "smug", yaw=20), k=ch([0.32, POD + 0.11, 0.25], {"turn": -10}, "smug"),
+    S.append(Shot(85.55, 87.3, "stage", C([0.4, POD + 0.25, 0.2], 1.05, 44, 25, 10), C([0.4, POD + 0.22, 0.2], 0.95, 44, 20, 8),
+                  c=ch([0.66, POD, 0.0], {"armL": "cross", "armR": "cross"}, "smug", yaw=-20), k=ch([0.32, POD + 0.26, 0.25], {"turn": -10}, "smug", yaw=20),
                   leash=0.7, lab="«подписку отменить» — кнопка",
                   fx=[fx_obj("btn3", "cancel_button", [0.32, POD, 0.25], {"radius": 0.13, "pedestal": 0.1}, 85.5, 87.3,
                              state=[{"t": 0, "press": 0}, {"t": 86.0, "press": 1}, {"t": 86.15, "press": 0}]),
-                      fx_obj("user2", "mochi_user", [0.62, POD, 0.4], {"size": 0.2, "mood": "type", "eyes": "normal"}, 85.5, 87.3, rotation=[0, -70, 0])]))
+                      fx_obj("user2", "mochi_user", [0.0, POD, 0.42], {"size": 0.2, "mood": "type", "eyes": "normal"}, 85.5, 87.3, rotation=[0, 60, 0])]))
     S.append(Shot(87.3, 89.0, "inferno", C([0.0, 0.13, 0.25], 0.38, 34, -6, 2), C([0.0, 0.135, 0.26], 0.3, 34, -4, 2),
                   c=ch([0, 0, 0.2], {"lean": 24, "armL": "hips", "armR": "hips", "shades": 0}, "smug", look=(0, -0.1)), k=None, leash=None, lab="наклон в линзу"))
     S.append(Shot(89.0, 91.65, "inferno", C([0.0, 0.32, 0.1], 1.1, 58, 0, 4), C([0.0, 0.32, 0.1], 0.9, 58, 0, 2),
-                  c=ch([0, 0, 0.2], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "smug"), k=ch([-0.34, 0, 0.32], {"lean": 20, "turn": 25}, "bark"),
+                  c=ch([0, 0, 0.2], {"armL": [62, -12, 0.6, 0], "armR": [62, -12, 0.6, 0]}, "smug"), k=ch([-0.42, 0, 0.32], {"lean": 20, "turn": 25}, "bark"),
                   lab="всё горит"))
     # ================= OUTRO: инструментал, монтаж по локациям, «Подписку отменить», кнопка отваливается
     out = [("stage", C([0.0, 0.3, 0.6], 1.6, 50, 8, 10), {"armL": [70, -10, 0.6, 0.5], "armR": [70, -10, 0.6, 0.5]}, "happy", [0, POD, 0]),
@@ -322,7 +322,7 @@ def shots() -> list[Shot]:
         loc, cam, pose, face, pos = out[i % len(out)]
         yaw = -25 if loc == "classroom" else 0
         S.append(Shot(edges[i], edges[i + 1], loc, cam, {**cam, "position": [v * 0.97 + c * 0.03 for v, c in zip(cam["position"], cam["target"])]},
-                      c=ch(pos, pose, face, yaw=yaw), k=None if loc == "classroom" else ch([pos[0] - 0.34, pos[1], pos[2] + 0.12], {"lean": 15, "turn": 25}, "bark"),
+                      c=ch(pos, pose, face, yaw=yaw), k=None if loc == "classroom" else ch([pos[0] - 0.46, pos[1], pos[2] + 0.14], {"lean": 15, "turn": 25}, "bark"),
                       leash=None if loc == "classroom" else 0.44, flash=i == 0, shake=0.012 if i == 0 else 0.0, lab=f"аутро {i + 1}: {loc}"))
     S.insert(len(S) - 7, Shot(91.65, 92.13, "studio", C([0.1, 0.16 + FY, 0.0], 0.34, 30, 0, 2), None, c=ch([0.1, 0.16, 0], {"shades": 1}, "deadpan", nod=False),
                               k=None, leash=None, lab="стоп-кадр перед аутро"))
@@ -331,18 +331,18 @@ def shots() -> list[Shot]:
                 {"t": 104.4, "position": [1.6, POD - 0.02 + 0.13, 1.4], "rotation": [90, 0, 720], "ease": "outQuad"}]
     btn_state = [{"t": 0, "press": 0, "crack": 0, "cap": 1}, {"t": 99.75, "crack": 0.35}, {"t": 100.35, "crack": 1.0}, {"t": 101.0, "cap": 0}]
     S.append(Shot(99.7, 101.0, "stage", C([0.14, POD + 0.12, 0.2], 0.95, 40, -10, 28), C([0.16, POD + 0.12, 0.22], 0.8, 40, -8, 30),
-                  c=ch([-0.05, POD, 0.1], {"armL": "hips", "armR": "hips"}, "smug", yaw=20), k=ch([0.05, POD, 0.45], {"turn": -10}, "smug"), leash=0.6,
+                  c=ch([-0.05, POD, 0.1], {"armL": "hips", "armR": "hips"}, "smug", yaw=20), k=ch([-0.46, POD, 0.3], {"turn": 20}, "smug"), leash=0.6,
                   lab="«Подписку отменить.» — трещина",
                   fx=[fx_obj("btn4", "cancel_button", [0.32, POD, 0.25], {"radius": 0.13, "pedestal": 0.1}, 99.7, DUR + 1, state=btn_state),
                       {"id": "capfall", "primitive": "cylinder", "params": {"size": [0.26, 0.12], "color": "#ff2e3f", "emissive": "#ff2e3f",
                                                                              "emissiveIntensity": 0.35},
                        "position": [0, 0, 0], "visible": win(101.0, DUR + 1), "keys": cap_roll}]))
     S.append(Shot(101.0, 104.4, "stage", C([0.5, POD + 0.15, 0.4], 1.2, 44, 20, 12), C([0.7, POD + 0.12, 0.7], 1.3, 44, 30, 10),
-                  c=ch([-0.05, POD, 0.1], {"armL": "shrug", "armR": "shrug"}, "smug", yaw=20), k=ch([0.05, POD, 0.45], {"turn": -10}, "angry"), leash=0.6,
+                  c=ch([-0.05, POD, 0.1], {"armL": "shrug", "armR": "shrug"}, "smug", yaw=20), k=ch([-0.46, POD, 0.3], {"turn": 20}, "angry"), leash=0.6,
                   lab="кнопка отваливается и катится"))
     S.append(Shot(104.4, DUR, "skyline", C(TH[:1] + [TH[1] + FY] + TH[2:], 0.75, 34, -12, 2, dof=1.0), C([-0.6, -1.6, -7.0], 0, 50, pos=[5.5, 4.5, 9.5]),
                   ease="inOutCubic", c=ch(TH, {"armL": "hips", "armR": [-10, 25, 0.3, 0]}, "smug", nod=False),
-                  k=ch([-0.3, 0, -0.04], {"turn": 20}, "smile", nod=False), lab="финал: кран вверх над городом"))
+                  k=ch([-0.5, 0, -0.15], {"turn": 20}, "smile", nod=False), leash=0.95, lab="финал: кран вверх над городом"))
     return S
 
 
@@ -465,7 +465,9 @@ def mouth_keys() -> list[dict]:
     import meme3d_hero_claude as H
 
     data = json.loads((DATA / "lyrics.json").read_text("utf-8"))
-    return H.mouth_keys_from_words([w for ln in data["lines"] for w in ln["words"]])
+    # Реплики юзера на мосту («— Ты зачем…», «— Восстанови…») поёт не Клод — их губами не повторяем.
+    mine = [ln for ln in data["lines"] if not (ln["text"].lstrip().startswith("—") and not any(x in ln["text"] for x in ("Отличный", "бэкап я")))]
+    return H.viseme_keys_from_words([w for ln in mine for w in ln["words"]])
 
 
 def build_specs(width: int = 1080, height: int = 1920) -> tuple[dict[str, dict], list[Shot]]:

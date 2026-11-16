@@ -236,3 +236,70 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+VISEMES = {
+    "a": {"w": 0.8, "h": 1.0, "r": 0.35, "th": 0.6},
+    "o": {"w": 0.5, "h": 0.8, "r": 1.0, "th": 0.0},
+    "u": {"w": 0.36, "h": 0.55, "r": 1.0, "th": 0.0},
+    "e": {"w": 0.95, "h": 0.55, "r": 0.15, "th": 0.9},
+    "i": {"w": 1.0, "h": 0.35, "r": 0.05, "th": 1.0},
+    "closed": {"w": 0.55, "h": 0.0, "r": 0.0, "th": 0.0},
+    "press": {"w": 0.5, "h": 0.0, "r": 0.0, "th": 0.0},
+}
+VOWEL_VIS = {**{v: "a" for v in "аяa"}, **{v: "o" for v in "оёo"}, **{v: "u" for v in "уюu"}, **{v: "e" for v in "еэe"},
+             **{v: "i" for v in "иыiy"}}
+LIPS = set("мбпфвmbpfv")  # губные: перед гласной губы смыкаются
+
+
+def _syllables(word: str) -> list[tuple[str, str]]:
+    """Слово → [(согласные перед гласной, гласная)] по гласным (для визем)."""
+    w = word.lower()
+    out, cons = [], ""
+    for ch in w:
+        if ch in VOWEL_VIS:
+            out.append((cons, ch))
+            cons = ""
+        elif ch.isalpha():
+            cons += ch
+    return out or [("", "а")]
+
+
+def viseme_keys_from_words(words: list[dict]) -> list[dict]:
+    """Виземы рта по словам с атаками слогов (``{w, t0, t1, syl: [t…]}``): на атаке слога — гласная (а — широко открыт,
+    о/у — кругло, е/и — растянут с зубами), губные м/б/п/ф/в — сперва сомкнуты; гласная держится до следующего слога,
+    в конце слова рот закрывается. Ключи с ease inOutSine — без щелчков между формами."""
+    keys: list[dict] = []
+
+    def put(t: float, vis: str, scale: float = 1.0) -> None:
+        v = VISEMES[vis]
+        keys.append({"t": round(t, 3), "ease": "inOutSine", **{k: round(x * (scale if k == "h" else 1.0), 3) for k, x in v.items()}})
+
+    for wi, w in enumerate(words):
+        sy = _syllables(str(w.get("w", "")))
+        on = list(w.get("syl") or [w["t0"]])
+        t1 = float(w.get("t1", on[-1] + 0.25))
+        nxt = float(words[wi + 1]["t0"]) if wi + 1 < len(words) else t1 + 1.0
+        for i, t in enumerate(on):
+            cons, vow = sy[i] if i < len(sy) else sy[-1]
+            vis = VOWEL_VIS.get(vow, "a")
+            if cons and cons[-1] in LIPS:
+                put(t - 0.03, "press")
+                put(t + 0.05, vis)
+            else:
+                put(t + 0.03, vis)
+            end = on[i + 1] if i + 1 < len(on) else t1
+            if end - t > 0.2:
+                put(end - 0.05, vis, 0.85)  # долгая гласная держится
+        if nxt - t1 > 0.12:
+            put(t1 + 0.04, "closed")
+        else:
+            put(t1, vis, 0.4)
+    keys.sort(key=lambda k: k["t"])
+    # Ключи не теснее 2 кадров: ближние сливаются (нет дрожи).
+    out: list[dict] = []
+    for k in keys:
+        if out and k["t"] - out[-1]["t"] < 0.06:
+            out[-1] = {**k, "t": out[-1]["t"]} if k["h"] > out[-1]["h"] else out[-1]
+            continue
+        out.append(k)
+    return out

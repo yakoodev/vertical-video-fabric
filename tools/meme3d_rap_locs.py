@@ -69,9 +69,9 @@ def loc_skyline() -> dict:
     objs = [
         # Башня, на крыше которой стоит Клод: крыша (y 58.33 у модели) — ровно на y = 0.
         M("tower", "building/kenney_sky_a", [0, -58.33 * s_tower, 0], 0, s_tower),
-        M("throne", "lux/throne", [0, 0, -0.42], 0, 0.2),
+        M("throne", "lux/throne", [0, 0, -0.42], 180, [0.95, 0.5, 0.85]),  # перёд модели — на −z
         M("car", "vehicle/sedan_sports", [0.95, 0, 0.15], 145, 0.16),
-        obj("prodsign", "sign_plate", [0.95, 0.335, 0.15], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
+        obj("prodsign", "sign_plate", [1.06, 0.27, -0.01], {"text": "PROD", "width": 0.22, "height": 0.07, "bg": "#f6c445", "fg": "#1a1206", "glow": 0.2},
             rotation=[0, -35, 0]),
         M("ac1", "roof/q_ac", [-1.15, 0, -1.0], 30),
         M("ac2", "roof/q_ac_stacked", [-1.55, 0, -0.35], 80),
@@ -116,7 +116,7 @@ def loc_skyline() -> dict:
                    {"saturation": 1.15, "contrast": 1.05, "shadows": "#3a2470", "highlights": "#ffc89a", "split": 0.35},
                    bloom=0.6, threshold=0.82, dof=True)
     return {"objects": objs, "lights": lights, "env": env,
-            "spot": {"claude": [0, 0, 0.1], "throne": [0, 0.69 * 0.2, -0.38], "car": [0.95, 1.41 * 0.16, 0.15]}}
+            "spot": {"claude": [0, 0, 0.1], "throne": [0, 0.69 * 0.5, -0.4], "car": [0.95, 1.94 * 0.16, 0.15]}}
 
 
 # --------------------------------------------------------------------------- неоновая сцена с толпой
@@ -172,10 +172,10 @@ def loc_penthouse() -> dict:
     sf = 0.29 * K
     objs = [
         floor("floor", [9, 9], "#efe6d8", surface=None, rough=0.12, metalness=0.15),
-        obj("rug", "cylinder", [0, 0.001, 0.15], {"size": [1.5, 0.006], "color": "#5a0f2c", "roughness": 0.95}),
+        obj("rug", "cylinder", [0, -0.006, 0.15], {"size": [1.5, 0.006], "color": "#5a0f2c", "roughness": 0.95}),
         M("sofa", "lux/sofa_white", [0, 0, -0.55], 0),
-        M("table", "lux/table_glass", [0, 0, 0.0], 0),
-        M("bars", "lux/gold_bars", [0.05, 0.5 * K, 0.0], 20),
+        M("table", "lux/table_glass", [0, 0, -0.22], 0),
+        M("bars", "lux/gold_bars", [0.05, 0.5 * K, -0.22], 20),
         M("chest", "lux/chest_gold", [0.85, 0, -0.35], -30),
         M("safe", "lux/safe", [-0.95, 0, -0.6], 25),
         M("plant1", "lux/plant_fiddle", [-0.75, 0, -0.75], 0),
@@ -213,7 +213,7 @@ def loc_penthouse() -> dict:
 def loc_street() -> dict:
     rng = random.Random(8)
     objs = [
-        obj("walk", "box", [0, -0.02, 0], {"size": [24, 0.04, 2.0], "color": "#b9a99a", "surface": {"kind": "concrete", "tile": 0.5}, "roughness": 0.85}),
+        obj("walk", "box", [0, -0.04, 0], {"size": [24, 0.04, 2.0], "color": "#b9a99a", "surface": {"kind": "concrete", "tile": 0.5}, "roughness": 0.85}),
         obj("curb", "box", [0, -0.02, 1.02], {"size": [24, 0.05, 0.06], "color": "#8d8078"}),
         obj("road", "box", [0, -0.05, 2.9], {"size": [24, 0.02, 3.8], "color": "#2e2b33", "surface": {"kind": "concrete", "tile": 0.8}, "roughness": 0.7}),
         obj("lane", "box", [0, -0.035, 2.9], {"size": [24, 0.004, 0.05], "color": "#f2e6a0", "emissive": "#f2e6a0", "emissiveIntensity": 0.2}),
@@ -222,7 +222,7 @@ def loc_street() -> dict:
             rotation=[0, 75, 0]),
         M("taxi", "vehicle/taxi", [2.3, -0.04, 3.4], -90),
         obj("cart", "hand_cart", [0.6, 0, 0.0], {"boxes": 4, "text": "ФУРИ-АНИМЕ"}, rotation=[0, -25, 0], scale=0.9),
-        obj("box1", "delivery_box", [-0.45, 0, 0.35], {"size": [0.3, 0.22, 0.26]}, rotation=[0, 20, 0]),
+        obj("box1", "delivery_box", [-0.8, 0, 0.1], {"size": [0.3, 0.22, 0.26]}, rotation=[0, 20, 0]),
         M("hydrant", "street/hydrant", [1.3, 0, 0.75], 0),
         M("dumpster", "street/dumpster", [-2.4, 0, -0.5], 10),
         M("bags", "street/trash_bags", [-1.75, 0, -0.45], 0),
