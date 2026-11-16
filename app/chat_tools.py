@@ -75,9 +75,10 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "list_assets", "search_web_images", "add_image_from_url", "add_video_from_url", "add_video_from_source",
         "upload_image", "upload_video", "generate_image", "list_fonts", "upload_font", "search_emoji", "list_packs",
         "search_pack", "svg_to_webm")),
-    "sources": ("исходники: расшифровка, склейки планов, лист кадров, чат Twitch, новый клип, компиляция", (
+    "sources": ("исходники: расшифровка, склейки планов, лист кадров, чат Twitch, новый клип, компиляция, "
+                "новый источник из торрента", (
         "get_source_transcript", "get_shots", "source_contact_sheet", "chat_activity", "get_chat", "create_clip",
-        "make_compilation")),
+        "make_compilation", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
     # Проектные, но не в базе: 18 объявлений в каждом ходе чата — дорого, подгружаются по словам.
     "ai_video": ("ИИ-видео с нуля: сценарий, персонажи, локации, этапы с оценкой и карточкой, сборка серии", (
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
@@ -109,7 +110,7 @@ _PRELOAD = {
              "слоу", "замедл", "ускор", "реверс", "задом", "цвет", "баланс", "экспоз", "светлее", "темнее"),
     "screens": ("плашк", "концовк", "end screen", "промо", "холст"),
     "assets": ("картинк", "библиотек", "шрифт"),
-    "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц"),
+    "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц", "торрент", "magnet", "магнет"),
     "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
     "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота", "темы канала", "очередь тем"),
     "stories": ("истори", "рассказчик", "эпизод", "библиотек сцен", "актёр", "актер"),

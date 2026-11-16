@@ -191,6 +191,24 @@ class SourceIngestor:
             original_url="",
         )
 
+    def ingest_local_file(
+        self,
+        path: Path,
+        *,
+        source_type: str,
+        original_url: str = "",
+        original_filename: str = "",
+        extra_metadata: dict | None = None,
+        max_bytes: int | None = None,
+    ) -> dict:
+        """Файл уже лежит в каталоге источников (торрент, app/torrents.py): хеш, ffprobe и обычный источник.
+        ``extra_metadata`` ложится в metadata_json рядом с ffprobe (торрент — ключ ``torrent``)."""
+        sha256, size_bytes = file_hash_and_size(path, limit=max_bytes)
+        stored = StoredSourceFile(path, original_filename or path.name, sha256, size_bytes)
+        return self._create_source_from_file(
+            source_type=source_type, stored=stored, original_url=original_url, extra_metadata=extra_metadata,
+        )
+
     def ingest_url(self, url: str, *, quality: str = "") -> dict:
         source_type = classify_source_url(url)
         downloader = {
@@ -283,7 +301,9 @@ class SourceIngestor:
         source_type: str,
         stored: StoredSourceFile,
         original_url: str,
+        extra_metadata: dict | None = None,
     ) -> dict:
+        extra = dict(extra_metadata or {})
         try:
             metadata = self.probe(stored.path)
             source = self.store.create_source(
@@ -297,7 +317,7 @@ class SourceIngestor:
                 width=metadata.width,
                 height=metadata.height,
                 fps=metadata.fps,
-                metadata=metadata.raw or {},
+                metadata={**(metadata.raw or {}), **extra},
                 status="ready",
             )
             source = self._with_chroma_key(source)
@@ -309,7 +329,7 @@ class SourceIngestor:
                 original_filename=stored.original_filename,
                 sha256=stored.sha256,
                 size_bytes=stored.size_bytes,
-                metadata={},
+                metadata=extra,
                 status="failed",
                 error=_safe_error(exc),
             )
@@ -905,7 +925,9 @@ def probe_media(path: Path) -> MediaMetadata:
     )
 
 
-def file_hash_and_size(path: Path) -> tuple[str, int]:
+def file_hash_and_size(path: Path, *, limit: int | None = None) -> tuple[str, int]:
+    """sha256 и размер; ``limit`` — свой потолок (торрент — TORRENT_MAX_GB), по умолчанию MAX_UPLOAD_BYTES."""
+    cap = settings.max_upload_bytes if limit is None else limit
     hasher = hashlib.sha256()
     size = 0
     with path.open("rb") as f:
@@ -914,8 +936,8 @@ def file_hash_and_size(path: Path) -> tuple[str, int]:
             if not chunk:
                 break
             size += len(chunk)
-            if size > settings.max_upload_bytes:
-                raise ValueError("source exceeds MAX_UPLOAD_BYTES")
+            if size > cap:
+                raise ValueError("source exceeds MAX_UPLOAD_BYTES" if limit is None else "source exceeds size limit")
             hasher.update(chunk)
     return hasher.hexdigest(), size
 

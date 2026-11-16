@@ -351,6 +351,15 @@ MODULES: list[Module] = [
         ui=("ссылка в окне «Создать»",),
     ),
     Module(
+        "torrents", "Источники из торрентов (aria2)", "sources",
+        "Видео по magnet-ссылке или файлу .torrent: список файлов, выбор, загрузка aria2c с прогрессом; каждый "
+        "выбранный видеофайл — свой источник. Раздача после загрузки выключена, отдача ограничена.",
+        cost=("network",), cost_note="скачивание гигабайтов по BitTorrent (без прокси сервиса)",
+        tools=("add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent"),
+        routes=("/api/torrents*",),
+        ui=("«Торрент» в окне «Новое видео» и в «Все проекты и видео»",),
+    ),
+    Module(
         "twitch_chat", "Чат Twitch-VOD", "sources",
         "Импорт чата VOD (авто для Twitch-источников), всплески активности для отбора моментов, чат в клипе.",
         cost=("network",), cost_note="запросы к Twitch GQL",

@@ -95,6 +95,7 @@ OpenCV по кадрам, фоновые работники ходят в сет
 | id | Название | Нагрузка | Что выключается |
 | --- | --- | --- | --- |
 | `downloads` | Загрузка по ссылкам (yt-dlp) | сеть | источник по ссылке, отрезок видео, музыка и звук по ссылке (`/api/sources/download`, `/api/downloads*`, `/video-from-url`, `/api/audio-tracks/from-url`), `add_source_from_url`, `add_video_from_url`, `add_music_from_url`, `add_sound_from_url`, поле ссылки в «Создать» |
+| `torrents` | Источники из торрентов (aria2) | сеть | magnet или .torrent → список файлов → загрузка aria2c (`/api/torrents*`), `add_torrent_source`, `torrent_status`, `start_torrent`, `cancel_torrent`, «🧲 Торрент» рядом с загрузкой файла |
 | `twitch_chat` | Чат Twitch-VOD | сеть | импорт чата (и автоимпорт для Twitch-источников), `/api/sources/{id}/chat*`, `chat_activity`, `get_chat` |
 
 ### Публикация
