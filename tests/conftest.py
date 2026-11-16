@@ -47,6 +47,8 @@ os.environ.setdefault("TTS_GUARD", "0")
 os.environ.setdefault("EMBED_MODEL", "off")
 # Словарь слов для фильтра шума тиммейтов (app/meme_edit_team.py) скачивается — в тестах только явно.
 os.environ.setdefault("WORDLIST_DOWNLOAD", "0")
+# Превью «Ленты» собирает ffmpeg фоном — в тестах зовут feed_preview.process_pending сами.
+os.environ.setdefault("FEED_PREVIEW_WORKER", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

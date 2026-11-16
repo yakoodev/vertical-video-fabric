@@ -601,6 +601,10 @@ class Database:
             from app.projects import ensure_projects_schema
 
             ensure_projects_schema(conn)
+            # «Лента»: готовые работы, версии, варианты файлов (app/feed.py); отметки — project_publications.
+            from app.feed import ensure_feed_schema
+
+            ensure_feed_schema(conn)
             # Автопилот канала: очередь одобрения, лента, расписание, Telegram, чат проекта (app/autopilot.py).
             from app.autopilot import ensure_autopilot_schema
 

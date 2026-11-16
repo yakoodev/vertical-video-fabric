@@ -149,11 +149,13 @@ def _render_plan(store: Any, clip_id: Any, clip_plan_id: int | None) -> tuple[in
 def add_manual_publication(store: Any, url: str = "", project_id: int | None = None, clip_plan_id: int | None = None,
                            title: str = "", published_at: Any = None, tags: Any = None, notes: str = "",
                            stats: dict | None = None, platform: Any = None, account: Any = "",
-                           clip_id: Any = None) -> dict:
+                           clip_id: Any = None, feed_variant_id: int | None = None, posted_by: str = "") -> dict:
     """Видео, выложенное руками, — к клипу или к проекту. Один клип можно выложить сколько угодно раз:
     на разные площадки и аккаунты, на один и тот же — тоже. Ссылка необязательна (без неё чисел нет);
     ``clip_id`` — какой готовый файл выложен; ``published_at`` по умолчанию — сегодня.
-    ``stats`` — числа, введённые вручную (Instagram без сессии и т.п.); YouTube и TikTok сервис подтянет сам."""
+    ``stats`` — числа, введённые вручную (Instagram без сессии и т.п.); YouTube и TikTok сервис подтянет сам.
+    ``feed_variant_id`` — отметка «запощено» варианта «Ленты» (app/feed.py): тогда проект и клип необязательны;
+    ``posted_by`` — кто выложил (owner / agent), пусто — не указано."""
     url = _url(url)
     clip_id, clip_plan_id = _render_plan(store, clip_id, None if clip_plan_id in (None, "", 0) else int(clip_plan_id))
     if clip_plan_id is not None:
@@ -162,15 +164,16 @@ def add_manual_publication(store: Any, url: str = "", project_id: int | None = N
             project_id = plan_project
     if project_id is not None:
         get_project(store, int(project_id), include_sources=False)
-    if project_id is None and clip_plan_id is None:
+    if project_id is None and clip_plan_id is None and feed_variant_id is None:
         raise ValueError("укажите проект или клип")
     _check_url_free(store, url)
     cur = store.db.execute(
         """INSERT INTO project_publications (project_id, clip_plan_id, clip_id, url, platform, account, title,
-                                            published_at, tags_json, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                            published_at, tags_json, notes, feed_variant_id, posted_by)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (project_id, clip_plan_id, clip_id, url, _platform(platform, url), _text(account, 100), _text(title, 200),
-         _date(published_at) or date.today().isoformat(), _json(_tags(tags)), _long_text(notes, 1000)),
+         _date(published_at) or date.today().isoformat(), _json(_tags(tags)), _long_text(notes, 1000),
+         None if feed_variant_id is None else int(feed_variant_id), _text(posted_by, 20)),
     )
     pub_id = int(cur.lastrowid)
     if stats:

@@ -1504,6 +1504,34 @@ px слоёв: у всех форматов 1080 — те же px, что в в�
   (`app/vod_watch.py`, `GET/PUT /api/projects/{id}/vod-watch`) качает только завершённые VOD и режет
   конвейером либо отдаёт тебе: событие `vod_for_agent` в ленте — «источник #N ждёт агента», режь по плейбуку.
 
+## Лента: сдать готовую работу одной ссылкой
+
+Владелец не хочет листать Telegram по 20 сообщений на ролик. Каждая готовая вещь — в «Ленту» (`/feed`, код
+`app/feed.py`): работа → версии (новые сверху, заметка «что поменял», статус и вердикт владельца) → варианты файлов
+(9:16, 16:9, «TikTok часть 1/4», «без музыки») с лёгким превью 720p ~1.5 Мбит/с для телефона и полным файлом.
+
+- **Сдать:** `feed_list(q="название")` — нет ли уже такой работы → `feed_create_work(title, kind, project_id?)` →
+  `feed_add_version(work_id, note, label?, variants)`. Вариант — `{label, clip_id}` (готовый клип сервиса),
+  `{label, path}` (файл в папке данных сервиса, `/data/…`, остаётся на месте) или `{label, host_path}` (файл,
+  положенный в `D:\vvf-data\runtime\feed_import` = `/data/runtime/feed_import`; переносится в ленту). Превью и кадр
+  собираются фоном (`preview: queued → ready`). Владельцу — одна ссылка `/feed?work=<id>`, не пачка файлов.
+- **Большой файл без клипа** (мувик 150–700 МБ) — загрузка потоком: `PUT /api/feed/versions/{id}/variants/upload?label=9:16&filename=x.mp4`
+  телом запроса (`curl -T x.mp4 -H "Authorization: Bearer …" "…/upload?label=9:16&filename=x.mp4"`).
+- **Вердикт** — решение владельца: агент не принимает свою работу сам. Новая версия от агента — только `draft`
+  или `review`; «принято»/«отклонено» — `feed_set_status(version_id, status, verdict)` со словами владельца.
+- **Выложено** — `feed_mark_posted(variant_id, platform, url?)` (tiktok / youtube / instagram / vk / other);
+  `unmark=true` — снять. Отметка — это ручная публикация проекта (`project_publications.feed_variant_id`): со ссылкой
+  YouTube/TikTok просмотры подтянутся сами, у варианта-клипа отметка видна и на экране клипа. Выложенное с экрана
+  клипа или сервисом видно в ленте само (снять его оттуда нельзя).
+- REST: `GET /api/feed?filter=ready_unposted|review|posted|draft|rejected&project_id=&kind=&q=`,
+  `POST /api/feed/works`, `GET|PATCH|DELETE /api/feed/works/{id}`, `POST /api/feed/works/{id}/versions`,
+  `POST /api/feed/versions/{id}/status`, `POST /api/feed/versions/{id}/variants` (ссылка),
+  `PUT …/variants/upload` (файл), `POST /api/feed/variants/{id}/postings`, `DELETE /api/feed/postings/{id}`,
+  `POST /api/feed/variants/{id}/preview` (собрать превью заново); файлы — `/media/feed/variants/{id}/preview|poster|file`.
+- **Старые работы** (до ленты) — `tools/feed_backfill.py` по `tools/feed_backfill_mapping.json`: копирует файлы в
+  папку импорта и создаёт работы через API (`VVF_URL`, `VVF_TOKEN` / `VVF_TOKEN_FILE`; `--dry-run` — план).
+  Повторный запуск пропускает созданное.
+
 ## ИИ-видео: серия с нуля
 
 Проект вида `ai_video` (модуль `ai_video`, гайд [`guides/ai-video.md`](guides/ai-video.md), код `app/aivideo*.py`):

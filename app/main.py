@@ -115,6 +115,13 @@ async def lifespan(app: FastAPI):
         logging.getLogger(__name__).warning("youtube keepalive state reset failed", exc_info=True)
     # Работники включённых модулей; выключенные не стартуют, включат — запустятся без перезапуска.
     modules.start_workers(store)
+    try:  # превью «Ленты» (app/feed_preview.py): прерванные перезапуском — снова в очередь, работник берёт их
+        from app import feed_preview
+
+        feed_preview.recover(store)
+        feed_preview.kick(store)
+    except Exception:  # noqa: BLE001 - фон ленты не должен мешать старту
+        logging.getLogger(__name__).warning("feed preview start failed", exc_info=True)
     try:
         yield
     finally:
@@ -140,6 +147,7 @@ app = FastAPI(
         {"name": "Brands", "description": "Brand kits: one look (font, colors, logo, CTA, music) for a client's clips."},
         {"name": "Posts", "description": "Upload a source video and queue publication jobs."},
         {"name": "Jobs", "description": "Inspect queued, running, and completed jobs."},
+        {"name": "Feed", "description": "«Лента»: готовые работы, версии, варианты, вердикт, отметки публикации."},
     ],
 )
 app.add_exception_handler(AuthRequired, auth_required_handler)
@@ -467,6 +475,10 @@ app.include_router(build_cover_docs_router(AuthDep, lambda: store, lambda: setti
 from app.webpages_api import build_webpages_router  # noqa: E402
 
 app.include_router(build_webpages_router(AuthDep, lambda: store))
+# 📰 «Лента»: готовые работы, версии, варианты файлов, вердикт и отметки «запощено» (app/feed.py).
+from app.feed_api import build_feed_router  # noqa: E402
+
+app.include_router(build_feed_router(AuthDep, lambda: store))
 
 # In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
 # `frontend/dist` may not exist — guarded accordingly.

@@ -2654,6 +2654,64 @@
 "module": "torrents",
 "handler": "h_cancel_torrent",
 "label": true
+},
+{
+"name": "feed_create_work",
+"title": "Создаю работу в ленте",
+"description": "39c08f1062f3ebf3",
+"parameters": "adb99e126b103644",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_feed_create_work",
+"label": true
+},
+{
+"name": "feed_add_version",
+"title": "Добавляю версию в ленту",
+"description": "09591f073dd774e3",
+"parameters": "a8683f6452d379bc",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_feed_add_version",
+"label": true,
+"cost": [
+"cpu"
+]
+},
+{
+"name": "feed_set_status",
+"title": "Ставлю статус версии",
+"description": "6d89eef400611d65",
+"parameters": "0eef9e9f15ba7239",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_feed_set_status",
+"label": true
+},
+{
+"name": "feed_mark_posted",
+"title": "Отмечаю публикацию",
+"description": "9d2f95199004defb",
+"parameters": "9abbf8f53fbd3736",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_feed_mark_posted",
+"label": true
+},
+{
+"name": "feed_list",
+"title": "Смотрю ленту",
+"description": "3808b2b42288afab",
+"parameters": "16d9c31fd207a091",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_feed_list",
+"label": true
 }
 ]
 }

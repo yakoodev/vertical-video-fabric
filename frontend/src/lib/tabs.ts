@@ -143,12 +143,13 @@ export const SECTIONS: Record<string, Section> = {
       { key: "backup", label: "Экспорт и импорт", to: "/settings/backup" },
     ],
   },
+  feed: { title: "Лента", to: "/feed", tabs: [] },
   help: { title: "Помощь", to: "/help", tabs: [] },
   automation: { title: "Авто", to: "/automation", tabs: [] },
   chat: { title: "Все переписки", to: "/chat", tabs: [] },
 };
 
-export const SECTION_ORDER = ["inbox", "pubs", "files", "settings", "help"];
+export const SECTION_ORDER = ["inbox", "feed", "pubs", "files", "settings", "help"];
 
 /* ---------- Подсказка «?»: те же списки, что у цифр в AppShell ---------- */
 
