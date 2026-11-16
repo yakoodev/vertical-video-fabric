@@ -241,6 +241,13 @@ def ensure_projects_schema(conn) -> None:
     if "clip_id" not in columns:
         conn.execute("ALTER TABLE project_publications ADD COLUMN clip_id INTEGER REFERENCES clips(id) ON DELETE SET NULL")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_project_publications_clip ON project_publications(clip_id)")
+    # Отметка «запощено» варианта «Ленты» (app/feed.py) и кто выложил (owner / agent; пусто — старые записи).
+    if "feed_variant_id" not in columns:
+        conn.execute("ALTER TABLE project_publications ADD COLUMN feed_variant_id INTEGER "
+                     "REFERENCES feed_variants(id) ON DELETE SET NULL")
+    if "posted_by" not in columns:
+        conn.execute("ALTER TABLE project_publications ADD COLUMN posted_by TEXT NOT NULL DEFAULT ''")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_project_publications_feed ON project_publications(feed_variant_id)")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(sources)")}
     if "project_id" not in columns:
         # Старые источники остаются без проекта (NULL) — ничего не теряется.

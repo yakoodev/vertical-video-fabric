@@ -79,6 +79,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "новый источник из торрента", (
         "get_source_transcript", "get_shots", "source_contact_sheet", "chat_activity", "get_chat", "create_clip",
         "make_compilation", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
+    "feed": ("лента готовых работ: сдать версию с файлами, вердикт владельца, отметка «выложено»", (
+        "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list")),
     # Проектные, но не в базе: 18 объявлений в каждом ходе чата — дорого, подгружаются по словам.
     "ai_video": ("ИИ-видео с нуля: сценарий, персонажи, локации, этапы с оценкой и карточкой, сборка серии", (
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
@@ -114,6 +116,7 @@ _PRELOAD = {
     "ai_video": ("ии-видео", "ии видео", "сценари", "раскадров", "персонаж", "шот-лист", "серию с нуля"),
     "explainer": ("объяснял", "маскот", "библиотек поз", "позы маскота", "темы канала", "очередь тем"),
     "stories": ("истори", "рассказчик", "эпизод", "библиотек сцен", "актёр", "актер"),
+    "feed": ("лент", "запощ", "выложил", "выложено", "выложен", "сдай работ", "сдать работ", "вердикт"),
 }
 
 # Опасное — только через карточку подтверждения в чате: что владелец увидит на кнопке.

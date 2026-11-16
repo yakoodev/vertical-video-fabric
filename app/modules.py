@@ -475,6 +475,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "find_noises", "get_playbook", "list_modules", "lint_clip", "describe_tool",
     # рендер клипа заданием (app/render_tools.py): без него нечего сдавать
     "render_clip", "render_status",
+    # «Лента» готовых работ (app/feed_tools.py): сдать версию, вердикт владельца, отметка «выложено»
+    "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list",
     # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
     "tts_preview",
     # озвучка клипа/холста своим текстом и анализатор озвучки (app/voice_tools.py); платное — только с confirm
