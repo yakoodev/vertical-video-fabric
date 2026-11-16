@@ -172,10 +172,18 @@ if (args[0] === "--png") {
   render(Math.round((Number(args[1]) - plan.t0) * FPS));
   writeFileSync(args[2], canvas.toBuffer("image/png"));
 } else {
+  // Кадры — прямо в stdin ffmpeg (аргументы — plan.ffmpeg): запись ждёт «drain», память не растёт (через stdout
+  // процесса на Windows обратного давления не было — node набирал 10 ГБ).
+  const { spawn } = await import("node:child_process");
+  const ff = spawn("ffmpeg", plan.ffmpeg, { stdio: ["pipe", "inherit", "inherit"] });
+  const done = new Promise((r) => ff.on("close", r));
   const n = Math.round(plan.dur * FPS);
   for (let f = 0; f < n; f++) {
     render(f);
     const data = g.getImageData(0, 0, W, H).data;
-    if (!process.stdout.write(Buffer.from(data.buffer, data.byteOffset, data.byteLength))) await new Promise((r) => process.stdout.once("drain", r));
+    if (!ff.stdin.write(Buffer.from(data.buffer, data.byteOffset, data.byteLength))) await new Promise((r) => ff.stdin.once("drain", r));
   }
+  ff.stdin.end();
+  const code = await done;
+  process.exit(code ?? 1);
 }

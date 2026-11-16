@@ -101,15 +101,14 @@ def overlay(video: Path, out: Path, t0: float, t1: float, work: Path) -> Path:
     work.mkdir(parents=True, exist_ok=True)
     pf = work / "caps_plan.json"
     p = plan(t0, t1)
+    p["ffmpeg"] = ["-y", "-v", "error", "-i", str(video), "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{p['width']}x{p['height']}",
+                   "-r", str(p["fps"]), "-i", "-", "-filter_complex", "[0:v][1:v]overlay=0:0:shortest=1[v]", "-map", "[v]", "-map", "0:a?",
+                   "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)]
     pf.write_text(json.dumps(p, ensure_ascii=False), "utf-8")
-    node = subprocess.Popen(["node", str(ROOT / "tools" / "meme3d_rap_caps.mjs"), str(pf)], stdout=subprocess.PIPE, cwd=ROOT)
-    ff = subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(video), "-f", "rawvideo", "-pix_fmt", "rgba", "-s", f"{p['width']}x{p['height']}",
-                         "-r", str(p["fps"]), "-i", "-", "-filter_complex", "[0:v][1:v]overlay=0:0:shortest=1[v]", "-map", "[v]", "-map", "0:a?",
-                         "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(out)],
-                        stdin=node.stdout, capture_output=False)
-    node.wait()
-    if ff.returncode != 0 or node.returncode != 0:
-        raise RuntimeError(f"подписи: ffmpeg {ff.returncode}, node {node.returncode}")
+    # node рисует и сам кормит ffmpeg (с обратным давлением) — см. meme3d_rap_caps.mjs.
+    r = subprocess.run(["node", "--max-old-space-size=2048", str(ROOT / "tools" / "meme3d_rap_caps.mjs"), str(pf)], cwd=ROOT)
+    if r.returncode != 0 or not out.is_file():
+        raise RuntimeError(f"подписи: код {r.returncode}")
     return out
 
 
