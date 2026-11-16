@@ -48,6 +48,7 @@ list.forEach((m, i) => {
   keys.push({ t: i, position: pos, target: tgt }, { t: i + 0.98, position: pos, target: tgt });
 });
 const spec = {
+  models: { attribution: true },  // каталог показывает и CC BY
   width: cell, height: cell, fps: 30, duration: list.length + 1,
   environment: { background: "#9fb7c9", fog: false, exposure: 0.95, envIntensity: 0, toneMapping: "neutral",
     toon: { preset: "ink", outline: { width: 6.0, ref: 1.9 } }, post: { ao: 0, bloom: false, vignette: 0.1, grain: 0, ca: 0 } },

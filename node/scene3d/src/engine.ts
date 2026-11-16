@@ -156,7 +156,8 @@ export interface SceneSpec {
     keepInFrame?: { ids?: string[]; margin?: number; feet?: boolean }; shake?: { t: number; amp?: number; duration?: number }[] };
   quality?: { shadows?: boolean; shadowSize?: number; antialias?: boolean };
   /** Библиотека вещей: seed — засев выбора вариантов, off — всё из процедурной замены (сравнение «до/после»). */
-  models?: { seed?: number | string; off?: boolean };
+  /** attribution: true — можно брать модели CC BY (строки атрибуции ролик кладёт в описание). */
+  models?: { seed?: number | string; off?: boolean; attribution?: boolean };
 }
 
 type Loaded = { scene: THREE.Group; animations: THREE.AnimationClip[] };
@@ -423,7 +424,9 @@ class Engine {
   /** Модель библиотеки для объекта или null (нет библиотеки, варианта, якоря для деталей, файла) — тогда замена. */
   async libraryModel(o: ObjectSpec): Promise<{ entry: LibModel; g: Loaded } | null> {
     if (this.spec.models?.off) return null;
-    const entry = pickModel(this.library, o.model!, { seed: `${this.modelSeed()}|${o.variantSeed ?? ""}`, key: o.id, tags: o.modelTags });
+    // CC BY — только когда сцена обещает подпись авторов (models.attribution: клип пишет строки атрибуции в описание).
+    const entry = pickModel(this.library, o.model!, { seed: `${this.modelSeed()}|${o.variantSeed ?? ""}`, key: o.id, tags: o.modelTags,
+      allowAttribution: !!this.spec.models?.attribution });
     if (!entry) {
       if (this.library) this.warnings.push(`объект ${o.id}: в библиотеке нет «${o.model}» — процедурная замена`);
       return null;
@@ -587,13 +590,14 @@ class Engine {
   update(t: number) {
     this.applyPhase(t);
     if (this.toon) this.toon.update(t);
-    for (const ch of Object.values(this.characters)) ch.update(t);
+    // Сначала где стоит (move), потом поза: прижим к полу героя считает от его основания на этот t.
     for (const [id, k] of Object.entries(this.charKeys)) {
       const ch = this.characters[id];
       const pos = k.move ? sampleVec(k.move, t, "position") : undefined;
       if (pos) ch.root.position.set(pos[0], pos[1], pos[2]);
       if (k.visible) ch.root.visible = sampleKeys<boolean>(k.visible, t, "on", (a, b, kk) => (kk < 1 ? a : b)) !== false;
     }
+    for (const ch of Object.values(this.characters)) ch.update(t);
     for (const l of this.lights) {
       let k = 1;
       for (const f of l.spec.flicker || []) {
@@ -665,6 +669,8 @@ class Engine {
       for (const k of s.state || []) if (t >= k.t) Object.assign(state, k);
       o.prop.update(t, state);
     }
+    // Поводок и прочие «связки» между героями (meme_props_rap.ts): концы — кости персонажей на этот t.
+    if ((o.prop as any)?.link) (o.prop as any).link(this.characters, t, o.node);
     // Крепление к кости персонажа: вес w смешивает «свободное» положение и «в руке».
     if (s.attach && s.attach.length) {
       o.node.updateMatrixWorld(true);
@@ -724,6 +730,15 @@ class Engine {
     const fov = sampleNumber(keys, t, "fov") ?? cs.fov ?? 40;
     const roll = sampleAngle(keys, t, "roll") ?? 0;
     this.dof = sampleNumber(keys, t, "dof") ?? 0;
+    // Фишай и вспышка удара (post.ts, LensShader): ключи камеры; flash — ещё и затухающие вспышки camera.flashes.
+    {
+      let fl = sampleNumber(keys, t, "flash") ?? 0;
+      for (const f of (cs as any).flashes || []) {
+        const d = t - f.t;
+        if (d >= 0 && d < (f.duration ?? 0.25)) fl = Math.max(fl, (f.amount ?? 0.85) * Math.pow(1 - d / (f.duration ?? 0.25), 2));
+      }
+      this.post?.setLens(sampleNumber(keys, t, "fisheye") ?? 0, fl);
+    }
     // Камера не в стене: держим внутри комнаты с отступом (кроме открытой декорации, clamp: false, и кадров free).
     let active: CameraKey | undefined;
     for (const k of cs.keys) if (k.t <= t + 1e-9) active = k;
@@ -880,6 +895,95 @@ class Engine {
   }
 
   /** Сведения для проверки сцены: где кто, габариты объектов на t. */
+  /**
+   * Видит ли камера героя: голова в кадре (NDC) и луч камера → центр головы не упирается в чужую вещь раньше героя
+   * (частицы, свечения, лучи и поводок не считаются). blocker — имя первой помехи.
+   */
+  sightline(c: Character) {
+    this.camera.updateMatrixWorld(true);
+    const head = headCenter(c);
+    const ndc = head.clone().project(this.camera);
+    const inFrame = Math.abs(ndc.x) <= 1 && Math.abs(ndc.y) <= 1 && ndc.z < 1;
+    const from = this.camera.position.clone();
+    const dir = head.clone().sub(from);
+    const dist = dir.length();
+    const ray = new THREE.Raycaster(from, dir.normalize(), this.camera.near, dist);
+    ray.camera = this.camera; // спрайты (ярлыки, частицы) без камеры луча падают
+    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet", "credit_card", "token", "db_icon"]);
+    const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
+    const solid = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+        if (!p.visible) return false;
+        if (p === c.root) return false;
+        if (soft.has(prim.get(p) || "")) return false;
+      }
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || (m as any).isSprite) return false;
+      const mat = m.material as THREE.Material;
+      return !(mat && (mat as any).transparent && (mat as any).opacity < 0.6);
+    };
+    const hits = ray.intersectObjects(this.scene.children, true).filter((h) => solid(h.object));
+    const hit = hits.find((h) => h.distance < dist - c.head.r * 1.2);
+    let owner = "";
+    if (hit) for (let p: THREE.Object3D | null = hit.object; p; p = p.parent) if (String(p.name).startsWith("obj:")) { owner = p.name; break; }
+    return { inFrame, occluded: !!hit, blocker: hit ? owner || hit.object.name || "?" : null, dist: r3(dist) };
+  }
+
+  /**
+   * Проникновения героя в мир (проверка клипа): лучи из центра его габарита на 85% полуразмера в ±x, ±z, вверх и вниз —
+   * упёрлись в чужой твёрдый меш (мебель, пол, другой герой) → он «внутри». Плюс: габариты героев пересекаются
+   * (сжатые на 15%), звенья поводка (без крайних) — внутри героя.
+   */
+  penetration(c: Character) {
+    const out: string[] = [];
+    const box = new THREE.Box3().setFromObject(c.root, true);
+    const ctr = box.getCenter(new THREE.Vector3()), half = box.getSize(new THREE.Vector3()).multiplyScalar(0.5);
+    const soft = new Set(["rain", "leash", "glow_disc", "sky", "spark_burst", "flame_jet", "credit_card", "token", "db_icon"]);
+    const prim = new Map(this.objects.map((x) => [x.node as THREE.Object3D, x.spec.primitive || ""]));
+    const solid = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) {
+        if (!p.visible || p === c.root || soft.has(prim.get(p) || "")) return false;
+      }
+      const m = o as THREE.Mesh;
+      return !!m.isMesh && !(m as any).isSprite && !((m.material as any)?.transparent && (m.material as any).opacity < 0.6);
+    };
+    const owner = (o: THREE.Object3D) => {
+      for (let p: THREE.Object3D | null = o; p; p = p.parent) if (/^(obj:|critter:|kodex2:)/.test(String(p.name))) return p.name;
+      return o.name || "?";
+    };
+    const dirs: [string, THREE.Vector3, number][] = [["+x", new THREE.Vector3(1, 0, 0), half.x], ["-x", new THREE.Vector3(-1, 0, 0), half.x],
+      ["+z", new THREE.Vector3(0, 0, 1), half.z], ["-z", new THREE.Vector3(0, 0, -1), half.z], ["up", new THREE.Vector3(0, 1, 0), half.y],
+      ["down", new THREE.Vector3(0, -1, 0), half.y]];
+    for (const [name, d, len] of dirs) {
+      const ray = new THREE.Raycaster(ctr, d, 0, len * 0.85);
+      ray.camera = this.camera;
+      const hit = ray.intersectObjects(this.scene.children, true).find((h) => solid(h.object));
+      if (hit) out.push(`${name}:${owner(hit.object)}`);
+    }
+    const shrunk = (b: THREE.Box3, k: number) => {
+      const cc = b.getCenter(new THREE.Vector3()), hh = b.getSize(new THREE.Vector3()).multiplyScalar(0.5 * k);
+      return new THREE.Box3(cc.clone().sub(hh), cc.clone().add(hh));
+    };
+    const mine = shrunk(box, 0.85);
+    for (const [id, o] of Object.entries(this.characters)) {
+      if (o === c || !o.root.visible) continue;
+      if (mine.intersectsBox(shrunk(new THREE.Box3().setFromObject(o.root, true), 0.85))) out.push(`hero:${id}`);
+    }
+    for (const ob of this.objects) {
+      if (ob.spec.primitive !== "leash" || !ob.node.visible) continue;
+      const links = (ob.prop?.object.children || []) as THREE.Object3D[];
+      const inner = shrunk(box, 0.7);
+      for (let i = 3; i < links.length - 3; i++) {
+        const w = links[i].getWorldPosition(new THREE.Vector3());
+        if (inner.containsPoint(w)) {
+          out.push(`chain:${ob.spec.id}`);
+          break;
+        }
+      }
+    }
+    return out;
+  }
+
   inspect(t: number) {
     this.update(t);
     const dirv = this.camera.getWorldDirection(new THREE.Vector3());
@@ -892,7 +996,8 @@ class Engine {
     for (const [id, c] of Object.entries(this.characters)) {
       const b = new THREE.Box3().setFromObject(c.root, true);
       out.characters[id] = { min: b.min.toArray().map(r3), max: b.max.toArray().map(r3), hand_r: c.boneWorld("hand_r").toArray().map(r3), hand_l: c.boneWorld("hand_l").toArray().map(r3), head: c.boneWorld("Head").toArray().map(r3),
-        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r) };
+        headCenter: headCenter(c).toArray().map(r3), headR: r3(c.head.r), shown: c.root.visible, sight: c.root.visible ? this.sightline(c) : null,
+        pen: c.root.visible ? this.penetration(c) : [] };
     }
     return out;
   }

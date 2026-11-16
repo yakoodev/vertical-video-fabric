@@ -4,6 +4,7 @@
  *
  *   cd tools/models3d && npm install            # один раз: gltf-transform, meshoptimizer, @napi-rs/canvas
  *   node tools/models3d/import.mjs --out D:/vvf-data/runtime/models3d --dl D:/vvf-offload/tmp/assets3d/dl [--only keyboard/,mug/white]
+ *     [--packs D:/vvf-offload/tmp/assets3d/packs — где лежат распакованные паки для записей с ``file``]
  *
  * Для каждой записи tools/models3d/sources.json: скачивает GLB (poly.pizza — в свой новый пустой каталог --dl/<id>;
  * скачанное — только данные, ничего из него не запускается) или строит свою модель (gen_keyboard.mjs), затем
@@ -49,7 +50,9 @@ async function fetchGlb(entry, dlRoot) {
   if (existsSync(file) && statSync(file).size > 0) return readFileSync(file);
   mkdirSync(dir, { recursive: true });
   const url = `https://static.poly.pizza/${entry.res}.glb`;
-  const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (asset import)" } });
+  // Браузерный UA и referer: без них static.poly.pizza отвечает 403.
+  const res = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36",
+    referer: "https://poly.pizza/" } });
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length > 60 * 1024 * 1024) throw new Error(`${url}: слишком большой файл (${buf.length})`);
@@ -151,6 +154,9 @@ async function main() {
         const scene = doc.createScene("scene");
         scene.addChild(generateKeyboard(doc, entry.gen));
         doc.getRoot().setDefaultScene(scene);
+      } else if (entry.file) {
+        // Модель из скачанного пака (Kenney, Quaternius …): путь относительно --packs (или абсолютный), .glb или .gltf с .bin.
+        doc = await io.read(resolve(a.packs || dl, entry.file));
       } else {
         doc = await io.readBinary(new Uint8Array(await fetchGlb(entry, dl)));
       }
@@ -189,10 +195,12 @@ async function main() {
         ...(entry.anchors ? { anchors: entry.anchors } : {}),
         source: entry.gen
           ? { kind: "generated", generator: `tools/models3d/gen_keyboard.mjs#${entry.gen}` }
+          : entry.file ? { kind: entry.pack?.kind || "pack", url: entry.pack?.url, pack: entry.pack?.name, file: entry.file }
           : { kind: "poly.pizza", url: `https://poly.pizza/m/${entry.pp}`, download: `https://static.poly.pizza/${entry.res}.glb` },
         author: entry.gen ? "vertical-video-fabric" : entry.author,
         license: entry.gen ? "CC0-1.0" : entry.license, license_name: lic.name, license_url: lic.url,
-        attribution: entry.gen ? "" : `«${entry.title}» — ${entry.author}, poly.pizza/m/${entry.pp}, ${lic.name}`,
+        attribution: entry.gen ? "" : entry.file ? `«${entry.title}» — ${entry.author}, ${entry.pack?.url || entry.pack?.name}, ${lic.name}`
+          : `«${entry.title}» — ${entry.author}, poly.pizza/m/${entry.pp}, ${lic.name}`,
       };
       report.push(`${entry.id.padEnd(28)} ${String(tris).padStart(6)} tris ${(glb.byteLength / 1024).toFixed(0).padStart(5)} KB size ${norm.size.join("×")}${glb.byteLength > BUDGET ? "  ! больше 2 МБ" : ""}`);
     } catch (e) {

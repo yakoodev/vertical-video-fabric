@@ -27,6 +27,8 @@ import { rng, sampleKeys, sampleNumber, type Key } from "./timeline.ts";
 import type { Character } from "./character.ts";
 import { addGear, type GearSpec } from "./meme_gear.ts";
 import { addDeco, bodyGradient } from "./meme_family.ts";
+import { addCostume, type CostumeSpec } from "./meme_costume.ts";
+import type { BlingHandle } from "./meme_bling.ts";
 
 export interface Kodex2Spec {
   id: string;
@@ -53,6 +55,10 @@ export interface Kodex2Spec {
   deco?: string | string[];
   /** Цвет детали (по умолчанию — свой у каждой). */
   decoColor?: string;
+  /** F/G: костюм (meme_costume.ts) — в т.ч. ошейник с шипами ``collar`` (кость ``collar`` — кольцо для поводка). */
+  costume?: CostumeSpec;
+  /** Ножки не наклоняются с корпусом (не уходят в пол). */
+  plantFeet?: boolean;
 }
 
 const D2R = Math.PI / 180;
@@ -265,6 +271,8 @@ interface Rig {
   dims?: typeof CP;
   /** Анимация детали-приметы (звёздочка крутится, костыли). */
   tick?: (t: number) => void;
+  costume?: BlingHandle | null;
+  legs?: THREE.Object3D[];
 }
 
 /** A и B — корпус зверька (buildCritter) с другими пропорциями и деталями. */
@@ -589,6 +597,46 @@ function knotHeadRig(S: number, badge: string): Rig {
     height: (P.legH + P.bodyH) * S + D };
 }
 
+/** Оскал (``snarl`` / ``bark``): тёмная пасть-полумесяц под глазами, острые клыки сверху и снизу; ``open`` 0..1. */
+function paintSnarl(g: CanvasRenderingContext2D, W: number, H: number, U: number, look: number[], open: number) {
+  const cx = W / 2 + look[0] * 0.03 * U, cy = H * 0.72 - look[1] * 0.02 * U;
+  const mw = 0.32 * U, mh = (0.035 + 0.05 * open) * U;
+  g.save();
+  g.fillStyle = "#2a1016";
+  g.beginPath();
+  g.moveTo(cx - mw / 2, cy - mh * 0.35);
+  g.quadraticCurveTo(cx, cy - mh * 0.75, cx + mw / 2, cy - mh * 0.35);
+  g.quadraticCurveTo(cx + mw * 0.3, cy + mh, cx, cy + mh * 0.85);
+  g.quadraticCurveTo(cx - mw * 0.3, cy + mh, cx - mw / 2, cy - mh * 0.35);
+  g.fill();
+  g.fillStyle = "#ff6f86";
+  g.beginPath();
+  g.ellipse(cx, cy + mh * 0.55, mw * 0.18, mh * 0.22, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = "#ffffff";
+  const n = 6;
+  for (let i = 0; i < n; i++) {
+    const x0 = cx - mw * 0.42 + (i * mw * 0.84) / (n - 1);
+    const big = i === 0 || i === n - 1;
+    const tw = mw * 0.075, th = mh * (big ? 0.75 : 0.42);
+    const yTop = cy - mh * 0.52 + Math.abs(i - (n - 1) / 2) * mh * 0.06;
+    g.beginPath();
+    g.moveTo(x0 - tw, yTop);
+    g.lineTo(x0 + tw, yTop);
+    g.lineTo(x0, yTop + th);
+    g.fill();
+    if (i % 2 === 1) {
+      const yb = cy + mh * 0.78;
+      g.beginPath();
+      g.moveTo(x0 - tw * 0.8, yb);
+      g.lineTo(x0 + tw * 0.8, yb);
+      g.lineTo(x0, yb - th * 0.7);
+      g.fill();
+    }
+  }
+  g.restore();
+}
+
 /* ---------------------------------------------------------------- «как Клод, только круглее и светлее» */
 
 const SOFT_EXPR: Record<string, string> = { calm: "neutral", smile: "happy", hopeful: "surprised", closed: "sigh" };
@@ -614,17 +662,24 @@ function softRig(variant: "f" | "g", S: number, badge: string, spec: Kodex2Spec 
   root.add(hopG);
   parts.root.remove(parts.lean);
   hopG.add(parts.lean);
-  const plate = labelPlate(badge, 0.24 * S, 0.075 * S, "#ffffff", "#3a2c30");
-  plate.position.set(-0.22 * S, 0.15 * S, (P.bodyD / 2 + 0.006) * S);
-  plate.rotation.z = 0.06;
-  parts.squash.add(plate);
+  // С ошейником бирка «Кодекс» переезжает на жетон ошейника (collar.tag).
+  if (!spec.costume?.collar) {
+    const plate = labelPlate(badge, 0.24 * S, 0.075 * S, "#ffffff", "#3a2c30");
+    plate.position.set(-0.22 * S, 0.15 * S, (P.bodyD / 2 + 0.006) * S);
+    plate.rotation.z = 0.06;
+    parts.squash.add(plate);
+  }
+  const costume = spec.costume ? addCostume(parts.squash, S, { ...P, radius: dims.radius }, spec.costume) : null;
   const paint: FacePaint = (g, W, H, expr, blink, talk, look, t) => {
-    const name = CRITTER_EXPR[expr] ? expr : SOFT_EXPR[expr] || "neutral";
+    const snarl = expr === "snarl" || expr === "bark";
+    const name = snarl ? "rage" : CRITTER_EXPR[expr] ? expr : SOFT_EXPR[expr] || "neutral";
     const f = { ...(paintCatBase as any), ...(CRITTER_EXPR[name] || {}) } as CritterFace;
+    if (snarl) f.tint = 0;
     paintCritterFace(g, W, H, parts.faceU, f, look, blink, talk, t, { eye: tone.eye || "#2a2226", cheeks: "#ffa9a0" }, P as typeof CP);
+    if (snarl) paintSnarl(g, W, H, parts.faceU, look, expr === "bark" ? 0.6 + 0.4 * Math.abs(Math.sin(t * 14)) : 0.35 + talk * 0.65);
   };
   return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: parts.faceCanvas, tex: parts.faceTex, paint,
-    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update };
+    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update, costume, legs: parts.legs };
 }
 
 export function createKodex2(spec: Kodex2Spec): Character {
@@ -732,6 +787,15 @@ export function createKodex2(spec: Kodex2Spec): Character {
       root.updateMatrixWorld(true);
       if (name === "hand_r") return handR.getWorldPosition(out);
       if (name === "hand_l") return handL.getWorldPosition(out);
+      if (name === "collar" && rig.costume?.ring) return rig.costume.ring.getWorldPosition(out);
+      if (name === "collar_center" && rig.costume?.ring) {
+        // Центр ошейника: высота кольца, по оси корпуса (поводок крепится к ближней к хозяину точке ремня).
+        rig.costume.ring.getWorldPosition(out);
+        const c = squash.getWorldPosition(new THREE.Vector3());
+        out.x = c.x;
+        out.z = c.z;
+        return out;
+      }
       return squash.getWorldPosition(out);
     },
     update(t0: number) {
@@ -741,12 +805,19 @@ export function createKodex2(spec: Kodex2Spec): Character {
       const breathe = 1 + 0.012 * Math.sin(t * 2 * Math.PI * 0.45);
       hopG.position.y = Math.max(0, num(t, "hop", 0)) * (S / 0.3) + v * 0.01 * S;
       lean.rotation.set(num(t, "lean", 0) * D2R, 0, -num(t, "tilt", 0) * D2R);
+      if (spec.plantFeet && rig.legs) for (const l of rig.legs) l.rotation.set(-lean.rotation.x, 0, -lean.rotation.z);
       const sq = num(t, "squash", 1) * breathe * (1 + 0.04 * v);
       const side = 1 / Math.sqrt(Math.max(0.3, sq));
       squash.scale.set(side, sq, side);
       for (const a of arms) setNub(a, arm(t, a.side > 0 ? "armL" : "armR", a.side > 0 ? "mug" : "rest"), S, t0, v * 10);
       gear?.update(t, (fld, d) => num(t, fld, d));
       rig.tick?.(t0);
+      rig.costume?.update((fld, d) => num(t, fld, d));
+      if (spec.plantFeet) {
+        root.updateMatrixWorld(true);
+        const low = new THREE.Box3().setFromObject(lean, true).min.y;
+        if (low < root.position.y) hopG.position.y += root.position.y - low;
+      }
       root.updateMatrixWorld(true);
       root.getWorldQuaternion(tmpQ2);
       // Кружка — в левой ручке (holdL: mug | none), карандаш — в правой (holdR: pencil | none).

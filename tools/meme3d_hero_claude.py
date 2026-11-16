@@ -67,9 +67,14 @@ def body_top(width: float = WIDTH) -> float:
 def hero(pose: list[dict], face: list[dict], voice: list[float] | None, blinks: list[float] | None = None, *,
          position: list[float], yaw: float = 0.0, width: float = WIDTH, headset: bool = True, label: str | None = None,
          fps: int = 30, gain: float = 1.0, bounce: float = 1.0, step_fps: int = 15, seed: int = 5,
-         char_id: str = "claude", glow: float = 0.12) -> dict:
-    """Описание персонажа для spec["characters"]. ``glow`` — своё свечение корпуса (в ярко освещённой сцене меньше)."""
+         char_id: str = "claude", glow: float = 0.12, mouth: bool = False, mouth_keys: list[dict] | None = None) -> dict:
+    """Описание персонажа для spec["characters"]. ``glow`` — своё свечение корпуса (в ярко освещённой сцене меньше).
+
+    ``mouth`` — рот на морде (по умолчанию нет — старые серии без рта); ``mouth_keys`` — формы губ по слогам
+    ``[{t, shape}]`` (open | o | wide | closed, см. :func:`mouth_keys_from_words`), раскрытие — от ``voice``."""
     look = {"body": PALETTE["body"], "shade": PALETTE["shade"], "eye": PALETTE["eye"], "glow": glow}
+    if mouth:
+        look["mouth"] = True
     if headset:
         look.update({"headset": PALETTE["headset"], "headsetAccent": PALETTE["headset_accent"]})
     if label:
@@ -78,7 +83,27 @@ def hero(pose: list[dict], face: list[dict], voice: list[float] | None, blinks: 
            "pose": pose, "face": face, "blinks": blinks or [], "stepFps": step_fps, "seed": seed}
     if voice:
         out["voice"] = {"fps": fps, "start": 0, "values": voice, "gain": gain, "bounce": bounce}
+    if mouth and mouth_keys:
+        out["mouthKeys"] = mouth_keys
     return out
+
+
+VOWEL_SHAPE = {**{v: "open" for v in "аяa"}, **{v: "o" for v in "оуюёouw"}, **{v: "wide" for v in "еиыэeiy"}}
+
+
+def mouth_keys_from_words(words: list[dict]) -> list[dict]:
+    """Формы губ по словам с атаками слогов (выравнивание текста песни: ``{w, t0, syl: [t…]}``): гласная слога → форма
+    (а — open, о/у — o, е/и — wide); между словами — closed."""
+    keys: list[dict] = []
+    for w in words:
+        vowels = [ch for ch in str(w.get("w", "")).lower() if ch in VOWEL_SHAPE]
+        syl = list(w.get("syl") or [w["t0"]])
+        for i, t in enumerate(syl):
+            v = vowels[i] if i < len(vowels) else (vowels[-1] if vowels else "а")
+            keys.append({"t": round(float(t), 3), "shape": VOWEL_SHAPE.get(v, "open")})
+        keys.append({"t": round(float(w.get("t1", syl[-1] + 0.2)), 3), "shape": "closed"})
+    keys.sort(key=lambda k: k["t"])
+    return keys
 
 
 def helper(*, color: str, accent: str, top: str = "sprout", label: str | None = None, size: float = 0.13,
@@ -207,6 +232,75 @@ def main() -> int:
     tile(files, labels, out / "hero_turnaround.jpg")
     print(out / "hero_turnaround.jpg")
     return 0
+
+
+
+VISEMES = {
+    "a": {"w": 0.8, "h": 1.0, "r": 0.35, "th": 0.6},
+    "o": {"w": 0.5, "h": 0.8, "r": 1.0, "th": 0.0},
+    "u": {"w": 0.36, "h": 0.55, "r": 1.0, "th": 0.0},
+    "e": {"w": 0.95, "h": 0.55, "r": 0.15, "th": 0.9},
+    "i": {"w": 1.0, "h": 0.35, "r": 0.05, "th": 1.0},
+    "closed": {"w": 0.55, "h": 0.0, "r": 0.0, "th": 0.0},
+    "press": {"w": 0.5, "h": 0.0, "r": 0.0, "th": 0.0},
+}
+VOWEL_VIS = {**{v: "a" for v in "аяa"}, **{v: "o" for v in "оёo"}, **{v: "u" for v in "уюu"}, **{v: "e" for v in "еэe"},
+             **{v: "i" for v in "иыiy"}}
+LIPS = set("мбпфвmbpfv")  # губные: перед гласной губы смыкаются
+
+
+def _syllables(word: str) -> list[tuple[str, str]]:
+    """Слово → [(согласные перед гласной, гласная)] по гласным (для визем)."""
+    w = word.lower()
+    out, cons = [], ""
+    for ch in w:
+        if ch in VOWEL_VIS:
+            out.append((cons, ch))
+            cons = ""
+        elif ch.isalpha():
+            cons += ch
+    return out or [("", "а")]
+
+
+def viseme_keys_from_words(words: list[dict]) -> list[dict]:
+    """Виземы рта по словам с атаками слогов (``{w, t0, t1, syl: [t…]}``): на атаке слога — гласная (а — широко открыт,
+    о/у — кругло, е/и — растянут с зубами), губные м/б/п/ф/в — сперва сомкнуты; гласная держится до следующего слога,
+    в конце слова рот закрывается. Ключи с ease inOutSine — без щелчков между формами."""
+    keys: list[dict] = []
+
+    def put(t: float, vis: str, scale: float = 1.0) -> None:
+        v = VISEMES[vis]
+        keys.append({"t": round(t, 3), "ease": "inOutSine", **{k: round(x * (scale if k == "h" else 1.0), 3) for k, x in v.items()}})
+
+    for wi, w in enumerate(words):
+        sy = _syllables(str(w.get("w", "")))
+        on = list(w.get("syl") or [w["t0"]])
+        t1 = float(w.get("t1", on[-1] + 0.25))
+        nxt = float(words[wi + 1]["t0"]) if wi + 1 < len(words) else t1 + 1.0
+        for i, t in enumerate(on):
+            cons, vow = sy[i] if i < len(sy) else sy[-1]
+            vis = VOWEL_VIS.get(vow, "a")
+            if cons and cons[-1] in LIPS:
+                put(t - 0.03, "press")
+                put(t + 0.05, vis)
+            else:
+                put(t + 0.03, vis)
+            end = on[i + 1] if i + 1 < len(on) else t1
+            if end - t > 0.2:
+                put(end - 0.05, vis, 0.85)  # долгая гласная держится
+        if nxt - t1 > 0.12:
+            put(t1 + 0.04, "closed")
+        else:
+            put(t1, vis, 0.4)
+    keys.sort(key=lambda k: k["t"])
+    # Ключи не теснее 2 кадров: ближние сливаются (нет дрожи).
+    out: list[dict] = []
+    for k in keys:
+        if out and k["t"] - out[-1]["t"] < 0.06:
+            out[-1] = {**k, "t": out[-1]["t"]} if k["h"] > out[-1]["h"] else out[-1]
+            continue
+        out.append(k)
+    return out
 
 
 if __name__ == "__main__":

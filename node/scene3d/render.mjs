@@ -11,7 +11,7 @@
  * паков отдаются через CDP Fetch из разрешённых каталогов (только чтение, без выхода за каталог).
  *
  * node node/scene3d/render.mjs --spec scene.json --out out.mp4 [--packs vendor/packs] [--workers 3]
- *   [--fps 30] [--duration 9] [--frames A:B] [--preview 0,2.5,5 --preview-dir DIR] [--inspect T]
+ *   [--fps 30] [--duration 9] [--frames A:B] [--preview 0,2.5,5 --preview-dir DIR] [--inspect T] [--inspect-list T1,T2,…]
  *   [--gl swiftshader|gpu] [--format jpeg|png] [--quality 92] [--crf 18] [--chrome PATH] [--ffmpeg ffmpeg]
  *   [--canvas2d cpu|gpu — 2D-холст кадра; по умолчанию cpu при SwiftShader: GPU-2D через программный GL в 3–4 раза
  *    медленнее (13.11, 3D-серия 4: 5 с на кадр против 1,4 с), картинка та же]
@@ -51,7 +51,7 @@ export function parseArgs(argv) {
     out[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value;
   }
   if (!out.spec) throw new UsageError("нужен --spec scene.json");
-  if (!out.out && !out.preview && out.inspect === undefined) throw new UsageError("нужен --out out.mp4 (или --preview / --inspect)");
+  if (!out.out && !out.preview && out.inspect === undefined && !out.inspectList) throw new UsageError("нужен --out out.mp4 (или --preview / --inspect)");
   const num = (name, def, lo, hi) => {
     if (out[name] === undefined) return def;
     const n = Number(out[name]);
@@ -91,6 +91,8 @@ export function parseArgs(argv) {
     previews,
     previewDir: out.previewDir ? resolve(out.previewDir) : null,
     inspect: out.inspect !== undefined ? num("inspect", 0, 0, 600) : null,
+    // --inspect-list 1.5,3,7.2 — то же для многих t одним браузером (проверка кадров клипа: видно ли героев).
+    inspectList: out.inspectList ? String(out.inspectList).split(",").map(Number).filter(Number.isFinite) : null,
     gl,
     post,
     canvas2d,
@@ -660,7 +662,16 @@ async function main() {
     if (opts.fps) spec.fps = opts.fps;
     if (opts.duration) spec.duration = opts.duration;
     let res;
-    if (opts.inspect !== null) {
+    if (opts.inspectList) {
+      const scene = await openScene(opts, spec, log);
+      try {
+        const list = [];
+        for (const t of opts.inspectList) list.push({ t, ...(await scene.inspect(t)) });
+        res = { ok: true, inspect: list, warnings: await scene.warnings() };
+      } finally {
+        await scene.close();
+      }
+    } else if (opts.inspect !== null) {
       const scene = await openScene(opts, spec, log);
       try {
         res = { ok: true, inspect: await scene.inspect(opts.inspect), warnings: await scene.warnings(), console: scene.console.slice(-10) };
