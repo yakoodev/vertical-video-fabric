@@ -140,6 +140,7 @@ def test_every_transition_renders(tmp_path: Path, kind: str, audio: str):
     out = tmp_path / "out.mp4"
     durations = [_duration(p) for p in parts]
     subprocess.run(build_join_args(parts, durations, out, t, has_audio=True), check=True)
-    overlap = effective_duration(t, durations)
-    expected = sum(durations) - 2 * overlap
+    # frag: у каждого вида своя длина (срез 0.2 с, …) — наплывы как их спланирует склейка.
+    overlaps = plan_joins(t, durations, None) if kind == "frag" else [effective_duration(t, durations)] * 2
+    expected = sum(durations) - sum(overlaps)
     assert _duration(out) == pytest.approx(expected, abs=0.15)
