@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { isActive, useActiveTasks } from "@/hooks/useActiveTasks";
 import { downloadsApi } from "@/api/downloads";
+import { torrentsApi } from "@/api/torrents";
 import { analysesApi } from "@/api/analyses";
 import { clipPlansApi } from "@/api/clipPlans";
 import { qk } from "@/api/keys";
@@ -18,6 +19,7 @@ const KIND_RU: Record<string, string> = {
   clip: "Рендер",
   analysis: "Анализ",
   download: "Скачивание",
+  torrent: "Торрент",
 };
 
 function fmtAgo(s?: string | null): string {
@@ -55,6 +57,12 @@ export function ActivityCenter() {
     mutationFn: (id: number) => downloadsApi.cancel(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить скачивание"),
+  });
+
+  const cancelTorrent = useMutation({
+    mutationFn: (id: number) => torrentsApi.cancel(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: qk.activeTasks }),
+    onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось отменить торрент"),
   });
 
   const cancelAnalysis = useMutation({
@@ -140,13 +148,16 @@ export function ActivityCenter() {
                         <Badge status={t.status} />
                       </div>
                       {t.label ? <div className="muted" style={{ fontSize: 12 }}>{t.label}</div> : null}
-                      {t.kind === "download" && isActive(t.status) ? (
+                      {(t.kind === "download" || t.kind === "torrent") && isActive(t.status) ? (
                         <div className="dl-progress" title={t.detail || ""}>
                           <div className="dl-bar">
                             <span style={{ width: `${Math.round(t.progress ?? 0)}%` }} />
                           </div>
                           <span className="mono">{Math.round(t.progress ?? 0)}%</span>
                         </div>
+                      ) : null}
+                      {t.kind === "torrent" && isActive(t.status) && t.detail ? (
+                        <div className="muted mono" style={{ fontSize: 11 }}>{t.detail}</div>
                       ) : null}
                       {t.error ? <div style={{ color: "var(--danger)", fontSize: 12 }}>{t.error}</div> : null}
                       <div className="activity-foot mono">
@@ -156,6 +167,15 @@ export function ActivityCenter() {
                             className="task-link"
                             disabled={t.status === "cancelling" || cancelDownload.isPending}
                             onClick={() => cancelDownload.mutate(t.id)}
+                          >
+                            {t.status === "cancelling" ? "отменяю…" : "отменить"}
+                          </button>
+                        ) : null}
+                        {t.kind === "torrent" && isActive(t.status) ? (
+                          <button
+                            className="task-link"
+                            disabled={t.status === "cancelling" || cancelTorrent.isPending}
+                            onClick={() => cancelTorrent.mutate(t.id)}
                           >
                             {t.status === "cancelling" ? "отменяю…" : "отменить"}
                           </button>

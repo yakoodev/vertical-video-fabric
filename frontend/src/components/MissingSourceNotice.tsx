@@ -31,7 +31,9 @@ export function MissingSourceNotice({
   const qc = useQueryClient();
   const toast = useToast();
   const { on } = useModules();
-  const canDownload = Boolean(source.original_url) && on("downloads");
+  // Запись из торрента заново по ссылке не скачать: её добавляют торрентом ещё раз.
+  const fromTorrent = Boolean(source.original_url?.startsWith("magnet:"));
+  const canDownload = Boolean(source.original_url) && !fromTorrent && on("downloads");
   const tasks = useQuery({
     queryKey: ["downloads"],
     queryFn: downloadsApi.list,
@@ -70,6 +72,7 @@ export function MissingSourceNotice({
             ? "Монтаж показан в низком качестве: смотреть и править можно. Новый рендер — только с записью."
             : "Готовый рендер, субтитры и настройки на месте. Новый рендер и кадры видео — только с записью."}
           {!source.original_url ? " Ссылки нет: запись загружали файлом." : ""}
+          {fromTorrent ? " Запись из торрента: добавьте торрент заново во «Новом видео»." : ""}
         </span>
         {task?.status === "failed" ? <span className="src-missing-err" title={task.error}>Не скачалось: {task.error.length > 200 ? `${task.error.slice(0, 200)}…` : task.error}</span> : null}
       </div>

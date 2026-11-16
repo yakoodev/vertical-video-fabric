@@ -12,6 +12,7 @@ import { useDeleteMutation } from "@/hooks/useDeleteMutation";
 import { useModuleOn, useModules } from "@/hooks/useModules";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { PlayerOptionsDialog } from "@/components/PlayerOptionsDialog";
+import { TorrentDialog } from "@/components/TorrentDialog";
 import { StoryboardPreview } from "@/components/StoryboardPreview";
 import { isSourceFileMissing } from "@/components/MissingSourceNotice";
 import { NewCanvas } from "@/components/NewCanvas";
@@ -225,6 +226,7 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
   const [url, setUrl] = useState("");
   const [quality, setQuality] = useState("");
   const [picking, setPicking] = useState("");
+  const [torrent, setTorrent] = useState(false);
 
   const onDone = (s: Source) => {
     onStarted?.();
@@ -261,6 +263,8 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
   const canPick = looksLikePlayerPage(url);
   // «Загрузка по ссылкам» выключена в «Настройки → Модули» — только файл и холст.
   const downloadsOn = useModuleOn("downloads");
+  // Источник из торрента (magnet / .torrent): свой модуль «Источники из торрентов».
+  const torrentsOn = useModuleOn("torrents");
 
   return (
     <div className="proj-add">
@@ -278,6 +282,17 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
           }}
         />
       </label>
+      {torrentsOn ? (
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          title="Magnet-ссылка или файл .torrent: выберите файлы, каждое видео станет отдельным"
+          onClick={() => setTorrent(true)}
+        >
+          🧲 Торрент
+        </button>
+      ) : null}
       {downloadsOn ? <div className="proj-add-row">
         <input
           className="input"
@@ -318,6 +333,15 @@ export function AddSource({ onStarted, projectId, noCanvas }: { onStarted?: () =
       </div> : null}
       {/* Ролик без видео: анимированный фон, картинки и титры (app/canvas.py). */}
       {noCanvas ? null : <NewCanvas onCreated={onStarted} disabled={busy} projectId={projectId} />}
+      {torrent ? (
+        <TorrentDialog
+          projectId={projectId}
+          onClose={() => {
+            setTorrent(false);
+            onStarted?.();
+          }}
+        />
+      ) : null}
       {picking ? (
         <PlayerOptionsDialog
           url={picking}
@@ -356,6 +380,7 @@ const SOURCE_TYPE_LABEL: Record<string, string> = {
   youtube_url: "YouTube",
   twitch_url: "Twitch",
   smotvibe_url: "Плеер",
+  torrent: "Торрент",
 };
 
 export function VideoListPage() {

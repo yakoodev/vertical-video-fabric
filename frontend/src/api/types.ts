@@ -450,7 +450,7 @@ export interface AutoRun {
 }
 
 export interface ActiveTask {
-  kind: "job" | "clip" | "analysis" | "download";
+  kind: "job" | "clip" | "analysis" | "download" | "torrent";
   id: number;
   status: string;
   label: string;
@@ -460,6 +460,6 @@ export interface ActiveTask {
   scheduled_at?: string | null;
   source_id?: number | null;
   detail?: string;
-  /** Downloads only: 0–100. */
+  /** Downloads and torrents: 0–100. */
   progress?: number;
 }

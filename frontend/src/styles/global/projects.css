@@ -217,3 +217,35 @@
 }
 .src-stat b { font-family: var(--display); font-size: 28px; line-height: 1.1; }
 .src-stat span { font-size: 12.5px; color: var(--text-dim); }
+
+/* ---------- «🧲 Торрент»: magnet / .torrent → файлы → прогресс (components/TorrentDialog.tsx) ---------- */
+.modal.torrent-dlg { max-width: 620px; max-height: calc(100vh - 32px); overflow: auto; }
+.torrent-sub { font-size: 13px; margin-bottom: 14px; }
+.torrent-col { display: grid; gap: 12px; }
+.torrent-magnet { width: 100%; resize: vertical; font-size: 12.5px; word-break: break-all; }
+.torrent-file { justify-self: start; }
+.torrent-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; margin-top: 4px; }
+.torrent-note { font-size: 12.5px; }
+.torrent-name { display: flex; gap: 10px; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+.torrent-name b { overflow-wrap: anywhere; }
+.torrent-files {
+  list-style: none; margin: 0; padding: 6px 10px; display: grid; gap: 4px; max-height: 320px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface-2);
+}
+.torrent-files li { display: flex; gap: 10px; justify-content: space-between; align-items: center; font-size: 13px; }
+.torrent-files li.off { opacity: 0.55; }
+.torrent-files .aiv-check { display: inline-flex; align-items: center; gap: 6px; min-width: 0; cursor: pointer; }
+.torrent-path { overflow-wrap: anywhere; }
+.torrent-total { font-size: 13px; }
+.torrent-total.over { color: var(--danger); }
+.torrent-progress { font-size: 13px; }
+.torrent-progress .dl-bar { height: 8px; }
+.torrent-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.torrent-stats dt { font-size: 11.5px; color: var(--text-faint); }
+.torrent-stats dd { margin: 2px 0 0; font-size: 14px; }
+.torrent-warn { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+.torrent-done { display: grid; gap: 8px; }
+.torrent-links { margin: 0; padding-left: 18px; }
+@media (max-width: 520px) {
+  .torrent-stats { grid-template-columns: 1fr 1fr; }
+}
