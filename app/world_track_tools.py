@@ -101,9 +101,21 @@ def h_track_surface(ctx: ToolContext, args: dict) -> Any:
     fmt = settings_layers_format(normalize_render_settings(plan.get("render_settings") or {}))
     rw, rh = _ref(fmt)
     try:
-        quad = WT.normalize_quad(args, rw / rh)
+        # box без quad — четырёхугольник по линиям самой поверхности (точки схода, app/surface_orient.py);
+        # orient: "screen" — прямоугольник экрана, как раньше.
+        box = args.get("box") if isinstance(args.get("box"), dict) else None
+        if args.get("quad") is None and box is not None and args.get("orient") != "screen":
+            quad = None
+            box = {k: _num(box.get(k)) for k in ("x", "y", "w", "h")}
+            if box["x"] is None or box["y"] is None or box["w"] is None:
+                raise WT.TrackError("box — {x, y, w, h}: центр и размер окна в долях кадра")
+            if box["h"] is None:
+                box["h"] = box["w"] * 0.3 * rw / rh
+        else:
+            quad, box = WT.normalize_quad(args, rw / rh), None
         track = WT.track_surface(ctx.store, ctx.plan_id, t=t, start=start, end=end, quad=quad, fps=args.get("fps"),
-                                 smooth=args.get("smooth"))
+                                 smooth=args.get("smooth"), box=box,
+                                 perspective="limited" if args.get("perspective") == "limited" else "full")
     except WT.TrackError as exc:
         raise ToolError(f"поверхность не отслежена: {exc}", exc.hints) from exc
     show_arg = args.get("show") if isinstance(args.get("show"), list) and len(args["show"]) == 2 else None
@@ -198,7 +210,10 @@ def tools() -> list[Tool]:
             "Слово «прилипает» к поверхности мира (как граффити на скале у референса владельца): трек плоскости по "
             "кадрам основы клипа (KLT + гомография RANSAC, сверка с кадром-семенем против дрейфа, потеря и поиск "
             "заново). t — момент, где задана поверхность: quad [[x,y]×4] — углы по часовой с левого верхнего (доли "
-            "кадра; трапеция по перспективе поверхности) или box {x, y, w, h, angle} — центр и размер. start/end — окно "
+            "кадра; трапеция по перспективе поверхности) или box {x, y, w, h} — центр и размер окна: четырёхугольник "
+            "строится сам по линиям поверхности (края стены, швы, ряды окон → точки схода), слово ляжет вдоль стены в "
+            "глубину (orient: screen — прямоугольник экрана). Трек — полная гомография (перспектива меняется с "
+            "камерой; perspective: limited — урезанная). start/end — окно "
             "трека (шкала clip; нет — t−0.6…t+1.6), не через склейку. Ответ: track_id, held (доля кадров, где держится), "
             "err_px, lost. text — сразу слой tracked_text (preset graffiti3d: синий→фиолетовый, белая обводка, объём; "
             "word_times — время появления каждого слова, шкала clip; show [start, end] — когда виден; текст только "
@@ -214,6 +229,9 @@ def tools() -> list[Tool]:
                   "quad": {"type": "array", "items": POINT, "minItems": 4, "maxItems": 4},
                   "box": _obj({"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"},
                                "h": {"type": "number"}, "angle": {"type": "number"}}),
+                  "orient": {"type": "string", "enum": ["surface", "screen"],
+                             "description": "box: surface — по линиям поверхности (по умолчанию), screen — прямоугольник"},
+                  "perspective": {"type": "string", "enum": ["full", "limited"]},
                   "start": {"type": "number"}, "end": {"type": "number"},
                   "fps": {"type": "number", "description": "кадров трека в секунду (30; 60 — для быстрых поворотов)"},
                   "smooth": {"type": "number", "description": "сглаживание углов 0..1 (0.35)"},

@@ -225,30 +225,52 @@ def surface_report(track: dict, rotation: float = 0.0, show: Any = None) -> dict
     return {"track_id": track.get("id"), "kind": "surface", "range": track.get("range"), "fps": track.get("fps"),
             "seed": track.get("seed"), "held": track.get("found"), "ok_share": track.get("ok_share"),
             "err_px": track.get("err_px"), "lost": track.get("lost"), "rejects": track.get("rejects") or {},
+            "orient": track.get("orient"),
             "check": surface_check(track, rotation, show), "notes": track.get("notes") or []}
 
 
-def compute_surface(frames: list[dict], seed_t: float, quad: list, *, smooth: float = 0.35) -> dict:
-    """Трек плоскости по готовым кадрам (кадры одного куска режутся по склейкам)."""
+def orient_quad(frames: list[dict], seed_t: float, box: dict) -> tuple[list, dict]:
+    """Четырёхугольник по ориентации поверхности в окне ``box`` кадра-семени (app/surface_orient.py)."""
+    from app.surface_orient import plane_quad
+    from app.surface_track import to_gray
+
+    return plane_quad(to_gray(frames[_nearest(frames, seed_t)]["img"]), box)
+
+
+def compute_surface(frames: list[dict], seed_t: float, quad: list | None = None, *, smooth: float = 0.35,
+                    box: dict | None = None, perspective: str = "full") -> dict:
+    """Трек плоскости по готовым кадрам (кадры одного куска режутся по склейкам). ``box`` вместо ``quad`` —
+    четырёхугольник строится по линиям поверхности (точки схода), слово ляжет вдоль стены в глубину."""
     from app.surface_track import track_plane
 
+    orient: dict | None = None
+    if quad is None:
+        if box is None:
+            raise TrackError("нужна поверхность: quad или box")
+        quad, orient = orient_quad(frames, seed_t, box)
     seed = _nearest(frames, seed_t)
     a, b = _piece_runs(frames, seed)
     part = frames[a:b + 1]
     try:
-        res = track_plane(part, seed - a, quad, smooth=smooth)
+        res = track_plane(part, seed - a, quad, smooth=smooth, perspective=perspective)
     except ValueError as exc:
         raise TrackError(str(exc), ["другое место: suggest_surfaces(t, text)"]) from exc
     notes = []
     if a > 0 or b < len(frames) - 1:
         notes.append(f"склейка: трек только в куске {part[0]['t']:.2f}–{part[-1]['t']:.2f} с")
     h, w = part[0]["img"].shape[:2]
-    return {**res, "kind": "surface", "aspect": round(quad_aspect(quad, w, h), 4),
-            "range": [part[0]["t"], part[-1]["t"]], "notes": notes}
+    if orient and orient.get("fallback"):
+        notes.append(f"ориентация поверхности не найдена ({orient['fallback']}) — прямоугольник окна")
+    out = {**res, "kind": "surface", "aspect": round(quad_aspect(quad, w, h), 4),
+           "range": [part[0]["t"], part[-1]["t"]], "notes": notes, "seed_quad": quad}
+    if orient is not None:
+        out["orient"] = orient
+    return out
 
 
-def track_surface(store: Any, plan_id: int, *, t: float, start: float, end: float, quad: list,
-                  fps: Any = None, smooth: Any = None, progress: Callable[[float], None] | None = None) -> dict:
+def track_surface(store: Any, plan_id: int, *, t: float, start: float, end: float, quad: list | None = None,
+                  fps: Any = None, smooth: Any = None, progress: Callable[[float], None] | None = None,
+                  box: dict | None = None, perspective: str = "full") -> dict:
     """Плоскость под слово: трек ``start..end`` (clip) от кадра ``t`` с поверхностью ``quad`` (доли кадра в момент t)."""
     from app.heavy_queue import heavy_slot
 
@@ -257,8 +279,8 @@ def track_surface(store: Any, plan_id: int, *, t: float, start: float, end: floa
         raise TrackError(f"t={t:.2f} вне диапазона трека {start:.2f}–{end:.2f}")
     with heavy_slot("tracking", f"клип {plan_id}: поверхность"):
         frames, setup = clip_frames(store, plan_id, start, end, fps_v, progress)
-        res = compute_surface(frames, t, quad, smooth=_num(smooth, 0.35) or 0.0)
-    res.update(plan_id=plan_id, fps=fps_v, seed={"t": round(t, 3), "quad": quad},
+        res = compute_surface(frames, t, quad, smooth=_num(smooth, 0.35) or 0.0, box=box, perspective=perspective)
+    res.update(plan_id=plan_id, fps=fps_v, seed={"t": round(t, 3), "quad": res.get("seed_quad") or quad},
                frame={"w": setup["width"], "h": setup["height"], "dw": setup["dw"], "dh": setup["dh"]})
     res["id"] = save_track(res)
     return res

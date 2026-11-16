@@ -203,7 +203,8 @@ def _confidence(inliers: int, total: int, err: float) -> float:
 class _PlaneRun:
     """Проход в одну сторону от кадра-семени. Хранит якорные точки (координаты в кадре-семени)."""
 
-    def __init__(self, seed_gray: np.ndarray, quad: np.ndarray, *, correct: bool = True):
+    def __init__(self, seed_gray: np.ndarray, quad: np.ndarray, *, correct: bool = True, persp_cap: float | None = None):
+        self.persp_cap = persp_cap
         cv2 = _cv2()
         self.cv2 = cv2
         self.seed = seed_gray
@@ -368,7 +369,9 @@ class _PlaneRun:
         if len(src) >= 3:
             sim, _ = self.cv2.estimateAffinePartial2D(src.reshape(-1, 1, 2), dst.reshape(-1, 1, 2),
                                                       method=self.cv2.LMEDS)
-        q = P.constrain(self.quad0, apply_h(H, self.quad0), sim)
+        if self.persp_cap is None:
+            return H  # полная гомография: стена в перспективе — как есть; отбраковка — в reject_reason
+        q = P.constrain(self.quad0, apply_h(H, self.quad0), sim, self.persp_cap)
         return self._quad_h(q)
 
     def _quad_h(self, q: np.ndarray) -> np.ndarray | None:
@@ -450,7 +453,7 @@ class _PlaneRun:
             return None
         H = np.linalg.inv(S) @ warp.astype(np.float64) @ S @ np.linalg.inv(T)
         H /= H[2, 2]
-        q = P.constrain(self.quad0, apply_h(H, self.quad0), None)
+        q = P.constrain(self.quad0, apply_h(H, self.quad0), None, self.persp_cap)
         H = self._quad_h(q)
         if H is None:
             return None
@@ -460,7 +463,8 @@ class _PlaneRun:
 # ---------------------------------------------------------------- плоскость: весь трек
 
 
-def _smooth_runs(samples: list[dict], amount: float, quad0: np.ndarray | None = None) -> None:
+def _smooth_runs(samples: list[dict], amount: float, quad0: np.ndarray | None = None,
+                 extra: tuple[float, float, float] = (0.25, 0.45, 0.5)) -> None:
     """Сглаживание позы (app/surface_pose.smooth_poses) по непрерывным видимым кускам (ok/weak/pred); прогноз
     тянет слабее. Без ``quad0`` — прежнее симметричное по углам."""
     if quad0 is None:
@@ -476,7 +480,8 @@ def _smooth_runs(samples: list[dict], amount: float, quad0: np.ndarray | None = 
             j += 1
         run = samples[i:j]
         sm = P.smooth_poses(quad0, [s["t"] for s in run], [s["q"] for s in run], amount,
-                            noise=[1.0 if s["s"] == "ok" else 2.0 if s["s"] == "weak" else 6.0 for s in run])
+                            noise=[1.0 if s["s"] == "ok" else 2.0 if s["s"] == "weak" else 6.0 for s in run],
+                            extra=extra)
         for s, q in zip(run, sm):
             s["q"] = q
         i = j
@@ -515,7 +520,7 @@ def _bound_predictions(samples: list[dict]) -> None:
 
 
 def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: float = 0.35,
-                correct: bool = True) -> dict:
+                correct: bool = True, perspective: str = "full") -> dict:
     """Плоскость по кадрам ``[{t, img}]`` (серые или BGR, один размер) от кадра ``seed_index`` вперёд и назад.
 
     ``quad`` — 4 угла в долях кадра семени. Ответ — ``{samples, found, ok_share, err_px, lost, seed_t}``;
@@ -531,7 +536,10 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
     out: dict[int, dict] = {seed_index: {"q": q0.astype(np.float64), "c": 1.0, "s": "ok", "e": 0.0}}
     rejects: dict[str, int] = {}
     for direction in (1, -1):
-        run = _PlaneRun(grays[seed_index], q0, correct=correct)
+        # full (по умолчанию) — полная гомография от семени: перспектива стены меняется, как в кадре (владелец
+        # 16.11: «перспективы нет» при урезанной); limited — подобие + перспектива ≤ PERSP_CAP (старое поведение).
+        run = _PlaneRun(grays[seed_index], q0, correct=correct,
+                        persp_cap=None if perspective == "full" else P.PERSP_CAP)
         run.rejects = rejects
         lost_for = 0.0
         i = seed_index + direction
@@ -551,7 +559,9 @@ def track_plane(frames: Sequence[dict], seed_index: int, quad: Any, *, smooth: f
         samples.append({"t": round(float(f["t"]), 4), "q": np.asarray(r["q"], np.float64), "c": r["c"], "s": r["s"],
                         "e": r.get("e")})
     _bound_predictions(samples)
-    _smooth_runs(samples, float(smooth), q0.astype(np.float64))
+    # Полная перспектива: остаток сверх подобия — сама перспектива стены, его не глушим сильнее центра.
+    _smooth_runs(samples, float(smooth), q0.astype(np.float64),
+                 (0.15, 0.25, 0.1) if perspective == "full" else (0.25, 0.45, 0.5))
     # После сглаживания — та же проверка позы: что всё же легло боком или перевернулось, не показываем.
     sign = 1.0 if P.area(q0.astype(np.float64)) > 0 else -1.0
     for s in samples:

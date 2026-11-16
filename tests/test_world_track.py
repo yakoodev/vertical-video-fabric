@@ -109,7 +109,7 @@ def test_reject_reason_and_constrained_model():
     assert reject_reason(q0, q0, _sq(cx=103), 1 / 30) is None
     assert reject_reason(q0, q0, _sq(mirror=True), 1 / 30) == "flip"
     assert reject_reason(q0, q0, _sq(ang=8), 1 / 30) == "rotation_jump"
-    assert reject_reason(q0, _sq(ang=17), _sq(ang=19), 1 / 30) == "rotation_limit"
+    assert reject_reason(q0, _sq(ang=39), _sq(ang=41), 1 / 30) == "rotation_limit"
     assert reject_reason(q0, q0, _sq(w=80 * 1.3, h=30 * 1.3), 1 / 30) == "scale_jump"
     squashed = _sq()
     squashed[2:, 1] = squashed[:2, 1][::-1] + 3  # нижнее ребро почти на верхнем
@@ -139,7 +139,7 @@ def test_track_plane_never_shows_mirrored_or_spinning_plane():
         frames.append({"t": round(i / 30, 4), "img": img})
     res = ST.track_plane(frames, 2, [[0.3, 0.4], [0.7, 0.4], [0.7, 0.55], [0.3, 0.55]])
     check = res["check"]
-    assert check["flips"] == 0 and check["text_angle_max"] <= 19.5, check
+    assert check["flips"] == 0 and check["text_angle_max"] <= 41.5, check
     assert check["rot_step_max"] <= 2.5, check
     assert res["rejects"], res["rejects"]
     # Слово, что не может удержать позу, гаснет, а не крутится.
@@ -334,6 +334,60 @@ def test_tools_track_surface_and_object_end_to_end(tmp_path, monkeypatch):
     kept, _assets, notes = resolve_layer_assets(store, layers)
     assert all(l["props"].get("trackData", {}).get("t") for l in kept if l["type"] in ("tracked_text", "trail"))
     assert len(kept) == len(layers) and not notes
+
+
+def _wall_in_perspective(w=540, h=960):
+    """Стена уходит вглубь вправо: горизонтальные швы сходятся к точке справа, вертикали — вертикальны."""
+    img = np.full((h, w), 70, np.uint8)
+    vp = np.array([1400.0, 380.0])
+    for y0 in range(250, 700, 45):  # швы плит: из левого края к точке схода
+        p0 = np.array([0.0, float(y0)])
+        p1 = p0 + (vp - p0) * (w / vp[0])
+        cv2.line(img, tuple(p0.astype(int)), tuple(p1.astype(int)), 200, 2)
+    for x in range(30, w, 70):  # вертикальные стыки
+        cv2.line(img, (x, 200), (x, 760), 160, 2)
+    return img, vp
+
+
+def test_plane_quad_follows_wall_lines_into_depth():
+    from app.surface_orient import plane_quad
+
+    img, vp = _wall_in_perspective()
+    quad, info = plane_quad(img, {"x": 0.45, "y": 0.5, "w": 0.6, "h": 0.12})
+    assert "fallback" not in info, info
+    q = np.array(quad) * [540, 960]
+    # Верх и низ четырёхугольника идут к точке схода: продолжения рёбер сходятся около неё.
+    def meet_x(a, b, c, d):
+        l1, l2 = np.cross([*a, 1], [*b, 1]), np.cross([*c, 1], [*d, 1])
+        x = np.cross(l1, l2)
+        return x[:2] / x[2]
+    vp_got = meet_x(q[0], q[1], q[3], q[2])
+    assert np.linalg.norm(vp_got - vp) < 150, (vp_got, info)
+    # Правый край короче левого (дальше), края — вертикальные.
+    left, right = np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1])
+    assert right < left * 0.85
+    assert abs(q[0][0] - q[3][0]) < 3 and abs(q[1][0] - q[2][0]) < 3
+    # Нет прямых — прямоугольник окна.
+    rect, info2 = plane_quad(np.full((960, 540), 90, np.uint8), {"x": 0.5, "y": 0.5, "w": 0.4, "h": 0.1})
+    assert info2.get("fallback") and abs(rect[0][1] - rect[1][1]) < 1e-9
+
+
+def test_track_plane_full_perspective_follows_homography():
+    """Полная гомография (perspective full): плоскость в сильной перспективе ведётся без урезания."""
+    big = _texture(4, (H * 2, W * 2))
+    frames, homs = [], []
+    for i in range(20):
+        Hm = np.array([[1.0, 0.0, -W / 2 + 2 * i], [0.0, 1.0, -H / 2], [6e-5 * i, 0.0, 1.0]])
+        frames.append({"t": round(i / 30, 4), "img": cv2.warpPerspective(big, Hm, (W, H), borderMode=cv2.BORDER_REFLECT)})
+        homs.append(Hm)
+    quad = [[0.3, 0.4], [0.7, 0.4], [0.7, 0.55], [0.3, 0.55]]
+    res = ST.track_plane(frames, 0, quad, smooth=0.0)
+    q0 = np.array(quad) * [W, H]
+    last = np.array(res["samples"][-1]["q"]).reshape(4, 2) * [W, H]
+    truth = ST.apply_h(homs[-1] @ np.linalg.inv(homs[0]), q0)
+    assert np.max(np.linalg.norm(last - truth, axis=1)) < 2.0
+    # Перспектива настоящая: правый край заметно короче левого (урезанная модель так не умела).
+    assert np.linalg.norm(last[2] - last[1]) < 0.95 * np.linalg.norm(last[3] - last[0])
 
 
 def test_schema_blend_modes_for_tracked_text_and_trail():
