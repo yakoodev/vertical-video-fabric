@@ -177,11 +177,20 @@ def check_surface(samples: Sequence[dict], *, frame: tuple[float, float], rotati
     rot = np.unwrap(np.radians(base_angles))
     steps = np.degrees(np.abs(np.diff(rot)))
     k = out_width / w
+    # Дрожь — отклонение углов от гладкой (квадратичной) кривой по 5 соседним кадрам: плавный разгон камеры (быстрый
+    # поворот на 30 fps) квадратика повторяет, а дёрганье — нет. Вторая разность принимала разгон за дрожь.
     jit = []
-    for i in range(1, len(qs) - 1):
-        if abs((float(vis[i + 1]["t"]) - float(vis[i - 1]["t"]))) > 0.12:
-            continue  # через пропуск вторая разность — не дрожь
-        jit.append(np.linalg.norm(qs[i] - (qs[i - 1] + qs[i + 1]) / 2, axis=1).mean() * k)
+    ts = np.array([float(s["t"]) for s in vis])
+    for i in range(2, len(qs) - 2):
+        win_t = ts[i - 2:i + 3]
+        if win_t[-1] - win_t[0] > 0.25:
+            continue  # через пропуск — не дрожь
+        tt = win_t - win_t[2]
+        Q = np.stack(qs[i - 2:i + 3]).reshape(5, 8)
+        A = np.stack([np.ones(5), tt, tt * tt], axis=1)
+        coef, *_ = np.linalg.lstsq(A, Q, rcond=None)
+        res = (Q[2] - coef[0]).reshape(4, 2)
+        jit.append(np.linalg.norm(res, axis=1).mean() * k)
     out.update(flips=flips, text_angle_max=round(max(abs(x) for x in text), 2),
                rot_std=round(float(np.degrees(np.std(rot))), 2), rot_step_max=round(float(steps.max()), 2),
                jitter_px=round(float(np.sqrt(np.mean(np.square(jit)))) if jit else 0.0, 2))
