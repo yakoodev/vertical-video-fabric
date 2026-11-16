@@ -202,8 +202,13 @@ class Settings:
         # (формат aria2: 256K, 1M; 0 — без предела); сколько торрентов сразу. Раздача после загрузки выключена всегда.
         self.aria2_bin = os.getenv("ARIA2_BIN", "aria2c").strip() or "aria2c"
         self.torrent_max_gb = float(os.getenv("TORRENT_MAX_GB", "60") or 60)
-        self.torrent_upload_limit = os.getenv("TORRENT_UPLOAD_LIMIT", "256K").strip() or "256K"
+        # Отдача во время загрузки: обмен «ты мне — я тебе» у пиров, при слишком низком потолке они отвечают медленнее.
+        self.torrent_upload_limit = os.getenv("TORRENT_UPLOAD_LIMIT", "1M").strip() or "1M"
         self.torrent_max_active = int(os.getenv("TORRENT_MAX_ACTIVE", "2") or 2)
+        # Порты для входящих пиров: по одному на одновременный торрент (диапазон проброшен в docker-compose).
+        # aria2 принимает диапазон «A-B» в listen-port/dht-listen-port: каждый процесс берёт свободный порт из него.
+        _port = int(os.getenv("TORRENT_LISTEN_PORT", "51413") or 51413)
+        self.torrent_listen_port = f"{_port}-{_port + max(1, self.torrent_max_active) - 1}"
         # Ждать метаданные magnet (пиры с info), выбора файлов человеком и хоть одного байта при загрузке, с.
         self.torrent_metadata_timeout_sec = float(os.getenv("TORRENT_METADATA_TIMEOUT_SEC", "180") or 180)
         self.torrent_select_timeout_sec = float(os.getenv("TORRENT_SELECT_TIMEOUT_SEC", "3600") or 3600)

@@ -129,6 +129,12 @@ def daemon_options(*, port: int, secret: str, download_dir: Path, log_path: Path
         "bt-remove-unselected-file": "true",
         "enable-dht": "true",
         "dht-file-path": str(dht_path),
+        # Постоянный порт для входящих пиров (проброшен в docker-compose): без него к нам могут подключиться только
+        # «открытые» пиры, и скорость упирается в единицы раздающих.
+        "listen-port": str(settings.torrent_listen_port),
+        "dht-listen-port": str(settings.torrent_listen_port),
+        "enable-peer-exchange": "true",
+        "bt-max-peers": "150",
         "bt-enable-lpd": "false",
         # В Docker без IPv6 попытки по v6 только тянут время.
         "disable-ipv6": "true",
