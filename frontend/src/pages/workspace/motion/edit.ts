@@ -228,6 +228,10 @@ export function layerTitle(layer: Layer): string {
   switch (layer.type) {
     case "text":
       return layer.props.text?.split("\n")[0]?.slice(0, 40) || "Текст";
+    case "tracked_text":
+      return `На поверхности: ${layer.props.text?.split("\n")[0]?.slice(0, 30) || "текст"}`;
+    case "trail":
+      return "След броска";
     case "emoji":
       return layer.props.char || "Эмодзи";
     case "counter":
@@ -288,6 +292,8 @@ export function layerTitle(layer: Layer): string {
 
 export const LAYER_ICON: Record<Layer["type"], string> = {
   text: "T",
+  tracked_text: "🧱",
+  trail: "☄",
   shape: "◆",
   image: "🖼",
   video: "🎞",

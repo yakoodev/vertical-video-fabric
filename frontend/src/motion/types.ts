@@ -750,8 +750,73 @@ export type LogoRevealProps = {
   seed?: number;
 };
 
+/**
+ * Трек сервиса (app/world_track.py) в компактном виде — его кладут в слой `props.trackData`.
+ * `surface`: `q` — 8 чисел на сэмпл (углы плоскости в долях кадра, по часовой с левого верхнего),
+ * `aspect` — ширина/высота плоскости в px кадра-семени. `object`: `p` — 2 числа на сэмпл (центр),
+ * `g` — 6 чисел (аффинная кадр → мир, доли кадра). `s` — статус по сэмплу: o/w/d — виден, p — прогноз,
+ * l — потерян. `t` — время клипа (шкала слоёв).
+ */
+export type TrackData = {
+  kind: "surface" | "object";
+  t: number[];
+  s?: string;
+  q?: number[];
+  aspect?: number;
+  p?: number[];
+  g?: number[];
+};
+
+/** Слово/строка на поверхности мира (layers/tracked.ts). x/y слоя — место на плоскости (доли). */
+export type TrackedTextProps = {
+  text: string;
+  /** Id трека сервиса (trk_…); данные — trackData. */
+  track: string;
+  trackData?: TrackData | null;
+  /** graffiti3d — как в референсе владельца (синий→фиолетовый, белая обводка, объём); plain — свои цвета. */
+  preset?: "graffiti3d" | "plain";
+  font?: string;
+  weight?: number;
+  color?: string;
+  gradient?: [string, string] | null;
+  stroke?: { color?: string; width?: number } | null;
+  extrude?: { color?: string; depth?: number; angle?: number } | null;
+  /** Наклон букв, градусы (курсив граффити −9). */
+  skew?: number;
+  uppercase?: boolean;
+  /** Доля плоскости под текст (0.9). */
+  fit?: number;
+  lineHeight?: number;
+  /** Время появления каждого слова (клип), по порядку слов текста. */
+  words?: { t: number; w?: string }[];
+  reveal?: "pop" | "fade" | "slam" | "none";
+};
+
+/** След летящего объекта по треку точки (layers/tracked.ts). */
+export type TrailProps = {
+  track: string;
+  trackData?: TrackData | null;
+  color?: string;
+  glowColor?: string;
+  /** Толщина, опорн. px. */
+  width?: number;
+  /** Сила свечения 0..1.5 (0 — без). */
+  glow?: number;
+  style?: "solid" | "dashed" | "dotted";
+  /** Длина видимого хвоста, с (0 — весь путь). */
+  tail?: number;
+  fadeTail?: boolean;
+  head?: boolean;
+  /** Окно следа на шкале клипа: с `from` (нет — начало слоя) по `to` (нет — до конца трека). */
+  from?: number;
+  to?: number;
+  anchor?: "world" | "screen";
+};
+
 export type LayerPropsMap = {
   text: TextProps;
+  tracked_text: TrackedTextProps;
+  trail: TrailProps;
   shape: ShapeProps;
   image: ImageProps;
   video: VideoProps;
@@ -863,6 +928,8 @@ export type LayerTracking = {
 export type LayerOf<T extends LayerType> = LayerBase & { type: T; props: LayerPropsMap[T] };
 
 export type TextLayer = LayerOf<"text">;
+export type TrackedTextLayer = LayerOf<"tracked_text">;
+export type TrailLayer = LayerOf<"trail">;
 export type ShapeLayer = LayerOf<"shape">;
 export type ImageLayer = LayerOf<"image">;
 export type VideoLayer = LayerOf<"video">;
@@ -892,6 +959,8 @@ export type TransitionLayerOf = LayerOf<"transition">;
 
 export type Layer =
   | TextLayer
+  | TrackedTextLayer
+  | TrailLayer
   | ShapeLayer
   | ImageLayer
   | VideoLayer

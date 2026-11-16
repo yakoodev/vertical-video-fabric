@@ -452,6 +452,49 @@ PROPS["logo_reveal"] = {
     "scratches": Opt(Num(6, 0, 24, integer=True)),
 }
 
+# Слово «в мире игры» (frontend/src/motion/layers/tracked.ts): текст лежит на поверхности по треку track
+# (app/world_track.py, track_surface) — едет и поворачивается с ней. x/y/scale/rotation слоя — место и
+# размер на плоскости (доли). Пусто у стиля — пресет graffiti3d (как в референсе владельца). words — время
+# появления каждого слова (шкала clip, по слогам вокала). Данные трека (trackData) сервис кладёт сам.
+TRACKED_TEXT_PRESETS = ("graffiti3d", "plain")
+TEXT_REVEALS = ("pop", "fade", "slam", "none")
+PROPS["tracked_text"] = {
+    "text": Text("", 200),
+    "track": Text("", 20),
+    "preset": Opt(Choice("graffiti3d", TRACKED_TEXT_PRESETS)),
+    "font": Opt(FONT),
+    "weight": Opt(Num(700, 100, 900, integer=True)),
+    "color": Opt(Color("#ffffff")),
+    "gradient": Opt(Colors(None, 2, 2, nullable=True)),
+    "stroke": Opt(Obj({"color": Color("#ffffff"), "width": Num(7, 0, 40, 2)}, nullable=True)),
+    "extrude": Opt(Obj({"color": Color("#1b1250"), "depth": Num(10, 0, 40, 2), "angle": Num(50, -180, 180, 1)},
+                       nullable=True)),
+    "skew": Opt(Num(-9, -30, 30, 2)),
+    "uppercase": Opt(Flag(False)),
+    "fit": Opt(Num(0.9, 0.1, 3, 3)),
+    "lineHeight": Opt(Num(1.0, 0.6, 2, 3)),
+    "words": Opt(ListOf(Obj({"t": Num(0, 0, MAX_TIME_SEC, 3), "w": Opt(Text("", 60))}), 40)),
+    "reveal": Opt(Choice("pop", TEXT_REVEALS)),
+}
+# След летящего объекта (граната): растущая линия по треку точки track (track_object), свечение, пунктир,
+# гаснущий хвост tail (с; 0 — весь путь); from/to — окно следа на шкале clip; anchor world — дуга едет с фоном.
+TRAIL_STYLES = ("solid", "dashed", "dotted")
+TRAIL_ANCHORS = ("world", "screen")
+PROPS["trail"] = {
+    "track": Text("", 20),
+    "color": Color("#ff3b5c"),
+    "glowColor": Opt(Color("#ff3b5c")),
+    "width": Num(10, 1, 80, 2),
+    "glow": Opt(Num(1, 0, 1.5, 3)),
+    "style": Opt(Choice("solid", TRAIL_STYLES)),
+    "tail": Opt(Num(0, 0, 30, 3)),
+    "fadeTail": Opt(Flag(True)),
+    "head": Opt(Flag(True)),
+    "from": Opt(Num(0, 0, MAX_TIME_SEC, 3)),
+    "to": Opt(Num(0, 0, MAX_TIME_SEC, 3)),
+    "anchor": Opt(Choice("world", TRAIL_ANCHORS)),
+}
+
 PROPS.update(AD_PROPS)
 PROPS.update(FLAT_PROPS)
 # Перетекающий переход между сценами (app/motion_flow.py): группы слоёв A/B, вид, маска, кривая.

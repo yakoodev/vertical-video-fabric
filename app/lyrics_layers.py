@@ -153,8 +153,24 @@ def build_lyric_layers(lines: list[dict], *, song_offset: float = 0.0, duration:
                 "out": {"type": "fade", "duration": 0.08}, "props": props})
             y_px += size * 1.02
         placed.append({"i": line["i"], "text": line["text"], "start": round(start, 3), "end": round(end, 3),
-                       "chunks": len(chunks)})
+                       "chunks": len(chunks), "lines": texts,
+                       "words": [{"w": str(w["w"]), "t": round(float(w["t0"]), 3)} for w in words],
+                       "layer_ids": [f"{LAYER_PREFIX}{line['i']}_{j}" for j in range(len(chunks))]})
     return {"layers": layers, "placed": placed, "skipped": skipped, "zone": zone}
 
 
-__all__ = ["LAYER_PREFIX", "ZONES", "build_lyric_layers"]
+def tracked_lyric_layer(placed: dict, track_id: str, *, start: float, end: float, word_times: list[float],
+                        style: dict | None = None, track: int = 6) -> dict:
+    """Строка текста песни словом «в мире игры» (слой ``tracked_text`` на поверхности по треку ``track_id``):
+    куски строки — строки текста, каждое слово появляется в свой слог (``word_times`` — шкала clip, по словам)."""
+    props: dict = {"text": "\n".join(placed.get("lines") or [placed["text"]]).upper(), "track": track_id,
+                   "words": [{"t": round(float(t), 3)} for t in word_times][:40], "reveal": "pop"}
+    for key, value in (style or {}).items():
+        if key in ("preset", "font", "color", "gradient", "stroke", "extrude", "skew", "fit") and value is not None:
+            props[key] = value
+    return {"id": f"{LAYER_PREFIX}{placed['i']}_w", "type": "tracked_text", "name": f"текст песни {placed['i']} (в мире)",
+            "track": int(track), "start": round(start, 3), "end": round(end, 3),
+            "out": {"type": "fade", "duration": 0.08}, "props": props}
+
+
+__all__ = ["LAYER_PREFIX", "ZONES", "build_lyric_layers", "tracked_lyric_layer"]

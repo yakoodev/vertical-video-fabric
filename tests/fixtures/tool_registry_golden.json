@@ -169,7 +169,7 @@
 "name": "add_layers",
 "title": "Добавляю слои",
 "description": "de3ee860d35d6e2b",
-"parameters": "49157db8b972b276",
+"parameters": "c5996facdabab990",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -1519,13 +1519,55 @@
 {
 "name": "lyric_layers",
 "title": "Ставлю текст песни",
-"description": "2fba59fb69d9daf3",
-"parameters": "17f35c749527aea7",
+"description": "29bbcf31f5f7e960",
+"parameters": "3467b8e603c1af56",
 "mutating": true,
 "scope": "clip",
 "module": "frag_movie",
 "handler": "h_lyric_layers",
 "label": true
+},
+{
+"name": "suggest_surfaces",
+"title": "Ищу поверхность под слово",
+"description": "1380e3b758d67e48",
+"parameters": "ddd975dd6db2a3b5",
+"mutating": false,
+"scope": "clip",
+"module": "frag_movie",
+"handler": "h_suggest_surfaces",
+"label": true,
+"cost": [
+"cpu"
+]
+},
+{
+"name": "track_surface",
+"title": "Веду поверхность",
+"description": "de9f5d3ab3dc6d26",
+"parameters": "a8dce1957f6ba34e",
+"mutating": true,
+"scope": "clip",
+"module": "frag_movie",
+"handler": "h_track_surface",
+"label": true,
+"cost": [
+"cpu"
+]
+},
+{
+"name": "track_object",
+"title": "Веду брошенный предмет",
+"description": "67c15fdf1dc5921c",
+"parameters": "749221a0966054fc",
+"mutating": true,
+"scope": "clip",
+"module": "frag_movie",
+"handler": "h_track_object",
+"label": true,
+"cost": [
+"cpu"
+]
 }
 ],
 "discovery": [

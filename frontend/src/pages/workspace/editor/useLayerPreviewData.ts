@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import { useModules } from "@/hooks/useModules";
-import { reframeBetween, type AssetSizes, type ChatMessage, type Layer, type PngtuberLayer, type WaveformLayer, type CameraKey } from "@/motion";
+import { reframeBetween, type AssetSizes, type ChatMessage, type Layer, type PngtuberLayer, type WaveformLayer, type CameraKey, type TrackData } from "@/motion";
 import { motionApi } from "@/api/motion";
 import { layerAssetSizes, loadMotionFonts, preloadLayerImages } from "@/pages/workspace/motion/runtime";
 import { type MontageAsset } from "@/api/assets";
@@ -95,8 +95,44 @@ export function useLayerPreviewData({
     staleTime: 300_000,
   });
   const motionFonts = useQuery({ queryKey: ["motion-fonts"], queryFn: loadMotionFonts, staleTime: Infinity });
+  // Слова на поверхности и след броска (tracked_text / trail): трек — файл сервиса по props.track
+  // (app/world_track.py); превью кладёт его в слой как рендер (props.trackData).
+  const trackIds = [...new Set(layers.flatMap((l) => (l.type === "tracked_text" || l.type === "trail") && l.props?.track ? [String(l.props.track)] : []))].sort();
+  const worldTracks = useQuery({
+    queryKey: ["world-tracks", trackIds.join(",")],
+    queryFn: async () => {
+      const out: Record<string, TrackData> = {};
+      await Promise.all(trackIds.map(async (id) => {
+        try {
+          out[id] = await api.get<TrackData>(`/api/motion/tracks/${encodeURIComponent(id)}`);
+        } catch {
+          // трека нет — слой в превью не рисуется (как в рендере: пропуск с пометкой)
+        }
+      }));
+      return out;
+    },
+    enabled: trackIds.length > 0,
+    staleTime: Infinity,
+  });
 
   return {
-    reframedView, planChat, planVoice, planLevels, motionFonts,
+    reframedView, planChat, planVoice, planLevels, motionFonts, worldTracks,
   };
+}
+
+const trackedCache = new WeakMap<Layer, { data: TrackData; layer: Layer }>();
+
+/** Слоям tracked_text / trail — данные их трека (props.trackData), как сервис кладёт их рендеру. */
+export function withTrackData(layers: Layer[], tracks: Record<string, TrackData> | undefined): Layer[] {
+  if (!tracks || !layers.some((l) => l.type === "tracked_text" || l.type === "trail")) return layers;
+  return layers.map((l) => {
+    if (l.type !== "tracked_text" && l.type !== "trail") return l;
+    const data = tracks[String(l.props?.track ?? "")];
+    if (!data) return l;
+    const hit = trackedCache.get(l);
+    if (hit && hit.data === data) return hit.layer;
+    const next = { ...l, props: { ...l.props, trackData: data } } as Layer;
+    trackedCache.set(l, { data, layer: next });
+    return next;
+  });
 }

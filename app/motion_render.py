@@ -277,7 +277,13 @@ def resolve_layer_assets(store: Any, layers: list[dict]) -> tuple[list[dict], di
     kept: list[dict] = []
     assets: dict[str, str] = {}
     notes: list[str] = []
+    from app.world_track import attach_track_data
+
     for layer in layers:
+        # Слово на поверхности и след броска — с данными своего трека (app/world_track.py); трека нет — пропуск.
+        layer = attach_track_data(layer, notes)
+        if layer is None:
+            continue
         ok = True
         for ref in layer_asset_refs(layer):
             key = asset_key(ref)
