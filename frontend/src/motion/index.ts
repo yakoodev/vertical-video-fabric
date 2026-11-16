@@ -127,7 +127,8 @@ export { carouselRenderer, carouselIndex, carouselOffset, carouselSwitches, CARO
 export { waveformRenderer, waveHeights, waveTrack, fakeVoice, WAVE_STYLES, WAVE_SOURCES } from "./layers/waveform";
 export { tileWallRenderer, wallProject, wallShift, TILE_COLORS } from "./layers/tilewall";
 export { logoRevealRenderer, logoSchedule, strokeLength, strokeProgress, timeAtProgress, brushEase, pointAt, hitScaleAt, resolveLogo, LOGO_DEFAULTS, LOGO_EXITS, LOGO_REVEALS } from "./layers/logoreveal";
-export { drawTrackedText, drawTrail, quadAt, quadUpright, squareToQuad, trailPoints, sampleIndex, GRAFFITI, FADE_SEC } from "./layers/tracked";
+export { drawTrackedText, drawTrail, quadAt, quadUpright, squareToQuad, trailPoints, sampleIndex, blurShots, surfaceBlend, GRAFFITI, FADE_SEC } from "./layers/tracked";
+export { blendOnto, boxBlur, PAINT_DEFAULTS, SURFACE_BLENDS, type PaintLook, type SurfaceBlend } from "./layers/trackedblend";
 export { BOIL_FPS, boilDrawing, boilHash } from "./layers/logoboil";
 export {
   FLOW_KINDS, FLOW_DIRECTIONS, FLOW_SHAPES, flowGroups, flowRegion, flowState, flowProgress, morphLayers, isTransition, groupable,

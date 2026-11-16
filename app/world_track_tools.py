@@ -123,7 +123,8 @@ def h_track_surface(ctx: ToolContext, args: dict) -> Any:
         props: dict = {"text": text, "track": track["id"]}
         if words:
             props["words"] = words
-        for key in ("preset", "font", "color", "gradient", "stroke", "extrude", "skew", "uppercase", "fit", "reveal"):
+        for key in ("preset", "font", "color", "gradient", "stroke", "extrude", "skew", "uppercase", "fit", "reveal",
+                    "blend", "paint"):
             if args.get(key) is not None:
                 props[key] = args[key]
         show = args.get("show") if isinstance(args.get("show"), list) and len(args["show"]) == 2 else None
@@ -162,7 +163,7 @@ def h_track_object(ctx: ToolContext, args: dict) -> Any:
     layer = None
     if args.get("trail"):
         props: dict = {"track": track["id"]}
-        for key in ("color", "glowColor", "width", "glow", "style", "tail", "fadeTail", "head", "anchor"):
+        for key in ("color", "glowColor", "width", "glow", "style", "tail", "fadeTail", "head", "anchor", "blend"):
             if args.get(key) is not None:
                 props[key] = args[key]
         rng = track.get("range") or [t, end]
@@ -201,7 +202,10 @@ def tools() -> list[Tool]:
             "трека (шкала clip; нет — t−0.6…t+1.6), не через склейку. Ответ: track_id, held (доля кадров, где держится), "
             "err_px, lost. text — сразу слой tracked_text (preset graffiti3d: синий→фиолетовый, белая обводка, объём; "
             "word_times — время появления каждого слова, шкала clip; show [start, end] — когда виден; текст только "
-            "горизонтально), layer_id — привязать трек к готовому слою. Модель — подобие + ограниченная перспектива, "
+            "горизонтально; blend — paint (по умолчанию: «краска» — свет, тени и фактура поверхности в буквах, "
+            "экспозиция и цвет участка, мягкий край, зерно, смаз по движению; paint {shade, texture, …}), normal "
+            "(наклейка — «граффити 3D» как в референсе), multiply/screen/overlay/soft-light), layer_id — привязать "
+            "трек к готовому слою. Модель — подобие + ограниченная перспектива, "
             "перевёрнутые/боком/скачущие кадры отбраковываются, слово там гаснет. check — проверка позы (flips, "
             "text_angle_max, rot_step_max, jitter_px; ok false — не показывать). Ответ со слоем — лист кадров "
             "проверки. / Track a "
@@ -220,6 +224,8 @@ def tools() -> list[Tool]:
                   "gradient": {"type": "array", "items": {"type": "string"}}, "stroke": {"type": "object"},
                   "extrude": {"type": "object"}, "skew": {"type": "number"}, "uppercase": {"type": "boolean"},
                   "fit": {"type": "number"}, "reveal": {"type": "string", "enum": ["pop", "fade", "slam", "none"]},
+                  "blend": {"type": "string", "enum": ["paint", "normal", "multiply", "screen", "overlay", "soft-light"]},
+                  "paint": {"type": "object", "description": "shade, texture, exposure, tint, grain, soften, opacity"},
                   "id": {"type": "string"}, "layer_id": {"type": "string"}, "check": {"type": "boolean"}}, ["t"]),
             h_track_surface, mutating=True, cost=("cpu",),
             label=lambda a: "Веду поверхность" + (f" под «{str(a.get('text'))[:20]}»" if a.get("text") else ""),
@@ -232,7 +238,8 @@ def tools() -> list[Tool]:
             "увиденные глазами: прогноз идёт по ним (мелкая граната на пёстром фоне). lead_in — секунд дуги назад "
             "до края кадра (граната вылетает из-за края). start/end — окно (шкала clip; нет — t…t+1.5), fps (60). "
             "trail: true — сразу слой trail (color, width, glow, style solid|dashed|dotted, tail), layer_id — "
-            "привязать к готовому. / Track a thrown object for an animated trajectory trail.",
+            "привязать к готовому; blend — screen (свечение, по умолчанию) | add | normal. / Track a thrown object for an "
+            "animated trajectory trail.",
             _obj({"t": {"type": "number"}, "x": {"type": "number"}, "y": {"type": "number"},
                   "w": {"type": "number"}, "h": {"type": "number"},
                   "hints": {"type": "array", "items": _obj({"t": {"type": "number"}, "x": {"type": "number"},
@@ -244,7 +251,8 @@ def tools() -> list[Tool]:
                   "width": {"type": "number"}, "glow": {"type": "number"},
                   "style": {"type": "string", "enum": ["solid", "dashed", "dotted"]}, "tail": {"type": "number"},
                   "fadeTail": {"type": "boolean"}, "head": {"type": "boolean"},
-                  "anchor": {"type": "string", "enum": ["world", "screen"]}, "layer_id": {"type": "string"}},
+                  "anchor": {"type": "string", "enum": ["world", "screen"]},
+                  "blend": {"type": "string", "enum": ["normal", "screen", "add"]}, "layer_id": {"type": "string"}},
                  ["t", "x", "y"]),
             h_track_object, mutating=True, cost=("cpu",),
             label=lambda a: f"Веду брошенный предмет с {(_num(a.get('t'), 0.0) or 0.0):.1f} с",

@@ -172,6 +172,77 @@ test("tracked_text: зеркальный (перевёрнутый) четырё
   assert.ok(bbox(render([word()], 0.5)));
 });
 
+/** Кадр с фоном: левая половина тёмная, правая светлая (полосы фактуры), сверху — слово режимом blend. */
+function onBackdrop(props, t = 0.5) {
+  const cv = createCanvas(W, H);
+  const g = cv.getContext("2d");
+  g.fillStyle = "#202020";
+  g.fillRect(0, 0, W / 2, H);
+  g.fillStyle = "#d0d0d0";
+  g.fillRect(W / 2, 0, W / 2, H);
+  for (let x = 0; x < W; x += 6) {
+    g.fillStyle = "rgba(0,0,0,0.25)";
+    g.fillRect(x, 0, 2, H);
+  }
+  const still = { kind: "surface", t: [0, 1], q: [0.05, 0.4, 0.95, 0.4, 0.95, 0.5, 0.05, 0.5, 0.05, 0.4, 0.95, 0.4, 0.95, 0.5, 0.05, 0.5], s: "oo", aspect: (0.9 * W) / (0.1 * H) };
+  E.drawFrame(g, { layers: [word({ text: "WWWWWWWW", preset: "plain", color: "#ffd84a", trackData: still, ...props })], fps: 30 }, t, env());
+  return g;
+}
+
+function meanRGB(g, x0, x1) {
+  const d = g.getImageData(x0, Math.round(0.43 * H), x1 - x0, Math.round(0.04 * H)).data;
+  let r = 0, gg = 0, b = 0, n = 0;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; gg += d[i + 1]; b += d[i + 2]; n++; }
+  return [r / n, gg / n, b / n];
+}
+
+test("tracked_text paint: краска берёт свет поверхности — на тёмном темнее, на светлом светлее, фактура проступает", () => {
+  const paint = onBackdrop({ blend: "paint", paint: { grain: 0, soften: 0 } });
+  const flat = onBackdrop({ blend: "normal" });
+  const dark = meanRGB(paint, 60, 200);
+  const light = meanRGB(paint, 340, 480);
+  const flatDark = meanRGB(flat, 60, 200);
+  assert.ok(dark[0] < light[0] - 40, `тёмная ${dark} светлая ${light}`);
+  assert.ok(dark[0] < flatDark[0] - 30, `краска на тёмном темнее наклейки: ${dark} vs ${flatDark}`);
+  // Фактура: полосы фона меняют пиксели букв — краска с фактурой отличается от краски без неё.
+  const plain = onBackdrop({ blend: "paint", paint: { grain: 0, soften: 0, texture: 0 } });
+  const a = paint.getImageData(300, Math.round(0.42 * H), 200, Math.round(0.06 * H)).data;
+  const b = plain.getImageData(300, Math.round(0.42 * H), 200, Math.round(0.06 * H)).data;
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 4) diff += Math.abs(a[i + 2] - b[i + 2]); // синий: у жёлтой краски красный упирается в 255
+  assert.ok(diff / (a.length / 4) > 2, `разница фактуры ${diff / (a.length / 4)}`);
+});
+
+test("tracked_text: режимы наложения отличаются, overlay сохраняет тёмный фон тёмным", () => {
+  const normal = meanRGB(onBackdrop({ blend: "normal" }), 60, 200);
+  const overlay = meanRGB(onBackdrop({ blend: "overlay" }), 60, 200);
+  const screen = meanRGB(onBackdrop({ blend: "screen" }), 60, 200);
+  assert.ok(overlay[0] < normal[0] - 60, `${overlay} ${normal}`);
+  assert.ok(screen[0] >= overlay[0], `${screen} ${overlay}`);
+});
+
+test("tracked_text: смаз по движению плоскости — быстрая плоскость размыта, неподвижная резкая", () => {
+  const moving = surfaceTrack();
+  // Плоскость едет 0.6 кадра в секунду: за затвор (1/30 с) — 11 px.
+  const fast = { ...moving, q: moving.q.map((v, i) => (i % 2 === 0 ? v - 0.2 * (Math.floor(i / 8) / 10) + 0.6 * (Math.floor(i / 8) / 10) - 0.1 : v)) };
+  assert.equal(E.blurShots(fast, 0.5, E.quadAt(fast, 0.5).q, 30, 1, W, H).length > 1, true);
+  assert.equal(E.blurShots(surfaceTrack(), 0.5, E.quadAt(surfaceTrack(), 0.5).q, 30, 0, W, H).length, 1);
+  // Резкость по горизонтали: сумма скачков альфы по строкам полосы слова.
+  const edgeContrast = (tr, shutter) => {
+    const cv = createCanvas(W, H);
+    E.drawFrame(cv.getContext("2d"), { layers: [word({ blend: "normal", trackData: tr }, { motionBlur: shutter })], fps: 30 }, 0.5, env());
+    const y0 = Math.round(0.38 * H);
+    const rows = Math.round(0.14 * H);
+    const d = cv.getContext("2d").getImageData(0, y0, W, rows).data;
+    let s = 0;
+    for (let r = 0; r < rows; r++) for (let x = 1; x < W; x++) s += Math.abs(d[(r * W + x) * 4 + 3] - d[(r * W + x - 1) * 4 + 3]);
+    return s;
+  };
+  const sharp = edgeContrast(fast, 0);
+  const blurred = edgeContrast(fast, 1);
+  assert.ok(sharp > 1000 && blurred < sharp * 0.8, `${blurred} ${sharp}`);
+});
+
 test("tracked_text: потеря трека — слово гаснет плавно, а не мигает", () => {
   const tr = surfaceTrack();
   const t = [];

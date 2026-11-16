@@ -458,6 +458,8 @@ PROPS["logo_reveal"] = {
 # появления каждого слова (шкала clip, по слогам вокала). Данные трека (trackData) сервис кладёт сам.
 TRACKED_TEXT_PRESETS = ("graffiti3d", "plain")
 TEXT_REVEALS = ("pop", "fade", "slam", "none")
+TRACKED_BLENDS = ("paint", "normal", "multiply", "screen", "overlay", "soft-light")
+TRAIL_BLENDS = ("normal", "screen", "add")
 PROPS["tracked_text"] = {
     "text": Text("", 200),
     "track": Text("", 20),
@@ -475,6 +477,13 @@ PROPS["tracked_text"] = {
     "lineHeight": Opt(Num(1.0, 0.6, 2, 3)),
     "words": Opt(ListOf(Obj({"t": Num(0, 0, MAX_TIME_SEC, 3), "w": Opt(Text("", 60))}), 40)),
     "reveal": Opt(Choice("pop", TEXT_REVEALS)),
+    # Как слово ложится в кадр (layers/trackedblend.ts): paint (нет поля) — «краска» со светом и фактурой
+    # поверхности; normal — наклейка (graffiti3d — «панч» как в референсе); multiply/screen/overlay/soft-light.
+    "blend": Opt(Choice("paint", TRACKED_BLENDS)),
+    "paint": Opt(Obj({"shade": Opt(Num(0.85, 0, 2, 3)), "texture": Opt(Num(0.6, 0, 2, 3)),
+                      "exposure": Opt(Num(0.7, 0, 2, 3)), "tint": Opt(Num(0.3, 0, 1, 3)),
+                      "grain": Opt(Num(0.05, 0, 0.5, 3)), "soften": Opt(Num(0.8, 0, 10, 2)),
+                      "opacity": Opt(Num(0.92, 0, 1, 3))}, nullable=True)),
 }
 # След летящего объекта (граната): растущая линия по треку точки track (track_object), свечение, пунктир,
 # гаснущий хвост tail (с; 0 — весь путь); from/to — окно следа на шкале clip; anchor world — дуга едет с фоном.
@@ -493,6 +502,8 @@ PROPS["trail"] = {
     "from": Opt(Num(0, 0, MAX_TIME_SEC, 3)),
     "to": Opt(Num(0, 0, MAX_TIME_SEC, 3)),
     "anchor": Opt(Choice("world", TRAIL_ANCHORS)),
+    # Нет — свечение screen, ядро normal; задано — всё этим режимом.
+    "blend": Opt(Choice("screen", TRAIL_BLENDS)),
 }
 
 PROPS.update(AD_PROPS)

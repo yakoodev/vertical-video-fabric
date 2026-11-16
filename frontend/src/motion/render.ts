@@ -219,7 +219,8 @@ export function drawFrame(
       // Слои «в мире» (layers/tracked.ts): трек — в координатах основы до камеры, наезд — сверху.
       if (cam === undefined) cam = camAt(t);
       const c = comp.camera?.length && cam && !isIdentityCamera(cam) ? cam : null;
-      if (layer.type === "tracked_text") drawTrackedText(ctx, layer as TrackedTextLayer, t, env, c);
+      // Смаз по движению плоскости: свой затвор слоя, иначе клипа, иначе 0.5 («180°») — слово смазано, как кадр.
+      if (layer.type === "tracked_text") drawTrackedText(ctx, layer as TrackedTextLayer, t, env, c, fps, shutterValue(layer.motionBlur) ?? shutterValue(comp.motionBlur) ?? 0.5);
       else drawTrail(ctx, layer as TrailLayer, t, env, c);
       continue;
     }
