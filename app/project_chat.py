@@ -142,7 +142,8 @@ SYSTEM = """\
   как тут принято) — запиши remember_fact одной фразой; «забудь» — forget_fact. Он видит и правит этот список сам.
   noticed в срезе — что агент заметил сам, владелец не подтвердил: не выдавай за факт, при расхождении верь владельцу.
 - Типовой заказ — сначала плейбук: нарезка стрима — get_playbook("stream-shorts"), реклама сайта или товара —
-  get_playbook("ad-voiceover"), промо приложения по записям экрана — "app-promo". Подходящий сервис кладёт ниже
+  get_playbook("ad-voiceover"), промо приложения по записям экрана — "app-promo", мувик (бои записей игры под
+  песню) — "frag-movie". Подходящий сервис кладёт ниже
   сам (блок «АКТИВНЫЙ ПЛЕЙБУК»); его шаги и чек-лист — условие сдачи.
 - Озвучка своим текстом (реклама, холст, серия) — группа voice: add_voiceover(clip_id, lines [{{text}}]) — фразы без
   style (Gemini зачитывает указания вслух), слои голоса длиной файла, субтитры по голосу; потом check_voiceover
@@ -322,7 +323,7 @@ class ThreadPolicy(TurnPolicy):
         # Плейбук по смыслу запроса (как у ИИ-монтажёра клипа): нарезка стрима, реклама с озвучкой, серия.
         from app.project_chat_playbook import block, pick
 
-        return _system(self.thread, self.groups) + block(pick(self.message, state.steps))
+        return _system(self.thread, self.groups) + block(pick(self.message, state.steps, self.thread.get("playbook")))
 
     def declarations(self, json_schema: bool) -> list[dict]:
         return CT.declarations(self.groups, json_schema)
@@ -382,7 +383,8 @@ class ThreadPolicy(TurnPolicy):
         from app.project_chat_playbook import pick
 
         changed, _seen = touched_clips(state.steps)
-        return render_guard(self.store, self.message, pick(self.message, state.steps), changed, self.started)
+        return render_guard(self.store, self.message, pick(self.message, state.steps, self.thread.get("playbook")),
+                            changed, self.started)
 
     def finish(self, state: TurnState, text: str) -> str:
         from app.ai.finish_guard import thread_clips, with_foreign_note

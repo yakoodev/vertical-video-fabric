@@ -54,6 +54,7 @@ CHAT_SCHEMA_SQL = [
         tool_groups_json TEXT NOT NULL DEFAULT '[]',
         summary TEXT NOT NULL DEFAULT '',
         summary_upto INTEGER NOT NULL DEFAULT 0,
+        playbook TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
@@ -101,6 +102,10 @@ def ensure_chat_schema(conn) -> None:
         conn.execute("ALTER TABLE chat_threads ADD COLUMN clip_plan_id INTEGER REFERENCES clip_plans(id) ON DELETE CASCADE")
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_threads_clip ON chat_threads(clip_plan_id) "
                  "WHERE clip_plan_id IS NOT NULL")
+    if "playbook" not in {r[1] for r in conn.execute("PRAGMA table_info(chat_threads)").fetchall()}:
+        # Закреплённый плейбук переписки (работа «Мувик под песню», app/frag_movie.py): каждый ход, а не только
+        # первый, идёт с ним — «ок, делай полную» плейбука по словам не назовёт. Пусто — как раньше.
+        conn.execute("ALTER TABLE chat_threads ADD COLUMN playbook TEXT NOT NULL DEFAULT ''")
     columns = {r[1]: r for r in conn.execute("PRAGMA table_info(project_chat_messages)").fetchall()}
     if not columns:
         conn.execute(_MESSAGES_SQL.format(name="project_chat_messages"))
@@ -279,6 +284,18 @@ def create_thread(store: Any, project_id: int | None = None, title: str = "", mo
         (int(project_id) if project_id else None, str(title or "Новый чат")[:120], 1 if is_default else 0,
          str(model or "")[:80]))
     return get_thread(store, int(cur.lastrowid))
+
+
+def set_thread_playbook(store: Any, thread_id: int, name: str) -> dict:
+    """Закрепить плейбук за перепиской (пусто — снять). Имя проверяется: такой плейбук должен быть."""
+    from app import playbooks
+
+    key = str(name or "").strip().lower()
+    if key:
+        playbooks.get_playbook(key)  # нет такого — KeyError
+    get_thread(store, thread_id)
+    store.db.execute("UPDATE chat_threads SET playbook = ? WHERE id = ?", (key, int(thread_id)))
+    return get_thread(store, thread_id)
 
 
 def default_thread(store: Any, project_id: int) -> dict:

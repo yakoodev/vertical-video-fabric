@@ -224,6 +224,9 @@ DEFAULT_CONFIG: dict = {
     "expire_hours": 168,  # pending без ответа столько часов → expired; 0 — никогда
     "digest": {"enabled": True, "weekday": 0, "hour": 10},
     "auto_rules": "confirm",  # чат проекта: правило из разговора — confirm (спросить) / auto (сразу)
+    # Особая работа проекта (app/frag_movie.py: «Мувик под песню») — подпись и хэштеги публикации, части для TikTok,
+    # проверка застывших кусков после рендера. Пусто — обычный проект.
+    "workflow": {},
 }
 
 
@@ -288,6 +291,9 @@ def normalize_config(raw: Any) -> dict:
     if auto_rules not in ("confirm", "auto"):
         raise ValueError("auto_rules: confirm или auto")
     cfg["auto_rules"] = auto_rules
+    from app.frag_movie import normalize_workflow
+
+    cfg["workflow"] = normalize_workflow(raw.get("workflow"))
     return cfg
 
 

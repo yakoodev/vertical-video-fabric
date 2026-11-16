@@ -337,6 +337,37 @@ def generate_publish_metadata(
             variant["description"] = strip_shorts_tags(variant["description"])
     if channel:
         meta["channel_rules"] = len(channel.get("rules") or [])
+    return apply_workflow_preset(store, clip, meta)
+
+
+_PART_RE = re.compile(r"(?:част[ьи]\s*|·\s*|p(?:ar)?t\s*)(\d{1,2})\s*/\s*(\d{1,2})", re.I)
+
+
+def apply_workflow_preset(store: Any, clip: dict, meta: dict) -> dict:
+    """Подпись и хэштеги из настроек работы проекта (app/frag_movie.py, «Мувик под песню») — поверх ответа модели.
+
+    Шаблон владельца — не пожелание для модели, а точный текст: tiktok.title — «ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ ᴀᴘᴇx ⨯ <трек> · N/M»
+    (N/M — из названия клипа части: «часть 2/3», «· 2/3»; нет — без номера), tiktok.description — пусто, хэштеги —
+    из настроек. Нет работы у проекта — meta как есть."""
+    try:
+        from app.frag_movie import plan_workflow, render_caption
+
+        workflow = plan_workflow(store, clip.get("clip_plan_id"))
+        if not workflow:
+            return meta
+        plan = store.get_clip_plan(int(clip["clip_plan_id"]), include_segments=False)
+    except Exception:  # noqa: BLE001 - пресет — уточнение, метаданные всё равно пишутся
+        return meta
+    names = " ".join(str(x or "") for x in (plan.get("title"), clip.get("title")))
+    found = _PART_RE.search(names)
+    n, m = (int(found.group(1)), int(found.group(2))) if found and 0 < int(found.group(1)) <= int(found.group(2))         else (None, None)
+    caption = render_caption(workflow.get("caption_template") or "", music_title(store, plan.get("render_settings") or {}),
+                             n, m)
+    platforms = dict(meta.get("platforms") or {})
+    platforms["tiktok"] = {"title": caption, "description": ""}
+    meta = {**meta, "platforms": platforms, "workflow": workflow.get("kind")}
+    if workflow.get("hashtags"):
+        meta["hashtags"] = list(workflow["hashtags"])
     return meta
 
 

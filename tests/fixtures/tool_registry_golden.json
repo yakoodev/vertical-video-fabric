@@ -1479,8 +1479,8 @@
 {
 "name": "plan_tiktok_parts",
 "title": "Делю ролик на части для TikTok",
-"description": "a8093fa17835987b",
-"parameters": "5d53aa0cc077e9ec",
+"description": "22fdfeac2f650048",
+"parameters": "1549fb00ffb0fac2",
 "mutating": false,
 "scope": "clip",
 "module": null,
@@ -1500,6 +1500,32 @@
 "cost": [
 "cpu"
 ]
+},
+{
+"name": "align_lyrics",
+"title": "Выравниваю текст песни",
+"description": "6b7b35f9372c88ef",
+"parameters": "bb26e383812bb845",
+"mutating": false,
+"scope": "global",
+"module": "frag_movie",
+"handler": "h_align_lyrics",
+"label": true,
+"cost": [
+"cpu",
+"ram"
+]
+},
+{
+"name": "lyric_layers",
+"title": "Ставлю текст песни",
+"description": "2fba59fb69d9daf3",
+"parameters": "17f35c749527aea7",
+"mutating": true,
+"scope": "clip",
+"module": "frag_movie",
+"handler": "h_lyric_layers",
+"label": true
 }
 ],
 "discovery": [
@@ -1618,8 +1644,8 @@
 {
 "name": "save_channel_project",
 "title": "Сохраняю проект-серию",
-"description": "47e440e1389fda66",
-"parameters": "06712816cbc5ae55",
+"description": "bedc1359572908d8",
+"parameters": "d219645b610ff86e",
 "mutating": true,
 "scope": "project",
 "module": "series",

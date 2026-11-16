@@ -53,9 +53,11 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
         "choose_cover", "create_cover_doc", "update_cover_doc", "render_cover_doc", "share_cover_doc", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
         "preview_scene_frame")),
-    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU", (
+    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU, "
+                  "текст песни мувика по слогам", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
-        "list_subtitle_styles", "translate_subtitles", "dub_clip", "tts_preview", "emphasize_words")),
+        "list_subtitle_styles", "translate_subtitles", "dub_clip", "tts_preview", "emphasize_words", "align_lyrics",
+        "lyric_layers")),
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
@@ -105,7 +107,8 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк",
                 "в такт", "долям", "доли", "в бит", "битам", "3d", "3д", "сцен", "анимац"),
-    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "ключев", "эмфаз"),
+    "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "ключев", "эмфаз", "текст песни", "мувик",
+                  "align_lyrics", "lyric_layers"),
     "voice": ("озвуч", "голос", "диктор", "закадр", "tts", "начитк", "реклам"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",

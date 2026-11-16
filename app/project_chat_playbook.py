@@ -5,8 +5,11 @@ get_playbook — центр-кроп игры без лица и донат-ба
 (``app/ai/editor_agent_prompts.active_playbook``), чат проекта — нет. Теперь тоже:
 
 1. последний успешный ``get_playbook(name)`` хода или имя плейбука в запросе — как у монтажёра;
-2. иначе — по словам запроса: нарезка стрима → ``stream-shorts``, реклама сайта/товара → ``ad-voiceover``,
-   серия по комменту / эпизод → заметка ``SERIES_NOTE`` (плейбука серии ещё нет).
+2. плейбук, закреплённый за перепиской (``chat_threads.playbook``: карточка «Мувик под песню», app/frag_movie.py) —
+   «ок, делай полную» плейбука по словам не назовёт, а работа та же;
+3. иначе — по словам запроса: мувик / фраг-мувик / бои под песню → ``frag-movie``, нарезка стрима →
+   ``stream-shorts``, реклама сайта/товара → ``ad-voiceover``, серия по комменту / эпизод → заметка ``SERIES_NOTE``
+   (плейбука серии ещё нет).
 """
 
 from __future__ import annotations
@@ -18,6 +21,9 @@ _STREAM = re.compile(r"(стрим|vod|эфир|трансляц|нарез|шо
 _AD = re.compile(r"(реклам|промо(?!код)|продающ|ролик про (сайт|магазин|товар|сервис)|прорекламир)", re.I)
 _SERIES = re.compile(r"(сери[юяи]\b|серию|эпизод|по коммент|зрители реш|интерактивн)", re.I)
 _SCREEN_REC = re.compile(r"(запис[ьи] экрана|скринкаст|screen ?rec)", re.I)
+# Мувик: бои записей игры под песню, без мемов (с мемами — meme-edit, его зовут по имени).
+_FRAG = re.compile(r"(мувик|фраг[- ]?мув|frag ?movie|нарезк\w* бо[её]в под (песн|трек|музык)|бои под (песн|трек))", re.I)
+_MEMES = re.compile(r"(мем|meme)", re.I)
 
 SERIES_NOTE = """
 ЗАДАНИЕ — СЕРИЯ (эпизод по комменту зрителя)
@@ -33,14 +39,18 @@ series3d_* для проекта «Мир от зрителей» (PS1) не п�
 """
 
 
-def pick(message: str, steps: list[dict] | None = None) -> str | None:
-    """Имя плейбука хода (или ``"series"`` — заметка серии), None — без подсказки."""
+def pick(message: str, steps: list[dict] | None = None, pinned: str | None = None) -> str | None:
+    """Имя плейбука хода (или ``"series"`` — заметка серии), None — без подсказки. ``pinned`` — плейбук переписки."""
     from app.ai.editor_agent_prompts import active_playbook
 
     named = active_playbook(message, steps)
     if named:
         return named
+    if pinned:
+        return str(pinned)
     text = str(message or "")
+    if _FRAG.search(text) and not _MEMES.search(text):
+        return "frag-movie"
     if _AD.search(text) and not _STREAM.search(text):
         return "app-promo" if _SCREEN_REC.search(text) else "ad-voiceover"
     if _SERIES.search(text) and not _STREAM.search(text):

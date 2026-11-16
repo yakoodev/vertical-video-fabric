@@ -252,7 +252,7 @@ def project_tools() -> list[Tool]:
         ),
         Tool(
             "save_channel_project", "Сохраняю проект-серию",
-            "Создать (без project_id) или изменить проект-серию: name, kind stream_channel|series|promo|other, "
+            "Создать (без project_id) или изменить проект-серию: name, kind stream_channel|game_channel|series|promo|other, "
             "description, links [{label,url}], brand_id, add_source_ids / remove_source_ids (источник — только в "
             "одном проекте). Заводи, только если владелец просил. / Create or update a channel project.",
             _obj({"project_id": _PROJECT_ARGS["project_id"], "name": {"type": "string"},

@@ -27,6 +27,11 @@ def _status_view(job: dict) -> dict:
         out.update(job.get("result") or {})
         out["next"] = ("готово: lint_clip (вспышки и луп — по этому файлу), contact_sheet для взгляда, потом "
                        "submit_for_approval(clip_id, title, …)")
+        if isinstance(out.get("freezes"), dict) and out["freezes"].get("ok") is False:
+            # Работа проекта (мувик) проверила рендер на застывшие куски сама — найдено: не сдавать.
+            out["note"] = f"файл готов, но {out['freezes'].get('note')}"
+            out["next"] = ("сначала застывшие куски: freezes.findings (final_t — секунда ролика, fix — как), поправь и "
+                           "render_clip снова; такой ролик не выдавай за готовый")
         if out.get("voice_ok") is False:
             # Файл есть, но озвучка битая: не сдавать как готовое.
             out["note"] = f"файл готов, но {out['voice']}"
