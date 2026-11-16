@@ -91,13 +91,20 @@ def flash_alpha(t: float, flashes: list[dict], fps: float) -> tuple[float, tuple
 
 def whip_amount(t: float, whips: list[dict], fps: float) -> tuple[float, tuple[float, float]]:
     """Directional blur strength 0..1 around a whip cut (2 frames before, 2 after) and its direction."""
+    a, d, _ = whip_state(t, whips, fps)
+    return a, d
+
+
+def whip_state(t: float, whips: list[dict], fps: float) -> tuple[float, tuple[float, float], tuple | None]:
+    """whip_amount plus the whip's colour cast (BGR or None)."""
     for w in whips:
         d = (t - w["t"]) * fps
         n = w.get("frames", 2)
         if -n <= d < n:
             a = 1.0 - abs(d + 0.5) / (n + 0.5)
-            return max(0.0, a), tuple(w["dir"])
-    return 0.0, (1.0, 0.0)
+            tint = w.get("tint")
+            return max(0.0, a), tuple(w["dir"]), (tuple(tint) if tint else None)
+    return 0.0, (1.0, 0.0), None
 
 
 # ----------------------------------------------------------------------------- image ops

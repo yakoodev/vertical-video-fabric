@@ -291,3 +291,79 @@ def test_static_and_low_motion_clips_lose():
     still = clip("s", "A", 0, energy=0.1)
     assert plan.clip_score(seg, moving, None, 0, 3) > plan.clip_score(seg, held, None, 0, 3) + 0.5
     assert plan.clip_score(seg, moving, None, 0, 3) > plan.clip_score(seg, still, None, 0, 3)
+
+
+# ----------------------------------------------------------------------------- story acts, duplicates, overrides
+def test_story_map_restricts_acts_in_order():
+    song = make_song(levels=[2])
+    cuts = plan.cut_grid(song, 0.1, 20.0)
+    segs = plan.make_segments(song, 0.1, 20.0, cuts)
+    clips = [dict(clip(f"{act}{i}", f"F{i % 3}", 10.0 * i), act=act) for act in ("life", "meet", "fight")
+             for i in range(25)]
+    story = [{"t0": 0, "t1": 8, "acts": ["life"]}, {"t0": 8, "t1": 14, "acts": ["meet"]},
+             {"t0": 14, "t1": 99, "acts": ["fight"]}]
+    out = plan.assign_clips(segs, clips, song["period"], story=story)
+    for s in out:
+        mid = (s["t0"] + s["t1"]) / 2
+        want = "life" if mid < 8 else "meet" if mid < 14 else "fight"
+        assert s["act"] == want
+    assert plan.story_acts(story, 9.0) == ["meet"] and plan.story_acts(None, 9.0) is None
+
+
+def test_story_map_falls_back_when_an_act_runs_dry():
+    song = make_song(levels=[2])
+    cuts = plan.cut_grid(song, 0.1, 10.0)
+    segs = plan.make_segments(song, 0.1, 10.0, cuts)
+    clips = [dict(clip("only", "A", 0.0), act="end")] + [dict(clip(f"x{i}", "B", 10.0 * i), act="fight")
+                                                        for i in range(40)]
+    out = plan.assign_clips(segs, clips, song["period"], story=[{"t0": 0, "t1": 99, "acts": ["end"]}])
+    assert all(s["clip"] for s in out) and sum(s["act"] == "end" for s in out) == 1
+
+
+def test_dup_groups_use_one_shot_per_group():
+    rng = np.random.default_rng(0)
+    base = rng.integers(0, 255, 32 * 18)
+    other = rng.integers(0, 255, 32 * 18)
+    clips = [dict(clip("a", "A", 0.0), thumb=base.tolist()), dict(clip("b", "B", 0.0), thumb=(base + 3).tolist()),
+             dict(clip("c", "C", 0.0), thumb=other.tolist())]
+    library.dup_groups(clips)
+    assert clips[0]["dup"] == clips[1]["dup"] != clips[2]["dup"]
+    song = make_song(levels=[0])
+    segs = plan.make_segments(song, 0.1, 4.0, plan.cut_grid(song, 0.1, 4.0))
+    out = plan.assign_clips(segs, clips, song["period"])
+    used = [s["clip"] for s in out if s["clip"]]
+    assert not ({"a", "b"} <= set(used))
+
+
+def test_reuse_continues_the_scene_without_repeating_frames():
+    song = make_song(levels=[1])
+    segs = plan.make_segments(song, 0.1, 12.0, plan.cut_grid(song, 0.1, 12.0))
+    clips = [clip("long", "A", 0.0, dur=12.0)] + [clip(f"b{i}", f"B{i}", 0.0, char=0.3, energy=0.3) for i in range(6)]
+    out = plan.assign_clips(segs, clips, song["period"], max_uses=3)
+    uses = [s for s in out if s["clip"] == "long"]
+    assert len(uses) >= 2
+    spans = sorted((s["src_in"], s["src_in"] + s["src_span"]) for s in uses)
+    assert all(b0 >= a1 for (_, a1), (b0, _) in zip(spans, spans[1:]))     # no frame shown twice
+    assert len(plan.assign_clips(segs, clips, song["period"], max_uses=1)) == len(segs)
+
+
+def test_act_at_and_overrides():
+    assert library.act_at([[0, 5, "life"], [5, 9, "meet"]], 6.0) == "meet"
+    assert library.act_at([[0, 5, "life"]], 7.0) is None
+    clips = [clip("a", "A", 0.0, char=0.1), clip("b", "B", 0.0), clip("c", "C", 0.0)]
+    ov = {"ban": ["c"], "face": ["a"], "act": {"b": "bond"}, "cx_916": {"a": 0.3}}
+    out = {c["id"]: c for c in library.apply_overrides(clips, ov)}
+    assert "c" not in out and out["a"]["char"] >= 0.9 and out["a"]["cx_916"] == 0.3 and out["b"]["act"] == "bond"
+
+
+def test_shake_density_and_tinted_whips():
+    song = make_song(levels=[3], drops=[0.1 + 16 * 0.4])
+    song["snares"] = [(b + 0.2, 0.5) for b in song["beats"][1::2]]
+    p = plan.build_plan(song, [clip(f"c{i}", "ABCDEFG"[i % 7], 10.0 * i, d=(0.3, 0.0)) for i in range(80)],
+                        0.1, 30.0, palette="csm")
+    fps = 30.0
+    shaken = sum(1 for k in range(int(29.9 * fps)) if abs(fx.shake_offset(0.1 + k / fps, p["shakes"])[0]) > 0.004)
+    assert shaken / (29.9 * fps) > 0.25
+    assert any(abs(w["t"] - song["drops"][0]) < 0.05 and w.get("tint") for w in p["whips"])
+    a, _, _ = fx.whip_state(p["whips"][0]["t"], p["whips"], fps)
+    assert a > 0.5

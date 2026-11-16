@@ -133,10 +133,12 @@ def render(plan: dict, boxes: dict, song: str | Path, out: str | Path, W: int, H
             img = fx.saturate(img, sat)
             sc = fx.punch_scale(t, plan["punches"])
             dx, dy, rot = fx.shake_offset(t, plan["shakes"])
-            wa, wd = fx.whip_amount(t, plan["whips"], fps)
-            img = fx.affine(img, sc * (1.0 + 0.02 * (abs(dx) + abs(dy) > 0)), dx, dy, rot)
+            wa, wd, wt = fx.whip_state(t, plan["whips"], fps)
+            # zoom in just enough that the shaken frame never shows its (mirrored) border
+            cover = 0.0 if abs(dx) + abs(dy) == 0 else 0.01 + 2.0 * max(abs(dx), abs(dy) * W / H) + 0.02 * abs(rot)
+            img = fx.affine(img, sc * (1.0 + cover), dx, dy, rot)
             if wa > 0:
-                img = fx.whip(img, wa, wd)
+                img = fx.whip(img, wa, wd, tint=wt)
             cs = (sc - 1.0) * 70 * W / 1280
             img = fx.chroma_split(img, cs)
             img = fx.vignette(img, 0.32)

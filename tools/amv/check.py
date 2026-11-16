@@ -67,6 +67,35 @@ def strip(path: str | Path, t0: float, dur: float, out: str | Path, cols: int = 
     return Path(out)
 
 
+def clip_sheet(clips: list[dict], boxes: dict, out: str | Path, cols: int = 10, tw: int = 192) -> Path:
+    """Review sheet of library clips: the motion-peak frame of each clip's content box with its 9:16 crop window
+    (yellow) drawn, labelled «#k film@t» and «ch(aracter) / e(nergy) / s(core)». Writes out.json with
+    #k → clip id, so overrides can be written from the sheet."""
+    import json
+    import cv2
+    th = tw * 9 // 16
+    imgs, index = [], {}
+    for k, c in enumerate(clips):
+        x, y, w, h = boxes.get(c["src"]) or (0, 0, 0, 0)
+        vf = f"crop={w}:{h}:{x}:{y}" if w else ""
+        im = next(iter(media.frames(c["src"], tw, th, t0=max(0.0, c["t_peak"]), dur=0.1, vf_pre=vf)), None)
+        im = np.zeros((th, tw, 3), np.uint8) if im is None else im.copy()
+        if w:
+            frac = min(1.0, (h * 9 / 16) / w)
+            cx = c.get("cx_916", 0.5)
+            x0 = int(round((cx - frac / 2) * tw))
+            cv2.rectangle(im, (x0, 0), (x0 + int(frac * tw) - 1, th - 1), (0, 220, 255), 1)
+        label(im, f"#{k} {c.get('film')}@{c['t_in']:.1f}", 0.38)
+        cv2.putText(im, f"ch{c.get('char', 0):.1f} e{c.get('energy', 0):.1f} s{c.get('score', 0):.2f}"
+                    + (" D" if c.get("dup") and c["dup"] != c["id"] else ""), (4, th - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
+        imgs.append(im)
+        index[k] = c["id"]
+    cv2.imwrite(str(out), tile(imgs, cols), [cv2.IMWRITE_JPEG_QUALITY, 85])
+    Path(str(out) + ".json").write_text(json.dumps(index), encoding="utf-8")
+    return Path(out)
+
+
 def frozen_stretches(pix_d: np.ndarray, fps: float, thresh: float = 0.6, min_s: float = 0.5) -> list[tuple[float, float]]:
     """Runs where the mean absolute frame difference (0..255 gray) stays below thresh for >= min_s.
 

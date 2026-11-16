@@ -37,6 +37,8 @@ REFERENCE = {
 CUTS_PER_BAR = {0: 1, 1: 2, 2: 2, 3: 3}
 MIN_GAP_BEATS = {0: 2.0, 1: 1.0, 2: 1.0, 3: 0.5}
 ENERGY_TARGET = {0: 0.45, 1: 0.55, 2: 0.7, 3: 0.9}   # calm bars still need visible motion
+# a shot without a character in a high bar: a 1-beat accent at most (round 2 lesson: characters and faces first)
+ABSTRACT_HIGH_BAR = 0.35
 
 
 def beat_level(song: dict) -> list[int]:
@@ -258,7 +260,7 @@ def clip_score(seg: dict, clip: dict, prev: dict | None, run_len: int, run_targe
         if seg["dur"] > 1.1 * period or seg["level"] < 2 or seg["drop"]:
             sc -= 0.8
         else:
-            sc -= 0.1
+            sc -= ABSTRACT_HIGH_BAR
         if prev is not None and is_abstract(prev):
             sc -= 0.8
     if prev is not None:
@@ -274,40 +276,49 @@ def clip_score(seg: dict, clip: dict, prev: dict | None, run_len: int, run_targe
     return sc
 
 
+def story_acts(story: list[dict] | None, t: float) -> list[str] | None:
+    """Acts allowed at song time t by the story map [{"t0", "t1", "acts": [...]}, ...]; None = any clip."""
+    for part in story or []:
+        if part["t0"] <= t < part["t1"]:
+            return list(part["acts"])
+    return None
+
+
 def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int = 7,
-                 near_s: float = 6.0) -> list[dict]:
-    """Greedy left-to-right choice. Each clip is used once; clips of the same film within near_s seconds of a
-    used one are penalized (no visible repeats). Returns segments with "clip" and "src_in"/"ramp" filled."""
+                 near_s: float = 1.5, story: list[dict] | None = None, max_uses: int = 1) -> list[dict]:
+    """Greedy left-to-right choice. Each clip is used up to max_uses times — a reuse continues the scene after the
+    frames already shown, never repeating them; jumping back to a part of a film shown within near_s seconds is
+    penalized (no visible repeats). Returns segments with "clip" and "src_in"/"ramp" filled.
+
+    story — song-time map of story acts: a segment only takes clips whose "act" is allowed there (the first act
+    listed is preferred), so the edit tells the parts of the story in order. If no tagged clip fits, any clip may."""
     rng = random.Random(seed)
-    used: set = set()
+    used: dict = {}                      # clip id → times used; "dup:<id>" → the clip id that owns the group
     used_spans: dict[str, list[tuple[float, float]]] = {}
     out = []
     prev = None
     run_len, run_target = 0, rng.randint(2, 4)
     for seg in segs:
+        allowed = story_acts(story, (seg["t0"] + seg["t1"]) / 2)
+        pool = [c for c in clips if c.get("act") in allowed] if allowed else clips
         best = None
-        for c in clips:
-            if c["id"] in used:
-                continue
-            r0 = ramp_for(seg, c, period)
-            fit = fit_ramp(seg, c, r0)
-            if fit is None:
-                continue
-            sc = clip_score(seg, c, prev, run_len, run_target, period)
-            for a, b in used_spans.get(c["src"], []):
-                if c["t_in"] < b + near_s and c["t_out"] > a - near_s:
-                    sc -= 0.5
-                    break
-            sc += rng.uniform(0, 0.04)
-            if best is None or sc > best[0]:
-                best = (sc, c, fit)
+        for pass_ in (0, 1):
+            if best is not None or (pass_ == 1 and pool is clips):
+                break
+            cand = pool if pass_ == 0 else clips
+            best = _pick(seg, cand, used, used_spans, prev, run_len, run_target, period, near_s, rng, allowed,
+                         max_uses)
         s = dict(seg)
+        if allowed:
+            s["acts"] = allowed
         if best is None:
             s["clip"] = None
             out.append(s)
             continue
         _, c, (src_in, ramp) = best
-        used.add(c["id"])
+        used[c["id"]] = used.get(c["id"], 0) + 1
+        if c.get("dup"):                  # the same shot from another trailer counts as used too
+            used.setdefault("dup:" + c["dup"], c["id"])
         span = fx.rate_integral(seg["t0"], seg["t1"], ramp)
         used_spans.setdefault(c["src"], []).append((src_in, src_in + span))
         if prev is not None and same_scene(prev, c):
@@ -315,7 +326,7 @@ def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int =
         else:
             run_len, run_target = 1, rng.randint(2, 4)
         s.update({"clip": c["id"], "src": c["src"], "film": c.get("film"), "src_in": src_in, "ramp": ramp,
-                  "src_span": round(span, 4), "cx": c.get("cx", 0.5),
+                  "src_span": round(span, 4), "cx": c.get("cx", 0.5), "act": c.get("act"),
                   "cx_916": c.get("cx_916", c.get("cx", 0.5)), "cx_169": c.get("cx_169", 0.5), "dir_out": c.get("dir_out", (0, 0)),
                   "dir_in": c.get("dir_in", (0, 0)), "t_peak": c.get("t_peak"),
                   "abstract": is_abstract(c), "character": round(character(c), 2)})
@@ -324,13 +335,73 @@ def assign_clips(segs: list[dict], clips: list[dict], period: float, seed: int =
     return out
 
 
+def continue_after(fit: tuple[float, dict], clip: dict, spans: list[tuple[float, float]], seg: dict,
+                   margin: float = 0.06, gap: float = 0.04) -> tuple[float, dict] | None:
+    """If the planned source span overlaps frames already shown, move it to just after them (the scene goes on
+    from where its last use stopped). None if that no longer fits in the clip."""
+    src_in, ramp = fit
+    span = fx.rate_integral(seg["t0"], seg["t1"], ramp)
+    hit = [b for a, b in spans if src_in < b + gap and src_in + span > a - gap]
+    if not hit:
+        return fit
+    s0 = max(hit) + gap
+    if s0 + span > clip["t_out"] - margin or any(s0 < b + gap and s0 + span > a - gap for a, b in spans):
+        return None
+    return round(s0, 4), ramp
+
+
+def _pick(seg, clips, used, used_spans, prev, run_len, run_target, period, near_s, rng, allowed, max_uses=1):
+    best = None
+    for c in clips:
+        owner = used.get("dup:" + c["dup"]) if c.get("dup") else None
+        if used.get(c["id"], 0) >= max_uses or (owner is not None and owner != c["id"]):
+            continue
+        r0 = ramp_for(seg, c, period)
+        fit = fit_ramp(seg, c, r0)
+        if fit is None:
+            continue
+        spans = used_spans.get(c["src"], [])
+        if used.get(c["id"]):
+            fit = continue_after(fit, c, spans, seg)
+            if fit is None:
+                continue
+        sc = clip_score(seg, c, prev, run_len, run_target, period)
+        if allowed and c.get("act") == allowed[0]:
+            sc += 0.3
+        if prev is None or not same_scene(prev, c):      # jumping back to a scene shown earlier
+            for a, b in spans:
+                if c["t_in"] < b + near_s and c["t_out"] > a - near_s:
+                    sc -= 0.5
+                    break
+        sc += rng.uniform(0, 0.04)
+        if best is None or sc > best[0]:
+            best = (sc, c, fit)
+    return best
+
+
 # ----------------------------------------------------------------------------- effects
 PALETTE = [(255, 255, 255), (60, 200, 255), (255, 220, 120), (80, 80, 255), (255, 255, 255)]  # BGR
+PALETTES = {
+    "default": PALETTE,
+    # Chainsaw Man: blood red, chainsaw orange, white, the movie's pink-magenta (Reze), white (BGR)
+    "csm": [(255, 255, 255), (40, 30, 230), (40, 140, 255), (255, 255, 255), (170, 60, 235)],
+}
+
+# shake and whip density (round 1 shook 9 % of frames vs the reference's 31 %; these reach ~30 %)
+SHAKE = {"kick_min": 0.15, "snare_min": 0.3, "gap": 0.2, "amp": 0.014, "amp_st": 0.012, "tau": 0.15,
+         "calm_kick_min": 0.5, "calm_scale": 0.6}
+WHIP_P = 0.6
 
 
 def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_min: float = 20.0,  # ≈ REFERENCE
-              seed: int = 3) -> dict:
-    """Flashes, punches, shakes and whips (song times). Calm bars (level < 2) get almost nothing."""
+              seed: int = 3, palette: str | list = "default", shake: dict | None = None,
+              whip_p: float = WHIP_P) -> dict:
+    """Flashes, punches, shakes and whips (song times). Calm bars (level < 2) get almost nothing.
+
+    Shake bursts sit on kicks and snares of high bars (and on strong kicks of level-1 bars, weaker), no two
+    closer than SHAKE["gap"]; whips get a palette tint and also lead into every drop."""
+    pal = PALETTES.get(palette, PALETTE) if isinstance(palette, str) else [tuple(c) for c in palette]
+    sh = dict(SHAKE, **(shake or {}))
     rng = random.Random(seed)
     lv = beat_level(song)
     beats = np.asarray(song["beats"], np.float64)
@@ -357,12 +428,25 @@ def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_mi
         if any(abs(t - c) < 0.08 for c in cut_ts):
             continue
         acc.append((st, t))
-    for t, st in song.get("kicks", []):
-        if t0 + 0.1 < t < t1 - 0.1 and level_at(t) >= 2 and st >= 0.3:
-            # A shakes ~31 % of frames in bursts of ~8 frames: kick-driven, decaying
-            shakes.append({"t": t, "amp": 0.012 + 0.01 * st, "tau": 0.13, "seed": rng.uniform(0, 6.28)})
-            if st >= 0.6:
-                punches.append({"t": t, "amp": 0.03, "tau": 0.1})
+    # A shakes ~31 % of frames in bursts of ~8 frames: kick/snare-driven, decaying
+    hits = [(t, st, "k") for t, st in song.get("kicks", [])] + [(t, st, "s") for t, st in song.get("snares", [])]
+    hits.sort()
+    last = -9.0
+    for t, st, kind in hits:
+        if not (t0 + 0.1 < t < t1 - 0.1) or t - last < sh["gap"]:
+            continue
+        lvl = level_at(t)
+        if lvl >= 2 and st >= (sh["kick_min"] if kind == "k" else sh["snare_min"]):
+            scale = 1.0
+        elif lvl == 1 and kind == "k" and st >= sh["calm_kick_min"]:
+            scale = sh["calm_scale"]
+        else:
+            continue
+        shakes.append({"t": t, "amp": round(scale * (sh["amp"] + sh["amp_st"] * st), 4), "tau": sh["tau"],
+                       "seed": rng.uniform(0, 6.28)})
+        last = t
+        if kind == "k" and st >= 0.6 and lvl >= 2:
+            punches.append({"t": t, "amp": 0.03, "tau": 0.1})
     acc.sort(reverse=True)
     k = 0
     for st, t in acc:
@@ -370,28 +454,38 @@ def fx_events(song: dict, segs: list[dict], t0: float, t1: float, flashes_per_mi
             break
         if any(abs(t - f["t"]) < 2 * period for f in flashes):
             continue
-        col = PALETTE[k % len(PALETTE)]
+        col = pal[k % len(pal)]
         flashes.append({"t": round(t, 4), "frames": 1 if st < 0.6 else 2, "color": col, "amp": 0.75 + 0.25 * st})
         k += 1
-    # whips: cuts inside high bars where both sides move in a similar direction (or the outgoing moves fast)
-    for a, b in zip(segs[:-1], segs[1:]):
-        if b["level"] < 2 or b["drop"] or a.get("clip") is None or b.get("clip") is None:
+    # whips: cuts inside high bars where the outgoing shot moves (the blur follows it); every drop gets one
+    for j, (a, b) in enumerate(zip(segs[:-1], segs[1:])):
+        if a.get("clip") is None or b.get("clip") is None:
             continue
         d = a.get("dir_out", (0, 0))
-        if math.hypot(*d) < 0.05:
+        tint = pal[(j * 3 + 1) % len(pal)]
+        if b["drop"]:
+            dd = d if math.hypot(*d) >= 0.05 else (1.0, 0.0)
+            whips.append({"t": b["t0"], "dir": (round(dd[0], 3), round(dd[1], 3)), "frames": 3, "tint": tint})
             continue
-        if rng.random() < 0.45:
-            whips.append({"t": b["t0"], "dir": (round(d[0], 3), round(d[1], 3)), "frames": 2})
+        if b["level"] < 2 or math.hypot(*d) < 0.05:
+            continue
+        if rng.random() < whip_p:
+            whips.append({"t": b["t0"], "dir": (round(d[0], 3), round(d[1], 3)), "frames": 2,
+                          "tint": tint if rng.random() < 0.5 else None})
     flashes.sort(key=lambda f: f["t"])
     return {"flashes": flashes, "punches": sorted(punches, key=lambda p: p["t"]),
             "shakes": sorted(shakes, key=lambda p: p["t"]), "whips": whips}
 
 
 def build_plan(song: dict, clips: list[dict], t0: float, t1: float, seed: int = 7,
-               forced: list[float] | None = None, **kw) -> dict:
-    cuts = cut_grid(song, t0, t1, forced=forced)
+               forced: list[float] | None = None, story: list[dict] | None = None,
+               cuts_per_bar: dict | None = None, min_gap_beats: dict | None = None, max_uses: int = 1,
+               **kw) -> dict:
+    """cuts_per_bar / min_gap_beats override CUTS_PER_BAR / MIN_GAP_BEATS — e.g. a fast song whose tracked «beat»
+    is the eighth-note pulse (188 BPM) needs about half the cuts per bar to keep shots readable."""
+    cuts = cut_grid(song, t0, t1, forced=forced, cuts_per_bar=cuts_per_bar, min_gap_beats=min_gap_beats)
     segs = make_segments(song, t0, t1, cuts)
-    segs = assign_clips(segs, clips, float(song["period"]), seed=seed)
+    segs = assign_clips(segs, clips, float(song["period"]), seed=seed, story=story, max_uses=max_uses)
     ev = fx_events(song, segs, t0, t1, seed=seed + 1, **kw)
     return {"t0": t0, "t1": t1, "bpm": song["bpm"], "period": song["period"], "segments": segs, **ev}
 

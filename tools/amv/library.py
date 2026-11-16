@@ -2,8 +2,10 @@
 """Clip library from source films: scan (cached), shots, sub-clips of long shots, normalized scores.
 
 sources.json format:
-  [{"film": "spring", "path": "D:/.../spring.mp4", "exclude": [[0, 12.5], [440, 9999]], "credit": "..."}]
-`exclude` drops title cards, credits and logos (seconds of the source)."""
+  [{"film": "spring", "path": "D:/.../spring.mp4", "exclude": [[0, 12.5], [440, 9999]], "credit": "...",
+    "acts": [[0, 30, "life"], [30, 52, "bond"]], "box": [0, 138, 1920, 804]}]
+`exclude` drops title cards, credits and logos (seconds of the source). `acts` (optional) tags source ranges with
+a story act; a clip takes the act of its middle (the plan's story map then restricts each song part to its acts)."""
 from __future__ import annotations
 
 import json
@@ -56,8 +58,34 @@ def _dir(F: dict, a: int, b: int) -> tuple[float, float]:
     return round(tx, 4), round(ty, 4)
 
 
+def act_at(acts: list | None, t: float) -> str | None:
+    """Story act of source time t from [[t0, t1, act], ...] (first match), None if untagged."""
+    for a, b, name in acts or []:
+        if a <= t < b:
+            return name
+    return None
+
+
+def allowed_parts(a: int, b: int, exclude: list, fps: float, pad: int = 2) -> list[tuple[int, int]]:
+    """Frame ranges of [a, b) outside the excluded source ranges (seconds), each kept `pad` frames clear."""
+    parts = [(a, b)]
+    for ea, eb in exclude:
+        fa, fb = int(ea * fps) - pad, int(np.ceil(eb * fps)) + pad
+        nxt = []
+        for x, y in parts:
+            if fb <= x or fa >= y:
+                nxt.append((x, y))
+                continue
+            if fa > x:
+                nxt.append((x, fa))
+            if fb < y:
+                nxt.append((fb, y))
+        parts = nxt
+    return parts
+
+
 def film_clips(film: str, path: str | Path, F: dict, exclude: list | None = None, max_len: float = 3.0,
-               min_len: float = 0.6) -> list[dict]:
+               min_len: float = 0.6, acts: list | None = None) -> list[dict]:
     """Shots of one film → clips (long shots are split into windows of <= max_len around motion peaks)."""
     fps = float(F["fps"])
     cuts = shots.detect_cuts(F["hist_d"], fps, min_shot_s=0.4)
@@ -67,12 +95,14 @@ def film_clips(film: str, path: str | Path, F: dict, exclude: list | None = None
     for s in sh:
         if s["dur"] < min_len:
             continue
-        if any(s["t_in"] < b and s["t_out"] > a for a, b in ex):
-            continue
-        a, b = s["a"], s["b"]
-        n = b - a
         L = int(max_len * fps)
-        windows = [(a, b)] if n <= L else [(a + k, min(b, a + k + L)) for k in range(0, n - int(min_len * fps), int(L * 0.8))]
+        windows = []
+        for a, b in allowed_parts(s["a"], s["b"], ex, fps):      # a shot that touches an excluded range is trimmed
+            n = b - a
+            if n < min_len * fps:
+                continue
+            windows += [(a, b)] if n <= L else [(a + k, min(b, a + k + L))
+                                                for k in range(0, n - int(min_len * fps), int(L * 0.8))]
         for wi, (wa, wb) in enumerate(windows):
             if (wb - wa) / fps < min_len:
                 continue
@@ -88,6 +118,7 @@ def film_clips(film: str, path: str | Path, F: dict, exclude: list | None = None
                 # share of near-identical consecutive frames (holds, static shots) — reads as a freeze when slowed
                 "static_frac": round(float((F["pix_d"][wa + 1:wb] < 0.7).mean()) if wb - wa > 2 else 1.0, 3),
                 "dir_in": _dir(F, wa + 1, wa + 1 + k), "dir_out": _dir(F, wb - k, wb),
+                "act": act_at(acts, (wa + wb) / 2 / fps),
             })
     return out
 
@@ -169,7 +200,7 @@ def focus_pass(clips: list[dict], boxes: dict, aspects=(("cx_916", 9 / 16), ("cx
     from frames at 30 % / peak / 70 %."""
     from . import media
     for c in clips:
-        if "sharp" in c and "char" in c:
+        if "sharp" in c and "char" in c and "thumb" in c:
             continue
         x, y, w, h = boxes.get(c["src"], (0, 0, 0, 0))
         info_w, info_h = (w, h) if w else (media.probe(c["src"])["w"], media.probe(c["src"])["h"])
@@ -177,12 +208,15 @@ def focus_pass(clips: list[dict], boxes: dict, aspects=(("cx_916", 9 / 16), ("cx
         th = max(16, int(round(tw * info_h / max(1, info_w) / 2)) * 2)
         vf = f"crop={w}:{h}:{x}:{y}" if w else ""
         maps, skins, dets = [], [], []
+        import cv2
         for t in (c["t_in"] + 0.3 * c["dur"], c["t_peak"], c["t_in"] + 0.7 * c["dur"]):
             fr = next(iter(media.frames(c["src"], 640, max(16, int(round(640 * info_h / max(1, info_w) / 2)) * 2),
                                         t0=max(0.0, t), dur=0.1, vf_pre=vf)), None)
             if fr is not None:
                 dets.append(detect_subjects(fr))
-                import cv2
+                if len(dets) == 1 or t == c["t_peak"]:      # tiny gray thumb for duplicate detection
+                    c["thumb"] = cv2.resize(cv2.cvtColor(fr, cv2.COLOR_BGR2GRAY), (32, 18),
+                                            interpolation=cv2.INTER_AREA).ravel().tolist()
                 fr = cv2.resize(fr, (tw, th), interpolation=cv2.INTER_AREA)
                 maps.append(focus_map(fr))
                 skins.append(skin_mask(fr))
@@ -244,7 +278,9 @@ def build(sources: list[dict], work: str | Path, progress: bool = True) -> list[
     old = {}
     if (work / "clips.json").exists():
         old = {c["id"]: c for c in json.loads((work / "clips.json").read_text(encoding="utf-8"))}
-    boxes = {s["path"]: letterbox(s["path"]) for s in sources}
+    # "box": [x, y, w, h] fixes the content box by hand (e.g. a trailer whose subtitles sit in the letterbox bar —
+    # the auto-detector would count the text rows as picture)
+    boxes = {s["path"]: tuple(s["box"]) if s.get("box") else letterbox(s["path"]) for s in sources}
     clips = []
     for src in sources:
         cache = work / f"{src['film']}.scan.npz"
@@ -255,30 +291,74 @@ def build(sources: list[dict], work: str | Path, progress: bool = True) -> list[
                 print(f"scan {src['film']} …", flush=True)
             F = shots.scan_video(src["path"], progress=progress)
             np.savez_compressed(cache, **F)
-        cl = film_clips(src["film"], src["path"], F, src.get("exclude"))
+        cl = film_clips(src["film"], src["path"], F, src.get("exclude"), acts=src.get("acts"))
         for c in cl:
             o = old.get(c["id"])
-            if o and "sharp" in o and "char" in o:
-                c.update({k: o[k] for k in ("sharp", "skin", "char", "faces", "cx_916", "cx_169")})
+            if o and "sharp" in o and "char" in o and "thumb" in o:
+                c.update({k: o[k] for k in ("sharp", "skin", "char", "faces", "cx_916", "cx_169", "thumb")})
         focus_pass(cl, boxes)
         if progress:
             print(f"  {src['film']}: {len(cl)} clips", flush=True)
         clips += cl
     clips = normalize(clips)
+    dup_groups(clips)
     (work / "clips.json").write_text(json.dumps(clips, ensure_ascii=False), encoding="utf-8")
     (work / "boxes.json").write_text(json.dumps({k: list(v) for k, v in boxes.items()}), encoding="utf-8")
     return clips
 
 
+def dup_groups(clips: list[dict], thresh: float = 0.9) -> list[dict]:
+    """Mark near-identical clips (the same shot cut into several trailers, or a repeated shot) with a shared
+    "dup" id: normalized correlation of the 32x18 gray thumbs >= thresh. The assembler uses one per group."""
+    idx = [i for i, c in enumerate(clips) if c.get("thumb")]
+    if not idx:
+        return clips
+    import cv2
+    T = []
+    for i in idx:
+        g = cv2.GaussianBlur(np.asarray(clips[i]["thumb"], np.float32).reshape(18, 32), (3, 3), 0).ravel()
+        g = g - g.mean()
+        T.append(g / (np.linalg.norm(g) + 1e-6) if g.std() > 4 else np.zeros_like(g))   # flat frames never match
+    T = np.array(T)
+    C = T @ T.T
+    parent = list(range(len(idx)))
+
+    def root(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for a, b in zip(*np.where(np.triu(C, 1) >= thresh)):
+        parent[root(a)] = root(b)
+    for k, i in enumerate(idx):
+        clips[i]["dup"] = clips[idx[root(k)]]["id"]
+    return clips
+
+
 def apply_overrides(clips: list[dict], ov: dict) -> list[dict]:
-    """Hand curation after looking at the review sheets: {"ban": [clip ids], "boost": {clip id: +score}}."""
+    """Hand curation after looking at the review sheets:
+    {"ban": [clip ids], "ban_films": [films], "boost": {clip id: +score}, "act": {clip id: act},
+     "cx_916": {clip id: crop centre 0..1}, "cx_169": {...}, "face": [clip ids with a readable face]}.
+    A `face` clip counts as a character on screen (anime faces are not found by the photo-face detector)."""
     ban = set(ov.get("ban", []))
+    ban_films = set(ov.get("ban_films", []))
     boost = ov.get("boost", {})
+    acts = ov.get("act", {})
+    face = set(ov.get("face", []))
     out = []
     for c in clips:
-        if c["id"] in ban:
+        if c["id"] in ban or c.get("film") in ban_films:
             continue
+        upd = {}
         if c["id"] in boost:
-            c = dict(c, score=round(min(1.3, c["score"] + float(boost[c["id"]])), 3), boosted=True)
-        out.append(c)
+            upd.update(score=round(min(1.3, c["score"] + float(boost[c["id"]])), 3), boosted=True)
+        if c["id"] in acts:
+            upd["act"] = acts[c["id"]]
+        if c["id"] in face:
+            upd.update(face=True, char=max(c.get("char", 0.0), 0.9))
+        for key in ("cx_916", "cx_169"):
+            if c["id"] in ov.get(key, {}):
+                upd[key] = float(ov[key][c["id"]])
+        out.append(dict(c, **upd) if upd else c)
     return out

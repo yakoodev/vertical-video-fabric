@@ -3,7 +3,9 @@
 
   python -m tools.amv.make song   --song SONG.wav --work W [--bpm 153.5]       → W/song.json
   python -m tools.amv.make lib    --sources sources.json --work W              → W/lib/clips.json (+ scans)
+  python -m tools.amv.make review --work W [--act bond]                         → W/review_<act>.jpg clip sheets
   python -m tools.amv.make plan   --work W --start 79.6 --end 99.9 --name sample  → W/plan_sample.json
+                                 [--story story.json] [--palette csm]
   python -m tools.amv.make render --work W --name sample --song SONG.wav --out OUT.mp4 --size 720x1280
                                  [--captions captions.json]
   python -m tools.amv.make check  --video OUT.mp4 --work W                     → sheet + frozen-stretch report
@@ -27,7 +29,13 @@ def _load(p: Path):
 def main(argv=None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("stage", choices=["song", "lib", "plan", "render", "check", "ref"])
+    ap.add_argument("stage", choices=["song", "lib", "review", "plan", "render", "check", "ref"])
+    ap.add_argument("--story", help="story map JSON: [{t0, t1, acts: [...]}] in song seconds")
+    ap.add_argument("--palette", default="default", help="flash/whip palette name (plan.PALETTES)")
+    ap.add_argument("--act", help="review: only clips of this act")
+    ap.add_argument("--cpb", help="plan: cuts per bar for levels 0..3, e.g. 1,1,2,2 (default plan.CUTS_PER_BAR)")
+    ap.add_argument("--gap", help="plan: minimum shot length in beats for levels 0..3, e.g. 2,2,1,1")
+    ap.add_argument("--reuse", type=int, default=1, help="plan: uses per clip (a reuse continues the scene)")
     ap.add_argument("--work", required=True)
     ap.add_argument("--song")
     ap.add_argument("--bpm", type=float)
@@ -57,6 +65,18 @@ def main(argv=None) -> int:
         srcs = _load(Path(a.sources))
         clips = library.build(srcs, work / "lib")
         print(f"{len(clips)} clips")
+    elif a.stage == "review":
+        clips = _load(work / "lib" / "clips.json")
+        ov = work / "overrides.json"
+        if ov.exists():
+            clips = library.apply_overrides(clips, _load(ov))
+        boxes = _load(work / "lib" / "boxes.json")
+        acts = [a.act] if a.act else sorted({c.get("act") or "-" for c in clips})
+        for act in acts:
+            sel = [c for c in clips if (c.get("act") or "-") == act]
+            if sel:
+                out = check.clip_sheet(sel, boxes, work / f"review_{act}.jpg")
+                print(f"{act}: {len(sel)} clips → {out}")
     elif a.stage == "plan":
         song = _load(work / "song.json")
         clips = _load(work / "lib" / "clips.json")
@@ -65,7 +85,11 @@ def main(argv=None) -> int:
             clips = library.apply_overrides(clips, _load(ov))
         end = a.end if a.end is not None else song["duration"]
         forced = [c["t"] for c in _load(Path(a.captions))] if a.captions else None
-        p = plan.build_plan(song, clips, a.start, end, seed=a.seed, forced=forced)
+        story = _load(Path(a.story)) if a.story else None
+        per_level = lambda s, f: {i: f(v) for i, v in enumerate(s.split(","))} if s else None
+        p = plan.build_plan(song, clips, a.start, end, seed=a.seed, forced=forced, story=story, palette=a.palette,
+                            cuts_per_bar=per_level(a.cpb, int), min_gap_beats=per_level(a.gap, float),
+                            max_uses=a.reuse)
         p["stats"] = plan.plan_stats(p, song)
         (work / f"plan_{a.name}.json").write_text(json.dumps(p, indent=1, ensure_ascii=False), encoding="utf-8")
         print(json.dumps(p["stats"], ensure_ascii=False))
