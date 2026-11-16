@@ -315,7 +315,11 @@ def library(store: Any, project_id: int) -> dict:
 # --------------------------------------------------------------------------- готовые персонажи и локации
 
 BUILTIN_NAMES = {"alina": "Алина", "vera": "Вера", "nika": "Ника", "zhenya": "Женя", "trial": "Пробная модель",
-                 "vera_oc": "Персонаж Веры", "kira": "Кира", "zhenya_cam": "Женя на вебке"}
+                 "vera_oc": "Персонаж Веры", "kira": "Кира", "zhenya_cam": "Женя на вебке", "sonya": "Соня",
+                 "lyosha": "Лёша", "shura": "Шура", "lilya": "Лиля", "varya": "Варя", "asya": "Ася", "mila": "Мила",
+                 "taya": "Тая", "olya": "Оля", "dima": "Дима", "stas": "Стас", "gosha": "Гоша",
+                 "sonya_free": "Бесплатная модель Сони", "taya_av": "Аватар Таи", "asya_av": "Аватар Аси",
+                 "lilya_av": "Аватар Лили", "varya_av": "Аватар Вари", "mila_av": "Аватар Милы"}
 
 
 def builtin_items() -> list[tuple[str, str, str, dict]]:

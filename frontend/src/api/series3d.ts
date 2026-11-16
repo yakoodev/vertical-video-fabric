@@ -181,6 +181,24 @@ export interface S3dCatalog {
   sounds: string[];
 }
 
+/** Шаблон серии — готовая история (реклама Витубики или мем-пилот), app/s3d_templates.py. */
+export interface S3dTemplate {
+  slug: string;
+  name: string;
+  description: string;
+  kind: "vtubika" | "meme";
+  engine: string;
+  renderable: boolean;
+  cast: { slug: string; name: string }[];
+  location: { slug: string; name: string };
+  lines: number;
+  length_sec: number;
+  thumb: string | null;
+  source: string;
+  series?: number;
+  note?: string;
+}
+
 export const S3D_ACTIVE = ["queued", "voice", "awaiting_approval", "render"];
 export const s3dKey = (projectId: number) => ["series3d", "overview", projectId] as const;
 export const s3dEpisodeKey = (id: number) => ["series3d", "episode", id] as const;
@@ -194,6 +212,9 @@ export const s3dApi = {
     api.del<{ deleted: boolean }>(`/api/projects/${projectId}/series3d/library/${kind}/${slug}`),
   create: (projectId: number, body: { script?: string; topic?: string; title?: string; cast?: string[]; duration?: number }) =>
     api.post<S3dEpisode & { notes: string[] }>(`/api/projects/${projectId}/series3d/episodes`, body),
+  templates: () => api.get<{ templates: S3dTemplate[] }>("/api/series3d/templates"),
+  fromTemplate: (projectId: number, template: string, overrides?: Record<string, unknown>) =>
+    api.post<S3dEpisode & { template: string }>(`/api/projects/${projectId}/series3d/from-template`, { template, overrides }),
   episode: (id: number) => api.get<S3dEpisode>(`/api/series3d/episodes/${id}`),
   savePlan: (id: number, plan: S3dPlan, note = "") => api.put<S3dEpisode>(`/api/series3d/episodes/${id}/plan`, { plan, note }),
   render: (id: number, dryRun: boolean) =>

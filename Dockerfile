@@ -131,6 +131,9 @@ RUN npm install --omit=dev
 COPY app /app/app
 # Библиотека движений VRM: перенос клипов паков и папки anim_inbox на скелет VRM (app/animlib.sync).
 COPY tools/anim_retarget.py tools/anim_library.py /app/tools/
+# Шаблоны 3D-серий (app/s3d_templates.py): планы готовых историй Витубики и мем-пилот (читается как текст, не запускается).
+COPY tools/vtubika_plans /app/tools/vtubika_plans
+COPY tools/meme3d_pilot.py /app/tools/meme3d_pilot.py
 # Бренд-ассеты (значок Витубики для концовки историй, app/vtubika_endcard.py).
 COPY assets /app/assets
 # Плейбуки агентов (get_playbook, MCP prompts) читаются с диска — app/playbooks.py.

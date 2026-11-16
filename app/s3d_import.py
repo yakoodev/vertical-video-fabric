@@ -145,6 +145,18 @@ def meme_pilot_plan(path: Path) -> dict:
             "lines": lines, "source": {"kind": "meme_pilot", "file": "meme3d_pilot.py", "duration": values.get("DURATION")}}
 
 
+MEME_DESK_NAME = "Стол Клода (мем-пилот)"
+MEME_DESK = {"type": "room", "room": {"preset": "cozy_desk", "colors": {
+    "wall": "#86a9bd", "wood": "#c98c58", "accent": "#3f7f84", "accent2": "#d9774b", "plant": "#6e9f6a"}}}
+
+
+def ensure_meme_desk(store: Any, project_id: int) -> None:
+    """Локация мем-пилота (комната-пресет с палитрой пилота) в библиотеку проекта, если её там нет."""
+    if not any(i["slug"] == "meme_desk" for i in D.list_items(store, project_id, "location")):
+        D.save_item(store, project_id, "location", json.loads(json.dumps(MEME_DESK)), slug="meme_desk",
+                    name=MEME_DESK_NAME)
+
+
 def demo_project(store: Any) -> int:
     from app import projects as P
 
@@ -159,9 +171,7 @@ def import_all(store: Any, plans_dir: Path | None = None, meme: bool = True, pro
     pid = int(project_id or demo_project(store))
     D.seed_builtins(store, pid)
     if meme:
-        D.save_item(store, pid, "location", {"type": "room", "room": {"preset": "cozy_desk", "colors": {
-            "wall": "#86a9bd", "wood": "#c98c58", "accent": "#3f7f84", "accent2": "#d9774b", "plant": "#6e9f6a"}}},
-                    slug="meme_desk", name="Стол Клода (мем-пилот)")
+        ensure_meme_desk(store, pid)
     have = {(e["source"] or {}).get("file") for e in D.list_episodes(store, pid)}
     lib, cfg = D.library(store, pid), D.get_settings(store, pid)
     made, skipped = [], []
