@@ -50,7 +50,7 @@ export function ReadyClipsPage({ embedded }: { embedded?: boolean } = {}) {
     <>
       {uploadButton && embedded ? (
         <div className="page-acts">
-          <p className="muted">Все готовые ролики всех проектов. Клипы одного проекта: его вкладка «Клипы».</p>
+          <p className="muted">Клипы одного проекта — на его вкладке «Клипы».</p>
           {uploadButton}
         </div>
       ) : null}

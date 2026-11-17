@@ -595,3 +595,121 @@ body { letter-spacing: 0; }
 
 /* Широкие таблицы публикаций на телефоне прокручиваются внутри панели, а не вместе со страницей. */
 .panel:has(> table.table) { overflow-x: auto; }
+
+/* Ошибка простыми словами (components/ErrorNote.tsx): что случилось — что сделать; сырой текст под «подробнее». */
+.err-note { display: inline-grid; gap: 3px; color: var(--danger); font-size: 13.5px; line-height: 1.4; min-width: 0; }
+.err-note--raw { display: inline; overflow-wrap: anywhere; }
+.err-note-t { overflow-wrap: anywhere; }
+a.err-note-act { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+a.err-note-act:hover { color: var(--text); }
+.err-note-raw, .home-row-raw { color: var(--text-faint); font-size: 12px; }
+.err-note-raw summary, .home-row-raw summary { cursor: pointer; width: max-content; }
+.err-note-raw summary:hover, .home-row-raw summary:hover { color: var(--text-dim); }
+.err-note-raw pre, .home-row-raw pre {
+  margin: 4px 0 0;
+  padding: 8px 10px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+/* «Главная»: понятный текст ошибки переносится, «подробнее» — под строкой-ссылкой. */
+.home-row-s.home-row-err { display: block; white-space: normal; color: var(--danger); font-size: 12.5px; }
+.home-row-raw { margin: -4px 0 6px; }
+.err-note--sm { font-size: 12px; }
+.task-error--human .err-note { font-size: 12.5px; }
+/* Список публикаций: под названием упавшей — что случилось, одной строкой. */
+/* ---------- телефон: лента меню ячейками, проекты — один пункт «Проекты ▾» со списком ---------- */
+/* На компьютере этих пунктов нет: там проекты списком в панели, подписи полные. */
+.side-k-projects, .side-t-short, .side-sheet, .side-sheet-back { display: none; }
+@media (max-width: 760px) {
+  .side { gap: 2px; padding: 4px 6px; }
+  .side-head, .side-proj { display: none; }
+  .side-k-projects { display: flex; }
+  .side-t-long { display: none; }
+  .side-t-short { display: inline; }
+  /* Главная, Проекты, Входящие, Лента, Настройки — первыми и без прокрутки на 375 px; остальное — дальше вбок. */
+  .side-brand { order: 0; }
+  .side-k-home { order: 1; }
+  .side-k-projects { order: 2; }
+  .side-k-inbox { order: 3; }
+  .side-k-feed { order: 4; }
+  .side-k-settings { order: 5; }
+  .side-k-pubs { order: 6; }
+  .side-k-files { order: 7; }
+  .side-k-help { order: 8; }
+  .side-mini { order: 9; }
+  .side-link {
+    position: relative;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    width: 60px;
+    min-width: 60px;
+    padding: 5px 2px 4px;
+    border-radius: 10px;
+  }
+  .side-link .side-t { font-size: 11px; line-height: 1.15; text-align: center; }
+  /* За краем экрана ячейки по ширине подписи («Публикации» в 60 px не входит). */
+  .side-k-pubs, .side-k-files, .side-k-help { width: auto; padding-left: 6px; padding-right: 6px; }
+  .side-link .side-n { display: none; }
+  .side-link .side-badge {
+    position: absolute;
+    top: 1px;
+    left: calc(50% + 5px);
+    min-width: 16px;
+    padding: 0 5px;
+    font-size: 10.5px;
+    line-height: 16px;
+  }
+  .side-caret { font-size: 9px; }
+  .side-k-projects[aria-expanded="true"] { background: var(--surface); color: #fff; }
+  .side-sheet-back { display: block; position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); }
+  .side-sheet {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    position: fixed;
+    left: 8px;
+    right: 8px;
+    z-index: 61;
+    max-height: 72vh;
+    overflow-y: auto;
+    padding: 6px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
+  }
+  .side-sheet-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 42px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 9px;
+    background: none;
+    color: #e4e1ec;
+    font: inherit;
+    font-size: 15px;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .side-sheet-item:hover { background: var(--surface-2); text-decoration: none; }
+  .side-sheet-item.on { background: #2a2142; color: #fff; font-weight: 600; }
+  .side-sheet-item .side-t { display: inline; flex: 1; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side-sheet-item .side-n { display: inline; font-size: 13px; }
+  .side-sheet-all { border-bottom: 1px solid var(--border); border-radius: 9px 9px 0 0; margin-bottom: 4px; }
+  .side-sheet-new { border-top: 1px solid var(--border); border-radius: 0 0 9px 9px; margin-top: 4px; color: var(--accent-2); }
+}
+
+.auto-what { flex: 1 1 100%; margin: 0; color: #c3bed0; font-size: 15px; }
+.pub-row-err { margin-top: 2px; color: var(--danger); font-size: 12.5px; max-width: 420px; }
