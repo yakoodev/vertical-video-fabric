@@ -253,6 +253,15 @@ body.vvf-studio .top-home:hover { background: var(--surface); }
 .page-title-main { flex: 1; min-width: 0; }
 .page-sub { color: #c3bed0; margin-top: 4px; font-size: 16px; }
 .btn.btn-xl { height: 46px; padding: 0 18px; font-size: 16.5px; font-weight: 600; border-radius: 11px; gap: 8px; }
+.page-title-acts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* Шапка проекта: «Референсы» рядом с «Новое видео» (pages/project/ProjectPage.tsx). */
+.proj-refs-btn.is-on { border-color: var(--accent); }
+.proj-refs-n {
+  white-space: nowrap;
+  padding: 1px 7px; border-radius: 999px; background: var(--surface-3); font-size: 12.5px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.proj-refs-n.is-pinned { background: var(--warn-soft); color: var(--warn); }
 .ptabs {
   display: flex;
   gap: 26px;
@@ -525,6 +534,10 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
   body.vvf-studio .content-inner { padding: 8px 10px 16px; }
   .btn.btn-xl { height: 40px; font-size: 15px; }
   .page-title-row .page-title-main { flex: 1 1 100%; }
+  .page-title-acts { flex: 1 1 100%; flex-wrap: nowrap; }
+  .page-title-acts .btn.proj-refs-btn { flex: 0 0 auto; }
+  .proj-refs-label { display: none; }
+  .page-title-acts .btn { flex: 1 1 0; justify-content: center; white-space: nowrap; padding: 0 12px; }
   .ptabs { gap: 18px; }
   .vrow { grid-template-columns: 104px minmax(0, 1fr); gap: 12px; }
   .vrow-th { width: 104px; height: 58px; }

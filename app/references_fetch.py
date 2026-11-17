@@ -21,7 +21,7 @@ import subprocess
 from html import unescape
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import unquote, urljoin, urlsplit
 
 from app import references as R
 
@@ -134,7 +134,7 @@ def _ytdlp(url: str, folder: Path) -> tuple[Path, str]:
     output = (proc.stdout or "") + "\n" + (proc.stderr or "")
     files = sorted(f for f in work.glob("dl.*") if not f.name.endswith((".part", ".ytdl", ".temp")))
     if proc.returncode != 0 or not files:
-        clean()
+        shutil.rmtree(work, ignore_errors=True)
         if "does not pass filter" in output:
             raise FetchError(f"ролик длиннее {MAX_VIDEO_SEC // 60} мин — для референса загрузи нужный кусок файлом")
         tail = [line for line in output.splitlines() if "ERROR" in line] or \
@@ -248,6 +248,9 @@ def _as_link(url: str, html: str, folder: Path, title: str) -> dict:
     if info.get("image"):
         _page_poster(info["image"], folder)
     fields = {"kind": "link"}
+    if not info.get("title"):  # страница не открылась (403, сеть) — хотя бы последний кусок адреса
+        tail = unquote(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1])
+        info["title"] = re.sub(r"[_+-]+", " ", Path(tail).stem).strip()[:120] if tail else ""
     if not title and info.get("title"):
         fields["title"] = info["title"][:160]
     summary = f"страница {info['site']}" + (f": «{info['title']}»" if info.get("title") else "")

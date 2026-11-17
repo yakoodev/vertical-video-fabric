@@ -30,6 +30,7 @@ KEYFRAME_LONG = 360
 SR = 22050
 HIT_STRENGTH = 0.6  # атака звука сильнее — «удар» (громкий звук, хлопок, бит)
 BEAT_TOL = 0.045  # склейка «в долю»: ±45 мс (кадр при 24 к/с)
+CLEAR_LIFT = 1.7  # ритм явный: атаки звука в долю в 1.7+ раза чаще случайного (beat_clarity)
 PALETTE_K = 6
 
 
@@ -87,6 +88,18 @@ def beat_chance(beats: list[float], duration: float, tol: float = BEAT_TOL) -> f
     rnd = np.random.default_rng(1).uniform(0.2, duration - 0.2, 2000)
     b = np.asarray(beats, np.float64)
     return round(float(np.mean(np.min(np.abs(b[None, :] - rnd[:, None]), 1) <= tol)), 3)
+
+
+def beat_clarity(song: dict, min_strength: float = 0.2) -> tuple[float, int]:
+    """Насколько ритм явный: во сколько раз чаще атаки звука попадают в долю, чем случайные моменты (lift), и
+    сколько атак. Замер 17.11: речь — 1.3, AMV под песню — 2.1, бит — 3.7; сила самой доли этого не различает."""
+    beats = song.get("beats") or []
+    times = [t for t, s in song.get("onsets") or [] if s >= min_strength]
+    if len(beats) < 4 or not times:
+        return 0.0, len(times)
+    real = on_beat(times, beats) / len(times)
+    chance = beat_chance(beats, float(song.get("duration") or beats[-1]))
+    return round(real / max(chance, 1e-3), 2), len(times)
 
 
 def energy_curve(rms_db: list[float], step_s: float, points: int = 80) -> dict:
@@ -181,10 +194,9 @@ def _music(path: Path, duration: float) -> tuple[dict | None, dict]:
     if x.size < SR or float(np.sqrt(np.mean(x ** 2))) < 1e-4:
         return None, {"silent": True}
     song = audio.analyze_song(x, SR)
-    strength = song.get("beat_strength") or []
-    clarity = float(np.median(strength)) if strength else 0.0
-    out = {"bpm": round(float(song["bpm"]), 1), "beats": len(song["beats"]), "clarity": round(clarity, 3),
-           "clear": clarity >= 0.25 and len(song["beats"]) >= 4,
+    clarity, attacks = beat_clarity(song)
+    out = {"bpm": round(float(song["bpm"]), 1), "beats": len(song["beats"]), "clarity": clarity,
+           "clear": clarity >= CLEAR_LIFT and len(song["beats"]) >= 4 and attacks >= 8,
            "drops": [round(float(t), 2) for t in song.get("drops") or []][:20],
            "dips": quiet_dips(song.get("bars") or []),
            "window_sec": round(len(x) / SR, 2)}
@@ -346,7 +358,6 @@ def analyze_video(path: Path, folder: Path) -> dict:
                                        "кадрам (reference_get с keyframe) и листу кадров"},
     }
     if detail:
-        a["zoom_punches"] = int((detail.get("zoom_punches") or {}).get("n") or 0)
         a["shake_share"] = (detail.get("shake") or {}).get("frames_frac")
         a["look"] = detail.get("look")
     if song is not None:

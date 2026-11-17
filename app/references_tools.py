@@ -15,7 +15,7 @@ from app.tool_core import ImageResult, Tool, ToolContext, ToolError, _obj
 
 RULE = ("референс — образец приёмов (что отмечено в note и tags), чужие кадры, музыку и тексты не переиспользуй")
 INFO_KEYS = ("duration", "aspect", "width", "height", "fps", "has_audio", "shots", "cuts_per_min", "shot_len",
-             "pace", "music", "hits", "flashes", "zoom_punches", "shake_share", "look", "palette", "brightness",
+             "pace", "music", "hits", "flashes", "shake_share", "look", "palette", "brightness",
              "text", "page", "energy", "scanned_sec")
 
 

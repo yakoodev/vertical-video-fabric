@@ -294,3 +294,24 @@ def test_chat_group_playbooks_and_system_prompt(env):
     assert f"#{ref['id']} video «Эталон темпа» — что взять: склейки на каждую долю; темп" in text
     assert "только приёмы" in text and "references_list" in text
     assert "У проекта есть референсы" not in PC._system({"id": 1, "project_id": pid}, [])
+
+
+def test_page_that_does_not_open_keeps_a_title_and_beat_clarity(env, monkeypatch):
+    _client_, store, pid, _tmp = env
+    from app import references_analyze as RA
+
+    def blocked(url: str):
+        raise RF.FetchError("не открылось: 403")
+
+    monkeypatch.setattr(RF, "HTTP_GET", blocked)
+    ref = R.create_from_url(store, pid, "https://en.wikipedia.org/wiki/Jump_cut", download=False)
+    R.process_pending(store)
+    ref = R.get_reference(store, ref["id"])
+    assert ref["status"] == "ready" and ref["kind"] == "link" and ref["title"] == "Jump cut"
+    # Атаки ровно в доли — ритм явный; атаки мимо долей — нет (речь, шум).
+    beats = [i * 0.5 for i in range(40)]
+    on = {"beats": beats, "duration": 20.0, "onsets": [(b, 0.9) for b in beats[1:]]}
+    off = {"beats": beats, "duration": 20.0, "onsets": [(b + 0.21, 0.9) for b in beats[1:]]}
+    assert RA.beat_clarity(on)[0] >= RA.CLEAR_LIFT > RA.beat_clarity(off)[0]
+    pace = RA.pace_curve([1.0, 1.5, 9.0], 10.0)  # окна по 2 с: две склейки в первом — 60 в минуту
+    assert pace["step"] == 2.0 and pace["values"] == [60.0, 0.0, 0.0, 0.0, 30.0]

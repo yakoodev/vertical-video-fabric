@@ -9,6 +9,7 @@ import { lazyPage } from "@/lazyPage";
 import { projectPath } from "@/lib/paths";
 import { LORE_TABS, movedProjectTab, projectTabs } from "@/lib/tabs";
 import { projectsApi } from "@/api/projects";
+import { referenceKeys, referencesApi } from "@/api/references";
 import { qk } from "@/api/keys";
 import { ErrorState, Loading, plural } from "@/components/ui";
 import { AutopilotTab } from "@/pages/project/AutopilotTab";
@@ -30,6 +31,7 @@ type Tab =
   | "clips"
   | "questions"
   | "files"
+  | "refs"
   | "chat"
   | "know"
   | "brief"
@@ -48,6 +50,10 @@ const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/components/
 const ProjectQuestions = lazyPage<{ projectId: number }>(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
 const ProjectFiles = lazyPage<{ projectId: number }>(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const ProjectMaterials = lazyPage<{ projectId: number }>(() => import("@/pages/project/ProjectMaterials"), "ProjectMaterials");
+const ProjectReferences = lazyPage<{ projectId: number }>(
+  () => import("@/pages/project/ProjectReferencesTab"),
+  "ProjectReferencesTab",
+);
 
 export function ProjectPage() {
   const { projectId } = useParams();
@@ -70,6 +76,13 @@ export function ProjectPage() {
     );
   const project = useQuery({ queryKey: qk.channelProject(id), queryFn: () => projectsApi.get(id), enabled: id > 0 });
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
+  // Число референсов для кнопки в шапке (тот же запрос, что у вкладки: открыть её — без второго запроса).
+  const refs = useQuery({
+    queryKey: referenceKeys.list(id),
+    queryFn: () => referencesApi.list(id),
+    enabled: id > 0,
+    staleTime: 30_000,
+  });
   const { openNewVideo } = useShell();
   const { on } = useModules();
   const tabs = projectTabs(on);
@@ -106,10 +119,27 @@ export function ProjectPage() {
             {p.brand ? ` · бренд «${p.brand.name}»` : ""}
           </div>
         </div>
-        <button className="btn primary btn-xl" onClick={openNewVideo} title="Ссылка, файл или ролик с нуля: выбрать тип (N)">
-          <Icon name="plus" />
-          Новое видео
-        </button>
+        <div className="page-title-acts">
+          <Link
+            className={`btn btn-xl proj-refs-btn${shown === "refs" ? " is-on" : ""}`}
+            to={projectPath(id, "refs")}
+            title="Референсы: примеры стиля — что взять и разбор"
+            aria-label="Референсы проекта"
+          >
+            <Icon name="star" />
+            <span className="proj-refs-label">Референсы</span>
+            {refs.data?.counts.total ? (
+              <span className={`proj-refs-n${refs.data.counts.pinned ? " is-pinned" : ""}`}>
+                {refs.data.counts.pinned ? `★${refs.data.counts.pinned} · ` : ""}
+                {refs.data.counts.total}
+              </span>
+            ) : null}
+          </Link>
+          <button className="btn primary btn-xl" onClick={openNewVideo} title="Ссылка, файл или ролик с нуля: выбрать тип (N)">
+            <Icon name="plus" />
+            Новое видео
+          </button>
+        </div>
       </div>
       <PageTabs
         label="Вкладки проекта"
@@ -143,6 +173,7 @@ export function ProjectPage() {
           {shown === "clips" ? <ProjectClips projectId={id} /> : null}
           {shown === "questions" ? <ProjectQuestions projectId={id} /> : null}
           {shown === "files" ? <ProjectFiles projectId={id} /> : null}
+          {shown === "refs" ? <ProjectReferences projectId={id} /> : null}
           {shown === "materials" ? <ProjectMaterials projectId={id} /> : null}
         </Suspense>
         {shown === "know" ? <KnowledgeTab projectId={id} /> : null}
