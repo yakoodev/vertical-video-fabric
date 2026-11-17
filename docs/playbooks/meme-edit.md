@@ -19,6 +19,9 @@
 
 ## Шаги
 
+**Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
+`reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
+
 1. **Записи.** `list_projects` → id записей игры (горизонтальные, с двумя дорожками: 0 — игра и тиммейты, 1 —
    микрофон). Все записи проекта — `channel_project_id`.
 2. **Мемы.** `search_video_memes` по словам, которые игрок говорит в этих боях, и по тегам (фейл, победа, шок,
@@ -61,7 +64,8 @@
 ## Инструменты MCP
 
 `list_projects`, `search_video_memes`, `list_music`, `meme_edit`, `render_status`, `contact_sheet`, `listen`,
-`place_video_meme`, `remove_insert`, `update_layer`, `lint_clip`, `feed_create_work`, `feed_add_version`.
+`place_video_meme`, `remove_insert`, `update_layer`, `lint_clip`, `feed_create_work`, `feed_add_version`,
+`references_list`, `reference_get`.
 
 ## Чек-лист перед сдачей
 

@@ -24,6 +24,9 @@
 
 ## Шаги
 
+**Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
+`reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
+
 1. **Записи и события.** `list_projects` → записи игры. `game_events(source_id)` по каждой: ноки, киллы, уничтожения
    отряда, очереди выстрелов, `fights`. Детектор может пропустить нок или урон — сверяй `source_contact_sheet` по
    окну боя (шаг 0.5–1 с): цифры урона, лента киллов, плашки.
@@ -104,7 +107,8 @@
 `list_projects`, `game_events`, `source_contact_sheet`, `list_music`, `create_clip`, `snap_to_beats`,
 `set_segment_speed`, `set_audio_joins`, `set_music_duck`, `set_transition`, `add_layers`, `contact_sheet`,
 `view_frame`, `listen`, `render_clip`, `render_status`, `lint_clip`, `plan_tiktok_parts`, `align_lyrics`,
-`lyric_layers`, `suggest_surfaces`, `track_surface`, `track_object`, `feed_create_work`, `feed_add_version`.
+`lyric_layers`, `suggest_surfaces`, `track_surface`, `track_object`, `feed_create_work`, `feed_add_version`,
+`references_list`, `reference_get`.
 
 ## Чек-лист перед сдачей
 

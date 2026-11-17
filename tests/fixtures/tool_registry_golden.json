@@ -2928,6 +2928,39 @@
 "module": null,
 "handler": "h_home_summary",
 "label": true
+},
+{
+"name": "references_list",
+"title": "Смотрю референсы проекта",
+"description": "553e57727c17786e",
+"parameters": "f71cb2f223707cee",
+"mutating": false,
+"scope": "project",
+"module": null,
+"handler": "h_references_list",
+"label": true
+},
+{
+"name": "reference_get",
+"title": "Смотрю референс",
+"description": "ae59ca6408309443",
+"parameters": "4c2792ba1d225abb",
+"mutating": false,
+"scope": "project",
+"module": null,
+"handler": "h_reference_get",
+"label": true
+},
+{
+"name": "reference_add",
+"title": "Добавляю референс",
+"description": "ba0eee2d4cab0f39",
+"parameters": "cdfacd1f5df02ad5",
+"mutating": true,
+"scope": "project",
+"module": null,
+"handler": "h_reference_add",
+"label": true
 }
 ]
 }

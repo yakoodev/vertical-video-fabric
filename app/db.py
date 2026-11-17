@@ -744,6 +744,10 @@ class Database:
             from app.video_memes import ensure_schema as ensure_video_memes
 
             ensure_video_memes(conn)
+            # «Референсы» проектов: примеры стиля от владельца и их разбор (app/references.py).
+            from app.references import ensure_schema as ensure_references
+
+            ensure_references(conn)
 
     def _ensure_column(
         self,

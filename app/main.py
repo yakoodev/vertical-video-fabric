@@ -126,6 +126,13 @@ async def lifespan(app: FastAPI):
         feed_preview.kick(store)
     except Exception:  # noqa: BLE001 - фон ленты не должен мешать старту
         logging.getLogger(__name__).warning("feed preview start failed", exc_info=True)
+    try:  # «Референсы» проектов (app/references.py): прерванные разборы — снова в очередь, работник берёт их
+        from app import references
+
+        references.recover(store)
+        references.kick(store)
+    except Exception:  # noqa: BLE001 - разбор референсов не должен мешать старту
+        logging.getLogger(__name__).warning("references worker start failed", exc_info=True)
     try:
         yield
     finally:
@@ -491,6 +498,10 @@ app.include_router(build_webpages_router(AuthDep, lambda: store))
 from app.feed_api import build_feed_router  # noqa: E402
 
 app.include_router(build_feed_router(AuthDep, lambda: store))
+# 🎯 «Референсы» проекта: чужие ролики, картинки и звуки как пример стиля, разбор фоном (app/references.py).
+from app.references_api import build_references_router  # noqa: E402
+
+app.include_router(build_references_router(AuthDep, lambda: store))
 # 🏠 «Главная»: сводка всего сервиса одним ответом (app/home.py).
 from app.home_api import build_home_router  # noqa: E402
 
