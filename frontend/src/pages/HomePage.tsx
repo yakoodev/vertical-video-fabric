@@ -483,6 +483,11 @@ function Spend({ block }: { block: HomeSummary["spend"] }) {
                   <span style={{ width: `${share * 100}%` }} />
                   {reservedShare ? <i style={{ width: `${reservedShare * 100}%` }} /> : null}
                 </span>
+                {polza.balance_rub != null ? (
+                  <span className="home-meter-s">
+                    <b>На счёте Polza: {rub(polza.balance_rub)}</b>
+                  </span>
+                ) : null}
                 <span className="home-meter-s">
                   картинки, видео, голос{polza.reserved_rub ? ` · зарезервировано ${rub(polza.reserved_rub)}` : ""} · потолок
                   месяца на все проекты{polza.enabled ? "" : " · платная генерация выключена"}

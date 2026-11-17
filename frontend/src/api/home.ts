@@ -119,7 +119,7 @@ export interface HomeSummary {
   spend: Block<{
     since: string;
     gemini: Block<{ calls: number; errors: number; cost_rub: number; cost_usd: number; unpriced: number }>;
-    polza: Block<{ spent_rub: number; reserved_rub: number; cap_rub: number; enabled: boolean }>;
+    polza: Block<{ spent_rub: number; reserved_rub: number; cap_rub: number; enabled: boolean; balance_rub?: number | null }>;
   }>;
   projects: Block<{ items: HomeProject[] }>;
   examples: Block<{ items: HomeExample[] }>;

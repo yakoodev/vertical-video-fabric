@@ -321,6 +321,29 @@ def _working(ctx: _Ctx) -> dict:
             "active": len(active)}
 
 
+_BALANCE_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
+_BALANCE_TTL = 300.0
+
+
+def _polza_balance() -> float | None:
+    """Остаток на счёте Polza (₽) — ``GET /balance``, кэш 5 минут, чтобы Главная не ждала сеть каждый раз.
+    Ключа нет или Polza не ответила — None (на Главной просто не показывается)."""
+    import time
+
+    from app.settings import settings
+
+    if not (settings.polza_api_key or "").strip():
+        return None
+    now = time.monotonic()
+    if _BALANCE_CACHE["at"] and now - _BALANCE_CACHE["at"] < _BALANCE_TTL:
+        return _BALANCE_CACHE["value"]
+    from app.aivideo_providers import PolzaImages
+
+    value = PolzaImages().balance(timeout=4)
+    _BALANCE_CACHE.update(at=now, value=value)
+    return value
+
+
 def _spend(ctx: _Ctx) -> dict:
     """Траты месяца (UTC, с первого числа): Gemini по журналу запросов, платные генерации Polza по журналу списаний
     и потолок месяца на все проекты (AIVIDEO_MONTH_CAP_RUB)."""
@@ -338,7 +361,8 @@ def _spend(ctx: _Ctx) -> dict:
         from app.aivideo_budget import _reserved, spent_month
 
         return {"spent_rub": spent_month(store), "reserved_rub": _reserved(store, "1 = 1", ()),
-                "cap_rub": float(settings.aivideo_month_cap_rub), "enabled": bool(settings.aivideo_enabled)}
+                "cap_rub": float(settings.aivideo_month_cap_rub), "enabled": bool(settings.aivideo_enabled),
+                "balance_rub": _polza_balance()}
 
     value, err = _guard("spend.polza", polza)
     out["polza"] = value if value is not None else {"error": err}
