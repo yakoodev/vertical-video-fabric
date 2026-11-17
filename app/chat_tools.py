@@ -53,21 +53,21 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
         "choose_cover", "create_cover_doc", "update_cover_doc", "render_cover_doc", "share_cover_doc", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
         "preview_scene_frame", "suggest_surfaces", "track_surface", "track_object")),
-    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса, эмфаза слов, перевод на русский, озвучка RU, "
-                  "текст песни мувика по слогам", (
+    "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса и кто говорит (банк голосов), сверка с речью, "
+                  "эмфаза слов, перевод на русский, озвучка RU, текст песни мувика по слогам", (
         "generate_subtitles", "set_subtitles", "set_subtitle_words", "edit_subtitle_lines", "separate_voices",
         "list_subtitle_styles", "translate_subtitles", "dub_clip", "tts_preview", "emphasize_words", "align_lyrics",
-        "lyric_layers")),
+        "lyric_layers", "snap_subtitles_to_speech", "register_voice", "identify_voices", "delete_voice")),
     "audio": ("звук: карта звука, мат, громкость, музыка, звуки, дорожки", (
         "audio_map", "listen", "find_noises", "censor_profanity", "mute_audio", "set_source_gain", "set_music",
         "list_music", "add_music_from_url", "add_sound_from_url", "set_music_duck", "set_audio_fx",
         "set_audio_keys", "set_audio_joins", "set_source_audio", "source_loudness", "audio_mix_report", "auto_mix", "set_mix", "audio_fx_reference",
         "set_audio_chain", "auto_sfx", "audio_crossfade")),
-    "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, цвет куска, фокус, раскладка, хромакей, формат, "
-             "части для TikTok", (
+    "cuts": ("куски и кадр: вырезы, обрезка, скорость/реверс куска, цвет куска, фокус, где аватар/вебка, раскладка, "
+             "хромакей, формат, части для TikTok", (
         "suggest_cuts", "apply_cuts", "trim_piece", "set_segment_speed", "set_piece_color", "match_piece_colors",
         "set_end_hold", "set_focus", "auto_focus",
-        "auto_crop_layer",
+        "auto_crop_layer", "detect_avatar",
         "set_piece_fit", "set_layout", "set_chroma_key", "set_format", "set_aspect", "plan_tiktok_parts")),
     "voice": ("голос: озвучить клип или холст текстом (add_voiceover), проверить озвучку, пробы голосов, банк голосов", (
         "add_voiceover", "check_voiceover", "tts_preview", "list_voices")),
@@ -83,6 +83,19 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "make_compilation", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
     "feed": ("лента готовых работ: сдать версию с файлами, вердикт владельца, отметка «выложено»; сводка сервиса", (
         "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list", "home_summary")),
+    # До 17.11 эти лежали в «other», и агент их не находил: реклама сайта (плейбук ad-voiceover) без web_search и
+    # page_*, мувик (frag-movie) без game_events — первое задание карточки так и писало «группа other».
+    "web": ("сайты как материал: поиск в интернете, снимок страницы, правка копии, слой page, блоки страницы слоями", (
+        "web_search", "page_snapshot", "page_edit", "page_to_layers", "list_pages", "view_page")),
+    "game": ("записи игры: события (ноки, киллы, бои, уничтожение отряда), мем-эдит боёв одним вызовом", (
+        "game_events", "meme_edit")),
+    "motion": ("шаблоны моушна и 3D-пресеты слоя scene: галерея шаблонов, вставка, 3D-стиль/свет/камера, анимации", (
+        "list_motion_templates", "add_motion_template", "list_3d_presets", "check_3d_plan", "list_animations")),
+    # 3D-серии были в базе (9 объявлений в каждом ходе любого проекта) — теперь группа: по словам и у проекта series3d.
+    "series3d": ("3D-серии своим движком: эпизоды, шаблоны, план по сценарию, правка плана, рендер, библиотека", (
+        "series3d_list", "series3d_create_episode", "series3d_list_templates", "series3d_from_template",
+        "series3d_plan_from_script", "series3d_update_plan", "series3d_render", "series3d_status",
+        "series3d_save_item")),
     # Проектные, но не в базе: 18 объявлений в каждом ходе чата — дорого, подгружаются по словам.
     "ai_video": ("ИИ-видео с нуля: сценарий, персонажи, локации, этапы с оценкой и карточкой, сборка серии", (
         "aiv_create_project", "aiv_get_project", "aiv_update_style", "aiv_define_character", "aiv_add_look",
@@ -119,7 +132,8 @@ _PRELOAD = {
     "voice": ("озвуч", "голос", "диктор", "закадр", "tts", "начитк", "реклам"),
     "audio": ("звук", " мат", "мата", "запикай", "заглуш", "громк", "музык", "тише", "громче"),
     "cuts": ("вырез", "обреж", "обрез", "подрежь", "кадрир", "фокус", "формат", "16:9", "9:16", "раскладк",
-             "слоу", "замедл", "ускор", "реверс", "задом", "цвет", "баланс", "экспоз", "светлее", "темнее"),
+             "слоу", "замедл", "ускор", "реверс", "задом", "цвет", "баланс", "экспоз", "светлее", "темнее",
+             "аватар", "вебк", "тикток-част", "части для тикток", "части тикток"),
     "screens": ("плашк", "концовк", "end screen", "промо", "холст"),
     "assets": ("картинк", "библиотек", "шрифт"),
     "sources": ("исходник", "расшифровк", "новый клип", "нарез", "момент", "компиляц", "торрент", "magnet", "магнет"),
@@ -131,6 +145,11 @@ _PRELOAD = {
     "amv": ("amv", "амв", "аниме-клип", "аниме клип", "аниме-эдит", "аниме эдит", "anime edit", "amv_"),
     "feed": ("лент", "запощ", "выложил", "выложено", "выложен", "сдай работ", "сдать работ", "вердикт", "сводк",
              "что ждёт"),
+    "web": ("сайт", "реклам", "страниц", "лендинг", "магазин", "web_search", "page_"),
+    "game": ("мувик", "фраг", "мем-эдит", "мем эдит", "боёв", "боев", "килл", "нокнул", "ноки", "апекс", "apex",
+             "game_events", "meme_edit"),
+    "motion": ("шаблон", "моушн", "3d", "3д", "пресет", "анимац"),
+    "series3d": ("3d-сери", "3д-сери", "3d сери", "3д сери", "series3d", "серию в 3d", "серию в 3д"),
 }
 
 # Опасное — только через карточку подтверждения в чате: что владелец увидит на кнопке.
@@ -264,9 +283,10 @@ def chat_only_tools() -> list[Tool]:
         Tool(
             LOAD_TOOLS, "Подгружаю инструменты",
             "Подгрузить группу инструментов (их объявления не входят в каждый ход ради токенов): "
-            "groups — список из montage, subtitles, audio, cuts, screens, assets, sources, other. "
-            "Зови перед правкой клипа: например, монтаж — load_tools([\"montage\"]). / Load tool groups.",
-            _obj({"groups": {"type": "array", "items": {"type": "string"}}}, ["groups"]),
+            f"groups — список из {', '.join(all_groups())} (что в какой — в системном промпте). Подгружай только "
+            "нужные заданию: каждая группа — тысячи токенов в каждом ходе. Пример: монтаж — "
+            "load_tools([\"montage\"]). / Load tool groups.",
+            _obj({"groups": {"type": "array", "items": {"type": "string", "enum": all_groups()}}}, ["groups"]),
             h_load_tools, scope="global",
             label=lambda a: "Подгружаю инструменты: " + ", ".join(str(g) for g in a.get("groups") or []),
         ),

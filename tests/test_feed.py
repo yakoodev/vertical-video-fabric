@@ -178,6 +178,33 @@ def test_clip_variant_shares_postings_with_clip_screen(env):
     assert (row["clip_id"], row["clip_plan_id"]) == (up["clip_id"], up["clip_plan_id"])
 
 
+def test_tool_variant_by_render_or_clip_plan_id(env):
+    """clip_id ленты — id рендера, а у остальных инструментов clip_id — клип: агенту можно назвать рендер
+    render_clip_id (как в render_status) или клип clip_plan_id — возьмётся его последний готовый рендер."""
+    from app.agent_tools import ToolContext, run_tool
+
+    client, store = env
+    src = _video(Path(settings.tmp_dir) / "clip2.mp4", size="180x320")
+    with src.open("rb") as fh:
+        up = client.post("/api/clips/upload", files={"file": ("clip2.mp4", fh, "video/mp4")},
+                         data={"title": "Клип"}).raise_for_status().json()
+    ctx = ToolContext(store=store)
+    work, ok = run_tool(ctx, "feed_create_work", {"title": "Сова 20", "kind": "series"}, validate=True)
+    assert ok, work
+    by_plan, ok = run_tool(ctx, "feed_add_version", {"work_id": work["work_id"], "note": "v1",
+                                                     "variants": [{"clip_plan_id": up["clip_plan_id"]}]}, validate=True)
+    assert ok and by_plan["variants"][0]["clip_id"] == up["clip_id"] and by_plan["variants"][0]["label"] == "9:16"
+    by_render, ok = run_tool(ctx, "feed_add_version", {"work_id": work["work_id"], "variants": [
+        {"label": "TikTok", "render_clip_id": up["clip_id"]}]}, validate=True)
+    assert ok and by_render["variants"][0]["clip_id"] == up["clip_id"]
+    both, ok = run_tool(ctx, "feed_add_version", {"work_id": work["work_id"], "variants": [
+        {"render_clip_id": up["clip_id"], "clip_plan_id": up["clip_plan_id"]}]}, validate=True)
+    assert not ok and "один источник" in both["error"]
+    none, ok = run_tool(ctx, "feed_add_version", {"work_id": work["work_id"],
+                                                  "variants": [{"clip_plan_id": up["clip_plan_id"] + 999}]}, validate=True)
+    assert not ok and "нет готового рендера" in none["error"] and "render_clip" in none["error"]
+
+
 # --------------------------------------------------------------------------- #
 # Превью
 # --------------------------------------------------------------------------- #

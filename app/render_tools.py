@@ -25,8 +25,9 @@ def _status_view(job: dict) -> dict:
                        "render_status(render_id, wait_sec=30) ещё раз")
     elif job["status"] == "done":
         out.update(job.get("result") or {})
-        out["next"] = ("готово: lint_clip (вспышки и луп — по этому файлу), contact_sheet для взгляда, потом "
-                       "submit_for_approval(clip_id, title, …)")
+        out["next"] = ("готово: lint_clip (вспышки и луп — по этому файлу), contact_sheet для взгляда; сдать владельцу — "
+                       "feed_add_version(work_id, note, variants [{label, render_clip_id}]) (группа feed), на "
+                       "публикацию сервисом — submit_for_approval(clip_id, title, …)")
         if isinstance(out.get("freezes"), dict) and out["freezes"].get("ok") is False:
             # Работа проекта (мувик) проверила рендер на застывшие куски сама — найдено: не сдавать.
             out["note"] = f"файл готов, но {out['freezes'].get('note')}"
@@ -75,7 +76,8 @@ def _db_render_view(ctx: ToolContext, render_clip_id: int) -> dict:
                     "Новый рендер — render_clip(clip_id), его задание — render_id вида r…")}
     out.update({k: v for k, v in RJ._brief_clip(clip).items() if k not in ("render_status",)})
     if status == "done":
-        out["next"] = "готово: lint_clip, contact_sheet, потом submit_for_approval(clip_id, title, …)"
+        out["next"] = ("готово: lint_clip, contact_sheet; сдать — feed_add_version(variants [{label, render_clip_id}]), "
+                       "на публикацию — submit_for_approval(clip_id, title, …)")
     elif status == "failed":
         out["next"] = "поправь клип по ошибке и запусти render_clip снова"
     return out

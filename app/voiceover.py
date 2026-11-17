@@ -13,12 +13,16 @@
 4. холст короче голоса — удлиняется (``trim_piece``); субтитры — слова текста на времени распознанной речи;
 5. ``check_voiceover`` — вердикт в ответе.
 
+До синтеза: латиница в русской озвучке — отказ (``latin_in_russian_speech``; владелец 17.11: английские названия
+голосом звучат ужасно — название в ``text``, голосом по-русски в ``say``). Нарочно английское — ``allow_latin``.
+
 Текст фразы — в описании файла («Текст озвучки: «…»»): по нему анализатор сверяет «услышано = написано».
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -48,6 +52,27 @@ def _num(value: Any, default: float | None = None) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+_LATIN_WORD = re.compile(r"[A-Za-z][A-Za-z0-9'’+\-.]*[A-Za-z0-9+]|[A-Za-z]")
+_CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+_LETTER = re.compile(r"[A-Za-zА-Яа-яЁё]")
+
+
+def latin_in_russian_speech(lines: list[dict]) -> list[str]:
+    """Латиница в русской озвучке — по фразе: [«фраза N: Live2D, VTube»]. Владелец 17.11 (гайд Витубики): английские
+    названия голосом «звучат уёбищно» — говорить по-русски, название только на экране. Озвучка не русская (кириллицы
+    меньше половины букв) — не проверяем: английский ролик читает английский текст."""
+    spoken = " ".join(str(line.get("say") or line.get("text") or "") for line in lines)
+    letters = _LETTER.findall(spoken)
+    if not letters or len(_CYRILLIC.findall(spoken)) * 2 < len(letters):
+        return []
+    out = []
+    for i, line in enumerate(lines):
+        words = list(dict.fromkeys(_LATIN_WORD.findall(str(line.get("say") or line.get("text") or ""))))
+        if words:
+            out.append(f"фраза {i + 1}: {', '.join(words[:6])}")
+    return out
 
 
 def parse_lines(raw: Any) -> list[dict]:
@@ -220,6 +245,13 @@ def add_voiceover(ctx: Any, args: dict) -> dict:
 
     store, plan_id = ctx.store, int(ctx.plan_id)
     lines = parse_lines(args.get("lines"))
+    latin = [] if args.get("allow_latin") else latin_in_russian_speech(lines)
+    if latin:
+        raise VoiceoverError(
+            "латиница в русской озвучке — голос прочтёт её по-английски, владелец это запретил: "
+            + "; ".join(latin) + ". Название оставь в text (оно будет в субтитрах и на экране), а say этой фразы "
+            "напиши по-русски словами («двумерная модель», «бесплатная программа», «фри десять»). Нарочно "
+            "английская фраза — allow_latin: true")
     provider = provider_key(args.get("provider") or "gemini")
     voice, voice_from = resolve_voice(store, plan_id, provider, args.get("voice"))
     tts = _tts(provider, voice, args.get("model"))

@@ -16,7 +16,11 @@ _VARIANT_SCHEMA = {
     "type": "object",
     "properties": {
         "label": {"type": "string", "description": "«9:16», «16:9», «TikTok часть 1/4», «без музыки»"},
-        "clip_id": {"type": "integer", "description": "готовый клип сервиса (id файла клипа, не плана)"},
+        "render_clip_id": {"type": "integer", "description": "готовый рендер: render_clip_id из render_status "
+                                                             "(done) или get_clip — лучший выбор"},
+        "clip_plan_id": {"type": "integer", "description": "клип (clip_id остальных инструментов): берётся его "
+                                                           "последний готовый рендер"},
+        "clip_id": {"type": "integer", "description": "старое имя render_clip_id — id ГОТОВОГО РЕНДЕРА, не клипа"},
         "path": {"type": "string", "description": "файл на сервере в папке данных (/data/…): по ссылке, на месте"},
         "host_path": {"type": "string", "description": "файл хоста в D:\\vvf-data\\runtime\\feed_import (в "
                                                        "контейнере /data/runtime/feed_import): переносится в ленту"},
@@ -29,6 +33,35 @@ def _int(args: dict, key: str, hint: str) -> int:
         return int(args.get(key))
     except (TypeError, ValueError) as exc:
         raise ToolError(f"нужен {key} ({hint})") from exc
+
+
+def _variant_spec(store: Any, spec: Any) -> Any:
+    """Вариант агента → вариант ленты. clip_id ленты — id готового РЕНДЕРА (таблица clips), а у всех остальных
+    инструментов clip_id — клип-план: агент путал их и сдавал чужой файл или «нет клипа». Теперь можно назвать
+    рендер ``render_clip_id`` (как в render_status) или клип ``clip_plan_id`` — возьмём его последний готовый рендер."""
+    if not isinstance(spec, dict):
+        return spec
+    spec = dict(spec)
+    render_id = spec.pop("render_clip_id", None)
+    plan_id = spec.pop("clip_plan_id", None)
+    picked = [k for k, v in (("render_clip_id", render_id), ("clip_plan_id", plan_id), ("clip_id", spec.get("clip_id")))
+              if v not in (None, "")]
+    if len(picked) > 1:
+        raise ToolError(f"у варианта один источник, а дано {', '.join(picked)}: render_clip_id — готовый рендер, "
+                        "clip_plan_id — клип (его последний готовый рендер)")
+    if render_id not in (None, ""):
+        spec["clip_id"] = int(render_id)
+    elif plan_id not in (None, ""):
+        try:
+            renders = store.list_clips_for_plan(int(plan_id))
+        except (TypeError, ValueError) as exc:
+            raise ToolError("clip_plan_id — число (clip_id клипа)") from exc
+        done = next((c for c in renders if c.get("status") == "succeeded" and c.get("output_path")), None)
+        if done is None:
+            raise ToolError(f"у клипа #{plan_id} нет готового рендера: render_clip(clip_id={plan_id}) → render_status "
+                            "до done, потом сдавай")
+        spec["clip_id"] = int(done["id"])
+    return spec
 
 
 def _brief_variant(v: dict) -> dict:
@@ -72,7 +105,8 @@ def h_feed_add_version(ctx: ToolContext, args: dict) -> dict:
     work_id = _int(args, "work_id", "feed_create_work или feed_list")
     variants = args.get("variants") or []
     if not isinstance(variants, list):
-        raise ToolError("variants — список {label, clip_id | path | host_path}")
+        raise ToolError("variants — список {label, render_clip_id | clip_plan_id | path | host_path}")
+    variants = [_variant_spec(ctx.store, v) for v in variants]
     version = _call(FEED.add_version, ctx.store, work_id, note=str(args.get("note") or ""), variants=variants,
                     label=str(args.get("label") or ""), status=args.get("status") or "review", made_by="agent")
     return {"ok": True, **_brief_version(version), "feed": f"{_FEED_URL}?work={work_id}",
@@ -131,8 +165,12 @@ def tools() -> list[Tool]:
         Tool(
             "feed_add_version", "Добавляю версию в ленту",
             "Сдать новую версию работы: note — что поменял (коротко, по-человечески), variants — файлы версии: "
-            "{label, clip_id} (готовый клип сервиса), {label, path} (файл в папке данных сервиса, /data/…) или "
-            "{label, host_path} (файл, положенный в D:\\vvf-data\\runtime\\feed_import — переносится в ленту). "
+            "{label, render_clip_id} (готовый рендер — render_clip_id из render_status done), {label, clip_plan_id} "
+            "(клип — его последний готовый рендер), {label, path} (файл в папке данных сервиса, /data/…) или "
+            "{label, host_path} (файл, положенный в D:\\vvf-data\\runtime\\feed_import — переносится в ленту); "
+            "clip_id варианта — старое имя render_clip_id (id рендера, НЕ клипа). "
+            "Сдаётся то, что посмотрел глазами (contact_sheet) и прогнал lint_clip; с музыкой, «без музыки» — "
+            "отдельным вариантом. "
             "label — «9:16», «16:9», «TikTok часть 1/4», «без музыки». Номер версии ставится сам; label версии — "
             "своя подпись («v4.1»). status по умолчанию review (на проверке). Лёгкое превью 720p и кадр соберутся "
             "фоном. Плохой вариант — отказ всей версии. / Add a version with its variant files.",

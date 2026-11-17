@@ -265,6 +265,26 @@ def test_dry_run_goes_to_a_project_clip_without_cards(env, monkeypatch):
     assert "sheet.jpg" in view["files"] and all(i["ready"] for i in view["images"])
 
 
+def test_finished_clip_goes_to_the_feed_once_per_job(env, monkeypatch):
+    """Готовое — в «Ленту» (владелец 16.11: не 20 сообщений в Telegram): сухой прогон — нет, настоящий — версия работы."""
+    from app import feed as FEED
+
+    store, pid, track = env["store"], env["pid"], env["track"]
+    _blender(env, monkeypatch)
+    dry = J.create(store, pid, track_id=track["id"], start=0, end=12, images=1, dry_run=True)
+    out = J.advance(store, dry["id"])
+    assert out["status"] == "done" and not FEED.list_feed(store)["items"], "сухой прогон в ленту не идёт"
+    job = M.get_job(store, dry["id"])
+    first = J.to_feed(store, job, int(out["clip_id"]), "клип на песню, v1")
+    M.update_job(store, job["id"], options={**(job.get("options") or {}), "feed": first})
+    again = J.to_feed(store, M.get_job(store, job["id"]), int(out["clip_id"]), "v2")
+    assert first["work_id"] == again["work_id"] and first["version_id"] != again["version_id"]
+    work = FEED.get_work(store, first["work_id"])
+    assert work["kind"] == "other" and work["project_id"] == pid and len(work["versions"]) == 2
+    assert work["versions"][0]["status"] == "review" and work["versions"][0]["variants"][0]["label"] == "9:16"
+    assert J.view(store, job["id"])["feed"]["url"] == f"/feed?work={first['work_id']}"
+
+
 def test_render_resumes_from_the_first_missing_frame(env, monkeypatch):
     store, pid, track = env["store"], env["pid"], env["track"]
     _blender(env, monkeypatch)

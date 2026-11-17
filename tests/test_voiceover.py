@@ -97,7 +97,7 @@ def _mk(path: Path) -> Path:
 LINES = [{"text": "Хочешь стать витубером, но нет своей модели?"},
          {"text": "Загляни в Витубику: готовые модели для стрима."},
          {"text": "Оплата в рублях, без посредников."},
-         {"text": "Промокод Free10 даёт скидку десять процентов."}]
+         {"text": "Промокод в описании даёт скидку десять процентов."}]
 
 
 def _voiceover(store, clip_id, **extra):
@@ -231,6 +231,27 @@ def test_add_voiceover_rejects_too_long_line_instead_of_cutting(canvas):
     out, ok = run_tool(ToolContext(store=store, clip_plan_id=clip_id), "add_voiceover",
                        {"lines": [{"text": "слово " * 100}]})
     assert not ok and "не режу" in out["error"]
+
+
+def test_add_voiceover_refuses_latin_in_russian_speech_before_synthesis(canvas):
+    """Владелец 17.11: английские названия голосом звучат ужасно — название на экране (text), голосом по-русски (say)."""
+    store, clip_id = canvas
+    ctx = ToolContext(store=store, clip_plan_id=clip_id)
+    lines = [{"text": "Есть три вида моделей для стрима."}, {"text": "Модель Live2D двигается за тобой."},
+             {"text": "Промокод Free10 — скидка."}]
+    out, ok = run_tool(ctx, "add_voiceover", {"lines": lines}, validate=True)
+    assert not ok and "латиница" in out["error"] and "Live2D" in out["error"] and "Free10" in out["error"]
+    assert "фраза 2" in out["error"] and "фраза 1" not in out["error"]
+    assert not FakeTTS.calls, "отказ — до синтеза: ни времени, ни денег"
+    lines[1]["say"], lines[2]["say"] = "Двумерная модель двигается за тобой.", "Промокод фри десять — скидка."
+    out, ok = run_tool(ctx, "add_voiceover", {"lines": lines}, validate=True)
+    assert ok and out["status"] == "done", out
+    assert "Двумерная модель двигается за тобой." in FakeTTS.calls and "Live2D" not in " ".join(FakeTTS.calls)
+    # Нарочно английское — можно; английский ролик (кириллицы меньше половины) не проверяется вовсе.
+    assert voiceover.latin_in_russian_speech([{"text": "Check out the new Live2D model"}]) == []
+    out, ok = run_tool(ctx, "add_voiceover", {"lines": [{"text": "Скажи OK."}], "allow_latin": True,
+                                              "replace": True}, validate=True)
+    assert ok, out
 
 
 def test_narrator_voice_from_brief(canvas, monkeypatch):

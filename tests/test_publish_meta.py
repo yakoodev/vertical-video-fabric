@@ -85,6 +85,7 @@ def test_rules_ban_cringe_and_give_the_movie_caption_format():
     assert "зовут досмотреть" not in BASE_RULES
     assert "вопросы-приманки" in BASE_RULES and "смотри до" in BASE_RULES
     assert "ʏᴀᴋᴏᴏᴅᴇᴠ ⨯ <игра> ⨯ <трек> · N/M" in BASE_RULES
+    assert "Без списков авторов" in BASE_RULES  # владелец 16.11 про подпись с кредитами: «это че за список»
     wide = rules_for_format("16:9")
     assert "2–4 предложения, как у ролика YouTube" in wide and "#shorts, #стрим" not in wide
 

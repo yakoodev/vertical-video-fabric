@@ -12,6 +12,10 @@ get_playbook — центр-кроп игры без лица и донат-ба
    нарезка стрима →
    ``stream-shorts``, реклама сайта/товара → ``ad-voiceover``, серия по комменту / эпизод → заметка ``SERIES_NOTE``
    (плейбука серии ещё нет).
+
+Выбранный плейбук ещё и подгружает свои узкие группы инструментов (``preload_groups``: game, web, amv, feed…),
+а про большие общие (montage, audio, cuts…) в промпте сказано, какие звать по шагу (``groups_note``). Какие
+группы — по разделу «## Инструменты MCP» плейбука (``playbook_tools``): правка плейбука меняет и подгрузку.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ SERIES_NOTE = """
 4. Голос — add_voiceover(clip_id, lines) (без style; голос рассказчика из брифа) → check_voiceover.
 5. Карточка коммента зрителя, бросок d20/выбор, вопрос в финале (титры 2–5 слов).
 6. set_music → auto_mix → lint_clip → render_clip → render_status (done и без «озвучка с ошибками»).
+7. contact_sheet глазами → в «Ленту»: feed_add_version(variants [{label, render_clip_id}]) — плейбук handoff.
 series3d_* для проекта «Мир от зрителей» (PS1) не подходит — только холст.
 """
 
@@ -71,12 +76,75 @@ def pick(message: str, steps: list[dict] | None = None, pinned: str | None = Non
     return None
 
 
+# Заметке серии (не файл плейбука) — её инструменты: холст, картинки/сцены слоями, голос, музыка.
+SERIES_TOOLS = ("get_project_brief", "create_canvas_clip", "add_layers", "add_voiceover", "check_voiceover",
+                "set_music", "auto_mix", "lint_clip", "render_clip", "render_status", "contact_sheet",
+                "feed_add_version")
+_TOOL_NAME = re.compile(r"`([a-z][a-z0-9_]+)`")
+
+
+def playbook_tools(name: str | None) -> list[str]:
+    """Инструменты плейбука: раздел «## Инструменты MCP», а нет раздела — все `имена` в тексте, что есть в чате."""
+    if not name:
+        return []
+    if name == "series":
+        return list(SERIES_TOOLS)
+    from app import chat_tools as CT
+    from app import playbooks
+
+    try:
+        text = playbooks.get_playbook(name)["text"]
+    except KeyError:
+        return []
+    if "## Инструменты MCP" in text:
+        text = text.split("## Инструменты MCP", 1)[1].split("\n## ", 1)[0]
+    known = CT.all_tools()
+    return list(dict.fromkeys(n for n in _TOOL_NAME.findall(text) if n in known))
+
+
+def groups_for(name: str | None) -> list[str]:
+    """Группы инструментов чата, без которых плейбук не сделать: подгружаются сами, как только плейбук выбран
+    (закреплённый «ок, делай полную» не называет ни одного инструмента — раньше агент шёл без них или гадал
+    группу). Только группы, где лежат инструменты плейбука, — не всё подряд: каждая группа — токены в каждом ходе."""
+    from app import chat_tools as CT
+
+    base = set(CT.base_names())
+    groups = [CT.group_of(n) for n in playbook_tools(name) if n not in base]
+    return list(dict.fromkeys(g for g in groups if g and g != "other"))
+
+
+# Общие большие группы (десятки объявлений, 15–50 тыс. знаков каждая) сами не подгружаем: модель зовёт их по шагу
+# плейбука (load_tools) или по словам владельца. Узкие (game, web, amv, music_video, feed, voice…) — сразу:
+# их имён модель не угадает (12.11 и 16.11: «группа other» в первом задании мувика, реклама без web_search).
+HEAVY_GROUPS = frozenset({"montage", "audio", "cuts", "subtitles", "sources", "screens", "assets"})
+
+
+def preload_groups(name: str | None) -> list[str]:
+    """Что подгрузить сразу, когда выбран плейбук: его узкие группы."""
+    return [g for g in groups_for(name) if g not in HEAVY_GROUPS]
+
+
+def groups_note(name: str | None) -> str:
+    groups = groups_for(name)
+    if not groups:
+        return ""
+    later = [g for g in groups if g in HEAVY_GROUPS]
+    now = [g for g in groups if g not in HEAVY_GROUPS]
+    parts = []
+    if now:
+        parts.append("уже подгружены: " + ", ".join(now))
+    if later:
+        parts.append("остальные по шагу — load_tools([" + ", ".join(f'"{g}"' for g in later) + "])")
+    return "Инструменты этого плейбука в группах: " + "; ".join(parts) + ".\n"
+
+
 def block(name: str | None) -> str:
-    """Текст для системного промпта: плейбук целиком (как у монтажёра) или заметка серии."""
+    """Текст для системного промпта: плейбук целиком (как у монтажёра) или заметка серии + где его инструменты."""
     if not name:
         return ""
     if name == "series":
-        return SERIES_NOTE
+        return SERIES_NOTE + groups_note(name)
     from app.ai.editor_agent_prompts import playbook_block
 
-    return playbook_block(name)
+    text = playbook_block(name)
+    return text + groups_note(name) if text else ""

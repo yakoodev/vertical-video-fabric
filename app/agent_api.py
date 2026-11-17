@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from app import agent_tools
 from app.ai import editor_agent
 from app.auth import require_auth, token_is_valid
+from app.owner_rules import OWNER_RULES
 from app.settings import settings
 
 _log = logging.getLogger(__name__)
@@ -52,15 +53,12 @@ get_clip → render.format и render.frame (9:16 — 1080×1920, 1:1 — 1080×1
 Справка по слоям: get_motion_reference(format?); полный контракт — docs/motion/spec.md.
 3D/2D-анимация кодом — слой scene: get_scene_reference → preview_scene_frame(scene, t) → add_layers
 (docs/motion/scene-engine.md).
-Типовые заказы (нарезка стрима, промо, мемы) — плейбуки: get_playbook() — список, get_playbook(name) — шаги
-и чек-лист (то же — MCP prompts). Игра под песню: с мемами — get_playbook("meme-edit"), мувик — "frag-movie".
-Владельцу: новый стиль или правки по жалобе — сначала короткие пробы (≈20 с, 2 варианта) на утверждение, полный рендер
-после «ок»; каждую готовую вещь — сразу; результат проб на площадке спрашивай прямо. Мувики и сову в TikTok владелец
-выкладывает с телефона (веб-заливка сервисом набирает ~0): готовь файлы и подписи; сервисом — только по его просьбе
-или автопостом проекта.
-Готовую работу сдавай в «Ленту» (/feed), а не пачкой файлов в Telegram: feed_list(q=…) → feed_create_work (если работы
-ещё нет) → feed_add_version(note «что поменял», variants 9:16 / 16:9 / части TikTok) — превью 720p соберётся само;
-владельцу — одна ссылка. Его вердикт — feed_set_status (его словами), выложенное — feed_mark_posted.
+Типовые заказы — плейбуки: get_playbook() — список, get_playbook(name) — шаги и чек-лист (то же — MCP prompts).
+Нарезка стрима — "stream-shorts" / "stream-horizontal" / "vtuber-story"; игра под песню: с мемами — "meme-edit", мувик —
+"frag-movie"; AMV — "amv"; клип на песню владельца — "music-video"; реклама — "ad-voiceover", промо приложения —
+"app-promo"; сдача любой работы — "handoff". Результат проб на площадке спрашивай прямо («вроде норм» — не ответ).
+Мувики и сову в TikTok владелец выкладывает с телефона (веб-заливка сервисом набирает ~0): готовь файлы и подписи;
+сервисом — только по его просьбе или автопостом проекта. Выложенное — feed_mark_posted.
 Реклама сайта или товара («реклама <X>»): сам web_search → официальный сайт → page_snapshot главной, товара и цен →
 page_edit (подсветка, убрать баннер, crop_to цены — правка через HTML копии) → слой page (поле layer ответа) через
 add_layers; ключевой экран — page_to_layers: фон и блоки отдельными слоями (карточку приблизить, кнопку нажать,
@@ -74,7 +72,8 @@ add_layers; ключевой экран — page_to_layers: фон и блоки
 Аргументы сверяются со схемой: лишний или пропущенный — ошибка с ожидаемыми именами и «может, …?».
 «Готово»/«отрендерено» — только после render_status со status done.
 Что можно без владельца, решает он в настройках проекта: get_agent_settings (ждать ли ответов, стоп на списке клипов,
-траты, публикация). Отказ называет настройку и где её менять: перескажи ему, сам не меняй и не обходи."""
+траты, публикация). Отказ называет настройку и где её менять: перескажи ему, сам не меняй и не обходи.
+""" + OWNER_RULES
 
 
 def _store():
