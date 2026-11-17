@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.backgrounds import needs_zones
@@ -89,6 +90,15 @@ class PlanRender:
 
             subtitle_margin_v = round(subtitle_margin_v * frame_size(aspect)[1] / frame_size(saved_format)[1])
         end_hold = self._end_hold_sec(plan, end_hold_sec)
+        if music_start_sec is None and music_track_id in (None, (plan.get("render_settings") or {}).get("track_id")):
+            # Концовка трека на конец ролика (app/music_fit.py, music_fit.mode end): длина могла поменяться с
+            # set_music (вырезы, стоп-кадры) — старт пересчитывается и пишется в настройки клипа до всего, что его читает.
+            from app.music_fit import refit_plan
+
+            try:
+                plan, _fit = refit_plan(self.store, plan, end_hold)
+            except Exception:  # noqa: BLE001 - подбор старта — надстройка: рендер со старым стартом
+                logging.getLogger("uvicorn.error").exception("music_fit refit failed for clip plan %s", clip_plan_id)
         # Джамп-каты (app/cuts.py): нет вырезов — None, и всё ниже как раньше.
         # До статуса «rendering»: вырезы на весь клип — ошибка запроса, а не зависший клип.
         cut_plan = self._cut_plan(plan, ffmpeg_preset_id)

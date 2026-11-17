@@ -721,6 +721,7 @@ def _project_tools() -> list[Tool]:
     from app.home_tools import tools as home_tools
     from app.music_video_tools import all_tools as music_video_tools
     from app.references_tools import tools as references_tools
+    from app.critique_tools import tools as critique_tools
 
     # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный;
     # объяснялки (app/explainer_tools.py) — маскот объясняет тему, на той же машинерии денег;
@@ -732,9 +733,10 @@ def _project_tools() -> list[Tool]:
     # Клип на песню (app/music_video_tools.py): разбор песни → план → карточка на картинки → кадры → клип.
     # «Главная» (app/home_tools.py): сводка сервиса — что ждёт владельца, что выйдет, что зашло, траты.
     # «Референсы» проекта (app/references_tools.py): примеры стиля владельца — разбор, лист кадров, добавить по ссылке.
+    # Независимый критик готового ролика (app/critique_tools.py): не у монтажёра клипа — он не должен видеть монтаж.
     return (tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
             + series3d_tools() + torrent_tools() + feed_tools() + music_video_tools() + home_tools()
-            + references_tools())
+            + references_tools() + critique_tools())
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:

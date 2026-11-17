@@ -619,8 +619,8 @@
 {
 "name": "set_music",
 "title": "Подкладываю музыку",
-"description": "eab2ff9a0077d6e6",
-"parameters": "feacdb03b568f9f2",
+"description": "544e2a5a430f4a5e",
+"parameters": "377fb5303bd8e036",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -2975,6 +2975,21 @@
 "module": null,
 "handler": "h_reference_add",
 "label": true
+},
+{
+"name": "critique_render",
+"title": "Зову независимого критика",
+"description": "f05f01781bae717c",
+"parameters": "910eb9a4de8ba888",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_critique_render",
+"label": true,
+"cost": [
+"paid",
+"network"
+]
 }
 ]
 }

@@ -26,6 +26,7 @@ from app.cuts import normalize_cuts
 from app.end_screen import normalize_end_screen
 from app.freeze import normalize_freezes
 from app.montage_assets import normalize_inserts
+from app.music_fit import normalize_fit
 from app.motion import normalize_camera, normalize_layers, normalize_motion_blur
 from app.stream_layout import normalize_layout
 from app.transitions import normalize_transition
@@ -143,6 +144,9 @@ def normalize_render_settings(raw: object) -> dict:
         "track_id": _opt_int(src.get("track_id")),
         # С какой секунды трека играет музыка на 0 с клипа (рендер читает из настроек плана).
         "music_start_sec": round(_pct(src.get("music_start_sec"), 0.0, 0.0, 3600.0), 2),
+        # Концовка трека на конец ролика (app/music_fit.py): {mode: end — старт подбирает сервис, off — выбран
+        # руками}; None — старый клип, старт как был.
+        "music_fit": normalize_fit(src.get("music_fit")),
         "mirror": _bool(src.get("mirror")),
         "transition": normalize_transition(src.get("transition")),
         "cover": normalize_cover(src.get("cover")),
