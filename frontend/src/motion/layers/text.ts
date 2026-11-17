@@ -13,6 +13,17 @@ import { animDuration, DEFAULT_IN_DURATION, type LayerState, type Reveal } from 
 import { hashString, rand01 } from "../keys";
 import type { Ctx2D, Highlight, RenderEnv, TextLayer, TextStyle } from "../types";
 import { clearShadow, drawImageLike, fillRoundRect, rgba, roundRectPath, type LayerRenderer } from "./common";
+import {
+  drawBlurred,
+  drawReel,
+  glyphTransform,
+  grayMix,
+  letterProgress,
+  slotReel,
+  slotWordIndex,
+  SLOT_OTHERS,
+  type Reel,
+} from "./textwords";
 
 type Seg = {
   text: string;
@@ -359,7 +370,19 @@ function drawBg(ctx: Ctx2D, L: TextLayout, bg: NonNullable<TextStyle["bg"]>, lef
  * Как показывать слово сейчас: сколько графем видно, масштаб и прозрачность «pop»;
  * у rise — сдвиг вниз `dy` и маска `clip` (полоса своей строки, слово выезжает из-под неё).
  */
-type WordView = { graphemes: number; scale: number; alpha: number; dy?: number; clip?: Band };
+type WordView = {
+  graphemes: number;
+  scale: number;
+  alpha: number;
+  dy?: number;
+  clip?: Band;
+  /** Размытие слова (focus), опорн. px системы слоя; 0 / нет — резко. */
+  blur?: number;
+  /** Насколько слово ещё серое (colorize): 1 — серое, 0 — своим цветом. */
+  gray?: number;
+  /** Барабан слот-машины (slot): позиция в шагах (0 — слово на месте), скорость, полоса строки — окно. */
+  reel?: Reel;
+};
 
 /** Полоса строки по вертикали (система слоя): маска rise. */
 type Band = { top: number; bottom: number };
@@ -375,8 +398,27 @@ export function lineBand(L: TextLayout, line: LaidLine, stroke = 0, bg?: TextSty
   return { top: line.cy - half, bottom: line.cy + half };
 }
 
-function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefined, band?: Band): WordView | null {
+function wordView(
+  word: LaidWord,
+  L: TextLayout,
+  reveal: Reveal | null | undefined,
+  band?: Band,
+  slotIdx = -1,
+): WordView | null {
   if (!reveal) return { graphemes: word.g, scale: 1, alpha: 1 };
+  if (reveal.mode === "letters") {
+    // Слово видно с первой своей буквы; буквы прячет и роняет charFx.
+    return letterProgress(L, reveal.fraction, word.gStart) > 0 ? { graphemes: word.g, scale: 1, alpha: 1 } : null;
+  }
+  if (reveal.mode === "slot") {
+    if (word.index !== slotIdx) {
+      const a = clamp01(reveal.fraction / SLOT_OTHERS);
+      return a > 0 ? { graphemes: word.g, scale: 1, alpha: ease("outQuad", a) } : null;
+    }
+    if (reveal.fraction <= 0) return null;
+    if (reveal.fraction >= 1 || !band) return { graphemes: word.g, scale: 1, alpha: 1 };
+    return { graphemes: word.g, scale: 1, alpha: 1, reel: { ...slotReel(reveal.fraction), band } };
+  }
   if (reveal.mode === "scramble") {
     // Слово видно, как только до него дошёл «фронт» перебора; буквы прячет и подменяет charFx.
     return scrambleFront(L, reveal.fraction) > word.gStart ? { graphemes: word.g, scale: 1, alpha: 1 } : null;
@@ -396,6 +438,16 @@ function wordView(word: LaidWord, L: TextLayout, reveal: Reveal | null | undefin
     if (wp >= 1) return { graphemes: word.g, scale: 1, alpha: 1 };
     const dy = (band.bottom - band.top) * (1 - ease("outCubic", wp));
     return { graphemes: word.g, scale: 1, alpha: clamp01(wp * 1.6), dy, clip: band };
+  }
+  if (reveal.mode === "focus") {
+    // Из размытия в резкость на своём месте: ни сдвига, ни масштаба.
+    if (wp >= 1) return { graphemes: word.g, scale: 1, alpha: 1 };
+    return { graphemes: word.g, scale: 1, alpha: ease("outQuad", clamp01(wp * 1.8)), blur: L.size * 0.3 * (1 - ease("outCubic", wp)) };
+  }
+  if (reveal.mode === "colorize") {
+    // Слово появляется серым (быстро), потом наливается своим цветом.
+    if (wp >= 1) return { graphemes: word.g, scale: 1, alpha: 1 };
+    return { graphemes: word.g, scale: 1, alpha: clamp01(wp * 4), gray: 1 - ease("inOutQuad", (wp - 0.2) / 0.8) };
   }
   return { graphemes: word.g, scale: Math.max(0, ease("outBack", wp)), alpha: clamp01(wp * 3) };
 }
@@ -504,7 +556,7 @@ function drawSegs(ctx: Ctx2D, segs: Seg[], x: number, baseline: number, cy: numb
  * Как рисовать графему номер `gi` (во всём тексте, как у typewriter): сдвиг вниз `dy` (опорн. px)
  * и символ `ch` вместо неё (расшифровка); null — ещё не видна.
  */
-type CharFx = (gi: number, g: string) => { dy: number; ch: string } | null;
+type CharFx = (gi: number, g: string) => { dy: number; ch: string; alpha?: number; scale?: number } | null;
 
 /** Перебор символов расшифровки — 20 смен в секунду (не кадр превью: превью и рендер совпадают). */
 export const SCRAMBLE_RATE = 20;
@@ -531,7 +583,21 @@ export function scrambleChar(g: string, seed: number, tick: number, gi: number):
   return set[Math.floor(rand01(seed, tick * 7919 + gi * 131) * set.length) % set.length];
 }
 
-function makeCharFx(L: TextLayout, fx: TextFx, scramble: number | null): CharFx {
+function makeCharFx(L: TextLayout, fx: TextFx, scramble: number | null, letters: number | null = null): CharFx {
+  if (letters !== null) {
+    // По буквам (имя): буква падает сверху на 0.45 кегля и «оседает» из крупного (1.35 → 1),
+    // не вырастает из нуля; волна букв (цикл wave) — поверх.
+    const amp = L.size * 0.12 * fx.wave;
+    const phase = Math.PI * 2 * 0.9 * fx.waveSpeed * fx.local;
+    return (gi, g) => {
+      const lp = letterProgress(L, letters, gi);
+      if (lp <= 0) return null;
+      const wave = amp ? -amp * Math.sin(phase - gi * 0.55) : 0;
+      if (lp >= 1) return { dy: wave, ch: g };
+      const q = ease("outCubic", lp);
+      return { dy: wave - L.size * 0.45 * (1 - q), ch: g, alpha: clamp01(lp * 2.5), scale: 1 + 0.35 * (1 - q) };
+    };
+  }
   const win = scrambleWindow(L);
   const front = scramble === null ? Infinity : scrambleFront(L, scramble);
   const tick = Math.floor(fx.local * SCRAMBLE_RATE);
@@ -568,6 +634,7 @@ function drawSegsFx(
       if (v) {
         ctx.save();
         ctx.translate(0, v.dy);
+        glyphTransform(ctx, v, cx + s.w / 2, cy);
         drawSegs(ctx, [s], cx, baseline, cy, L, pass, env, cells);
         ctx.restore();
       }
@@ -579,11 +646,17 @@ function drawSegsFx(
     for (const g of graphemes(s.text)) {
       const next = measure(ctx, L.font, L.letterSpacing, prefix + g);
       const v = chars(gi++, g);
-      if (v) {
+      if (v && (v.alpha ?? 1) > 0.001) {
         // Подменённая буква — по центру ячейки настоящей: строка не «прыгает» по ширине.
         const off = v.ch === g ? 0 : (next - px - measure(ctx, L.font, L.letterSpacing, v.ch)) / 2;
+        const own = v.alpha !== undefined || v.scale !== undefined;
+        if (own) {
+          ctx.save();
+          glyphTransform(ctx, v, cx + (px + next) / 2, cy + v.dy);
+        }
         if (pass === "stroke") ctx.strokeText(v.ch, cx + px + off, baseline + v.dy);
         else ctx.fillText(v.ch, cx + px + off, baseline + v.dy);
+        if (own) ctx.restore();
       }
       prefix += g;
       px = next;
@@ -716,12 +789,16 @@ export function drawTextLayout(
 ): void {
   const left = -L.w / 2;
   const scramble = reveal?.mode === "scramble" ? reveal.fraction : null;
-  const chars = fx && (fx.wave > 0 || scramble !== null) ? makeCharFx(L, fx, scramble) : null;
+  const letters = reveal?.mode === "letters" ? reveal.fraction : null;
+  const fxOr: TextFx = fx ?? { seed: 1, local: 0, wave: 0, waveSpeed: 1, highlight: 1 };
+  const chars = (fx && (fx.wave > 0 || scramble !== null)) || letters !== null ? makeCharFx(L, fxOr, scramble, letters) : null;
+  const masked = reveal?.mode === "rise" || reveal?.mode === "slot";
+  const slotIdx = reveal?.mode === "slot" ? slotWordIndex(L, opts.highlight) : -1;
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
   const strokeW = opts.stroke && opts.stroke.width > 0 ? opts.stroke.width : 0;
   const views = L.lines.map((line) =>
-    line.words.map((w) => wordView(w, L, reveal, reveal?.mode === "rise" ? lineBand(L, line, strokeW, opts.bg) : undefined)),
+    line.words.map((w) => wordView(w, L, reveal, masked ? lineBand(L, line, strokeW, opts.bg) : undefined, slotIdx)),
   );
   // Маска rise по ширине — весь блок с запасом под обводку и эмодзи.
   const maskX = left - L.size - strokeW;
@@ -780,10 +857,30 @@ export function drawTextLayout(
         if (!v) return;
         const segs = v.graphemes < w.g ? cutSegs(w.segs, v.graphemes) : w.segs;
         const x = left + line.x0 + w.x;
-        withWordTransform(ctx, x + w.w / 2, line.cy, v, maskX, maskW, () => {
-          if (pass === "fill") ctx.fillStyle = hlColor && hlSet.has(w.index) ? rgba(hlColor) : fill;
+        const paint: string | CanvasGradient = hlColor && hlSet.has(w.index) ? rgba(hlColor) : fill;
+        const gray = v.gray ?? 0;
+        const drawWord = () => {
           if (chars) drawSegsFx(ctx, segs, x, baseline, line.cy, L, pass, env, w.gStart, chars, opts.cells);
           else drawSegs(ctx, segs, x, baseline, line.cy, L, pass, env, opts.cells);
+        };
+        withWordTransform(ctx, x + w.w / 2, line.cy, v, maskX, maskW, () => {
+          if (pass === "fill") ctx.fillStyle = gray > 0 && typeof paint === "string" ? grayMix(paint, gray) : paint;
+          if (v.reel) drawReel(ctx, w, x, baseline, L, pass, v.reel, fxOr.seed, drawWord);
+          else if (v.blur && v.blur > 0.3) {
+            // Цвет тени-размытия: заливка (у градиента — его верх) или обводка.
+            const solid = pass === "fill"
+              ? typeof paint === "string" ? paint : rgba(opts.gradient?.[0] ?? opts.color ?? "#ffffff")
+              : rgba(stroke?.color ?? "#000000");
+            drawBlurred(ctx, v.blur, gray > 0 ? grayMix(solid, gray) : solid, drawWord);
+          } else drawWord();
+          if (pass === "fill" && gray > 0 && typeof paint !== "string") {
+            // Градиент не смешать с серым — серое поверх с прозрачностью доли.
+            ctx.save();
+            ctx.globalAlpha *= gray;
+            ctx.fillStyle = grayMix(opts.gradient?.[0] ?? "#ffffff", 1);
+            drawWord();
+            ctx.restore();
+          }
         });
       });
     });
@@ -801,16 +898,17 @@ function withWordTransform(
   maskW: number,
   fn: () => void,
 ): void {
-  if (v.scale === 1 && v.alpha === 1 && !v.dy && !v.clip) {
+  if (v.scale === 1 && v.alpha === 1 && !v.dy && !v.clip && !v.blur && !v.gray && !v.reel) {
     fn();
     return;
   }
   if (v.scale <= 0.001 || v.alpha <= 0.001) return;
   ctx.save();
-  if (v.clip) {
-    // Маска строки неподвижна, слово едет под ней (rise).
+  const clip = v.clip ?? v.reel?.band;
+  if (clip) {
+    // Маска строки неподвижна, слово едет под ней (rise, барабан slot).
     ctx.beginPath();
-    ctx.rect(maskX, v.clip.top, maskW, v.clip.bottom - v.clip.top);
+    ctx.rect(maskX, clip.top, maskW, clip.bottom - clip.top);
     ctx.clip();
   }
   ctx.globalAlpha *= v.alpha;

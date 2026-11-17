@@ -370,12 +370,22 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
         _auth: auth_dep,  # type: ignore[valid-type]
         n: int = Query(8, ge=2, le=16, description="сколько кадров"),
         width: int = Query(240, ge=120, le=540, description="ширина одного кадра"),
+        mode: str = Query("even", pattern="^(even|cuts|phone)$",
+                          description="even — равномерно; cuts — −0.2/склейка/+0.2 у каждой склейки; phone — 360 px"),
+        page: int = Query(1, ge=1, le=100, description="mode cuts: страница по 8 склеек"),
     ) -> Response:
-        """Кадры равномерно по клипу с подписью времени — для агента и для проверки глазами."""
+        """Кадры равномерно по клипу с подписью времени — для агента и для проверки глазами; перед сдачей —
+        склейки (mode cuts) и лист на ширине телефона (mode phone, app/quality_lint_sheets.py)."""
         from app.motion_render import CompositorMissing, contact_sheet_jpeg
 
         try:
-            data = contact_sheet_jpeg(get_store(), clip_plan_id, n=n, width=width)
+            if mode in ("cuts", "phone"):
+                from app.quality_lint_sheets import cut_strip_jpeg, phone_sheet_jpeg
+
+                data, _info = (cut_strip_jpeg(get_store(), clip_plan_id, page=page) if mode == "cuts"
+                               else phone_sheet_jpeg(get_store(), clip_plan_id, n=n))
+            else:
+                data = contact_sheet_jpeg(get_store(), clip_plan_id, n=n, width=width)
         except CompositorMissing as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
         except KeyError as exc:

@@ -32,6 +32,15 @@
 * ``fragments`` — обрывки после вырезов (app/cuts.py ``kept_islands``): кусок короче 2.5 с или без трёх
   слов между разрывами — «момент из одного слова» (горизонталка Муры 31.10). Без медиа, по текущему плану.
 
+* Перед сдачей (журнал 17.11, идеи HyperFrames/Remotion/motionmaxxing — свой код): ``frame0`` (кадр 0 — обложка:
+  пустой, чёрный, только логотип, крючок ещё не вошёл), ``dead`` (больше 3 с без перемены — по плану, у видео основы
+  сверка с рендером), ``hold`` (кадр держится 1–1.5 с после последнего входа до склейки), ``outro`` (концовка ≤ 1.4 с и
+  ≤ 25 %) — ``app/quality_lint_delivery.py``; ``subject`` (главный объект графической сцены ≥ 1/3 высоты),
+  ``slide_chrome`` (счётчики «02/05», прогресс, угловые подписи, печатная машинка-украшение), ``zero_scale`` (рост из
+  нуля), ``entrances`` (один и тот же вход слов дважды) — ``app/quality_lint_craft.py``; ``assertions`` — проверки
+  клипа из файла (``app/quality_lint_assert.py``). У каждой находки ``priority`` P0/P1/P2 и ``line`` — одна строка
+  «P1 · t=… · где · что не так → что поменять»; ``lines`` в ответе — все строки по порядку важности.
+
 * ``sub_sync`` — субтитры против звука, без рендера. Страницы против распознанных слов (app/speech_heard.py, локальный
   whisper, один раз на набор кусков): страница раньше своих слов больше 0.6 с, позже больше 0.7 с, уплывший конец,
   слова, которых не слышно. VAD (app/speech_activity.py): строка в тишине, речь без субтитров перед строкой.
@@ -54,7 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from app.quality_lint_base import (  # noqa: F401
-    CHECKS, CHECK_ALIASES, _num, _short, normalize_checks, _finding,
+    CHECKS, CHECK_ALIASES, CHECK_LABELS, PRIORITIES, _num, _short, normalize_checks, _finding, finding_line, priority_of,
 )
 from app.quality_lint_zones import (  # noqa: F401
     W, H, MIN_PEN_PX, WARN_PEN_PX, WARN_AREA_SHARE, ZONE_GAP_PX, SAMPLE_STEP, SAMPLE_MAX, MIN_OPACITY,
@@ -224,10 +233,102 @@ def _freeze_findings(scanner: Any, path: Path, plan: dict, rs: dict, clock: Any,
     return items
 
 
-def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any = None, media: Any = "auto") -> dict:
+def _end_hold(rs: dict) -> float:
+    """Стоп-кадр в конце готового ролика, с (как render_finish._end_hold_sec)."""
+    from app.clip_settings import normalize_end_hold
+    from app.settings import settings
+
+    if not getattr(settings, "render_loudnorm", False):
+        return 0.0
+    value = normalize_end_hold(rs.get("end_hold_sec"))
+    return max(0.0, float(value if value is not None else (getattr(settings, "render_end_hold_sec", 0) or 0)))
+
+
+def _caption_mask(caption_layers: list[dict], clock: Any, rs: dict, pages_by_layer: dict, ass: dict | None) -> Any:
+    """Клетки под субтитрами (смена страницы — не «перемена картинки») — объединение по ролику."""
+    from app.formats import settings_layers_format
+    from app.quality_lint_delivery import DEAD_SIZE
+    from app.quality_lint_freeze import clip_mask_fn
+
+    mask_at = clip_mask_fn(caption_layers, clock, size=DEAD_SIZE, camera=rs.get("camera"),
+                           vertical=settings_layers_format(rs) == "9:16", caption_pages=pages_by_layer,
+                           ass=ass if rs.get("subs_on") else None, freezes=None, step=0.5)
+    if mask_at is None:
+        return None
+    union = None
+    t = 0.0
+    while t < clock.final_duration:
+        m = mask_at(t)
+        if m is not None:
+            union = m.copy() if union is None else (union | m)
+        t += 0.5
+    return union
+
+
+def delivery_findings(store: Any, plan: dict, rs: dict, clock: Any, wanted: list[str], *, path: Path | None,
+                      mode: str, caption_layers: list[dict], pages_by_layer: dict, ass: dict | None,
+                      assertions: Any, out: dict, skipped: dict) -> list[dict]:
+    """Проверки перед сдачей: кадр 0, мёртвые куски, держать кадр, концовка, ремесло графики, утверждения."""
+    from app import quality_lint_craft as C
+    from app import quality_lint_delivery as D
+    from app.formats import settings_layers_format
+    from app.promo_lint import frame_of
+
+    findings: list[dict] = []
+    duration = clock.clip_duration
+    layers = D.visual_layers(rs)
+    end_hold = _end_hold(rs)
+    with frame_of(settings_layers_format(rs)):
+        if "frame0" in wanted:
+            findings += D.frame0_plan_findings(store, plan, rs, clock)
+            if path is not None and not any(f.get("priority") == "P0" for f in findings if f["check"] == "frame0"):
+                try:
+                    findings += D.frame0_render_findings(D.first_frame_stats(path), clock.final_to_clip(0.0))
+                except Exception as exc:  # noqa: BLE001 - не прочитали первый кадр — по плану
+                    out["frame0_render"] = f"первый кадр рендера не прочитан: {str(exc)[:160]}"
+        if "dead" in wanted:
+            mask = None
+            if path is not None:
+                try:
+                    mask = _caption_mask(caption_layers, clock, rs, pages_by_layer, ass)
+                except Exception:  # noqa: BLE001 - без маски субтитров
+                    mask = None
+            findings += D.dead_findings(store, plan, rs, clock, path, caption_mask=mask, out=out)
+        if "hold" in wanted:
+            findings += D.hold_findings(rs, clock, end_hold)
+        if "outro" in wanted:
+            findings += D.outro_findings(rs, clock, end_hold)
+        if "subject" in wanted:
+            canvas = D.is_canvas_plan(store, plan)
+            if not canvas:
+                skipped["subject"] = "видео основа (геймплей, запись) — главный объект не меряется"
+            else:
+                findings += C.subject_findings(layers, duration, canvas, rs.get("camera"))
+        if "slide_chrome" in wanted:
+            findings += C.chrome_findings(layers, duration)
+        if "zero_scale" in wanted:
+            findings += C.zero_scale_findings(layers)
+        if "entrances" in wanted:
+            findings += C.entrance_findings(layers)
+        if "assertions" in wanted:
+            from app.quality_lint_assert import assertion_findings, load_assertions
+
+            items = assertions if isinstance(assertions, list) else load_assertions(int(plan["id"]))
+            if items:
+                found, info = assertion_findings(items, rs, clock)
+                findings += found
+                out["assertions"] = info
+            else:
+                skipped["assertions"] = "проверок клипа нет (lint_clip assertions + save_assertions — завести)"
+    return findings
+
+
+def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any = None, media: Any = "auto",
+              assertions: Any = None) -> dict:
     """Все проверки клипа. ``checks`` — подмножество ``CHECKS``; ``platforms`` — tiktok/reels/shorts
     (youtube/instagram; пусто — площадки проекта, нет — все три); ``media`` — auto (по готовому
-    рендеру, если он есть) | true | false. Ничего не меняет."""
+    рендеру, если он есть) | true | false; ``assertions`` — свои проверки-утверждения вместо файла
+    клипа (app/quality_lint_assert.py). Ничего не меняет."""
     from app.agent_tools import plan_clock
     from app.clip_settings import normalize_render_settings
     from app.formats import settings_layers_format, settings_render_format
@@ -289,7 +390,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
 
     mode = _media_flag(media)
     clip, path = (None, None)
-    if mode != "no" and ("flashes" in wanted or "loop" in wanted or "freezes" in wanted):
+    if mode != "no" and any(c in wanted for c in ("flashes", "loop", "freezes", "frame0", "dead")):
         clip, path = _latest_render_file(store, clip_plan_id)
         if clip is not None:
             # Два номера с подписями: render_clip_id (готовый рендер в базе) и render_job_id (задание render_clip).
@@ -431,30 +532,40 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
             except Exception as exc:  # noqa: BLE001 - нет файлов/ffmpeg — скажем, не упадём
                 skipped["audio_mix"] = f"сведение не измерено: {str(exc)[:200]}"
 
+    if any(c in wanted for c in ("frame0", "dead", "hold", "outro", "subject", "slide_chrome", "zero_scale",
+                                 "entrances", "assertions")):
+        findings += delivery_findings(store, plan, rs, clock, wanted, path=path, mode=mode,
+                                      caption_layers=caption_layers, pages_by_layer=pages_by_layer, ass=ass,
+                                      assertions=assertions, out=out, skipped=skipped)
+
     for item in findings:
         if "t" in item and "final_t" not in item:
             try:
                 item["final_t"] = round(clock.clip_to_final(item["t"]), 2)
             except Exception:  # noqa: BLE001
                 pass
+        item["priority"] = priority_of(item)
+        item["line"] = finding_line(item)
     order = {"warn": 0, "info": 1}
-    findings.sort(key=lambda f: (order.get(f["severity"], 2), CHECKS.index(f["check"]), f.get("t", 0.0)))
+    findings.sort(key=lambda f: (PRIORITIES.index(f["priority"]), order.get(f["severity"], 2), CHECKS.index(f["check"]),
+                                 f.get("t", 0.0)))
     counts = {"warn": sum(f["severity"] == "warn" for f in findings), "info": sum(f["severity"] == "info" for f in findings)}
+    by_priority = {p: sum(f["priority"] == p for f in findings) for p in PRIORITIES}
     by_check = {c: sum(f["check"] == c for f in findings) for c in wanted}
-    out.update(checks=wanted, findings=findings, counts=counts, by_check=by_check, skipped=skipped,
-               summary=summary_text(counts, by_check, skipped))
+    out.update(checks=wanted, findings=findings, counts=counts, by_priority=by_priority, by_check=by_check,
+               skipped=skipped, lines=[f["line"] for f in findings],
+               summary=summary_text(counts, by_check, skipped, by_priority))
     return out
 
 
-def summary_text(counts: dict, by_check: dict, skipped: dict) -> str:
-    labels = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "freezes": "застывшие куски",
-              "loop": "луп",
-              "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки", "sub_sync": "субтитры и голос",
-              "voice": "озвучка"}
+def summary_text(counts: dict, by_check: dict, skipped: dict, by_priority: dict | None = None) -> str:
+    labels = CHECK_LABELS
     if not counts.get("warn") and not counts.get("info"):
         head = "замечаний нет"
     else:
         head = f"предупреждений {counts.get('warn', 0)}, подсказок {counts.get('info', 0)}"
+        if by_priority and any(by_priority.values()):
+            head += " [" + ", ".join(f"{p}: {n}" for p, n in by_priority.items() if n) + "]"
         parts = [f"{labels[c]} {n}" for c, n in by_check.items() if n]
         if parts:
             head += " (" + ", ".join(parts) + ")"
@@ -467,4 +578,6 @@ def brief(result: dict, limit: int = 8) -> dict:
     """Коротко для карточки одобрения и ответа submit_for_approval: счётчики и главные предупреждения."""
     warns = [f for f in result.get("findings") or [] if f.get("severity") == "warn"]
     return {"counts": result.get("counts") or {}, "summary": result.get("summary") or "",
-            "warnings": [f["message"] + (f" → {f['fix']}" if f.get("fix") else "") for f in warns[:limit]]}
+            "by_priority": result.get("by_priority") or {},
+            "warnings": [f["message"] + (f" → {f['fix']}" if f.get("fix") else "") for f in warns[:limit]],
+            "lines": [f.get("line") or f["message"] for f in warns[:limit]]}
