@@ -103,3 +103,11 @@ def test_context_names_the_clip_song():
     store.get_audio_track = lambda track_id: {"id": track_id, "label": "RUZLXN — BURN YOUR LOCAL POLITICIAN!"}
     assert clip_context(store, store.clip)["music"] == "RUZLXN — BURN YOUR LOCAL POLITICIAN!"
     assert "music" not in clip_context(FakeStore(), FakeStore().clip)
+
+
+def test_hashtags_drop_model_garbage_and_overlong():
+    from app.ai.publish_meta import _clean_hashtags
+
+    raw = ["#лифт", "#блэкаутlocal_tag_1_placeholder_for_schema_validation_or_similar_if_needed_just_tags_in_russian_no_spaces_lowercase_блэкаут",
+           "#" + "а" * 40, "#страшилка"]
+    assert _clean_hashtags(raw) == ["#лифт", "#страшилка"]

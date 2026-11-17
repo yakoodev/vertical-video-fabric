@@ -211,11 +211,18 @@ def clean_tag(tag: Any) -> str:
     return _TAG_JUNK.sub("", t)
 
 
+_TAG_MAX = 30
+# Модель иногда выдаёт служебный мусор вместо тега («…placeholder_for_schema_validation…», 17.11, клип 964).
+_TAG_GARBAGE = re.compile(r"placeholder|schema|validation|local_tag|example|todo|_if_|_or_", re.I)
+
+
 def _clean_hashtags(raw: Any) -> list[str]:
     out: list[str] = []
     for tag in raw if isinstance(raw, list) else []:
         t = clean_tag(tag)
-        if t and f"#{t}" not in out:
+        if not t or len(t) > _TAG_MAX or _TAG_GARBAGE.search(t):
+            continue
+        if f"#{t}" not in out:
             out.append(f"#{t}")
     return out[:10]
 
