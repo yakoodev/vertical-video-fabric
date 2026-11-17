@@ -169,8 +169,18 @@ def iter_base_frames(store: Any, plan: dict, setup: dict, start: float, end: flo
         # Кадры на сетке 1/fps от начала куска: fps в графе основы их не двигает.
         offset = math.ceil((lo - a_clip) * fps - 1e-6) / fps
         count = max(1, int(math.floor((hi - a_clip - offset) * fps - 1e-6)) + 1)
-        graph, path = _piece_graph(store, plan, setup, segment, fps)
-        args = base_frames_args(graph, path, float(segment["start_sec"]) + offset, offset, count, fps, dw, dh)
+        # Скорость куска (set_segment_speed): шаг 1/fps шкалы clip — это speed/fps секунд записи, как в рендере
+        # (app/piece_speed.to_source). Реверс по кадрам вперёд не прочитать — трек по нему не ведём.
+        from app.piece_speed import is_reversed, seg_speed
+
+        if is_reversed(segment):
+            raise TrackError(f"кусок {index} идёт задом наперёд (set_segment_speed reverse) — трек по нему не ведётся",
+                             ["трек на соседнем куске или без реверса"])
+        speed = seg_speed(segment)
+        src_fps = fps / speed
+        graph, path = _piece_graph(store, plan, setup, segment, src_fps)
+        args = base_frames_args(graph, path, float(segment["start_sec"]) + offset * speed, offset * speed, count,
+                                src_fps, dw, dh)
         got = 0
         with tempfile.TemporaryFile() as errlog:
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=errlog)

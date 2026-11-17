@@ -82,6 +82,10 @@ def h_suggest_surfaces(ctx: ToolContext, args: dict) -> Any:
                  "Дальше — track_surface(t, quad, text)")}
     if not cands:
         info["note"] = "ровной фактурной поверхности у центра не нашлось — другой момент или quad руками"
+    if setup.get("band"):
+        # Раскладка «полоса» (meme): искали в видео полосы, координаты — доли всего кадра, как у view_frame.
+        info["band"] = setup["band"]
+        info["note"] += "; раскладка «полоса»: окна — внутри видео полосы (доли всего кадра)"
     data = WT.draw_candidates(img, cands)
     return ImageResult(data=data, mime_type="image/jpeg", info=info) if data else info
 
