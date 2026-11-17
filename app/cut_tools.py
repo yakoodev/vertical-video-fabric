@@ -184,6 +184,8 @@ def tools() -> list[Tool]:
             "(0.3 с), frag — смесь по склейкам (в основном срез, панели и искры акцентами; свой порядок — kinds). "
             "angle — направление среза в градусах (0 вправо, 90 вниз; нет — по движению камеры), color — цвет "
             "кромки #rrggbb, panels — 2 или 3. Середина перехода — точка склейки (snap_to_beats ставит её в долю). "
+            "scope — в раскладке «полоса» (meme): band (по умолчанию) — вспышка/вжух/наплыв только в полосе видео, "
+            "поля, фон и титры меняются встык; frame — во весь кадр. "
             "/ Transition between pieces.",
             _obj({"type": {"type": "string"}, "duration": {"type": "number"}, "sfx": {"type": "string"},
                   "sfx_volume": {"type": "number"}, "audio": {"type": "string"}, "smart": {"type": "boolean"},
@@ -193,6 +195,8 @@ def tools() -> list[Tool]:
                   "kinds": {"type": "array", "items": {"type": "string"},
                             "description": "frag: виды по склейкам по кругу (slash/panels/sparks)"},
                   "panels": {"type": "integer", "description": "panels: 2 или 3 полосы"},
+                  "scope": {"type": "string", "enum": ["band", "frame"],
+                            "description": "раскладка «полоса»: переход только в полосе видео (band) или во весь кадр"},
                   "fit_speech": {"type": "boolean", "description": "укоротить переход, чтобы не задевал слова"}}),
             h_set_transition, mutating=True, label=lambda a: f"Переход {a.get('type') or ''} {a.get('sfx') or ''}".strip(),
         ),

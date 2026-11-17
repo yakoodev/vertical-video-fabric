@@ -1,7 +1,9 @@
 // Компоновщик: окружение движка и рисование одного кадра.
 import { createCanvas, ImageData, type Image } from "@napi-rs/canvas";
 import {
+  camAffine,
   cameraMatrix,
+  frameCameraMatrix,
   cameraBlurTimes,
   clipAccent,
   drawFrame,
@@ -105,7 +107,7 @@ export function makePainter(comp: Composition, env: RenderEnv): Painter {
             if (use3d) drawBasePlane(target, env, fc, camera3dAt(comp.camera, tt), m, unit);
             else {
               target.save();
-              if (!isIdentityCamera(m)) target.transform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+              if (!isIdentityCamera(m)) target.transform(...camAffine(m));
               target.imageSmoothingEnabled = true;
               target.imageSmoothingQuality = "high";
               target.drawImage(fc, 0, 0, W, H, 0, 0, W, H);
@@ -155,13 +157,13 @@ export function makePainter(comp: Composition, env: RenderEnv): Painter {
             // вебки стоят на месте (раньше зум увеличивал весь собранный кадр с окошком).
             target.drawImage(fc, 0, 0, W, H, 0, 0, W, H);
             const box = comp.cameraBox ?? { x: 0, y: 0, w: W, h: H };
-            const bm = cameraMatrix(comp.camera, tt, box.w, box.h);
+            const bm = frameCameraMatrix(comp.camera, tt, W, H, box);
             target.save();
             target.beginPath();
             target.rect(box.x, box.y, box.w, box.h);
             target.clip();
-            // Камера внутри окна: точка окна (u, v) → (box.x + s·u + tx, box.y + s·v + ty).
-            target.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
+            // Камера внутри окна (полоса meme, окно игры split): зум, сдвиг и крен — только в нём.
+            target.setTransform(...camAffine(bm));
             target.imageSmoothingEnabled = true;
             target.imageSmoothingQuality = "high";
             target.drawImage(fc, 0, 0, W, H, 0, 0, W, H);
@@ -172,7 +174,7 @@ export function makePainter(comp: Composition, env: RenderEnv): Painter {
           } else {
             // Зум ≥ 1 и центр зажат — кадр основы всегда закрывает холст целиком.
             target.save();
-            target.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+            target.setTransform(...camAffine(m));
             target.imageSmoothingEnabled = true;
             target.imageSmoothingQuality = "high";
             target.drawImage(fc, 0, 0, W, H, 0, 0, W, H);

@@ -35,6 +35,11 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
             transition[key] = args[key]
     if args.get("smart") is not None:
         transition["smart"] = bool(args["smart"])
+    if args.get("scope") is not None:
+        # Раскладка «полоса» (meme): переход только в полосе видео или во весь кадр (app/transitions.py).
+        if str(args["scope"]) not in ("band", "frame"):
+            problems.append("scope: band (только в полосе видео) или frame (во весь кадр)")
+        transition["scope"] = args["scope"]
     from app.transitions import FX_DURATIONS
 
     if args.get("type") in FX_DURATIONS and args["type"] != (render.get("transition") or {}).get("type") \

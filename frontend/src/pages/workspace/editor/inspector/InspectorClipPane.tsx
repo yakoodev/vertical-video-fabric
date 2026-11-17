@@ -265,6 +265,19 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
             />
           </label>
         ) : null}
+        {transition.type !== "cut" && layout?.mode === "meme" ? (
+          <label className="field" title="Раскладка «полоса»: вспышка, вжух и наплыв — только в полосе видео или во весь кадр.">
+            <span>Где идёт переход</span>
+            <select
+              className="input"
+              value={transition.scope ?? "band"}
+              onChange={(e) => patchTransition({ scope: e.target.value as TransitionSettings["scope"] })}
+            >
+              <option value="band">в полосе видео</option>
+              <option value="frame">во весь кадр</option>
+            </select>
+          </label>
+        ) : null}
         <label className="field">
           <span>Звук на стыке</span>
           <select

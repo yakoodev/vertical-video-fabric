@@ -448,9 +448,31 @@ export function pipBox(
 }
 
 /**
+ * Полоса видео раскладки meme в px рендера `out` (как app/stream_layout.meme_box), обрезана по кадру;
+ * null — видео закрывает весь кадр.
+ */
+export function memeBox(
+  layout: StreamLayout,
+  srcW: number,
+  srcH: number,
+  out: { w: number; h: number } = { w: 1080, h: 1920 },
+): LayoutRect | null {
+  const top = layout.video_y > 0 ? evenPx(layout.video_y * out.h) : 0;
+  const vidW = evenPx(out.w * (layout.video_scale || 1));
+  const vidH = evenPx((vidW * (srcH || 9)) / Math.max(1e-6, srcW || 16));
+  const x0 = Math.max(0, Math.floor((out.w - vidW) / 2));
+  const y0 = Math.max(0, top);
+  const x1 = Math.min(out.w, x0 + Math.min(out.w, vidW));
+  const y1 = Math.min(out.h, top + vidH);
+  if (x1 <= x0 || y1 <= y0 || (x0 === 0 && y0 === 0 && x1 === out.w && y1 === out.h)) return null;
+  return { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+}
+
+/**
  * Где камера (наезды) двигает кадр при раскладке — как app/stream_layout.camera_regions,
  * в px холста W×H: `box` — окно игры, `pinned` — окошко вебки, оно стоит на месте.
- * null — single/meme: камера двигает весь кадр.
+ * meme («полоса»): `box` — полоса видео (как drawLayoutFrame), камера двигает и кренит только её.
+ * null — single (или видео meme на весь кадр): камера двигает весь кадр.
  */
 export function cameraRegions(
   layout: StreamLayout | null | undefined,
@@ -460,7 +482,14 @@ export function cameraRegions(
   H: number,
   out: { w: number; h: number } = { w: 1080, h: 1920 },
 ): { box: LayoutRect; pinned: LayoutRect[] } | null {
-  if (!layout || (layout.mode !== "split" && layout.mode !== "pip_cam")) return null;
+  if (!layout || (layout.mode !== "split" && layout.mode !== "pip_cam" && layout.mode !== "meme")) return null;
+  if (layout.mode === "meme") {
+    const b = memeBox(layout, srcW, srcH, out);
+    if (!b) return null;
+    const kx = W / out.w;
+    const ky = H / out.h;
+    return { box: { x: b.x * kx, y: b.y * ky, w: b.w * kx, h: b.h * ky }, pinned: [] };
+  }
   if (layout.mode === "split") {
     const { camH, gap, gameH } = splitGeometry(layout, out.h);
     const k = H / out.h;

@@ -333,6 +333,37 @@ test("камера: зум 1..4, центр зажат так, что окно �
   assert.ok(E.isIdentityCamera(E.cameraMatrix([], 0, 1080, 1920)));
 });
 
+test("камера roll: крен вокруг центра окна, кадр доприближен — углы экрана не выходят за кадр основы", () => {
+  const W = 1080;
+  const H = 1920;
+  const inv = (m, x, y) => {
+    const [a, b, c, d, e, f] = E.camAffine(m);
+    const det = a * d - b * c;
+    return [(d * (x - e) - c * (y - f)) / det, (-b * (x - e) + a * (y - f)) / det];
+  };
+  // Без крена — ровно прежняя матрица.
+  assert.deepEqual(E.camAffine(E.cameraMatrix([{ t: 0, zoom: 2, x: 0.3, y: 0.6 }], 0, W, H)).slice(1, 3), [0, 0]);
+  for (const keys of [[{ t: 0, roll: 8 }], [{ t: 0, zoom: 1.4, x: 0.2, y: 0.8, roll: -12 }], [{ t: 0, zoom: 3, x: 1, y: 0, roll: 30 }]]) {
+    const m = E.cameraMatrix(keys, 0, W, H);
+    assert.ok(Math.abs(m.rot) > 0, "крен в матрице");
+    for (const [x, y] of [[0, 0], [W, 0], [0, H], [W, H]]) {
+      const [u, v] = inv(m, x, y);
+      assert.ok(u >= -0.5 && u <= W + 0.5 && v >= -0.5 && v <= H + 0.5, `угол ${x},${y} → ${u},${v} вне кадра`);
+    }
+  }
+  near(E.rollCover(5, W, H), Math.cos((5 * Math.PI) / 180) + Math.sin((5 * Math.PI) / 180) * (H / W));
+  near(E.cameraRollAt([{ t: 0, roll: 0, ease: "linear" }, { t: 2, roll: 10 }], 1), 5);
+  near(E.cameraRollAt([{ t: 0, roll: 99 }], 0), E.ROLL_LIMIT);
+  assert.ok(!E.isIdentityCamera(E.cameraMatrix([{ t: 0, roll: 3 }], 0, W, H)));
+  // Внутри окна (полоса meme): углы окна → внутрь окна.
+  const box = { x: 0, y: 200, w: 1080, h: 608 };
+  const bm = E.frameCameraMatrix([{ t: 0, zoom: 1.3, roll: 10 }], 0, W, H, box);
+  for (const [x, y] of [[0, 200], [1080, 200], [0, 808], [1080, 808]]) {
+    const [u, v] = inv(bm, x, y);
+    assert.ok(u >= -0.5 && u <= 1080.5 && v >= 199.5 && v <= 808.5, `угол окна ${x},${y} → ${u},${v}`);
+  }
+});
+
 test("камера anchor in_place: точка наезда стоит на месте, кадр не открывает край; по умолчанию — прежний центр", () => {
   const W = 1920;
   const H = 1080;
@@ -962,6 +993,37 @@ test("CLI: наезд в раскладке pip — окошко одно: ка�
   const info = ffprobe(out);
   assert.equal(info.height, H);
   assert.equal(Number(info.nb_read_frames), 30);
+});
+
+test("CLI: раскладка «полоса» (meme) — наезд и крен только внутри полосы, поля и фон стоят", async () => {
+  // Кадр 270×480: чёрные поля, полоса видео (зелёная с красной рамкой) на y 48..200.
+  const W = 270;
+  const H = 480;
+  const band = { x: 0, y: 48, w: 270, h: 152 };
+  const file = join(tmp, "meme-band.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=black:size=${W}x${H}:rate=30`, "-t", "1",
+    "-vf", `drawbox=x=0:y=${band.y}:w=${band.w}:h=${band.h}:color=0xff0000:t=fill,drawbox=x=8:y=${band.y + 8}:w=${band.w - 16}:h=${band.h - 16}:color=0x00ff00:t=fill`,
+    "-pix_fmt", "yuv420p", file], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const camera = [{ t: 0, zoom: 1.5, x: 0.5, y: 0.5, roll: 12 }];
+  const p = writeInputs("meme-band", { width: W, height: H, fps: 30, duration: 1, layers: [], camera, cameraBox: band });
+  const png = join(tmp, "meme-band.png");
+  const r = run(["--comp", p.comp, "--assets", p.assets, "--input", file, "--frame", "0.5", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  const cv = createCanvas(W, H);
+  const ctx = cv.getContext("2d");
+  ctx.drawImage(await loadImage(readFileSync(png)), 0, 0);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const px = (x, y) => [...d.slice((y * W + x) * 4, (y * W + x) * 4 + 3)];
+  // Вне полосы — чёрное поле как было (зум всего кадра увеличил бы и полосу на поля).
+  for (const [x, y] of [[135, 20], [135, 44], [135, 206], [135, 400], [5, 300]]) {
+    assert.ok(px(x, y).every((c) => c < 40), `поле ${x},${y} = ${px(x, y)}`);
+  }
+  // Внутри полосы — зумленное видео: при 1.5× и крене красная рамка уходит за край полосы, всё зелёное.
+  for (const [x, y] of [[4, 52], [266, 52], [4, 196], [266, 196], [135, 124]]) {
+    const [rr, gg] = px(x, y);
+    assert.ok(gg > 150 && rr < 120, `полоса ${x},${y} = ${px(x, y)}`);
+  }
 });
 
 test("CLI: стоп-кадр посреди ролика (comp.freezes) — слои и камера стоят, после вставки идут со сдвигом", () => {

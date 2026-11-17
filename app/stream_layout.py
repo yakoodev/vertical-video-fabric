@@ -382,7 +382,7 @@ def gameplay_height(layout: object, width: int, height: int) -> int:
 
 def camera_regions(
     layout: object, width: int, height: int, src_w: float | None = None, src_h: float | None = None,
-    mirror: bool = False,
+    mirror: bool = False, crop: dict | None = None,
 ) -> dict | None:
     """Где камера (наезды) двигает кадр при раскладке стрима — в пикселях выхода.
 
@@ -390,10 +390,19 @@ def camera_regions(
     игрой и уезжало за край. Компоновщик (node/motion-render.ts) рисует камеру только
     внутри ``box`` (окно игры), а прямоугольники ``pinned`` (окошко pip) кладёт поверх
     из незумленного кадра. ``{"box": {x,y,w,h}, "pinned": [{x,y,w,h}]}`` или None
-    (single/meme — камера двигает весь кадр, как раньше)."""
-    if not isinstance(layout, dict) or layout.get("mode") not in ("split", "pip_cam"):
+    (single — камера двигает весь кадр, как раньше).
+
+    ``meme`` («полоса»: видео полосой на фоне): ``box`` — полоса видео (как ``render._layout_filter``, ``crop`` —
+    обрезка полей исходника): наезд, сдвиг и крен камеры — внутри полосы, фон, поля и титры стоят (пилот 17.11:
+    зум увеличивал весь кадр вместе с чёрными полями). Видео закрывает весь кадр — None, как раньше."""
+    if not isinstance(layout, dict) or layout.get("mode") not in ("split", "pip_cam", "meme"):
         return None
     layout = normalize_layout(layout)
+    if layout["mode"] == "meme":
+        box = meme_box(layout, width, height, src_w, src_h, crop)
+        if box is None:
+            return None
+        return {"box": box, "pinned": []}
     if layout["mode"] == "split":
         cam_h, gap, game_h = split_geometry(layout, height, width)
         top = layout["cam_pos"] != "bottom"
@@ -414,6 +423,23 @@ def camera_regions(
     rect["w"] = min(int(width) - rect["x"], int(w) + 2 * pad)
     rect["h"] = min(int(height) - rect["y"], int(h) + 2 * pad)
     return {"box": {"x": 0, "y": 0, "w": int(width), "h": int(height)}, "pinned": [rect]}
+
+
+def meme_box(layout: dict, width: int, height: int, src_w: float | None = None, src_h: float | None = None,
+             crop: dict | None = None) -> dict | None:
+    """Полоса видео раскладки meme в px выхода (обрезана по кадру): во всю ширину × ``video_scale`` по центру,
+    верх на ``video_y``, высота по пропорции картинки после обрезки полей. Видео на весь кадр — None."""
+    layout = normalize_layout(layout)
+    top = even_px(float(layout["video_y"]) * height) if float(layout["video_y"]) > 0 else 0
+    video_w = even_px(width * float(layout.get("video_scale") or 1.0))
+    c = crop if isinstance(crop, dict) else {}
+    aspect = (float(src_h or 9) * float(c.get("h") or 1.0)) / max(1e-6, float(src_w or 16) * float(c.get("w") or 1.0))
+    video_h = even_px(video_w * aspect)
+    x0, y0 = max(0, (int(width) - video_w) // 2), max(0, top)
+    x1, y1 = min(int(width), x0 + min(int(width), video_w)), min(int(height), top + video_h)
+    if x1 <= x0 or y1 <= y0 or (x0 == 0 and y0 == 0 and x1 == int(width) and y1 == int(height)):
+        return None
+    return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
 
 
 # Горизонтальный кадр (16:9): вебка — окошком в углу. Ширина окошка из split — доля ширины

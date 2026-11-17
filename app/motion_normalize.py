@@ -486,7 +486,7 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
     for index, item in enumerate(raw[:MAX_CAMERA_KEYS]):
         where = f"camera[{index}]"
         if not isinstance(item, dict):
-            rep(where, "нужен объект {t, zoom, x, y, ease?, shake?, anchor?}")
+            rep(where, "нужен объект {t, zoom, x, y, ease?, shake?, anchor?, roll?}")
             continue
         if _finite(item.get("t")) is None:
             rep(f"{where}.t", "нужно число — ключ отброшен")
@@ -507,6 +507,13 @@ def _normalize_camera(raw: Any, rep: _Report) -> list[dict]:
                 rep(f"{where}.anchor", f"одно из {', '.join(CAMERA_ANCHORS)} — взят center")
             elif anchor == "in_place":
                 key["anchor"] = "in_place"
+        if item.get("roll") not in (None, 0):
+            # Крен (2D-поворот кадра вокруг центра окна камеры): только если задан — старые ключи прежние.
+            from app.motion_limits import CAMERA_ROLL_LIMIT
+
+            roll = Num(0, -CAMERA_ROLL_LIMIT, CAMERA_ROLL_LIMIT, 2).norm(item["roll"], rep, f"{where}.roll")
+            if roll:
+                key["roll"] = roll
         if item.get("shake") not in (None, 0):
             shake = Num(0, 0, 1, 3).norm(item["shake"], rep, f"{where}.shake")
             if shake > 0:

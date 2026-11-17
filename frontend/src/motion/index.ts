@@ -30,6 +30,11 @@ export {
   drawCameraFrame,
   frameCameraMatrix,
   inPlaceCenter,
+  camAffine,
+  applyCam,
+  cameraRollAt,
+  rollCover,
+  ROLL_LIMIT,
   type CameraState,
   type CameraMatrix,
 } from "./camera";

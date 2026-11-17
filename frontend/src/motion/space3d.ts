@@ -23,7 +23,7 @@
  * времени и ключей: превью и рендер совпадают кадр в кадр.
  */
 import { clamp, DEFAULT_EASE, ease, lerp } from "./easing";
-import type { CameraMatrix } from "./camera";
+import { applyCam, type CameraMatrix } from "./camera";
 import type { CameraKey, Ctx2D, RenderEnv, ScratchCanvas } from "./types";
 
 /** Поле зрения по вертикали по умолчанию, градусы; пределы — FOV_MIN..FOV_MAX. */
@@ -111,6 +111,7 @@ export function makeProjector(cam: Camera3D | null, W: number, H: number, unit: 
   const s2 = m2d?.scale ?? 1;
   const tx = m2d?.tx ?? 0;
   const ty = m2d?.ty ?? 0;
+  const rolled = m2d && m2d.rot ? m2d : null;
   return (x, y, z) => {
     // Облёт (вокруг вертикали), затем наклон (вокруг горизонтали).
     const x1 = x * cy - z * sy;
@@ -120,6 +121,8 @@ export function makeProjector(cam: Camera3D | null, W: number, H: number, unit: 
     const depth = L + z2;
     if (depth < NEAR * f0) return null;
     const k = f / depth;
+    // Плоский наезд с креном (roll) — полной матрицей; без крена — как было.
+    if (rolled) return applyCam(rolled, W / 2 + x1 * k, H / 2 + y2 * k);
     return [s2 * (W / 2 + x1 * k) + tx, s2 * (H / 2 + y2 * k) + ty];
   };
 }

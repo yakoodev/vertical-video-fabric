@@ -255,6 +255,8 @@ export interface TransitionSettings {
   kinds?: FxTransitionKind[];
   /** panels: 2 или 3 полосы. */
   panels?: 2 | 3;
+  /** Раскладка «полоса» (meme): переход только в полосе видео (band, по умолчанию) или во весь кадр (frame). */
+  scope?: "band" | "frame";
 }
 
 /** Clip cover: a frame of the clip or an uploaded picture, optionally burned in first. */

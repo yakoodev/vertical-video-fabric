@@ -18,7 +18,7 @@ import { clamp01, ease } from "../easing";
 import { fontString } from "../fonts";
 import { resolveLayer, type LayerState } from "../animate";
 import { envBuffer, warpImage } from "../space3d";
-import type { CameraMatrix } from "../camera";
+import { applyCam, type CameraMatrix } from "../camera";
 import type { Ctx2D, RenderEnv, TrackData, TrackedTextLayer, TrailLayer } from "../types";
 import { layerUnit, refSize } from "../types";
 import { rgba } from "./common";
@@ -130,7 +130,7 @@ function project(m: Mat3, u: number, v: number): Pt | null {
 }
 
 function camPt(cam: CameraMatrix | null, x: number, y: number): Pt {
-  return cam ? [cam.scale * x + cam.tx, cam.scale * y + cam.ty] : [x, y];
+  return cam ? applyCam(cam, x, y) : [x, y];
 }
 
 /* ---------- tracked_text ---------- */

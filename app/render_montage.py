@@ -18,7 +18,7 @@ from app.render_presets import (
     pin_band,
 )
 from app.settings import settings
-from app.transitions import build_join_args, is_plain_concat, normalize_transition, part_overlaps
+from app.transitions import build_join_args, is_plain_concat, normalize_transition, part_overlaps, transition_region
 
 
 class MontageRender:
@@ -355,6 +355,9 @@ class MontageRender:
                         jump_joins=jumps,
                         jl=jl,
                         fx_clips=fx_clips,
+                        # Раскладка «полоса» (meme): вспышка/вжух — только в полосе видео (transition.scope).
+                        region=transition_region(join, preset.get("layout"), int(preset.get("output_width") or 1080),
+                                                 int(preset.get("output_height") or 1920), source, parts),
                     ),
                     timeout=60 * 30,
                 )
