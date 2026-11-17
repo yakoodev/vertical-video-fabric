@@ -8,7 +8,7 @@
  * холст размером со свою рамку и уже оттуда кладётся в кадр.
  */
 import { isLayerActive, layerDuration, resolveLayer, type LayerState } from "./animate";
-import { frameCameraMatrix, isIdentityCamera, type CameraMatrix } from "./camera";
+import { applyCam, camAffine, frameCameraMatrix, isIdentityCamera, type CameraMatrix } from "./camera";
 import { hashString } from "./keys";
 import { blurSamples, maxTravel, MOTION_BLUR_THRESHOLD, paintLayerBlur, shutterTimes, shutterValue } from "./motionblur";
 import { sceneTravel } from "./scene/render";
@@ -276,7 +276,7 @@ function paintScene(
     // Слой едет и зумится вместе с видео: та же матрица, что у кадра основы
     // (с хромакеем — во весь кадр, в раскладке стрима — внутри окна игры).
     ctx.save();
-    ctx.transform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+    ctx.transform(...camAffine(cam));
     drawLayer(ctx, layer, t, env, data);
     ctx.restore();
     return;
@@ -588,7 +588,7 @@ function layerCorners(layer: Layer, st: LayerState, size: { w: number; h: number
   const cx = st.x * W;
   const cy = st.y * H;
   const pts = local.map(([dx, dy]) => [cx + dx, cy + dy]);
-  if (layer.followCamera && cam) return pts.map(([x, y]) => [cam.scale * x + cam.tx, cam.scale * y + cam.ty]);
+  if (layer.followCamera && cam) return pts.map(([x, y]) => applyCam(cam, x, y));
   return pts;
 }
 
@@ -834,7 +834,7 @@ export function layerBox(
   ctx.save();
   const size = r.measure(ctx, layer, st, env, frame);
   ctx.restore();
-  let z = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
+  let z: CameraMatrix = cam && layer.followCamera ? cam : { scale: 1, tx: 0, ty: 0 };
   let cx = st.x * env.width;
   let cy = st.y * env.height;
   if (has3dFields(layer)) {
@@ -846,12 +846,14 @@ export function layerBox(
     cy = pl.cy;
   }
   const k = layerUnit(env) * st.scale * z.scale;
+  const [px, py] = applyCam(z, cx, cy);
   return {
-    cx: cx * z.scale + z.tx,
-    cy: cy * z.scale + z.ty,
+    cx: px,
+    cy: py,
     w: size.w * k,
     h: size.h * k,
-    rotation: st.rotation,
+    // Крен камеры (roll) поворачивает и слой followCamera.
+    rotation: st.rotation + ((z.rot ?? 0) * 180) / Math.PI,
   };
 }
 

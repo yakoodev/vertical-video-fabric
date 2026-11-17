@@ -21,6 +21,7 @@ import { clearShadow, fillRoundRect, rgba, roundRectPath, type FrameInfo, type L
 import { deviceScale } from "./counter";
 import { drawEmoji } from "./image";
 import { capHeight, envFont, measure, setLetterSpacing, textCacheGeneration } from "./text";
+import { splitPhrase } from "./phrasing";
 
 /* ---------- пресеты ---------- */
 
@@ -334,8 +335,9 @@ function packLines(widths: number[], space: number, maxW: number): { line: numbe
 const pageCache = new WeakMap<object, WeakMap<object, { key: string; pages: CaptionPage[] }>>();
 
 /**
- * Разбить слова окна [from, to) на страницы: по `maxWords`, по ширине и числу
- * строк, по паузам > 0.6 с и по концу предложения.
+ * Разбить слова окна [from, to) на страницы: фразы — по паузам > 0.6 с, концу предложения и
+ * смене голоса; внутри фразы — по смыслу (phrasing.ts): `maxWords`, ширина и число строк,
+ * запятые и паузы, не после предлога/союза.
  */
 export function captionPages(
   ctx: Ctx2D,
@@ -397,35 +399,21 @@ export function captionPages(
   }
   if (cur.length) phrases.push(cur);
 
-  // 2) Фраза — на страницы поровну (4 слова при maxWords 3 → 2 + 2, а не 3 + 1:
-  // одинокое слово в конце фразы выглядит обрывком), 3) широкую страницу — жадно по ширине.
-  // Слово с эмфазой занимает в строке столько, сколько рисуется (× свой масштаб).
+  // 2) Фраза — на страницы по смыслу (phrasing.ts, зеркало ASS): разрыв по запятой и паузе, не после
+  // предлога/союза, страница ≥ 1 с, примерно поровну (4 слова при maxWords 3 — 2 + 2, а не 3 + 1),
+  // каждая помещается в maxLines строк. Слово с эмфазой занимает в строке столько, сколько рисуется.
   const fits = (g: Item[]) => packLines(g.map((x) => x.w * x.es), space, maxW).lines.length <= r.maxLines;
   const groups: Item[][] = [];
   for (const ph of phrases) {
-    const count = Math.ceil(ph.length / r.maxWords);
-    const base = Math.floor(ph.length / count);
-    let extra = ph.length % count;
-    let pos = 0;
-    for (let k = 0; k < count; k++) {
-      const size = base + (extra > 0 ? 1 : 0);
-      if (extra > 0) extra--;
-      const chunk = ph.slice(pos, pos + size);
-      pos += size;
-      if (fits(chunk)) {
-        groups.push(chunk);
-        continue;
-      }
-      let part: Item[] = [];
-      for (const it of chunk) {
-        if (part.length && !fits([...part, it])) {
-          groups.push(part);
-          part = [];
-        }
-        part.push(it);
-      }
-      if (part.length) groups.push(part);
-    }
+    const pages = splitPhrase(
+      ph.map((x) => x.raw),
+      ph.map((x) => x.t0),
+      ph.map((x) => x.t1),
+      r.maxWords,
+      (i, j) => fits(ph.slice(i, j)),
+      HOLD,
+    );
+    for (const page of pages) groups.push(page.map((k) => ph[k]));
   }
   ctx.restore();
 

@@ -300,12 +300,12 @@ def test_verify_switches_only_the_heard_word_to_silence_then_noise(tmp_path, mon
         return [{"word": "блять", "start": 1.35, "end": 1.65}]  # «блять» узнаётся всегда, «сука» — нет
 
     calls = _mock_rounds(monkeypatch, store, plan, hearing)
-    out = censor.verify_plan(store, plan["id"])  # новый клип — reverse по умолчанию
-    # Уровни 1→2→3 (max_rounds 3), потом сверх них — смена стиля только у «блять»: silence, noise.
+    out = censor.verify_plan(store, plan["id"], max_rounds=5)  # новый клип — reverse по умолчанию
+    # Уровни 1→2→3, потом смена стиля только у «блять»: silence, noise — все 5 кругов в счёт max_rounds.
     assert seen == [[(True, 1, "reverse"), (False, 1, "reverse")], [(True, 2, "reverse"), (False, 1, "reverse")],
                     [(True, 3, "reverse"), (False, 1, "reverse")], [(True, 3, "silence"), (False, 1, "reverse")],
                     [(True, 3, "noise"), (False, 1, "reverse")]]
-    assert calls["render"] == 3 + censor.STYLE_FALLBACK_ROUNDS
+    assert calls["render"] == 5
     word = next(w for w in out["words"] if w["i"] == 1)
     assert word["heard"] and word["style"] == "noise" and censor.CONTEXT_NOTE in word["note"]
     assert word["style_switched"] == [{"from": "reverse", "to": "silence", "round": 4},
@@ -373,3 +373,23 @@ def test_listen_hears_styles_like_render(tmp_path):
         data = r.readframes(r.getnframes())
     assert data[2100 * 2:2102 * 2] == int(4096 * VOLUME_STYLES["duck"]).to_bytes(2, "little") * 2
     assert data[3100 * 2:3102 * 2] == bytes(4) and data[:4] == b"\x00\x10" * 2
+
+
+def test_verify_never_renders_more_than_max_rounds(tmp_path, monkeypatch):
+    """17.11: censor_profanity с max_rounds 3 сделал 5 рендеров (смена стиля шла «сверх» лимита)."""
+    from test_censor import _mock_rounds
+
+    for limit in (1, 2, 3):
+        store, _s, plan, _p = _plan(tmp_path / str(limit), monkeypatch)
+        calls = _mock_rounds(monkeypatch, store, plan, lambda n, mute: [{"word": "блять", "start": 1.35, "end": 1.65}])
+        out = censor.verify_plan(store, plan["id"], max_rounds=limit)
+        assert calls["render"] == limit and len(out["rounds"]) == limit
+    # По умолчанию — 3, и даже мусор вместо числа не даёт больше MAX_ROUNDS_LIMIT.
+    store, _s, plan, _p = _plan(tmp_path / "d", monkeypatch)
+    calls = _mock_rounds(monkeypatch, store, plan, lambda n, mute: [{"word": "блять", "start": 1.35, "end": 1.65}])
+    censor.verify_plan(store, plan["id"])
+    assert calls["render"] == censor.DEFAULT_MAX_ROUNDS == 3
+    store, _s, plan, _p = _plan(tmp_path / "big", monkeypatch)
+    calls = _mock_rounds(monkeypatch, store, plan, lambda n, mute: [{"word": "блять", "start": 1.35, "end": 1.65}])
+    censor.verify_plan(store, plan["id"], max_rounds=50)
+    assert calls["render"] == censor.MAX_ROUNDS_LIMIT

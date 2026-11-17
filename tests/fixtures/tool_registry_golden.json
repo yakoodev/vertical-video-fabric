@@ -245,7 +245,7 @@
 {
 "name": "set_camera",
 "title": "Наезды камеры",
-"description": "b3aeaf2917eb7df3",
+"description": "624ab4e6ceca67a6",
 "parameters": "1ebd82309cde92cb",
 "mutating": true,
 "scope": "clip",
@@ -960,8 +960,8 @@
 {
 "name": "set_transition",
 "title": "Ставлю переход",
-"description": "c49d3d6f25fb190e",
-"parameters": "4a2876a572d31ae8",
+"description": "3c00235f30895005",
+"parameters": "dd51b5d2449447f7",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -2823,6 +2823,17 @@
 "scope": "global",
 "module": "torrents",
 "handler": "h_cancel_torrent",
+"label": true
+},
+{
+"name": "import_local_window",
+"title": "Беру окно записи",
+"description": "d12cd3a390561523",
+"parameters": "cbe5b1d9a999eb0a",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_import_local_window",
 "label": true
 },
 {

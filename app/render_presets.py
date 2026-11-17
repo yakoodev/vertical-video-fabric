@@ -203,7 +203,7 @@ def layout_camera_regions(preset: dict, source: dict | None, width: int, height:
         return None
     source = source or {}
     return camera_regions(layout, width, height, source.get("width"), source.get("height"),
-                          mirror=bool(preset.get("mirror")))
+                          mirror=bool(preset.get("mirror")), crop=source.get("content_crop"))
 
 
 def pin_band(preset: dict, source: dict | None, motion: dict | None) -> dict | None:

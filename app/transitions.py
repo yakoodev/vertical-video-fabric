@@ -43,6 +43,12 @@ Settings (all optional, see ``normalize_transition``):
 градусах (0 — вправо, 90 — вниз; нет — по движению камеры, иначе по очереди), ``color`` — цвет кромки
 ``#rrggbb``, ``kinds`` — виды по стыкам у ``frag``, ``panels`` — 2 или 3 панели.
 
+``scope`` — где идёт переход-наплыв (xfade: вспышка, вжух, зум-панч…) в раскладке «полоса» (meme: видео
+полосой на фоне): ``band`` (по умолчанию, когда полоса есть) — только в полосе видео, поля, фон и титры
+меняются жёстко посередине перехода (пилот 17.11: белая вспышка заливала чёрные поля и место под
+титры); ``frame`` — во весь кадр, как раньше. Поле хранится, только если задано. Окна переходов мувика
+(slash/panels/sparks) пока всегда во весь кадр.
+
 Pure functions only (argument builders): the caller runs ffmpeg. That keeps the
 filter graph testable without media.
 """
@@ -83,6 +89,11 @@ FRAG_PATTERN = ("slash", "slash", "panels", "slash", "slash", "sparks")
 FX_DEFAULT_COLOR = "#ffbe6e"
 # Белые вспышки и зум-панчи владелец забраковал для мувиков игры (журнал монтажа 15.11).
 FRAG_REJECTED = ("flash", "zoompunch", "fadewhite")
+
+# Где идёт переход в раскладке «полоса»: только в видео полосы или во весь кадр.
+SCOPES = ("band", "frame")
+_SCOPE_ALIASES = {"полоса": "band", "полосе": "band", "band": "band", "video": "band", "весь кадр": "frame",
+                  "кадр": "frame", "frame": "frame", "full": "frame", "all": "frame"}
 
 SFX_KINDS: dict[str, str] = {
     "none": "Без звука",
@@ -161,7 +172,24 @@ def normalize_transition(raw: object) -> dict:
     if blur == blur and blur > 0:
         # Только если задан: прежние настройки перехода остаются ровно прежними.
         out["motion_blur"] = round(min(1.0, blur), 3)
+    scope = _SCOPE_ALIASES.get(str(src.get("scope") or "").strip().lower())
+    if scope:
+        out["scope"] = scope
     return out
+
+
+def transition_region(transition: dict, layout: object, width: int, height: int, source: dict | None = None,
+                      parts: list[dict] | None = None) -> dict | None:
+    """Прямоугольник (px выхода), где идёт переход-наплыв: полоса видео раскладки meme, если ``scope`` не
+    ``frame``; иначе / без полосы / у кусков «шире окна» (``fit`` — своя основа) — None, весь кадр."""
+    if transition.get("scope") == "frame" or not isinstance(layout, dict) or layout.get("mode") != "meme":
+        return None
+    if any(isinstance(p, dict) and p.get("fit") for p in parts or []):
+        return None
+    from app.stream_layout import meme_box
+
+    src = source or {}
+    return meme_box(layout, int(width), int(height), src.get("width"), src.get("height"), src.get("content_crop"))
 
 
 def _fx_options(src: dict) -> dict:
@@ -440,8 +468,13 @@ def join_picture_filters(
     width: int = 1080,
     fps: float = 30.0,
     fx_inputs: dict[int, int] | None = None,
+    region: dict | None = None,
 ) -> list[str]:
     """Граф картинки склейки: входы ``[0:v]…[n-1:v]`` → ``[vout]``. Его же читает предпросмотр-трансляция.
+
+    ``region`` — ``{x, y, w, h}`` px (``transition_region``): наплыв только в этом прямоугольнике — поверх
+    жёсткой склейки посередине перехода кладётся вырезанный из xfade прямоугольник (поля и фон полосы не
+    вспыхивают и не уезжают).
 
     ``fx_inputs`` — склейка → номер входа ffmpeg с готовым окном перехода мувика (``slash``/``panels``/
     ``sparks``, app/transitions_fx_render.py, ровно ``overlap`` секунд целыми кадрами): на такой склейке
@@ -469,6 +502,24 @@ def join_picture_filters(
                 filters.append(f"[{fx_inputs[k - 1]}:v]settb=AVTB,setpts=PTS-STARTPTS[fx{k}]")
                 filters.append(f"[p{k}]trim=start={overlap - half:.4f},setpts=PTS-STARTPTS[fb{k}]")
                 filters.append(f"[fa{k}][fx{k}][fb{k}]concat=n=3:v=1:a=0[{label}]")
+                elapsed += durations[k] - overlap
+            elif overlap > 0 and region:
+                # Переход только в полосе: жёсткая склейка посередине окна (та же длина, что у xfade), сверху —
+                # прямоугольник полосы из xfade.
+                name = TRANSITIONS.get(join_kind(transition, k - 1), (None, xfade_name))[1] or xfade_name
+                rx, ry, rw, rh = (int(region[key]) for key in ("x", "y", "w", "h"))
+                mid = elapsed - overlap / 2
+                filters.append(f"[{previous}]split=2[xa{k}][ca{k}]")
+                filters.append(f"[p{k}]split=2[xb{k}][cb{k}]")
+                filters.append(
+                    f"[xa{k}][xb{k}]xfade=transition={name}:duration={overlap:.3f}:offset={elapsed - overlap:.3f},"
+                    f"crop={rw}:{rh}:{rx}:{ry}[xr{k}]"
+                )
+                filters.append(f"[ca{k}]trim=end={mid:.4f},setpts=PTS-STARTPTS[ch{k}]")
+                filters.append(f"[cb{k}]trim=start={overlap / 2:.4f},setpts=PTS-STARTPTS[ct{k}]")
+                filters.append(f"[ch{k}][ct{k}]concat=n=2:v=1:a=0[cc{k}]")
+                filters.append(f"[cc{k}][xr{k}]overlay=x={rx}:y={ry}:eof_action=pass[{label}]")
+                windows.append((elapsed - overlap, elapsed, overlap))
                 elapsed += durations[k] - overlap
             elif overlap > 0:
                 # У «frag» вид свой на каждой склейке: без окна-файла — его запасной xfade.
@@ -518,8 +569,11 @@ def build_join_args(
     width: int = 1080,
     fps: float = 30.0,
     fx_clips: dict[int, Path] | None = None,
+    region: dict | None = None,
 ) -> list[str]:
     """ffmpeg args joining ``parts`` with the given transition settings.
+
+    ``region`` — переход-наплыв только в этом прямоугольнике (px, раскладка «полоса», ``transition_region``).
 
     ``jump_joins`` — какие склейки это джамп-каты (app/cuts.py): встык, без
     звука стыка и всегда с коротким фейдом звука против щелчка.
@@ -549,7 +603,7 @@ def build_join_args(
         fx_inputs[i] = n + len(handle_inputs) + len(fx_inputs)
         args.extend(["-i", str(fx[i])])
 
-    filters = join_picture_filters(n, durations, overlaps, transition, width, fps, fx_inputs)
+    filters = join_picture_filters(n, durations, overlaps, transition, width, fps, fx_inputs, region)
 
     # ---- sound -----------------------------------------------------------
     audio_label = None
@@ -654,6 +708,8 @@ def transition_options() -> dict:
         "types": [{"key": k, "label": v[0]} for k, v in TRANSITIONS.items()],
         "audio": [{"key": k, "label": v} for k, v in AUDIO_MODES.items()],
         "sfx": [{"key": k, "label": v} for k, v in SFX_KINDS.items()],
+        # Раскладка «полоса» (meme): где идёт переход-наплыв.
+        "scopes": [{"key": "band", "label": "в полосе видео"}, {"key": "frame", "label": "во весь кадр"}],
         "snap": dict(SNAP_DURATIONS),
         "default": dict(DEFAULT_TRANSITION),
         # Переходы мувика: своя длина по умолчанию; у «frag» длина у каждого вида своя (ползунка нет).

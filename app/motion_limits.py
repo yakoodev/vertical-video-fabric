@@ -183,6 +183,8 @@ Z_FAR_LIMIT = 20000.0
 ROT3D_LIMIT = 720.0
 CAMERA_Z_LIMIT = 2400.0
 CAMERA_ROT_LIMIT = 60.0
+# Крен камеры (2D-поворот кадра, ключ roll, frontend/src/motion/camera.ts ROLL_LIMIT), градусы.
+CAMERA_ROLL_LIMIT = 30.0
 DEFAULT_FOV = 40.0
 FOV_RANGE = (10.0, 120.0)
 DEFAULT_BASE_Z = 1000.0

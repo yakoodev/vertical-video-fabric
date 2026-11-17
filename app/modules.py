@@ -505,6 +505,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "get_agent_settings",
     # поиск проекта и клипа, новые клипы
     "list_projects", "list_clips", "get_shots", "create_clip", "create_canvas_clip",
+    # окно локальной записи новым источником (app/local_import.py): ffmpeg копией, без сети
+    "import_local_window",
     # смотреть клип и источник
     "get_clip", "get_transcript", "view_frame", "contact_sheet", "source_contact_sheet", "source_loudness",
     # события геймплея записи игры (app/game_events_tools.py): нокауты, убийства, смерть, бои

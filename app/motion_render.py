@@ -500,6 +500,16 @@ def build_audio_layers_args(
     return args
 
 
+def frame_source_offset(segment: dict, clip_local: float) -> float:
+    """Секунда исходника от начала куска для момента ``clip_local`` (с от начала куска на шкале clip) — как
+    рендер: скорость куска (set_segment_speed) и реверс (``app.piece_speed.to_source``)."""
+    from app.piece_speed import to_source
+
+    start, end = float(segment["start_sec"]), float(segment["end_sec"])
+    src = to_source(segment, max(0.0, float(clip_local)))
+    return min(max(0.0, src - start), max(0.0, end - start - 0.02))
+
+
 def render_frame_png(*args: Any, **kwargs: Any) -> bytes:
     """Кадр клипа (``_render_frame_png``) — в очереди кадров (app/heavy_queue.frame_slot): каждый
     кадр поднимает компоновщик, четыре агента с view_frame сразу — лишний гигабайт памяти."""
@@ -569,7 +579,10 @@ def _render_frame_png(
     st = t if sub_t is None else min(max(0.0, float(sub_t)), max(0.0, total - 0.02))
     index = max(i for i, start in enumerate(starts) if start <= t + 1e-9)
     segment = segments[index]
-    local = t - starts[index]
+    # Момент куска на шкале clip → секунды исходника, как в рендере (app/piece_speed.to_source): слоу-мо 0.5 —
+    # 1 с ролика = 0.5 с записи, реверс — от конца куска. ``local`` дальше — секунды ИСХОДНИКА от начала куска
+    # (в них кадрирование focus и время графа основы).
+    local = frame_source_offset(segment, t - starts[index])
 
     from app.formats import comp_ref
 

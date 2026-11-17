@@ -51,6 +51,13 @@ class Settings:
         self.heavy_jobs_concurrency = int(os.getenv("HEAVY_JOBS_CONCURRENCY", "1") or 0)
         # Кадры для агента (view_frame, contact_sheet) — своей очередью, по столько сразу.
         self.frame_jobs_concurrency = int(os.getenv("FRAME_JOBS_CONCURRENCY", "2") or 0)
+        # Сторож памяти (app/memory_guard.py): тяжёлая задача ждёт, пока после её старта у машины
+        # останется HEAVY_MEM_RESERVE_MB (ПК общий: рядом идёт чужая модель голоса на 6–9 ГБ).
+        self.heavy_mem_guard = os.getenv("HEAVY_MEM_GUARD", "1").strip().lower() not in {"0", "false", "no", "off"}
+        self.heavy_mem_reserve_mb = float(os.getenv("HEAVY_MEM_RESERVE_MB", "3072") or 0)
+        self.heavy_mem_cgroup_reserve_mb = float(os.getenv("HEAVY_MEM_CGROUP_RESERVE_MB", "300") or 0)
+        self.heavy_mem_wait_max_sec = float(os.getenv("HEAVY_MEM_WAIT_MAX_SEC", "1800") or 0)
+        self.heavy_mem_poll_sec = float(os.getenv("HEAVY_MEM_POLL_SEC", "5") or 5)
         self.posting_proxy_url = os.getenv("POSTING_PROXY_URL", "").strip()
         self.provider_mode = os.getenv("POSTING_PROVIDER_MODE", "real").strip().lower()
         self.worker_poll_seconds = float(os.getenv("WORKER_POLL_SECONDS", "2"))

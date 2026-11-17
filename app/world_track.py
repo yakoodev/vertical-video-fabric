@@ -165,9 +165,74 @@ def normalize_quad(args: dict, aspect_wh: float) -> list[list[float]]:
 # ---------------------------------------------------------------- кадры клипа
 
 
+def band_regions(store: Any, plan: dict, setup: dict) -> dict[int, dict]:
+    """Раскладка «полоса» (meme: видео полосой на фоне): где видео каждого куска в кадре, доли кадра
+    ``{кусок: {x, y, w, h}}``. Нет полосы (другая раскладка, кусок «шире окна», видео во весь кадр) — пусто."""
+    from app.backgrounds import meme_hole
+    from app.stream_layout import normalize_layout
+    from app.video_crop import normalize_fit
+
+    layout = (setup.get("preset") or {}).get("layout")
+    if not isinstance(layout, dict) or layout.get("mode") != "meme":
+        return {}
+    lay = normalize_layout(layout)
+    width, height = int(setup["width"]), int(setup["height"])
+    out: dict[int, dict] = {}
+    for index, segment in enumerate(plan.get("segments") or []):
+        if normalize_fit(segment.get("fit")):
+            continue  # кусок «шире окна» — своя основа, раскладка на него не действует
+        source = store.get_source(int(segment.get("source_id") or plan["source_id"]))
+        hole = meme_hole(lay, source, source.get("content_crop"), width, height)
+        if hole and hole["w"] > 0 and hole["h"] > 0:
+            out[index] = {"x": hole["x"] / width, "y": hole["y"] / height, "w": hole["w"] / width,
+                          "h": hole["h"] / height}
+    return out
+
+
+def crop_to_band(frames: list[dict], regions: dict[int, dict]) -> list[dict]:
+    """Кадры куска с полосой — только видео полосы (детекция не смотрит в чёрное поле и титры);
+    ``full`` — кадр целиком (рисовать подсказки), ``region`` — где полоса (доли кадра)."""
+    out = []
+    for frame in frames:
+        region = regions.get(frame.get("piece"))
+        if not region:
+            out.append(frame)
+            continue
+        img = frame["img"]
+        h, w = img.shape[:2]
+        x0, y0 = int(round(region["x"] * w)), int(round(region["y"] * h))
+        x1, y1 = int(round((region["x"] + region["w"]) * w)), int(round((region["y"] + region["h"]) * h))
+        out.append({**frame, "img": np.ascontiguousarray(img[y0:y1, x0:x1]), "full": img,
+                    "region": {"x": x0 / w, "y": y0 / h, "w": (x1 - x0) / w, "h": (y1 - y0) / h}})
+    return out
+
+
+def to_band(region: dict | None, x: float, y: float) -> tuple[float, float]:
+    if not region:
+        return x, y
+    return (x - region["x"]) / region["w"], (y - region["y"]) / region["h"]
+
+
+def from_band(region: dict | None, x: float, y: float) -> tuple[float, float]:
+    if not region:
+        return x, y
+    return region["x"] + x * region["w"], region["y"] + y * region["h"]
+
+
+def _map_quad(quad: Any, region: dict | None, fn: Callable) -> Any:
+    if quad is None or not region:
+        return quad
+    flat = np.asarray(quad, dtype=np.float64).reshape(-1, 2)
+    pts = [fn(region, float(a), float(b)) for a, b in flat]
+    if isinstance(quad, list) and quad and isinstance(quad[0], (list, tuple)):
+        return [[round(a, 5), round(b, 5)] for a, b in pts]
+    return [round(v, 5) for p in pts for v in p]
+
+
 def clip_frames(store: Any, plan_id: int, start: float, end: float, fps: float,
-                progress: Callable[[float], None] | None = None) -> tuple[list[dict], dict]:
-    """Кадры основы клипа ``[{t, piece, img}]`` (размер детекции) и настройки кадра (app/tracking._frame_setup)."""
+                progress: Callable[[float], None] | None = None, band: bool = False) -> tuple[list[dict], dict]:
+    """Кадры основы клипа ``[{t, piece, img}]`` (размер детекции) и настройки кадра (app/tracking._frame_setup).
+    ``band`` — в раскладке «полоса» кадры обрезаны до видео полосы (``crop_to_band``)."""
     from app import tracking
 
     plan = store.get_clip_plan(plan_id)
@@ -186,6 +251,10 @@ def clip_frames(store: Any, plan_id: int, start: float, end: float, fps: float,
                                             on_frame=(lambda t: progress((t - start) / span)) if progress else None))
     if not frames:
         raise TrackError("кадров для трека нет")
+    if band:
+        regions = band_regions(store, plan, setup)
+        if regions:
+            frames = crop_to_band(frames, regions)
     return frames, setup
 
 
@@ -278,8 +347,24 @@ def track_surface(store: Any, plan_id: int, *, t: float, start: float, end: floa
     if not (start - 1e-3 <= t <= end + 1e-3):
         raise TrackError(f"t={t:.2f} вне диапазона трека {start:.2f}–{end:.2f}")
     with heavy_slot("tracking", f"клип {plan_id}: поверхность"):
-        frames, setup = clip_frames(store, plan_id, start, end, fps_v, progress)
+        frames, setup = clip_frames(store, plan_id, start, end, fps_v, progress, band=True)
+        # Раскладка «полоса»: поверхность ищем в видео полосы, а не в собранном кадре с чёрным полем —
+        # quad/box (доли кадра) в доли полосы, трек обратно в доли кадра (слой рисуется в кадре).
+        region = frames[_nearest(frames, t)].get("region")
+        if region:
+            quad = _map_quad(quad, region, to_band)
+            if box is not None:
+                bx, by = to_band(region, float(box["x"]), float(box["y"]))
+                box = {**box, "x": bx, "y": by, "w": float(box["w"]) / region["w"], "h": float(box["h"]) / region["h"]}
         res = compute_surface(frames, t, quad, smooth=_num(smooth, 0.35) or 0.0, box=box, perspective=perspective)
+        if region:
+            for sample in res.get("samples") or []:
+                if sample.get("q") is not None:
+                    sample["q"] = _map_quad(sample["q"], region, from_band)
+            res["seed_quad"] = _map_quad(res.get("seed_quad"), region, from_band)
+            quad = _map_quad(quad, region, from_band)
+            res["band"] = {k: round(v, 4) for k, v in region.items()}
+            res.setdefault("notes", []).append("раскладка «полоса»: поверхность искалась в видео полосы")
     res.update(plan_id=plan_id, fps=fps_v, seed={"t": round(t, 3), "quad": res.get("seed_quad") or quad},
                frame={"w": setup["width"], "h": setup["height"], "dw": setup["dw"], "dh": setup["dh"]})
     res["id"] = save_track(res)
@@ -363,9 +448,18 @@ def suggest(store: Any, plan_id: int, t: float, text: str = "", n: int = 3, widt
     from app.heavy_queue import heavy_slot
 
     with heavy_slot("tracking", f"клип {plan_id}: места под слово"):
-        frames, setup = clip_frames(store, plan_id, max(0.0, t - 0.3), t + 0.3, 30.0)
+        frames, setup = clip_frames(store, plan_id, max(0.0, t - 0.3), t + 0.3, 30.0, band=True)
         cands = suggest_in_frames(frames, t, text, n, width)
-    img = frames[_nearest(frames, t)]["img"].copy()
+    seed = frames[_nearest(frames, t)]
+    region = seed.get("region")
+    if region:
+        # Раскладка «полоса»: окна искались в видео полосы — в доли всего кадра (как view_frame и слои).
+        for c in cands:
+            c["x"], c["y"] = (round(v, 4) for v in from_band(region, c["x"], c["y"]))
+            c["w"], c["h"] = round(c["w"] * region["w"], 4), round(c["h"] * region["h"], 4)
+            c["quad"] = _map_quad(c["quad"], region, from_band)
+        setup = {**setup, "band": {k: round(v, 4) for k, v in region.items()}}
+    img = (seed.get("full") if region else seed["img"]).copy()
     return cands, setup, img
 
 

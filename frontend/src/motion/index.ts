@@ -30,6 +30,11 @@ export {
   drawCameraFrame,
   frameCameraMatrix,
   inPlaceCenter,
+  camAffine,
+  applyCam,
+  cameraRollAt,
+  rollCover,
+  ROLL_LIMIT,
   type CameraState,
   type CameraMatrix,
 } from "./camera";
@@ -156,6 +161,7 @@ export {
   type CaptionPageWord,
   type ResolvedCaptions,
 } from "./layers/captions";
+export { splitPhrase, breakCost, bareWord, endsWithPausePunct, FUNCTION_WORDS, WEAK_WORDS, ATTACH_WORDS } from "./layers/phrasing";
 export type { FrameInfo } from "./layers/common";
 export type { FrameData } from "./render";
 export {

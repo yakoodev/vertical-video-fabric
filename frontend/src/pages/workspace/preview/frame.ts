@@ -8,6 +8,7 @@
 import {
   cameraBlurTimes,
   camera3dAt,
+  camAffine,
   cameraMatrix,
   clipAccent,
   drawBasePlane,
@@ -555,7 +556,7 @@ export function composeFrame(input: ComposeInput): void {
         if (cam3 && motion) drawBasePlane(target, blurEnv, kc, camera3dAt(motion.camera, tt), m, layerUnit(blurEnv), kc.width, kc.height);
         else {
           target.save();
-          if (m) target.transform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+          if (m) target.transform(...camAffine(m));
           target.drawImage(kc, 0, 0, cv.width, cv.height);
           target.restore();
         }
@@ -579,12 +580,12 @@ export function composeFrame(input: ComposeInput): void {
         const regionAt = (target: CanvasRenderingContext2D, tt: number) => {
           target.setTransform(1, 0, 0, 1, 0, 0);
           target.drawImage(lc2, 0, 0);
-          const bm = cameraMatrix(motion.camera, tt, box.w, box.h);
+          const bm = frameCameraMatrix(motion.camera, tt, cv.width, cv.height, box);
           target.save();
           target.beginPath();
           target.rect(box.x, box.y, box.w, box.h);
           target.clip();
-          target.setTransform(bm.scale, 0, 0, bm.scale, box.x + bm.tx - bm.scale * box.x, box.y + bm.ty - bm.scale * box.y);
+          target.setTransform(...camAffine(bm));
           // pip_cam: зумится игра без окошка — иначе увеличенная копия окошка ехала с камерой
           // рядом с неподвижным (окно «раздваивалось»), как в рендере (app/render.pin_band).
           if (lay?.mode === "pip_cam") target.drawImage(v, rect.x, rect.y, rect.w, rect.h, 0, 0, cv.width, cv.height);
@@ -617,13 +618,13 @@ export function composeFrame(input: ComposeInput): void {
     } else {
       const times = cam && motion ? camTimes(null, false) : [clipT];
       if (times.length < 2) {
-        if (cam) ctx.setTransform(cam.scale, 0, 0, cam.scale, cam.tx, cam.ty);
+        if (cam) ctx.setTransform(...camAffine(cam));
         drawBase(ctx, lay, cv.width, cv.height);
       } else {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         paintOpaqueBlur(ctx, blurEnv, times, (target, tt) => {
           const m = cameraMatrix(motion!.camera, tt, cv.width, cv.height);
-          target.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+          target.setTransform(...camAffine(m));
           drawBase(target, lay, cv.width, cv.height);
           target.setTransform(1, 0, 0, 1, 0, 0);
         });

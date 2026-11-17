@@ -94,6 +94,8 @@ def run_case(name: str, tmp_path: Path, monkeypatch, extra: dict | None = None,
     monkeypatch.setattr(settings, "motion_node", _FAKE_NODE)
 
     def fake_ffmpeg(args, timeout, cwd=None):
+        # Папка шрифтов libass (fontsdir, tests/test_ass_fonts.py) — путь машины, не часть эталона.
+        args = [a.split(":fontsdir=", 1)[0] if isinstance(a, str) and a.startswith("ass=") else a for a in args]
         calls.append(["ffmpeg", list(args)])
         ass = next((a for a in args if isinstance(a, str) and a.startswith("ass=")), None)
         if ass and cwd is not None:

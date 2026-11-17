@@ -10,15 +10,25 @@
  * кадр масштабируется вокруг неё (центр окна = p + (0.5 − p) / zoom — всегда в кадре).
  * Между ключами, где хоть один «на месте», зум и точка наезда идут плавно — точка не
  * уезжает к центру по пути. Зеркала: app/promo_lint.camera_view, app/aspect._camera_view.
+ *
+ * `roll` у ключа — крен кадра (2D-поворот вокруг центра окна камеры), градусы ±30. Чтобы в углах не
+ * показался край, кадр доприближается ровно настолько, чтобы повёрнутое окно легло внутрь окна без
+ * крена (`rollCover`). Матрица тогда — с поворотом (`rot`): рисуют её `camAffine`/`applyCam`.
  */
 import { clamp, DEFAULT_EASE, ease, lerp } from "./easing";
 import { noise1 } from "./keys";
 import type { CameraKey } from "./types";
 
-export type CameraState = { zoom: number; x: number; y: number; shake: number };
+export type CameraState = { zoom: number; x: number; y: number; shake: number; roll?: number };
 
-/** Матрица для рисования кадра основы: `ctx.setTransform(scale, 0, 0, scale, tx, ty)`. */
-export type CameraMatrix = { scale: number; tx: number; ty: number };
+/**
+ * Матрица для рисования кадра основы: `ctx.setTransform(...camAffine(m))` — без крена это
+ * `(scale, 0, 0, scale, tx, ty)`; `rot` — крен, радианы (нет — 0).
+ */
+export type CameraMatrix = { scale: number; tx: number; ty: number; rot?: number };
+
+/** Предел крена камеры, градусы (дальше доприближение под крен съедает кадр). */
+export const ROLL_LIMIT = 30;
 
 const REST: CameraState = { zoom: 1, x: 0.5, y: 0.5, shake: 0 };
 
@@ -31,6 +41,55 @@ const SHAKE_SEED_Y = 0x5eed2;
 function field(key: CameraKey, name: "zoom" | "x" | "y" | "shake"): number {
   const v = key[name];
   return typeof v === "number" && Number.isFinite(v) ? v : REST[name];
+}
+
+function rollOf(key: CameraKey): number {
+  const v = key.roll;
+  return typeof v === "number" && Number.isFinite(v) ? clamp(v, -ROLL_LIMIT, ROLL_LIMIT) : 0;
+}
+
+/** Крен камеры (градусы) в клиповое время `t`: те же отрезки и ease, что у наезда. */
+export function cameraRollAt(keys: CameraKey[] | undefined | null, t: number): number {
+  if (!keys || !keys.length || !keys.some((k) => rollOf(k) !== 0)) return 0;
+  const ks = sortedKeys(keys);
+  if (t <= ks[0].t) return rollOf(ks[0]);
+  const last = ks[ks.length - 1];
+  if (t >= last.t) return rollOf(last);
+  for (let i = 0; i < ks.length - 1; i++) {
+    const a = ks[i];
+    const b = ks[i + 1];
+    if (t >= a.t && t < b.t) {
+      const span = b.t - a.t;
+      return lerp(rollOf(a), rollOf(b), ease(a.ease ?? DEFAULT_EASE, span > 0 ? (t - a.t) / span : 1));
+    }
+  }
+  return rollOf(last);
+}
+
+/**
+ * Во сколько доприблизить кадр W×H под крен `deg`, чтобы повёрнутое окно легло внутрь окна без
+ * крена (углы не выходят за кадр): cos θ + sin θ · max(W/H, H/W).
+ */
+export function rollCover(deg: number, W: number, H: number): number {
+  const a = (Math.abs(deg) * Math.PI) / 180;
+  if (a < 1e-9) return 1;
+  const r = Math.max(W / Math.max(1e-6, H), H / Math.max(1e-6, W));
+  return Math.cos(a) + Math.sin(a) * r;
+}
+
+/** Аффинная матрица камеры `[a, b, c, d, e, f]` для `ctx.setTransform` / `ctx.transform`. */
+export function camAffine(m: CameraMatrix): [number, number, number, number, number, number] {
+  const r = m.rot ?? 0;
+  if (!r) return [m.scale, 0, 0, m.scale, m.tx, m.ty];
+  const c = Math.cos(r) * m.scale;
+  const s = Math.sin(r) * m.scale;
+  return [c, s, -s, c, m.tx, m.ty];
+}
+
+/** Точка кадра основы (x, y) → холст через камеру. */
+export function applyCam(m: CameraMatrix, x: number, y: number): [number, number] {
+  const [a, b, c, d, e, f] = camAffine(m);
+  return [a * x + c * y + e, b * x + d * y + f];
 }
 
 /** Центр окна камеры, при котором точка `p` (доля кадра) остаётся на своём месте при `zoom`. */
@@ -124,10 +183,19 @@ export function cameraView(keys: CameraKey[] | undefined | null, t: number): { z
   return { zoom, x, y };
 }
 
-/** Матрица кадра основы размера W×H на холсте W×H. */
+/** Матрица кадра основы размера W×H на холсте W×H (с креном `roll` — поворот вокруг центра окна). */
 export function cameraMatrix(keys: CameraKey[] | undefined | null, t: number, W: number, H: number): CameraMatrix {
   const v = cameraView(keys, t);
-  return { scale: v.zoom, tx: W / 2 - v.x * W * v.zoom, ty: H / 2 - v.y * H * v.zoom };
+  const roll = cameraRollAt(keys, t);
+  if (!roll) return { scale: v.zoom, tx: W / 2 - v.x * W * v.zoom, ty: H / 2 - v.y * H * v.zoom };
+  // Окно без крена (зум и центр зажаты как всегда) — повёрнутое и ужатое в rollCover раз ложится в него.
+  const rot = (roll * Math.PI) / 180;
+  const scale = v.zoom * rollCover(roll, W, H);
+  const cx = v.x * W;
+  const cy = v.y * H;
+  const a = Math.cos(rot) * scale;
+  const b = Math.sin(rot) * scale;
+  return { scale, rot, tx: W / 2 - (a * cx - b * cy), ty: H / 2 - (b * cx + a * cy) };
 }
 
 /**
@@ -143,11 +211,13 @@ export function frameCameraMatrix(
 ): CameraMatrix {
   if (!box) return cameraMatrix(keys, t, W, H);
   const m = cameraMatrix(keys, t, box.w, box.h);
-  return { scale: m.scale, tx: box.x + m.tx - m.scale * box.x, ty: box.y + m.ty - m.scale * box.y };
+  // Точка окна (u, v) → box.xy + M·(u − box.x, v − box.y).
+  const [a, b, c, d] = camAffine(m);
+  return { ...m, tx: box.x + m.tx - (a * box.x + c * box.y), ty: box.y + m.ty - (b * box.x + d * box.y) };
 }
 
 export function isIdentityCamera(m: CameraMatrix): boolean {
-  return Math.abs(m.scale - 1) < 1e-6 && Math.abs(m.tx) < 1e-3 && Math.abs(m.ty) < 1e-3;
+  return Math.abs(m.scale - 1) < 1e-6 && Math.abs(m.tx) < 1e-3 && Math.abs(m.ty) < 1e-3 && Math.abs(m.rot ?? 0) < 1e-9;
 }
 
 /**
@@ -156,7 +226,7 @@ export function isIdentityCamera(m: CameraMatrix): boolean {
  */
 export function cameraCss(keys: CameraKey[] | undefined | null, t: number, W: number, H: number): string {
   const m = cameraMatrix(keys, t, W, H);
-  return `matrix(${m.scale}, 0, 0, ${m.scale}, ${m.tx}, ${m.ty})`;
+  return `matrix(${camAffine(m).join(", ")})`;
 }
 
 /**
@@ -173,7 +243,7 @@ export function drawCameraFrame(
 ): void {
   const m = cameraMatrix(keys, t, W, H);
   ctx.save();
-  ctx.setTransform(m.scale, 0, 0, m.scale, m.tx, m.ty);
+  ctx.setTransform(...camAffine(m));
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(source as CanvasImageSource, 0, 0, W, H);

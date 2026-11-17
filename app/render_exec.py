@@ -77,6 +77,38 @@ def _filter_filename(filename: str) -> str:
     return str(Path(filename).name).replace("\\", "/").replace(":", r"\:")
 
 
+def subtitle_fonts_dir(font_family: str | None = None) -> Path:
+    """Папка шрифтов для libass: шрифты сервиса (vendor/fonts — Oswald, Montserrat…); семейство только
+    из своих шрифтов (загруженных, app/user_fonts.py) — их папка."""
+    from app.settings import settings
+
+    vendor = Path(settings.motion_fonts_dir)
+    family = str(font_family or "").strip().lower()
+    if family:
+        try:
+            from app.motion_assets import load_vendor_fonts
+            from app.user_fonts import load_user_fonts, user_fonts_dir
+
+            if not any(str(f.get("family") or "").lower() == family for f in load_vendor_fonts()) and any(
+                    str(f.get("family") or "").lower() == family for f in load_user_fonts()):
+                return user_fonts_dir()
+        except Exception:  # noqa: BLE001 - нет реестров — шрифты сервиса
+            pass
+    return vendor
+
+
+def ass_filter(ass_filename: str, fonts_dir: Path | None = None) -> str:
+    """Фильтр ffmpeg ``ass=…:fontsdir=…``. Без ``fontsdir`` libass видит только системные шрифты (в контейнере —
+    DejaVu): стиль с Oswald рисовался запасным шрифтом. Путь — в кавычках графа, двоеточие (диск Windows)
+    экранировано для опций фильтра."""
+    folder = Path(fonts_dir) if fonts_dir is not None else subtitle_fonts_dir()
+    out = f"ass={_filter_filename(ass_filename)}"
+    if folder.is_dir():
+        escaped = folder.resolve().as_posix().replace("'", "").replace(":", r"\:")
+        out += f":fontsdir='{escaped}'"
+    return out
+
+
 def _concat_file_line(path: Path) -> str:
     escaped = path.resolve().as_posix().replace("'", "'\\''")
     return f"file '{escaped}'"

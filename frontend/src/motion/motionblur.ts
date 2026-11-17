@@ -16,7 +16,7 @@
  *   подкадр × 1/k (lighter); итог кладётся в кадр режимом наложения слоя. Ошибка округления —
  *   1–2 уровня из 255 при 12 подкадрах (замер — docs/motion/spec.md).
  */
-import { frameCameraMatrix } from "./camera";
+import { applyCam, frameCameraMatrix } from "./camera";
 import { clamp, clamp01 } from "./easing";
 import { baseCover, camera3dAt, makeProjector } from "./space3d";
 import type { CameraKey, Ctx2D, RenderEnv, ScratchCanvas } from "./types";
@@ -94,7 +94,7 @@ function cameraCorners(keys: CameraKey[], t: number, W: number, H: number, unit:
     [b.x + b.w, b.y],
     [b.x + b.w, b.y + b.h],
     [b.x, b.y + b.h],
-  ].map(([x, y]) => [m.scale * x + m.tx, m.scale * y + m.ty]);
+  ].map(([x, y]) => applyCam(m, x, y));
 }
 
 type CameraBox = { x: number; y: number; w: number; h: number } | null | undefined;

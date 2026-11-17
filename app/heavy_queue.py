@@ -17,6 +17,11 @@
 задачей возвращается системе, а не оседает в кучах glibc) и строка в лог с RSS процесса до
 задачи, после неё и после очистки. Перед задачей другого рода выгружается то, что держит
 прошлый род (``release_before_other``: модель Whisper не лежит рядом с рендером).
+
+Сторож памяти (app/memory_guard.py, только у ``HEAVY``): задача, получив место, сначала ждёт, пока у
+машины и контейнера хватит памяти на неё и запас (ПК общий — рядом чужая модель голоса на 6–9 ГБ).
+Пока ждёт — ``status()["memory_wait"]`` и колбэк потока ``on_wait`` («жду память: свободно X ГБ,
+нужно ~Y»): задание рендера показывает это в ``render_status``.
 """
 
 from __future__ import annotations
@@ -40,9 +45,11 @@ def release_before_other(kind: str, release: Callable[[], None]) -> None:
 class HeavyQueue:
     """FIFO-очередь с ``limit()`` мест; ``slot(kind, label)`` — контекстный менеджер."""
 
-    def __init__(self, limit: Any = None, *, track_memory: bool = False) -> None:
+    def __init__(self, limit: Any = None, *, track_memory: bool = False, mem_guard: bool = False) -> None:
         self._limit = limit
         self._track_memory = track_memory
+        self._mem_guard = mem_guard
+        self._mem_wait: dict[int, dict] = {}
         self._cond = threading.Condition()
         self._local = threading.local()
         self._waiting: list[int] = []
@@ -64,10 +71,10 @@ class HeavyQueue:
         except (TypeError, ValueError):
             return 1
 
-    def slot(self, kind: str, label: str = "") -> "_Slot":
-        return _Slot(self, kind, label)
+    def slot(self, kind: str, label: str = "", need_mb: float | None = None) -> "_Slot":
+        return _Slot(self, kind, label, need_mb)
 
-    def _enter(self, kind: str, label: str) -> int | None:
+    def _enter(self, kind: str, label: str, need_mb: float | None = None) -> int | None:
         depth = getattr(self._local, "depth", 0)
         if depth:
             self._local.depth = depth + 1
@@ -79,7 +86,11 @@ class HeavyQueue:
             self._waiting.append(ticket)
             started = time.monotonic()
             try:
+                told = False
                 while self._waiting[0] != ticket or (limit and len(self._active) >= limit):
+                    if not told:
+                        _notify(_queue_note(self._active.values(), self._waiting.index(ticket)))
+                        told = True
                     self._cond.wait(timeout=5.0)
                     limit = self.limit()
             except BaseException:
@@ -96,7 +107,28 @@ class HeavyQueue:
         self._local.depth = 1
         if self._track_memory:
             self._before_task(ticket, kind)
+        if self._mem_guard:
+            try:
+                self._wait_memory(ticket, kind, label, need_mb)
+            except BaseException:
+                self._exit(ticket)  # не дождались памяти — место отдаём, задачу не начинаем
+                raise
+        _notify(None)
         return ticket
+
+    def _wait_memory(self, ticket: int, kind: str, label: str, need_mb: float | None) -> None:
+        from app import memory_guard
+
+        def waiting(info: dict) -> None:
+            with self._cond:
+                self._mem_wait[ticket] = {"kind": kind, "label": label, **info}
+            _notify(info.get("text") or "жду память")
+
+        try:
+            memory_guard.wait_for_memory(kind, label, need_mb, on_wait=waiting)
+        finally:
+            with self._cond:
+                self._mem_wait.pop(ticket, None)
 
     def _exit(self, ticket: int | None) -> None:
         self._local.depth = max(0, getattr(self._local, "depth", 1) - 1)
@@ -149,23 +181,59 @@ class HeavyQueue:
                 "limit": self.limit(),
                 "running": [{k: v for k, v in item.items() if k != "rss_mb"} for item in self._active.values()],
                 "waiting": len(self._waiting),
+                **({"memory_wait": [dict(v) for v in self._mem_wait.values()]} if self._mem_guard else {}),
             }
 
 
+_notes = threading.local()
+
+
+def _notify(text: str | None) -> None:
+    """Сказать ждущему потоку, что с его задачей (``on_wait``): текст — ждёт, None — пошла."""
+    callback = getattr(_notes, "callback", None)
+    if callback is not None:
+        try:
+            callback(text)
+        except Exception:  # noqa: BLE001 - статус — удобство, не повод сорвать задачу
+            log.debug("heavy queue: on_wait упал", exc_info=True)
+
+
+def _queue_note(active: Any, ahead: int) -> str:
+    running = ", ".join(f"{a.get('kind')} {a.get('label') or ''}".strip() for a in active) or "—"
+    return f"в очереди тяжёлых задач: сейчас идёт {running}" + (f", впереди ещё {ahead}" if ahead else "")
+
+
+class on_wait:  # noqa: N801 - контекстный менеджер
+    """``with on_wait(cb):`` — тяжёлые задачи этого потока сообщают ``cb(text)``, чего ждут (очередь, память),
+    и ``cb(None)``, когда начались (статус задания рендера)."""
+
+    def __init__(self, callback: Callable[[str | None], None]) -> None:
+        self.callback = callback
+        self.prev: Any = None
+
+    def __enter__(self) -> "on_wait":
+        self.prev = getattr(_notes, "callback", None)
+        _notes.callback = self.callback
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        _notes.callback = self.prev
+
+
 class _Slot:
-    def __init__(self, queue: HeavyQueue, kind: str, label: str) -> None:
-        self.queue, self.kind, self.label = queue, kind, label
+    def __init__(self, queue: HeavyQueue, kind: str, label: str, need_mb: float | None = None) -> None:
+        self.queue, self.kind, self.label, self.need_mb = queue, kind, label, need_mb
         self.ticket: int | None = None
 
     def __enter__(self) -> "_Slot":
-        self.ticket = self.queue._enter(self.kind, self.label)
+        self.ticket = self.queue._enter(self.kind, self.label, self.need_mb)
         return self
 
     def __exit__(self, *_exc: Any) -> None:
         self.queue._exit(self.ticket)
 
 
-HEAVY = HeavyQueue(track_memory=True)
+HEAVY = HeavyQueue(track_memory=True, mem_guard=True)
 
 
 def _frame_limit() -> int:
@@ -179,9 +247,10 @@ def _frame_limit() -> int:
 FRAMES = HeavyQueue(_frame_limit)
 
 
-def heavy_slot(kind: str, label: str = "") -> _Slot:
-    """Место в очереди тяжёлых задач процесса (``with heavy_slot("render", "клип 5"): ...``)."""
-    return HEAVY.slot(kind, label)
+def heavy_slot(kind: str, label: str = "", need_mb: float | None = None) -> _Slot:
+    """Место в очереди тяжёлых задач процесса (``with heavy_slot("render", "клип 5"): ...``). ``need_mb`` —
+    сколько памяти задаче нужно (сторож памяти ждёт её); нет — по роду (app/memory_guard.KIND_NEED_MB)."""
+    return HEAVY.slot(kind, label, need_mb)
 
 
 def frame_slot(label: str = "") -> _Slot:

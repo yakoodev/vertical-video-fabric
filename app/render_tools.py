@@ -23,6 +23,10 @@ def _status_view(job: dict) -> dict:
     if job["status"] in RJ.ACTIVE:
         out["note"] = ("рендер идёт (очередь тяжёлых задач — одно за раз, обычно 1–5 мин): "
                        "render_status(render_id, wait_sec=30) ещё раз")
+        if job.get("note"):
+            # Ждёт место в очереди или память машины (app/memory_guard.py) — причина как есть.
+            out["waiting"] = job["note"]
+            out["note"] = f"рендер ещё не начат — {job['note']}; render_status(render_id, wait_sec=30) ещё раз"
     elif job["status"] == "done":
         out.update(job.get("result") or {})
         out["next"] = ("готово: lint_clip (вспышки и луп — по этому файлу), contact_sheet для взгляда; сдать владельцу — "

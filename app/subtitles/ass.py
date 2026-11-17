@@ -343,22 +343,32 @@ def _normalized_words(words: list[SubtitleWord], uppercase: bool) -> list[Subtit
 
 
 def _subtitle_page_indices(words: list[SubtitleWord], page_size: int, chars_per_line: int) -> list[list[int]]:
-    """Страницы режем так, чтобы текст помещался в отведённые строки целиком."""
+    """Страницы по фразам (app/subtitles/phrasing.py): фраза — между паузами длиннее
+    ``MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC`` и концами предложений; внутри неё разрыв — по запятой или паузе,
+    не после предлога/союза, страница не короче секунды. Текст страницы помещается в её строки целиком."""
+    from app.subtitles.phrasing import split_phrase
 
-    pages: list[list[int]] = []
+    phrases: list[list[int]] = []
     current: list[int] = []
     for index, word in enumerate(words):
         if current:
             previous = words[current[-1]]
-            gap = word.start - previous.end
-            candidate = [words[i] for i in (*current, index)]
-            overflows = len(_pack_lines(candidate, page_size, chars_per_line)) > MAX_SUBTITLE_LINES_PER_PAGE
-            if gap > MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC or overflows or _ends_sentence(previous.word):
-                pages.append(current)
+            if word.start - previous.end > MAX_SUBTITLE_GAP_INSIDE_PAGE_SEC or _ends_sentence(previous.word):
+                phrases.append(current)
                 current = []
         current.append(index)
     if current:
-        pages.append(current)
+        phrases.append(current)
+    pages: list[list[int]] = []
+    for phrase in phrases:
+        items = [words[i] for i in phrase]
+
+        def fits(a: int, b: int, items: list[SubtitleWord] = items) -> bool:
+            return len(_pack_lines(items[a:b], page_size, chars_per_line)) <= MAX_SUBTITLE_LINES_PER_PAGE
+
+        groups = split_phrase([w.word for w in items], [w.start for w in items], [w.end for w in items],
+                              page_size * MAX_SUBTITLE_LINES_PER_PAGE, fits, MAX_SUBTITLE_HOLD_AFTER_WORD_SEC)
+        pages.extend([phrase[k] for k in group] for group in groups)
     return pages
 
 

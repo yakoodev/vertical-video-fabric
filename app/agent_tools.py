@@ -530,7 +530,11 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
         raise ToolError("у клипа нет кусков")
     from app.storyboard import plan_thumb
 
-    local = t - piece["clip_start"]
+    from app.motion_render import frame_source_offset
+
+    # Скорость/реверс куска — как в рендере: секунда исходника, а не клипа (слоу-мо не показывать на 1×).
+    local = frame_source_offset({"start_sec": piece["source_start"], "end_sec": piece["source_end"],
+                                 "speed": piece.get("speed"), "reverse": piece.get("reverse")}, t - piece["clip_start"])
     x = _focus_x_at(piece.get("focus") or [], local)
     source = store.get_source(int(timeline["plan"]["source_id"]))
     path = plan_thumb(source, piece["source_start"] + local, x)
@@ -717,6 +721,7 @@ def _project_tools() -> list[Tool]:
     from app.stories_tools import all_tools as stories_tools
     from app.stream_question_tools import tools as stream_question_tools
     from app.torrent_tools import tools as torrent_tools
+    from app.local_import_tools import tools as local_import_tools
     from app.feed_tools import tools as feed_tools
     from app.home_tools import tools as home_tools
     from app.music_video_tools import all_tools as music_video_tools
@@ -729,13 +734,14 @@ def _project_tools() -> list[Tool]:
     # вопросы по стриму и выбор мемов (app/stream_question_tools.py) — монтажёр спрашивает владельца.
     # 3D-серия (app/s3d_tools.py) — план серии, версии, рендер заданием и проверки.
     # Источник из торрента (app/torrent_tools.py) — не клиповый: ИИ-монтажёру клипа не нужен.
+    # Окно локальной записи новым источником (app/local_import_tools.py) — тоже.
     # «Лента» готовых работ (app/feed_tools.py): сдать версию, вердикт, отметка «выложено».
     # Клип на песню (app/music_video_tools.py): разбор песни → план → карточка на картинки → кадры → клип.
     # «Главная» (app/home_tools.py): сводка сервиса — что ждёт владельца, что выйдет, что зашло, траты.
     # «Референсы» проекта (app/references_tools.py): примеры стиля владельца — разбор, лист кадров, добавить по ссылке.
     # Независимый критик готового ролика (app/critique_tools.py): не у монтажёра клипа — он не должен видеть монтаж.
     return (tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
-            + series3d_tools() + torrent_tools() + feed_tools() + music_video_tools() + home_tools()
+            + series3d_tools() + torrent_tools() + local_import_tools() + feed_tools() + music_video_tools() + home_tools()
             + references_tools() + critique_tools())
 
 

@@ -333,6 +333,37 @@ test("камера: зум 1..4, центр зажат так, что окно �
   assert.ok(E.isIdentityCamera(E.cameraMatrix([], 0, 1080, 1920)));
 });
 
+test("камера roll: крен вокруг центра окна, кадр доприближен — углы экрана не выходят за кадр основы", () => {
+  const W = 1080;
+  const H = 1920;
+  const inv = (m, x, y) => {
+    const [a, b, c, d, e, f] = E.camAffine(m);
+    const det = a * d - b * c;
+    return [(d * (x - e) - c * (y - f)) / det, (-b * (x - e) + a * (y - f)) / det];
+  };
+  // Без крена — ровно прежняя матрица.
+  assert.deepEqual(E.camAffine(E.cameraMatrix([{ t: 0, zoom: 2, x: 0.3, y: 0.6 }], 0, W, H)).slice(1, 3), [0, 0]);
+  for (const keys of [[{ t: 0, roll: 8 }], [{ t: 0, zoom: 1.4, x: 0.2, y: 0.8, roll: -12 }], [{ t: 0, zoom: 3, x: 1, y: 0, roll: 30 }]]) {
+    const m = E.cameraMatrix(keys, 0, W, H);
+    assert.ok(Math.abs(m.rot) > 0, "крен в матрице");
+    for (const [x, y] of [[0, 0], [W, 0], [0, H], [W, H]]) {
+      const [u, v] = inv(m, x, y);
+      assert.ok(u >= -0.5 && u <= W + 0.5 && v >= -0.5 && v <= H + 0.5, `угол ${x},${y} → ${u},${v} вне кадра`);
+    }
+  }
+  near(E.rollCover(5, W, H), Math.cos((5 * Math.PI) / 180) + Math.sin((5 * Math.PI) / 180) * (H / W));
+  near(E.cameraRollAt([{ t: 0, roll: 0, ease: "linear" }, { t: 2, roll: 10 }], 1), 5);
+  near(E.cameraRollAt([{ t: 0, roll: 99 }], 0), E.ROLL_LIMIT);
+  assert.ok(!E.isIdentityCamera(E.cameraMatrix([{ t: 0, roll: 3 }], 0, W, H)));
+  // Внутри окна (полоса meme): углы окна → внутрь окна.
+  const box = { x: 0, y: 200, w: 1080, h: 608 };
+  const bm = E.frameCameraMatrix([{ t: 0, zoom: 1.3, roll: 10 }], 0, W, H, box);
+  for (const [x, y] of [[0, 200], [1080, 200], [0, 808], [1080, 808]]) {
+    const [u, v] = inv(bm, x, y);
+    assert.ok(u >= -0.5 && u <= 1080.5 && v >= 199.5 && v <= 808.5, `угол окна ${x},${y} → ${u},${v}`);
+  }
+});
+
 test("камера anchor in_place: точка наезда стоит на месте, кадр не открывает край; по умолчанию — прежний центр", () => {
   const W = 1920;
   const H = 1080;
@@ -459,6 +490,20 @@ test("шаблоны собираются в валидные слои с уни
   const boom = E.buildTemplate("boom", {}, 3);
   assert.ok(boom.camera.some((k) => k.shake > 0));
   assert.ok(boom.layers.some((l) => l.type === "audio"));
+});
+
+test("шаблон «Карточка-пруф»: строки по одной на своих словах, недостающие — шагом 0.7 с", () => {
+  const res = E.buildTemplate("proof-card", { title: "ПРУФ", lines: "Урон: 3 412|Нокаутов: 14|Место: 1", times: "0.5, 1.3" }, 10);
+  const rows = res.layers.filter((l) => /^Строка /.test(l.name));
+  assert.deepEqual(rows.map((l) => l.props.text), ["Урон: 3 412", "Нокаутов: 14", "Место: 1"]);
+  assert.deepEqual(rows.map((l) => Math.round((l.start - 10) * 100) / 100), [0.5, 1.3, 2]);
+  const card = res.layers.find((l) => l.name === "Карточка");
+  const ys = rows.map((l) => l.y * 1920);
+  assert.ok(ys.every((y, i) => !i || y > ys[i - 1]), "строки сверху вниз");
+  assert.ok(ys[0] > card.y * 1920 - card.props.h / 2 && ys[2] < card.y * 1920 + card.props.h / 2, "строки внутри карточки");
+  assert.ok(!res.layers.some((l) => l.type === "image"), "своя графика, без логотипов площадок");
+  // Слова речи → times: секунды слов от начала шаблона.
+  assert.deepEqual(E.buildTemplate("proof-card", { lines: "а|б", times: "" }, 0).layers.filter((l) => /^Строка /.test(l.name)).map((l) => l.start), [0.45, 1.15]);
 });
 
 test("ссылки на картинки: Twemoji-имена и эмодзи внутри текста", () => {
@@ -646,6 +691,25 @@ const SPEECH = [
   { t0: 3.95, t1: 4.3, w: "это!" },
 ];
 
+test("субтитры: разбивка фраз — та же, что у ASS (tests/fixtures/phrase_pages.json)", () => {
+  const data = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "phrase_pages.json"), "utf8"));
+  assert.deepEqual([...E.FUNCTION_WORDS].sort(), [...data.lists.function].sort());
+  assert.deepEqual([...E.WEAK_WORDS].sort(), [...data.lists.weak].sort());
+  assert.deepEqual([...E.ATTACH_WORDS].sort(), [...data.lists.attach].sort());
+  for (const c of data.cases) {
+    const got = E.splitPhrase(c.words.map((w) => w[0]), c.words.map((w) => w[1]), c.words.map((w) => w[2]), c.cap, null, c.hold);
+    assert.deepEqual(got, c.pages, c.name);
+  }
+  // Пилот 17.11 слоем captions: «так и буду» вместе, страница не кончается на «так»/«и».
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const pilot = "меня накажут, если я здесь так и буду их булить".split(" ").map((w, i) => ({ t0: i * 0.3, t1: i * 0.3 + 0.26, w }));
+  const pages = E.captionPages(ctx, pilot, { style: "hormozi", maxWords: 3 }, 0, 10, "Montserrat");
+  const texts = pages.map((p) => p.words.map((w) => w.text).join(" "));
+  assert.equal(texts[0], "МЕНЯ НАКАЖУТ");
+  assert.ok(texts.includes("ТАК И БУДУ"), texts.join(" | "));
+  for (const t of texts.slice(0, -1)) assert.ok(!/ (ТАК|И|ЕСЛИ)$/.test(t), t);
+});
+
 test("субтитры: пресет + свои props, null перекрывает, рамки зажаты", () => {
   const r = E.resolveCaptions({ style: "box", size: 70, activeBg: null, maxWords: 20, wordScale: 3 });
   assert.equal(r.size, 70);
@@ -658,12 +722,12 @@ test("субтитры: пресет + свои props, null перекрывае
   for (const s of E.CAPTION_STYLES) assert.ok(s.id && s.name && s.description && s.props, s.id);
 });
 
-test("субтитры: страницы по числу слов, паузам и концу предложения", () => {
+test("субтитры: страницы по фразам, паузам и концу предложения", () => {
   const ctx = createCanvas(8, 8).getContext("2d");
   const pages = E.captionPages(ctx, SPEECH, { style: "hormozi", maxWords: 3 }, 0, 10, "Montserrat");
   assert.deepEqual(pages.map((p) => p.words.map((w) => w.text)), [
-    ["РЕБЯТА", "ВЫ"], // фраза из 4 слов при maxWords 3 — поровну, 2 + 2
-    ["ЭТО", "ВИДИТЕ"],
+    ["РЕБЯТА"], // разрыв по запятой (phrasing.ts), а не 2 + 2 по счёту слов
+    ["ВЫ", "ЭТО", "ВИДИТЕ"],
     ["ОН"], // после «видите?» — новое предложение, после «Он» — пауза
     ["СДЕЛАЛ", "ЭТО"],
   ]);
@@ -671,7 +735,8 @@ test("субтитры: страницы по числу слов, паузам 
   for (let k = 1; k < pages.length; k++) assert.ok(pages[k - 1].t1 <= pages[k].t0 + 1e-9);
   assert.equal(pages[0].t1, pages[1].t0);
   assert.equal(E.captionPageAt(pages, 2.9), null);
-  assert.equal(E.captionPageAt(pages, 1.0).index, 0);
+  assert.equal(E.captionPageAt(pages, 0.5).index, 0);
+  assert.equal(E.captionPageAt(pages, 1.0).index, 1);
   assert.equal(E.captionPageAt(pages, 4.0).index, 3);
   // Окно слоя: слова до start и после end не показываются.
   const late = E.captionPages(ctx, SPEECH, { style: "hormozi" }, 3, 10, "Montserrat");
@@ -942,6 +1007,37 @@ test("CLI: наезд в раскладке pip — окошко одно: ка�
   const info = ffprobe(out);
   assert.equal(info.height, H);
   assert.equal(Number(info.nb_read_frames), 30);
+});
+
+test("CLI: раскладка «полоса» (meme) — наезд и крен только внутри полосы, поля и фон стоят", async () => {
+  // Кадр 270×480: чёрные поля, полоса видео (зелёная с красной рамкой) на y 48..200.
+  const W = 270;
+  const H = 480;
+  const band = { x: 0, y: 48, w: 270, h: 152 };
+  const file = join(tmp, "meme-band.mp4");
+  const g = spawnSync("ffmpeg", ["-v", "error", "-y", "-f", "lavfi", "-i", `color=c=black:size=${W}x${H}:rate=30`, "-t", "1",
+    "-vf", `drawbox=x=0:y=${band.y}:w=${band.w}:h=${band.h}:color=0xff0000:t=fill,drawbox=x=8:y=${band.y + 8}:w=${band.w - 16}:h=${band.h - 16}:color=0x00ff00:t=fill`,
+    "-pix_fmt", "yuv420p", file], { encoding: "utf8" });
+  assert.equal(g.status, 0, g.stderr);
+  const camera = [{ t: 0, zoom: 1.5, x: 0.5, y: 0.5, roll: 12 }];
+  const p = writeInputs("meme-band", { width: W, height: H, fps: 30, duration: 1, layers: [], camera, cameraBox: band });
+  const png = join(tmp, "meme-band.png");
+  const r = run(["--comp", p.comp, "--assets", p.assets, "--input", file, "--frame", "0.5", "--png", png]);
+  assert.equal(r.status, 0, r.stderr);
+  const cv = createCanvas(W, H);
+  const ctx = cv.getContext("2d");
+  ctx.drawImage(await loadImage(readFileSync(png)), 0, 0);
+  const d = ctx.getImageData(0, 0, W, H).data;
+  const px = (x, y) => [...d.slice((y * W + x) * 4, (y * W + x) * 4 + 3)];
+  // Вне полосы — чёрное поле как было (зум всего кадра увеличил бы и полосу на поля).
+  for (const [x, y] of [[135, 20], [135, 44], [135, 206], [135, 400], [5, 300]]) {
+    assert.ok(px(x, y).every((c) => c < 40), `поле ${x},${y} = ${px(x, y)}`);
+  }
+  // Внутри полосы — зумленное видео: при 1.5× и крене красная рамка уходит за край полосы, всё зелёное.
+  for (const [x, y] of [[4, 52], [266, 52], [4, 196], [266, 196], [135, 124]]) {
+    const [rr, gg] = px(x, y);
+    assert.ok(gg > 150 && rr < 120, `полоса ${x},${y} = ${px(x, y)}`);
+  }
 });
 
 test("CLI: стоп-кадр посреди ролика (comp.freezes) — слои и камера стоят, после вставки идут со сдвигом", () => {

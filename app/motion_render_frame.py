@@ -95,12 +95,13 @@ def frame_subtitles_ass(store: Any, plan: dict, rs: dict, preset: dict, width: i
     return write_ass_subtitles(result, profile, path, width=width, height=height, fmt=preset.get("format"))
 
 
-def build_frame_subtitle_args(png: Path, out: Path, ass_name: str, t: float) -> list[str]:
-    """ffmpeg: прожечь ASS (файл ``ass_name`` в рабочей папке) в кадр ``png`` как момент ``t``."""
-    from app.render import _filter_filename
+def build_frame_subtitle_args(png: Path, out: Path, ass_name: str, t: float, fonts_dir: Path | None = None) -> list[str]:
+    """ffmpeg: прожечь ASS (файл ``ass_name`` в рабочей папке) в кадр ``png`` как момент ``t`` — шрифтами
+    сервиса, как рендер (``fonts_dir``)."""
+    from app.render_exec import ass_filter
 
     return ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(png),
-            "-vf", f"setpts=PTS-STARTPTS+{max(0.0, float(t)):.3f}/TB,ass={_filter_filename(ass_name)}",
+            "-vf", f"setpts=PTS-STARTPTS+{max(0.0, float(t)):.3f}/TB,{ass_filter(ass_name, fonts_dir)}",
             "-frames:v", "1", str(out)]
 
 

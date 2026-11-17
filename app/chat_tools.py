@@ -78,9 +78,9 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "upload_image", "upload_video", "generate_image", "list_fonts", "upload_font", "search_emoji", "list_packs",
         "search_pack", "svg_to_webm")),
     "sources": ("исходники: расшифровка, склейки планов, лист кадров, чат Twitch, новый клип, компиляция, "
-                "новый источник из торрента", (
+                "новый источник из торрента или окном локальной записи", (
         "get_source_transcript", "get_shots", "source_contact_sheet", "chat_activity", "get_chat", "create_clip",
-        "make_compilation", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
+        "make_compilation", "import_local_window", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
     "feed": ("лента готовых работ: сдать версию с файлами, вердикт владельца, отметка «выложено»; сводка сервиса; "
              "независимый критик готового ролика перед сдачей", (
         "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list", "home_summary",
