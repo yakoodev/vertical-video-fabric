@@ -14,7 +14,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
+from app import cover_doc_fx as FX
 from app import cover_docs as D
+from app import cover_photo as PH
 
 NO_LEAK_HEADERS = {"Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow", "Cache-Control": "no-store",
                    "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
@@ -76,16 +78,21 @@ async def _read_json(request: Request, limit: int = D.MAX_DOC_BYTES * 2) -> dict
 def _public_doc(store: Any, access: Access) -> dict:
     doc = D.get_doc(store, access.doc_id)
     clip = None
-    if doc["clip_id"]:
+    if doc["clip_id"] or doc.get("feed_variant_id"):
         try:
-            row = store.get_clip(int(doc["clip_id"]))
-            clip = {"duration": float(row.get("duration_sec") or 0), "title": row.get("title") or ""}
-        except KeyError:
+            row, _video = PH.doc_video(store, doc)
+            clip = {"duration": float(row.get("duration_sec") or 0), "title": row.get("title") or "",
+                    "plan": bool(row.get("clip_plan_id"))}
+        except (KeyError, ValueError):
             clip = None
     out = {"title": doc["title"], "format": doc["format"], "doc": doc["doc"], "rev": doc["rev"], "perm": access.perm,
            "clip": clip, "owner": access.is_owner, "assets": sorted(D.doc_assets(access.doc_id))}
+    made = PH.read_meta(access.doc_id).get("_thumbnail") or {}
+    if made:  # превью «как в ролике» уже собирали: поля формы — те же
+        out["movie"] = {k: made.get(k) for k in ("big_word", "top_line", "subline", "style", "side") if made.get(k)}
     if access.is_owner:
-        out.update(id=doc["id"], clip_id=doc["clip_id"])
+        out.update(id=doc["id"], clip_id=doc["clip_id"], project_id=doc.get("project_id"),
+                   feed_variant_id=doc.get("feed_variant_id"))
     return out
 
 
@@ -139,7 +146,8 @@ def _add_doc_routes(router: APIRouter, prefix: str, access_dep: Callable[..., Ac
         payload = await _read_json(request, SMALL_BODY)
         origin = payload.get("origin") if payload.get("origin") in ("clean", "render", "source") else "clean"
         try:
-            return await run_in_threadpool(D.add_frame, get_store(), access.doc_id, payload.get("t"), origin)
+            return await run_in_threadpool(PH.add_frame, get_store(), access.doc_id, payload.get("t"), origin,
+                                           payload.get("trim_bars", True) is not False)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Клипа больше нет") from exc
         except ValueError as exc:
@@ -168,7 +176,8 @@ def _add_doc_routes(router: APIRouter, prefix: str, access_dep: Callable[..., Ac
         pictures = D.library_pictures(store, access.doc_id) if access.can_edit else []
         fonts = [{k: f.get(k) for k in ("family", "file", "weight", "style", "label", "variable", "weight_range")}
                  for f in load_fonts()]
-        return {"pictures": pictures, "templates": D.template_briefs(size["width"], size["height"]), "fonts": fonts}
+        return {"pictures": pictures, "templates": D.template_briefs(size["width"], size["height"]), "fonts": fonts,
+                **FX.library_extras()}
 
     @router.get(f"{prefix}/fonts/{{file}}", include_in_schema=False)
     def api_font(access: Acc, file: str) -> FileResponse:
@@ -197,11 +206,79 @@ def _add_doc_routes(router: APIRouter, prefix: str, access_dep: Callable[..., Ac
             raise HTTPException(status_code=502, detail="Кадр не получился") from exc
         return {"layers": layers, "assets": sorted(D.doc_assets(access.doc_id))}
 
+    @router.get(f"{prefix}/candidates", summary="Сильные кадры ролика документа (резкие, с героем, без переходов)")
+    async def api_candidates(access: Acc, refresh: int = 0) -> dict:
+        _rate(access, "frame")
+        try:
+            items = await run_in_threadpool(PH.frame_candidates, get_store(), access.doc_id, PH.CAND_COUNT, bool(refresh))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Ролика больше нет") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail="Кадры не получились") from exc
+        return {"items": items}
+
+    @router.get(f"{prefix}/candidates/{{name}}", include_in_schema=False)
+    def api_candidate(access: Acc, name: str) -> FileResponse:
+        _rate(access, "thumb")
+        path = PH.candidate_path(access.doc_id, name)
+        if path is None:
+            raise HTTPException(status_code=404, detail="Кадра нет")
+        return FileResponse(path, media_type="image/jpeg", headers=ASSET_HEADERS)
+
+    @router.post(f"{prefix}/hud", summary="Где на кадре интерфейс игры: прямоугольники (доли кадра)")
+    async def api_hud(access: Acc, request: Request) -> dict:
+        _need_edit(access)
+        _rate(access, "frame")
+        payload = await _read_json(request, SMALL_BODY)
+        try:
+            boxes = await run_in_threadpool(PH.hud_boxes, get_store(), access.doc_id, str(payload.get("src") or ""))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"boxes": boxes}
+
+    @router.post(f"{prefix}/clean", summary="Закрасить прямоугольники на кадре (новый файл документа)")
+    async def api_clean(access: Acc, request: Request) -> dict:
+        _need_edit(access)
+        _rate(access, "frame")
+        payload = await _read_json(request, 64 * 1024)
+        rects = payload.get("rects") if isinstance(payload.get("rects"), list) else []
+        try:
+            return await run_in_threadpool(PH.clean_frame, get_store(), access.doc_id, str(payload.get("src") or ""),
+                                           rects, payload.get("auto") is True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @router.post(f"{prefix}/movie", summary="Слои превью «как в ролике» (не сохраняет)")
+    async def api_movie(access: Acc, request: Request) -> dict:
+        _need_edit(access)
+        _rate(access, "frame")
+        payload = await _read_json(request, 64 * 1024)
+        from app import cover_movie as M
+
+        fields = {k: payload.get(k) for k in ("big_word", "top_line", "subline", "style", "side", "logo", "accents",
+                                               "zoom", "center_x", "center_y", "t", "frame", "hud", "hud_rects")
+                  if payload.get(k) is not None}
+        fields.setdefault("big_word", "")
+        try:
+            out = await run_in_threadpool(lambda: M.build_movie_doc(get_store(), access.doc_id, **fields))
+            PH.note_asset(access.doc_id, "_thumbnail", {**fields, "frame": out["frame"]})
+            return out
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     def _export(access: Access, kind: str, download: int) -> FileResponse:
         _rate(access, "export")
         store = get_store()
         try:
-            path: Path = D.export_jpeg(store, access.doc_id) if kind == "jpg" else D.render_doc(store, access.doc_id)
+            path: Path = PH.export_limited(store, access.doc_id) if kind == "jpg" else D.render_doc(store, access.doc_id)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail="Экспорт не получился, попробуйте ещё раз") from exc
         headers = {**NO_LEAK_HEADERS}
@@ -245,22 +322,33 @@ def build_cover_docs_router(auth_dep: Any, get_store: Callable[[], Any], spa_ind
     _add_doc_routes(router, "/api/cover-docs/{doc_id}", owner_access, get_store)
     _add_doc_routes(router, "/api/c/{token}", token_access, get_store)
 
-    @router.get("/api/cover-docs", summary="Документы обложек клипа")
-    def api_list(_auth: auth_dep, clip_id: int | None = None) -> dict:
-        docs = D.list_docs(get_store(), clip_id)
-        return {"docs": [{k: d[k] for k in ("id", "clip_id", "title", "format", "rev", "updated_at")} for d in docs]}
+    @router.get("/api/cover-docs", summary="Документы обложек и фото: клипа, проекта или версии ленты")
+    def api_list(_auth: auth_dep, clip_id: int | None = None, project_id: int | None = None,
+                 feed_variant_id: int | None = None) -> dict:
+        docs = D.list_docs(get_store(), clip_id, project_id, feed_variant_id)
+        keys = ("id", "clip_id", "project_id", "feed_variant_id", "title", "format", "rev", "updated_at")
+        return {"docs": [{**{k: d.get(k) for k in keys}, "width": d["doc"]["width"], "height": d["doc"]["height"],
+                          "preview": f"/api/cover-docs/{d['id']}/export.jpg" if d["rendered_rev"] else None}
+                         for d in docs]}
 
     @router.post("/api/cover-docs", summary="Новый документ обложки (или свежий документ этого клипа)")
     def api_create(_auth: auth_dep, payload: dict = Body(...)) -> dict:
         store = get_store()
         clip_id = payload.get("clip_id")
+        variant_id = payload.get("feed_variant_id")
+        fmt = payload.get("format")
         try:
-            if clip_id and payload.get("reuse", True):
-                existing = D.list_docs(store, int(clip_id))
+            if payload.get("feed_version_id") and not variant_id:
+                variant_id = PH.feed_version_variant(store, int(payload["feed_version_id"]))
+            if (clip_id or variant_id) and payload.get("reuse", True):
+                existing = D.list_docs(store, int(clip_id), None) if clip_id else D.list_docs(store, None, None, int(variant_id))
+                existing = [d for d in existing if not fmt or d["format"] == fmt]
                 if existing:
                     return {"id": existing[0]["id"], "created": False}
             doc = D.create_doc(store, int(clip_id) if clip_id else None, str(payload.get("title") or ""),
-                               payload.get("format"), payload.get("template"), str(payload.get("text") or ""))
+                               fmt, payload.get("template"), str(payload.get("text") or ""),
+                               width=payload.get("width"), height=payload.get("height"),
+                               project_id=payload.get("project_id"), feed_variant_id=variant_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Клипа нет") from exc
         except (ValueError, TypeError) as exc:
@@ -278,6 +366,14 @@ def build_cover_docs_router(auth_dep: Any, get_store: Callable[[], Any], spa_ind
             return D.apply_to_clip(get_store(), access.doc_id, burn=payload.get("burn", True) is not False)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail="Экспорт не получился, попробуйте ещё раз") from exc
+
+    @router.post("/api/cover-docs/{doc_id}/save-to-project", summary="Готовую картинку — в файлы проекта")
+    def api_save_to_project(access: Annotated[Access, Depends(owner_access)], payload: dict = Body(default={})) -> dict:
+        kind = "png" if payload.get("kind") == "png" else "jpg"
+        try:
+            return PH.save_to_project(get_store(), access.doc_id, kind, str(payload.get("label") or ""))
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail="Экспорт не получился, попробуйте ещё раз") from exc
 

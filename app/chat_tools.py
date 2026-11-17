@@ -51,7 +51,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "add_insert", "remove_insert", "search_video_memes", "place_video_meme", "describe_video_meme",
         "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",
-        "choose_cover", "create_cover_doc", "update_cover_doc", "render_cover_doc", "share_cover_doc", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
+        "choose_cover", "create_cover_doc", "update_cover_doc", "render_cover_doc", "share_cover_doc", "make_thumbnail", "track_layer", "untrack_layer", "snap_to_beats", "get_scene_reference",
         "preview_scene_frame", "suggest_surfaces", "track_surface", "track_object")),
     "subtitles": ("субтитры: распознать, стиль, слова, строки, голоса и кто говорит (банк голосов), сверка с речью, "
                   "эмфаза слов, перевод на русский, озвучка RU, текст песни мувика по слогам", (
@@ -131,6 +131,7 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
 _PRELOAD = {
     "montage": ("смонтир", "монтаж", "хук", "слой", "титр", "наезд", "камер", "мем", "гифк", "панчлайн", "обложк",
                 "в такт", "долям", "доли", "в бит", "битам", "3d", "3д", "сцен", "анимац", "на поверхн", "граффити",
+                "превью", "миниатюр", "thumbnail",
                 "гранат", "траектор", "след броска"),
     "subtitles": ("субтитр", "сабы", "подпис", "перевод", "переведи", "ключев", "эмфаз", "текст песни", "мувик",
                   "align_lyrics", "lyric_layers"),

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from app import cover_doc_fx as FX
 from app import cover_variants as V
 from app.settings import settings
 
@@ -63,9 +64,20 @@ SCHEMA_SQL = [
 ]
 
 
+# Фоторедактор (17.11): документ живёт и без клипа — в проекте (project_id) или у версии «Ленты» (feed_variant_id,
+# кадры берутся из её файла). Старые базы получают колонки здесь.
+EXTRA_COLUMNS = (("project_id", "INTEGER REFERENCES projects(id) ON DELETE SET NULL"),
+                 ("feed_variant_id", "INTEGER REFERENCES feed_variants(id) ON DELETE SET NULL"))
+
+
 def ensure_cover_docs_schema(conn) -> None:
     for sql in SCHEMA_SQL:
         conn.execute(sql)
+    have = {row[1] for row in conn.execute("PRAGMA table_info(cover_docs)").fetchall()}
+    for name, decl in EXTRA_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE cover_docs ADD COLUMN {name} {decl}")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_cover_docs_project ON cover_docs(project_id, id)")
 
 
 # --------------------------------------------------------------------------- #
@@ -167,7 +179,7 @@ def _layer(raw: Any, width: int, height: int, assets: set[str], seen: set[str]) 
     }
     if kind == "image":
         src = raw.get("src")
-        return {**base, "src": src if isinstance(src, str) and src in assets else "",
+        return {**base, "src": src if isinstance(src, str) and src in assets else "", "filters": FX.sanitize_filters(raw.get("filters")),
                 "fit": _choice(raw.get("fit"), ("cover", "contain")), "crop": _crop(raw.get("crop")),
                 "mask": _choice(raw.get("mask"), ("none", "round", "ellipse")),
                 "radius": _num(raw.get("radius"), 0, 0, 2000), "flipX": raw.get("flipX") is True,
@@ -191,7 +203,8 @@ def _layer(raw: Any, width: int, height: int, assets: set[str], seen: set[str]) 
             "align": _choice(raw.get("align"), ("center", "left", "right")),
             "valign": _choice(raw.get("valign"), ("middle", "top", "bottom")),
             "lineHeight": _num(raw.get("lineHeight"), 1.1, 0.6, 3), "letterSpacing": _num(raw.get("letterSpacing"), 0, -40, 200),
-            "uppercase": raw.get("uppercase") is True}
+            "uppercase": raw.get("uppercase") is True, "edge": FX.sanitize_edge(raw.get("edge")),
+            "underline": FX.sanitize_underline(raw.get("underline"))}
 
 
 def sanitize_doc(raw: Any, width: int, height: int, assets: set[str]) -> dict:
@@ -318,7 +331,10 @@ def template_layers(template_id: str, width: int, height: int, assets: set[str],
 
 
 def _row(row: Any) -> dict:
+    keys = row.keys()
     return {"id": int(row["id"]), "clip_id": row["clip_id"], "title": row["title"], "format": row["format"],
+            "project_id": row["project_id"] if "project_id" in keys else None,
+            "feed_variant_id": row["feed_variant_id"] if "feed_variant_id" in keys else None,
             "doc": json.loads(row["doc"]), "rev": int(row["rev"]), "rendered_rev": int(row["rendered_rev"]),
             "created_at": row["created_at"], "updated_at": row["updated_at"]}
 
@@ -330,11 +346,18 @@ def get_doc(store: Any, doc_id: int) -> dict:
     return _row(row)
 
 
-def list_docs(store: Any, clip_id: int | None = None) -> list[dict]:
-    if clip_id is None:
-        rows = store.db.query_all("SELECT * FROM cover_docs ORDER BY id DESC LIMIT 200", ())
-    else:
+def list_docs(store: Any, clip_id: int | None = None, project_id: int | None = None,
+              feed_variant_id: int | None = None) -> list[dict]:
+    if clip_id is not None:
         rows = store.db.query_all("SELECT * FROM cover_docs WHERE clip_id = ? ORDER BY id DESC", (int(clip_id),))
+    elif feed_variant_id is not None:
+        rows = store.db.query_all("SELECT * FROM cover_docs WHERE feed_variant_id = ? ORDER BY id DESC",
+                                  (int(feed_variant_id),))
+    elif project_id is not None:
+        rows = store.db.query_all("SELECT * FROM cover_docs WHERE project_id = ? ORDER BY id DESC LIMIT 200",
+                                  (int(project_id),))
+    else:
+        rows = store.db.query_all("SELECT * FROM cover_docs ORDER BY id DESC LIMIT 200", ())
     return [_row(row) for row in rows]
 
 
@@ -357,20 +380,38 @@ def asset_path(doc_id: int, name: str) -> Path | None:
     return path if path.is_file() else None
 
 
+CUSTOM_MIN, CUSTOM_MAX = 64, 4096
+
+
 def create_doc(store: Any, clip_id: int | None = None, title: str = "", fmt: str | None = None,
-               template: str | None = None, text: str = "") -> dict:
-    """Новый документ. У клипа формат и заголовок — его; ``template`` — сразу разложить шаблон."""
+               template: str | None = None, text: str = "", *, width: Any = None, height: Any = None,
+               project_id: Any = None, feed_variant_id: Any = None) -> dict:
+    """Новый документ. У клипа формат и заголовок — его, если формат не задан явно (превью 16:9 вертикального
+    клипа — ``fmt="16:9"``); ``custom`` — свой размер ``width``×``height``; ``template`` — сразу разложить шаблон.
+    ``project_id`` — фото проекта без клипа; ``feed_variant_id`` — кадры из файла версии «Ленты»."""
+    from app import cover_photo as PH
+
     clip = store.get_clip(int(clip_id)) if clip_id else None
-    if clip:
+    variant = PH.feed_variant(store, int(feed_variant_id)) if feed_variant_id else None
+    if clip and fmt not in V.COVER_SIZES and fmt != "custom":
         from app.publish_format import clip_format
 
-        fmt = clip_format(store, clip) or fmt or "9:16"
-    fmt = fmt if fmt in V.COVER_SIZES else "9:16"
-    width, height = V.COVER_SIZES[fmt]
-    name = _text(title, MAX_TITLE) or (str(clip.get("title") or "") if clip else "") or "Обложка"
+        fmt = clip_format(store, clip) or "9:16"
+    if fmt == "custom":
+        width = int(_num(width, 1280, CUSTOM_MIN, CUSTOM_MAX))
+        height = int(_num(height, 720, CUSTOM_MIN, CUSTOM_MAX))
+    else:
+        if variant and fmt not in V.COVER_SIZES:
+            fmt = "9:16" if (variant.get("height") or 0) > (variant.get("width") or 0) else "16:9"
+        fmt = fmt if fmt in V.COVER_SIZES else "9:16"
+        width, height = V.COVER_SIZES[fmt]
+    project = PH.doc_project(store, clip=clip, variant=variant, project_id=project_id)
+    name = (_text(title, MAX_TITLE) or (str(clip.get("title") or "") if clip else "")
+            or (str(variant.get("work_title") or "") if variant else "") or "Обложка")
     cur = store.db.execute(
-        "INSERT INTO cover_docs (clip_id, title, format, doc) VALUES (?, ?, ?, ?)",
-        (int(clip_id) if clip_id else None, name[:MAX_TITLE], fmt, json.dumps(blank_doc(width, height))),
+        "INSERT INTO cover_docs (clip_id, title, format, doc, project_id, feed_variant_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (int(clip_id) if clip_id else None, name[:MAX_TITLE], fmt, json.dumps(blank_doc(width, height)), project,
+         int(feed_variant_id) if variant else None),
     )
     doc_id = int(cur.lastrowid)
     doc_dir(doc_id).mkdir(parents=True, exist_ok=True)
@@ -489,13 +530,10 @@ def describe_asset(doc_id: int, name: str) -> dict:
 
 
 def _video_of(store: Any, doc: dict) -> tuple[dict, Path]:
-    if not doc.get("clip_id"):
-        raise ValueError("документ не привязан к клипу: кадры брать неоткуда")
-    clip = store.get_clip(int(doc["clip_id"]))
-    video = Path(clip.get("output_path") or "")
-    if clip.get("status") != "succeeded" or not video.is_file():
-        raise ValueError("файла готового клипа нет")
-    return clip, video
+    """Ролик документа: готовый клип или файл версии «Ленты» (у неё «клип» — только длина и размер кадра)."""
+    from app import cover_photo as PH
+
+    return PH.doc_video(store, doc)
 
 
 def _source_moment(store: Any, clip: dict, t: float) -> tuple[Path, float]:

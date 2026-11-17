@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { Link } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@/api/client";
-import { coverDocsApi, type CoverApi, type CoverDocState, type CoverFont, type CoverLibrary, type CoverLink, type CoverTemplate, type FrameOrigin } from "@/api/coverDocs";
+import { coverDocsApi, type CoverApi, type CoverDocState, type CoverFont, type CoverLibrary, type CoverTemplate, type FrameOrigin, type MovieResult } from "@/api/coverDocs";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { layoutText, paintCoverDoc, type CoverDoc, type CoverImageLayer, type CoverImageLike, type CoverLayer, type CoverShapeLayer, type CoverTextLayer } from "@/motion/coverdoc";
 import { CoverInspector, type LayerPatch } from "./CoverInspector";
+import { ShareDialog, TemplateThumb } from "./CoverParts";
+import { HudOverlay, HudPanel, type HudState } from "./CoverHud";
+import { CandidateStrip, MoviePanel } from "./CoverPanels";
 import { contains, isCorner, moveWithSnap, resizeBox, rotationAt, snapLines, type Box, type Guide, type Handle, type SnapLines } from "./geometry";
 import "@/styles/cover.css";
 
@@ -90,108 +93,6 @@ function scaleText(base: CoverTextLayer, box: Box): CoverTextLayer {
   };
 }
 
-function TemplateThumb({ template, width, height, images, version }: { template: CoverTemplate; width: number; height: number; images: Map<string, HTMLImageElement>; version: number }) {
-  const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const canvas = ref.current;
-    const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
-    paintCoverDoc(ctx, { version: 1, width: width, height: height, bg: "#101018", layers: template.layers }, {
-      getImage: (src) => (images.get(src) as CoverImageLike | undefined) ?? null,
-      placeholders: true,
-      scale: canvas.width / width,
-    });
-  }, [template, width, height, images, version]);
-  const w = 132;
-  return <canvas ref={ref} width={w} height={Math.round((w * height) / width)} aria-hidden="true" />;
-}
-
-function ShareDialog({ docId, onClose }: { docId: number; onClose: () => void }) {
-  const toast = useToast();
-  const [links, setLinks] = useState<CoverLink[]>([]);
-  const [perm, setPerm] = useState<"edit" | "view">("edit");
-  const [days, setDays] = useState(30);
-  const [made, setMade] = useState<{ url: string; warning?: string } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const reload = useCallback(() => {
-    coverDocsApi.links(docId).then((r) => setLinks(r.links)).catch(() => undefined);
-  }, [docId]);
-  useEffect(reload, [reload]);
-  const absolute = (url: string) => (url.startsWith("/") ? `${window.location.origin}${url}` : url);
-  const create = async () => {
-    setBusy(true);
-    try {
-      const out = await coverDocsApi.createLink(docId, perm, days);
-      setMade({ url: absolute(out.url), warning: out.warning });
-      reload();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Не удалось создать ссылку");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const copy = async () => {
-    if (!made) return;
-    try {
-      await navigator.clipboard.writeText(made.url);
-      toast.success("Ссылка скопирована");
-    } catch {
-      toast.error("Браузер не дал скопировать: выделите ссылку и скопируйте вручную");
-    }
-  };
-  const revoke = async (id: number) => {
-    try {
-      await coverDocsApi.revokeLink(docId, id);
-      reload();
-    } catch (err) {
-      toast.error(err instanceof ApiError ? err.message : "Не удалось отозвать ссылку");
-    }
-  };
-  const active = links.filter((l) => !l.revoked_at && new Date(l.expires_at) > new Date());
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal cov-share" role="dialog" aria-modal="true" aria-label="Ссылка на редактирование" onClick={(e) => e.stopPropagation()}>
-        <h3>Ссылка на редактирование</h3>
-        <p className="muted">По ссылке открывается только эта обложка, без входа в сервис и без доступа к другим клипам.</p>
-        <div className="cov-row">
-          <label className="cov-num">
-            <span>Что можно</span>
-            <select className="input" value={perm} onChange={(e) => setPerm(e.target.value as "edit" | "view")}>
-              <option value="edit">Править</option>
-              <option value="view">Только смотреть</option>
-            </select>
-          </label>
-          <label className="cov-num">
-            <span>Срок, дней</span>
-            <input className="input" type="number" min={1} max={365} value={days} onChange={(e) => setDays(Number(e.target.value) || 30)} />
-          </label>
-        </div>
-        <button type="button" className="btn primary" disabled={busy} onClick={create}>Создать ссылку</button>
-        {made ? (
-          <div className="cov-link">
-            <input className="input" readOnly value={made.url} onFocus={(e) => e.target.select()} aria-label="Новая ссылка" />
-            <button type="button" className="btn sm" onClick={copy}>Скопировать</button>
-            <p className="muted">Ссылка показывается один раз: сервис хранит только её отпечаток.</p>
-            {made.warning ? <p className="cov-warn">{made.warning}</p> : null}
-          </div>
-        ) : null}
-        {active.length ? (
-          <div className="cov-links">
-            <strong>Действующие ссылки</strong>
-            {active.map((l) => (
-              <div key={l.id} className="cov-link-row">
-                <span>{l.perm === "edit" ? "Править" : "Смотреть"}, до {new Date(l.expires_at).toLocaleDateString("ru-RU")}</span>
-                <button type="button" className="btn sm danger" onClick={() => revoke(l.id)}>Отозвать</button>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <button type="button" className="btn ghost" onClick={onClose}>Закрыть</button>
-      </div>
-    </div>
-  );
-}
-
 export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -216,6 +117,8 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
   const [frameT, setFrameT] = useState(0);
   const [frameOrigin, setFrameOrigin] = useState<FrameOrigin>("clean");
   const [thumbT, setThumbT] = useState(0);
+  const [pickedT, setPickedT] = useState<number | null>(null);
+  const [hud, setHud] = useState<HudState | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -256,6 +159,7 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
       setSaveState("saved");
       setLoadError(null);
       setFrameT((fresh.clip?.duration ?? 0) / 2);
+      if (fresh.clip && !fresh.clip.plan) setFrameOrigin("render");
       setThumbT((fresh.clip?.duration ?? 0) / 2);
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "Не удалось открыть обложку");
@@ -264,7 +168,7 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
 
   useEffect(() => {
     void load();
-    api.library().then(setLibrary).catch(() => setLibrary({ pictures: [], templates: [], fonts: [] }));
+    api.library().then(setLibrary).catch(() => setLibrary({ pictures: [], templates: [], fonts: [], looks: [], text_styles: [] }));
   }, [api, load]);
 
   // Шрифты — те же файлы, что у компоновщика; без них перенос строк был бы другим, чем в экспорте.
@@ -716,6 +620,65 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
     }
   };
 
+  const saveToProject = async () => {
+    if (!docId) return;
+    setBusy("files");
+    try {
+      await flushSave();
+      const out = await coverDocsApi.saveToProject(docId);
+      toast.success(`В файлах ${out.project_id ? "проекта" : "(общих)"}: «${out.asset.label}»`);
+    } catch (err) {
+      toast.error(err instanceof ApiError ? err.message : "Не удалось сохранить в файлы");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  /* ---------- интерфейс игры на кадре ---------- */
+
+  const findHud = async (layer: CoverImageLayer) => {
+    setHud({ layerId: layer.id, rects: [], busy: "find", note: "" });
+    try {
+      const out = await api.hud(layer.src);
+      setHud((h) => (h && h.layerId === layer.id ? {
+        ...h, rects: out.boxes, busy: null,
+        note: out.boxes.length ? "" : "Интерфейс не нашёлся сам: обведите его по кадру пальцем или мышью.",
+      } : h));
+    } catch (err) {
+      const note = err instanceof ApiError ? err.message : "Поиск не получился";
+      setHud((h) => (h && h.layerId === layer.id ? { ...h, busy: null, note: `${note}. Обведите интерфейс по кадру сами.` } : h));
+    }
+  };
+
+  const cleanHud = async (layer: CoverImageLayer) => {
+    if (!hud || hud.layerId !== layer.id) return;
+    setHud({ ...hud, busy: "clean" });
+    try {
+      const made = await api.clean(layer.src, hud.rects);
+      setAssets((list) => (list.includes(made.name) ? list : [...list, made.name]));
+      updateLayer(layer.id, { src: made.name });
+      setHud(null);
+      toast.success("Интерфейс закрашен — прежний кадр остался в файлах обложки");
+    } catch (err) {
+      setHud((h) => (h ? { ...h, busy: null, note: err instanceof ApiError ? err.message : "Не закрасилось" } : h));
+    }
+  };
+
+  useEffect(() => {
+    if (hud && (!selected || selected.id !== hud.layerId)) setHud(null);
+  }, [selected, hud]);
+
+  const applyMovie = (out: MovieResult) => {
+    setAssets(out.assets);
+    const current = docRef.current;
+    if (!current) return;
+    const layers = out.layers.map((l) => (l.type === "text" ? fitTextBox(l) : l));
+    commit({ ...current, bg: out.bg, layers });
+    setSelectedId(layers.find((l) => l.type === "text" && l.name === "Главное слово")?.id ?? null);
+    if (out.warnings.length) toast.error(out.warnings.join("; "));
+    else toast.success(out.hud_boxes.length ? `Готово, интерфейс закрашен (${out.hud_boxes.length})` : "Готово");
+  };
+
   useEffect(() => {
     const id = window.setTimeout(() => setThumbT(frameT), 150);
     return () => window.clearTimeout(id);
@@ -744,7 +707,11 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
   return (
     <div className={`cov-app${readOnly ? " view" : ""}`} data-panel={panel}>
       <header className="cov-top">
-        {state.owner ? <Link className="btn ghost sm" to="/pubs?tab=ready">К клипам</Link> : null}
+        {state.owner ? (
+          state.project_id && !state.clip_id
+            ? <Link className="btn ghost sm" to={`/p/${state.project_id}?tab=files`}>К проекту</Link>
+            : <Link className="btn ghost sm" to="/pubs?tab=ready">К клипам</Link>
+        ) : null}
         <h1 title={state.title}>{state.title}</h1>
         {readOnly ? <span className="cov-state">Только просмотр</span> : <span className={`cov-state ${saveState}`} role="status">{SAVE_LABEL[saveState]}</span>}
         {saveState === "conflict" ? <button type="button" className="btn sm" onClick={() => void load()}>Открыть свежую версию</button> : null}
@@ -767,7 +734,13 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
           </div>
         )}
         <div className="cov-actions">
-          <button type="button" className="btn sm" disabled={busy === "export"} onClick={() => void exportFile("png")}>Скачать PNG</button>
+          <button type="button" className="btn sm" disabled={busy === "export"} onClick={() => void exportFile("jpg")} title="JPEG до 2 МБ — как просит YouTube">Скачать JPG</button>
+          <button type="button" className="btn sm ghost" disabled={busy === "export"} onClick={() => void exportFile("png")}>PNG</button>
+          {state.owner && !readOnly && docId ? (
+            <button type="button" className="btn sm" disabled={busy === "files"} onClick={() => void saveToProject()} title="Готовая картинка — в «Файлы» проекта; документ остаётся, правка здесь же">
+              {busy === "files" ? "Сохраняю…" : "В файлы проекта"}
+            </button>
+          ) : null}
           {state.owner && !readOnly ? <button type="button" className="btn sm" onClick={() => setShareOpen(true)}>Ссылка</button> : null}
           {state.owner && state.clip_id ? (
             <button type="button" className="btn sm primary" disabled={busy === "apply"} onClick={() => void applyToClip()}>
@@ -786,6 +759,17 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
       <aside className="cov-left">
         {panel === "templates" || panel === "props" ? (
           <div className="cov-pane cov-pane-templates">
+            <MoviePanel
+              api={api}
+              initial={state.movie}
+              pickedT={pickedT}
+              layerSrc={selected?.type === "image" && selected.src ? selected.src : null}
+              hasVideo={!!state.clip}
+              busy={busy === "movie"}
+              setBusy={(on) => setBusy(on ? "movie" : null)}
+              onBuilt={applyMovie}
+              onError={(m) => toast.error(m)}
+            />
             <p className="muted">Раскладка заменит все слои. Кнопка «Отменить» вернёт прежние.</p>
             <div className="cov-templates">
               {(library?.templates ?? []).map((t) => (
@@ -801,17 +785,24 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
           <div className="cov-pane">
             {state.clip ? (
               <>
+                <CandidateStrip api={api} picked={pickedT} onPick={(t) => {
+                  setPickedT(t);
+                  setFrameT(t);
+                }} />
                 <img className="cov-thumb" style={{ aspectRatio: `${doc.width} / ${doc.height}` }} src={api.thumbUrl(thumbT)} alt={`Кадр на ${thumbT.toFixed(1)} с`} />
                 <label className="field">
                   <span>Момент ролика: {frameT.toFixed(1)} с из {duration.toFixed(1)}</span>
-                  <input type="range" min={0} max={Math.max(0, duration - 0.1)} step={0.1} value={frameT} onChange={(e) => setFrameT(Number(e.target.value))} />
+                  <input type="range" min={0} max={Math.max(0, duration - 0.1)} step={0.1} value={frameT} onChange={(e) => {
+                    setFrameT(Number(e.target.value));
+                    setPickedT(Number(e.target.value));
+                  }} />
                 </label>
                 <label className="field">
                   <span>Какой кадр взять</span>
                   <select className="input" value={frameOrigin} onChange={(e) => setFrameOrigin(e.target.value as FrameOrigin)}>
-                    <option value="clean">Ролик без текста и субтитров</option>
+                    <option value="clean" disabled={!state.clip.plan}>Ролик без текста и субтитров</option>
                     <option value="render">Как в готовом ролике</option>
-                    <option value="source">Из видео, весь кадр</option>
+                    <option value="source" disabled={!state.clip.plan}>Из видео, весь кадр</option>
                   </select>
                 </label>
                 <button type="button" className="btn primary" disabled={!!busy} onClick={() => void insertFrame(false)}>
@@ -821,7 +812,7 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
                   <button type="button" className="btn" disabled={!!busy} onClick={() => void insertFrame(true)}>Заменить в выбранном слое</button>
                 ) : null}
               </>
-            ) : <p className="muted">Эта обложка не привязана к ролику: загрузите картинку.</p>}
+            ) : <p className="muted">Это фото не привязано к ролику: загрузите картинку во вкладке «Файлы».</p>}
           </div>
         ) : null}
         {panel === "files" ? (
@@ -896,7 +887,16 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
             {guides.map((g, i) => (
               <div key={i} className={`cov-guide ${g.axis}`} style={g.axis === "x" ? { left: g.at * zoom } : { top: g.at * zoom }} />
             ))}
-            {selected && !readOnly ? (
+            {hud && selected?.type === "image" && selected.id === hud.layerId && imagesRef.current.get(selected.src)?.naturalWidth ? (
+              <HudOverlay
+                layer={selected}
+                img={imagesRef.current.get(selected.src) as unknown as CoverImageLike}
+                rects={hud.rects}
+                zoom={zoom}
+                onChange={(rects) => setHud({ ...hud, rects })}
+              />
+            ) : null}
+            {selected && !readOnly && !hud ? (
               <div
                 className={`cov-frame${selected.locked ? " locked" : ""}`}
                 style={{ left: selected.x * zoom, top: selected.y * zoom, width: selected.w * zoom, height: selected.h * zoom, transform: `rotate(${selected.rotation}deg)` }}
@@ -936,6 +936,18 @@ export function CoverEditor({ api, docId }: { api: CoverApi; docId?: number }) {
                 assetUrl={api.assetUrl}
                 onUpload={(file, id) => void upload(file, id)}
                 textRef={textRef}
+                looks={library?.looks ?? []}
+                textStyles={library?.text_styles ?? []}
+                imageExtra={selected.type === "image" ? (
+                  <HudPanel
+                    layer={selected}
+                    hud={hud}
+                    onStart={() => void findHud(selected)}
+                    onFind={() => void findHud(selected)}
+                    onClean={() => void cleanHud(selected)}
+                    onCancel={() => setHud(null)}
+                  />
+                ) : null}
               />
               <div className="cov-row">
                 <button type="button" className="btn sm" onClick={() => duplicate(selected)}>Копия</button>

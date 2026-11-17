@@ -24,6 +24,8 @@
 
 ## Шаги
 
+**Превью YouTube.** `make_thumbnail(clip_id | feed_version_id, big_word, top_line?, subline?)` — надписи в стиле самого ролика (ЧБ с акцентами, разреженные капсы, слово из ролика); слоганов не придумывай, название канала не пиши, если стоит логотип; жёлтый текст с толстой обводкой и радужные градиенты владелец бракует.
+
 **Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
 `reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
 
@@ -108,7 +110,7 @@
 `set_segment_speed`, `set_audio_joins`, `set_music_duck`, `set_transition`, `add_layers`, `contact_sheet`,
 `view_frame`, `listen`, `render_clip`, `render_status`, `lint_clip`, `plan_tiktok_parts`, `align_lyrics`,
 `lyric_layers`, `suggest_surfaces`, `track_surface`, `track_object`, `feed_create_work`, `feed_add_version`,
-`references_list`, `reference_get`.
+`references_list`, `reference_get`, `make_thumbnail`.
 
 ## Чек-лист перед сдачей
 

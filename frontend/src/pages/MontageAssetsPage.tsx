@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState } from "react";
+import { ProjectPhotos } from "@/components/ProjectPhotos";
 import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { montageAssetsApi, type MontageAsset } from "@/api/assets";
@@ -319,6 +320,7 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
           </select>
         ) : null}
       </div>
+      {tab === "project" && projectId != null ? <ProjectPhotos projectId={projectId} /> : null}
       {tab !== "memes" && undescribed.length && moduleOn("asset_ai") ? (
         <div className="asset-hint">
           <span>

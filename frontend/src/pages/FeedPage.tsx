@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
+import { coverDocsApi } from "@/api/coverDocs";
 import {
   FEED_KINDS,
   FEED_PLATFORMS,
@@ -139,6 +140,13 @@ function VariantRow({ variant, workId }: { variant: FeedVariant; workId: number 
     mutationFn: () => feedApi.rebuildPreview(variant.id),
     onSuccess: () => void qc.invalidateQueries({ queryKey: feedKeys.work(workId) }),
   });
+  const navigate = useNavigate();
+  // Превью/фото из кадров этой версии (фоторедактор обложек): 16:9 — миниатюра YouTube.
+  const photo = useMutation({
+    mutationFn: async () => (await coverDocsApi.create({ feed_variant_id: variant.id, format: "16:9" })).id,
+    onSuccess: (id) => navigate(`/covers/${id}`),
+    onError: (e) => toast.error(errorText(e, "Не удалось открыть редактор превью")),
+  });
   const meta = [
     variant.width && variant.height ? `${variant.width}×${variant.height}` : "",
     variant.duration_sec ? formatDuration(variant.duration_sec) : "",
@@ -191,6 +199,12 @@ function VariantRow({ variant, workId }: { variant: FeedVariant; workId: number 
         ) : (
           <span className="muted">Файла больше нет на диске</span>
         )}
+        {variant.file_present ? (
+          <button type="button" className="btn sm feed-photo" disabled={photo.isPending} onClick={() => photo.mutate()}
+                  title="Картинка 1280×720 из кадров этой версии: ЧБ с акцентом, надписи как в ролике">
+            {photo.isPending ? "Открываю…" : "Превью для YouTube"}
+          </button>
+        ) : null}
         {variant.postings.length ? (
           <div className="feed-posts">
             {variant.postings.map((p) => (
