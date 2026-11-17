@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.ingest import probe_media
-from app.render_exec import _filter_filename, _json_dict, _run_ffmpeg, _safe_error, _seconds
+from app.render_exec import _filter_filename, _json_dict, _run_ffmpeg, _safe_error, _seconds, ass_filter, subtitle_fonts_dir
 from app.settings import settings
 from app.store import AppStore
 from app.subtitles.ass import write_ass_subtitles
@@ -72,7 +72,9 @@ def build_ffmpeg_burn_subtitle_args(
     output_path: Path,
     ass_filename: str,
     preset: dict,
+    fonts_dir: Path | None = None,
 ) -> list[str]:
+    """Прожиг ASS: ``fonts_dir`` — папка шрифтов стиля для libass (нет — шрифты сервиса, vendor/fonts)."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     args = [
         "ffmpeg",
@@ -83,7 +85,7 @@ def build_ffmpeg_burn_subtitle_args(
         "-i",
         str(input_path),
         "-vf",
-        f"ass={_filter_filename(ass_filename)}",
+        ass_filter(ass_filename, fonts_dir),
         "-map",
         "0:v:0",
         "-map",
@@ -351,7 +353,8 @@ class SubtitlesRender:
                 fmt=preset.get("format"),
             )
             _run_ffmpeg(
-                build_ffmpeg_burn_subtitle_args(input_path, output_path, ass_path.name, preset),
+                build_ffmpeg_burn_subtitle_args(input_path, output_path, ass_path.name, preset,
+                                                subtitle_fonts_dir(profile.get("font_family"))),
                 timeout=60 * 20,
                 cwd=ass_path.parent,
             )

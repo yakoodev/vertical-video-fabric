@@ -21,7 +21,8 @@ def _frame_fixture(tmp_path, monkeypatch, **render):
         calls.append(("ffmpeg", list(args)))
         vf = args[args.index("-vf") + 1] if "-vf" in args else ""
         if "ass=" in vf:  # прожиг субтитров в кадр — запомнить ASS, пока он есть
-            seen_ass.append((Path(cwd) / vf.split("ass=", 1)[1]).read_text(encoding="utf-8"))
+            name = vf.split("ass=", 1)[1].split(":fontsdir=", 1)[0]
+            seen_ass.append((Path(cwd) / name).read_text(encoding="utf-8"))
         Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
         Path(args[-1]).write_bytes(b"png")
 
