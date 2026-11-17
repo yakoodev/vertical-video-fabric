@@ -104,7 +104,7 @@ export {
   type GlitchStyle,
   type ResolvedFx,
 } from "./layers/fx";
-export { REACT_SOURCES, REACT_PROPS, REACT_MAX_WINDOW, levelAt, reactAt, type Levels, type ReactEffect } from "./levels";
+export { REACT_SOURCES, REACT_PROPS, REACT_BANDS, REACT_MAX_WINDOW, levelAt, reactAt, reactLevelKey, type Levels, type ReactEffect } from "./levels";
 export { videoFileTime, VIDEO_MIN_SPEED, VIDEO_MAX_SPEED, VIDEO_TAIL } from "./layers/video";
 export { DEVICE_KINDS, DEFAULT_DEVICE_COLOR, STATUS_BAR_AUTO, STATUS_BAR_MAX, STATUS_ISLAND_GAP, phoneMetrics, statusBarHeight, statusBarLayout, type PhoneMetrics, type StatusBarLayout } from "./layers/device";
 export {
@@ -123,7 +123,7 @@ export { pageRenderer, pageRef, pageRegion, pageWindow, pageKeyValue, activeTaps
 export { parsePageParam } from "./templates/page";
 export { parseRows, AD_CATEGORY } from "./templates/ads";
 export { screenTiltKeys } from "./templates/ads2";
-export { roughen, scribblePts, cursorPts, sketchOutline, BOIL_RATE } from "./layers/sketch";
+export { roughen, scribblePts, cursorPts, sketchOutline, penWidth, handStroke, BOIL_RATE } from "./layers/sketch";
 export { parsePath, parseTimes } from "./templates/sketch";
 export { nameplateRenderer, nameplateAccent, nameplateMotion, PLATFORM_COLORS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, type NameplateMotion } from "./layers/nameplate";
 export { formatCounter, counterValue } from "./layers/counter";

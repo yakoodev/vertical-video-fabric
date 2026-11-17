@@ -197,6 +197,11 @@ export type ShapeProps = {
   seed?: number;
   /** Линия «кипит» — дрожание меняется 8 раз в секунду, как в рисованной анимации. */
   boil?: boolean;
+  /**
+   * Перо у фигуры от руки (`rough` > 0): `hand` — нажим, как у маркера/Caveat: тонкий заход, полная середина,
+   * хвост сходит на нет, ширина чуть гуляет. Нет / `even` — ровная линия.
+   */
+  pen?: "even" | "hand";
 };
 
 /** Видимая часть картинки в долях; ключи cropX/Y/W/H анимируют её поверх этой базы. */
@@ -567,14 +572,24 @@ export type FxProps = {
 /* ---------- реакция на звук ---------- */
 
 export type ReactSource = "voice" | "music" | "mix";
-export type ReactProp = "scale" | "glow" | "opacity" | "y";
+export type ReactProp = "scale" | "glow" | "opacity" | "y" | "shake";
+/** Полоса частот огибающей: full — вся громкость, bass 20–150 Гц, mid 150–2000 Гц, high 2–4 кГц. */
+export type ReactBand = "full" | "bass" | "mid" | "high";
 
 /**
  * Слой «дышит» громкостью клипа: огибающая `comp.levels[source]` (её считает сервер,
  * app/audio_react.py), `amount` 0..3 — сила, `smooth` 0..1 — сглаживание (окно до 0.5 с назад),
- * `color` — цвет свечения (prop glow).
+ * `color` — цвет свечения (prop glow). `band` — полоса частот (`comp.levels["music:bass"]`): bass —
+ * пульс под бочку и бас, а не под вокал; нет — вся громкость.
  */
-export type LayerReact = { source?: ReactSource; prop?: ReactProp; amount?: number; smooth?: number; color?: string };
+export type LayerReact = {
+  source?: ReactSource;
+  prop?: ReactProp;
+  band?: ReactBand;
+  amount?: number;
+  smooth?: number;
+  color?: string;
+};
 
 /** Огибающая громкости по кадрам: кадр k — момент `t0 + k / fps` (клиповое время), `v[k]` 0..100. */
 export type LevelTrack = { t0: number; fps: number; v: number[] };

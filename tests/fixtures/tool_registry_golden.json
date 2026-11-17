@@ -276,6 +276,17 @@
 "label": true
 },
 {
+"name": "add_annotation",
+"title": "Рисую пометку от руки",
+"description": "226ea6c736a47afe",
+"parameters": "9e6aefae2bcb3ec5",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_add_annotation",
+"label": true
+},
+{
 "name": "list_motion_templates",
 "title": "Смотрю шаблоны графики",
 "description": "8e4731cffb41f017",
@@ -960,8 +971,8 @@
 {
 "name": "set_transition",
 "title": "Ставлю переход",
-"description": "3c00235f30895005",
-"parameters": "dd51b5d2449447f7",
+"description": "d016e1bed093d449",
+"parameters": "65c2c158b5e8b2ae",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -1315,8 +1326,8 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "bcddb85ba2c51fce",
-"parameters": "b48d15b7a834544c",
+"description": "6e2ad1f9b68adb1e",
+"parameters": "1385e26faeb9a643",
 "mutating": false,
 "scope": "clip",
 "module": null,

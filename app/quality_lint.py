@@ -38,7 +38,9 @@
   ≤ 25 %) — ``app/quality_lint_delivery.py``; ``subject`` (главный объект графической сцены ≥ 1/3 высоты),
   ``slide_chrome`` (счётчики «02/05», прогресс, угловые подписи, печатная машинка-украшение), ``zero_scale`` (рост из
   нуля), ``entrances`` (один и тот же вход слов дважды) — ``app/quality_lint_craft.py``; ``assertions`` — проверки
-  клипа из файла (``app/quality_lint_assert.py``). У каждой находки ``priority`` P0/P1/P2 и ``line`` — одна строка
+  клипа из файла (``app/quality_lint_assert.py``); ``direction`` — одно основное направление на ролик: переход стыка
+  против движения рядом, смена направления на склейке без ``reason`` (``app/quality_lint_direction.py``).
+  У каждой находки ``priority`` P0/P1/P2 и ``line`` — одна строка
   «P1 · t=… · где · что не так → что поменять»; ``lines`` в ответе — все строки по порядку важности.
 
 * ``sub_sync`` — субтитры против звука, без рендера. Страницы против распознанных слов (app/speech_heard.py, локальный
@@ -310,6 +312,10 @@ def delivery_findings(store: Any, plan: dict, rs: dict, clock: Any, wanted: list
             findings += C.zero_scale_findings(layers)
         if "entrances" in wanted:
             findings += C.entrance_findings(layers)
+        if "direction" in wanted:
+            from app.quality_lint_direction import direction_findings
+
+            findings += direction_findings(rs, clock)
         if "assertions" in wanted:
             from app.quality_lint_assert import assertion_findings, load_assertions
 
@@ -533,7 +539,7 @@ def lint_clip(store: Any, clip_plan_id: int, checks: Any = None, platforms: Any 
                 skipped["audio_mix"] = f"сведение не измерено: {str(exc)[:200]}"
 
     if any(c in wanted for c in ("frame0", "dead", "hold", "outro", "subject", "slide_chrome", "zero_scale",
-                                 "entrances", "assertions")):
+                                 "entrances", "assertions", "direction")):
         findings += delivery_findings(store, plan, rs, clock, wanted, path=path, mode=mode,
                                       caption_layers=caption_layers, pages_by_layer=pages_by_layer, ass=ass,
                                       assertions=assertions, out=out, skipped=skipped)

@@ -137,6 +137,41 @@ test("фигура rough рисуется (draw-вход рисует частя
   assert.ok(headInk > 400, `наконечник ${headInk}`);
 });
 
+test("пометка от руки: перо hand — нажим (тонкий заход и хвост), рисуется частями, кадр детерминирован", () => {
+  // нажим: заход тоньше середины, хвост сходит на нет, ширина гуляет, но не исчезает
+  assert.ok(E.penWidth(0, 1) < 0.6 * E.penWidth(0.5, 1) && E.penWidth(1, 1) < 0.45 * E.penWidth(0.5, 1));
+  for (let u = 0; u <= 1; u += 0.05) assert.ok(E.penWidth(u, 7) >= 0.18 && E.penWidth(u, 7) < 1.25);
+  const line = (pen) => shapeLayer({ kind: "line", w: 600, rough: 0.3, seed: 4, pen, stroke: { color: "#ff0000", width: 24 } }, { rotation: 0 });
+  const even = drawOne(line(undefined), 2);
+  const hand = drawOne(line("hand"), 2);
+  // столбец у начала линии: у пера тоньше, чем у ровной; в середине — почти та же толщина
+  const column = (cv, x) => {
+    const d = cv.getContext("2d").getImageData(x, 960 - 60, 1, 120).data;
+    let n = 0;
+    for (let i = 3; i < d.length; i += 4) if (d[i] > 100) n++;
+    return n;
+  };
+  assert.ok(column(hand, 540 - 290) < column(even, 540 - 290) * 0.75, `заход ${column(hand, 250)} vs ${column(even, 250)}`);
+  assert.ok(column(hand, 540) >= column(even, 540) * 0.8, `середина ${column(hand, 540)} vs ${column(even, 540)}`);
+  // круг пером рисуется входом draw частями; повтор — тот же кадр
+  const ring = shapeLayer({ kind: "ellipse", rough: 0.55, seed: 9, pen: "hand" }, { in: { type: "draw", duration: 0.4 } });
+  const part = ink(drawOne(ring, 0.15)).n;
+  const done = ink(drawOne(ring, 1)).n;
+  assert.ok(part > 200 && done > part * 1.6, `${part} → ${done}`);
+  assert.ok(drawOne(ring, 0.2).toBuffer("image/png").equals(drawOne(ring, 0.2).toBuffer("image/png")));
+  // стрелка пером: линия и два штриха наконечника видны у острия; полупрозрачная — без «бусин» (ровная альфа)
+  const arrow = shapeLayer({ kind: "arrow", w: 400, rough: 0.6, seed: 1, pen: "hand" }, { rotation: 0 });
+  const d = drawOne(arrow, 2).getContext("2d").getImageData(540 + 150, 960 - 60, 60, 120).data;
+  let headInk = 0;
+  for (let i = 3; i < d.length; i += 4) if (d[i] > 40) headInk++;
+  assert.ok(headInk > 250, `наконечник ${headInk}`);
+  const ghost = drawOne(shapeLayer({ kind: "line", w: 600, rough: 0.2, seed: 2, pen: "hand" }, { rotation: 0, opacity: 0.5 }), 2);
+  const g = ghost.getContext("2d").getImageData(400, 960 - 30, 200, 60).data;
+  const alphas = new Set();
+  for (let i = 3; i < g.length; i += 4) if (g[i] > 100) alphas.add(g[i]);
+  assert.ok(Math.max(...alphas) <= 130, `альфа внутри ленты ${[...alphas].slice(0, 5)}`);
+});
+
 /* ---------- курсор и касания ---------- */
 
 test("курсор и касания: путь по точкам, остриё — в точке пути, волна — там, где курсор в момент касания", () => {

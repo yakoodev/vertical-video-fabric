@@ -191,8 +191,10 @@ in/out: {', '.join(enums['anims'])} (typewriter/words/rise — только text
   свой (lint_clip entrances предупредит). Ничего не выращивай из нуля (pop, spin, words — масштаб с 0): лучше въезд от края или
   «оседание» из чуть крупнее
 loop: {', '.join(enums['loops'])} (glitch — редкие сбои, wave — буквы волной: только text)
-react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0..1, color?}} у любого слоя — дышит громкостью клипа
-  (огибающую считает сервис; music — фоновый трек клипа). Не больше 1–2 «дышащих» слоёв на сцену
+react {{source voice|music|mix, prop scale|glow|opacity|y|shake, band full|bass|mid|high, amount 0..3, smooth 0..1, color?}} у любого
+  слоя — дышит громкостью клипа (огибающую считает сервис; music — фоновый трек клипа). band — полоса частот: bass
+  (20–150 Гц) — пульс под бочку и бас (логотип, плашка «качает» в долю, а не от вокала), mid — голос и гитары, high —
+  хэты; нет — вся громкость. shake — тряска от звука. Не больше 1–2 «дышащих» слоёв на сцену
 3D: у слоя z (глубина, опорн. px: −300 ближе … 600 дальше; задана — слой в сцене, едет с камерой), rotX/rotY (наклон
   с перспективой, °; ключи z/rotX/rotY); у ключа камеры z (dolly), rotX/rotY (наклон/облёт ±12°), fov (40), baseZ (видео, 1000).
   Проще camera_preset(preset, start): parallax_push, orbit, dolly_zoom, tilt_reveal, float, card_flip (layer_id),
@@ -215,7 +217,7 @@ props по типу:
         внутри текста рисуются векторно цветом текста (в шрифтах их нет — без этого был бы квадрат)
   shape: kind {'|'.join(enums['shapes'])} (star4 — четырёхлучевая искра ✦), w, h, fill|null, stroke {{color,width}}, radius, points, dash
          rough 0..1 — «от руки» (ellipse/rect/line/arrow/scribble: линия дрожит, круг заходит сам на себя, наконечник — два штриха),
-         seed, boil (дрожит 8 раз/с); scribble — штриховка маркером по w×h; cursor — курсор мыши (остриё — левый верх w×h)
+         seed, boil (дрожит 8 раз/с), pen "hand" — перо с нажимом маркера (тонкий заход, хвост на нет; готовая пометка — add_annotation); scribble — штриховка маркером по w×h; cursor — курсор мыши (остриё — левый верх w×h)
   image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX,
          device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island,
          statusBar (true или доля ширины экрана 0..0.4: полоса «9:41 · связь · батарея» НАД записью, экран выше на неё;

@@ -8,13 +8,14 @@ from typing import Any
 
 CHECKS = ("ui_zones", "reading", "flashes", "freezes", "loop", "audio_mix", "montage", "fragments", "sub_sync", "voice",
           # Перед сдачей (app/quality_lint_delivery.py, quality_lint_craft.py, quality_lint_assert.py).
-          "frame0", "dead", "hold", "outro", "subject", "slide_chrome", "zero_scale", "entrances", "assertions")
+          "frame0", "dead", "hold", "outro", "subject", "slide_chrome", "zero_scale", "entrances", "assertions",
+          "direction")
 CHECK_LABELS = {"ui_zones": "зоны площадок", "reading": "темп чтения", "flashes": "вспышки", "freezes": "застывшие куски",
                 "loop": "луп", "audio_mix": "сведение звука", "montage": "монтаж", "fragments": "обрывки",
                 "sub_sync": "субтитры и голос", "voice": "озвучка", "frame0": "кадр 0", "dead": "мёртвые куски",
                 "hold": "держать кадр", "outro": "концовка", "subject": "главный объект",
                 "slide_chrome": "слайдовая обвязка", "zero_scale": "рост из нуля", "entrances": "входы слов",
-                "assertions": "проверки клипа"}
+                "assertions": "проверки клипа", "direction": "направление на склейках"}
 PRIORITIES = ("P0", "P1", "P2")
 CHECK_ALIASES = {
     "zones": "ui_zones", "ui": "ui_zones", "ui_zone": "ui_zones", "platform": "ui_zones", "buttons": "ui_zones",
@@ -28,7 +29,8 @@ CHECK_ALIASES = {
     "мёртвый": "dead", "settle": "hold", "end_card": "outro", "endcard": "outro", "ending": "outro",
     "subject_size": "subject", "slides": "slide_chrome", "chrome": "slide_chrome", "scale_zero": "zero_scale",
     "grow": "zero_scale", "entrance": "entrances", "word_entrances": "entrances", "asserts": "assertions",
-    "assert": "assertions",
+    "assert": "assertions", "directions": "direction", "continuity": "direction", "flow": "direction",
+    "направление": "direction",
 }
 
 

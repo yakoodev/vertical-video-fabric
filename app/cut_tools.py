@@ -186,7 +186,17 @@ def tools() -> list[Tool]:
             "кромки #rrggbb, panels — 2 или 3. Середина перехода — точка склейки (snap_to_beats ставит её в долю). "
             "scope — в раскладке «полоса» (meme): band (по умолчанию) — вспышка/вжух/наплыв только в полосе видео, "
             "поля, фон и титры меняются встык; frame — во весь кадр. "
-            "/ Transition between pieces.",
+            "Переходы склеек кадрами: whippan — хлыст, обе картинки уносит по direction со смазом (0.13–0.3 с); "
+            "colorfill — заливка цветом: плашка color (нет — цвет бренда) въезжает по direction, закрывает кадр и "
+            "открывает следующий (0.3–0.45 с); blurswap — смена через размытие (0.25–0.4 с); dipblack — затемнение: "
+            "~3 кадра в чёрный до склейки, следующий кусок сразу (0.1–0.3 с); zoomblur — радиальное зум-размытие "
+            "(0.2–0.45 с). direction — куда едет картинка: left/right/up/down (нет — по движению камеры, камера "
+            "стоит — влево); одно основное направление на ролик (lint_clip direction). "
+            "join — номер стыка кусков (0 — между кусками 0 и 1; можно списком): переход только этого стыка "
+            "(type, duration, direction, color, angle; ставится и в той же сцене), type inherit — снять, стык снова "
+            "общий; type cut — этот стык встык; reason — почему тут направление меняется (флешбек, ответ "
+            "собеседника) — линт direction молчит. Без join — общий переход всех стыков. "
+            "/ Transition between pieces (global or per join).",
             _obj({"type": {"type": "string"}, "duration": {"type": "number"}, "sfx": {"type": "string"},
                   "sfx_volume": {"type": "number"}, "audio": {"type": "string"}, "smart": {"type": "boolean"},
                   "motion_blur": {"type": "number", "description": "смаз whip/slide 0..1"},
@@ -197,8 +207,16 @@ def tools() -> list[Tool]:
                   "panels": {"type": "integer", "description": "panels: 2 или 3 полосы"},
                   "scope": {"type": "string", "enum": ["band", "frame"],
                             "description": "раскладка «полоса»: переход только в полосе видео (band) или во весь кадр"},
+                  "direction": {"type": "string", "enum": ["left", "right", "up", "down", "auto"],
+                                "description": "whippan/colorfill: куда едет картинка; auto — по камере"},
+                  "join": {"type": ["integer", "array"], "items": {"type": "integer"},
+                           "description": "номер стыка кусков (0 — между 0 и 1) или список: переход только там"},
+                  "reason": {"type": "string",
+                             "description": "у стыка: почему здесь меняется направление (линт direction молчит)"},
                   "fit_speech": {"type": "boolean", "description": "укоротить переход, чтобы не задевал слова"}}),
-            h_set_transition, mutating=True, label=lambda a: f"Переход {a.get('type') or ''} {a.get('sfx') or ''}".strip(),
+            h_set_transition, mutating=True,
+            label=lambda a: (f"Переход {a.get('type') or ''} {a.get('sfx') or ''}".strip()
+                             + (f" на стыке {a.get('join')}" if a.get("join") is not None else "")),
         ),
         Tool(
             "trim_piece", "Подрезаю кусок",

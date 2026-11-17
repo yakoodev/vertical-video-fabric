@@ -56,7 +56,7 @@ export const handArrow: MotionTemplate = {
     { name: "text", label: "Подпись (можно пустую)", type: "text", default: "Вот здесь ошибка" },
     { name: "color", label: "Цвет", type: "color", default: RED },
     { name: "width", label: "Толщина линии, px", type: "number", default: 16, min: 4, max: 40 },
-    drawParam(0.6),
+    drawParam(0.45),
     roughParam,
     boilParam,
     durationParam(3),
@@ -76,7 +76,7 @@ export const handArrow: MotionTemplate = {
     const tailY = ty + fy * k;
     const angle = (Math.atan2(tipY - tailY, tipX - tailX) * 180) / Math.PI;
     const color = str(p, "color", RED);
-    const draw = Math.max(0.1, num(p, "draw", 0.6));
+    const draw = Math.max(0.1, num(p, "draw", 0.45));
     const width = num(p, "width", 16);
     const layers: Layer[] = [
       layer(
@@ -94,7 +94,7 @@ export const handArrow: MotionTemplate = {
           shadow: { color: "#000000", blur: 10, x: 0, y: 3, opacity: 0.45 },
         },
         // Изгиб наружу: стрелка приходит дугой, а не по линейке.
-        { kind: "arrow", w: Math.round(len * (1 - gap)), fill: null, stroke: { color, width }, bend: Math.round(len * 0.12) * (fx < 0 ? 1 : -1), rough: num(p, "rough", 0.6), seed: 11, boil: bool(p, "boil", false) },
+        { kind: "arrow", w: Math.round(len * (1 - gap)), fill: null, stroke: { color, width }, bend: Math.round(len * 0.12) * (fx < 0 ? 1 : -1), rough: num(p, "rough", 0.6), seed: 11, boil: bool(p, "boil", false), pen: "hand" },
       ),
     ];
     const text = str(p, "text", "");
@@ -125,7 +125,7 @@ export const handCircle: MotionTemplate = {
     { name: "text", label: "Подпись под кругом (можно пустую)", type: "text", default: "" },
     { name: "color", label: "Цвет", type: "color", default: RED },
     { name: "width", label: "Толщина линии, px", type: "number", default: 14, min: 4, max: 40 },
-    drawParam(0.7),
+    drawParam(0.45),
     roughParam,
     boilParam,
     durationParam(3),
@@ -137,7 +137,7 @@ export const handCircle: MotionTemplate = {
     const w = num(p, "w", 420);
     const h = num(p, "h", 240);
     const color = str(p, "color", RED);
-    const draw = Math.max(0.1, num(p, "draw", 0.7));
+    const draw = Math.max(0.1, num(p, "draw", 0.45));
     const layers: Layer[] = [
       layer(
         "shape",
@@ -154,7 +154,7 @@ export const handCircle: MotionTemplate = {
           shadow: { color: "#000000", blur: 10, x: 0, y: 3, opacity: 0.45 },
         },
         // Круг чуть больше области: рука обводит с запасом, а не по краю.
-        { kind: "ellipse", w: Math.round(w * 1.16 + 30), h: Math.round(h * 1.2 + 30), fill: null, stroke: { color, width: num(p, "width", 14) }, rough: num(p, "rough", 0.6), seed: 5, boil: bool(p, "boil", false) },
+        { kind: "ellipse", w: Math.round(w * 1.16 + 30), h: Math.round(h * 1.2 + 30), fill: null, stroke: { color, width: num(p, "width", 14) }, rough: num(p, "rough", 0.6), seed: 5, boil: bool(p, "boil", false), pen: "hand" },
       ),
     ];
     const text = str(p, "text", "");
@@ -198,7 +198,7 @@ export const handUnderline: MotionTemplate = {
       layer(
         "shape",
         { ...base, start, y: y + dy / REF_H, rotation: -1.5 + seed * 0.4, name },
-        { kind: "line", w: Math.round(w * k), fill: null, stroke: { color, width }, bend: -6, rough, seed },
+        { kind: "line", w: Math.round(w * k), fill: null, stroke: { color, width }, bend: -6, rough, seed, pen: "hand" },
       );
     if (kind === "дважды") return { layers: [line(0, 1, at, 1, "Подчёркивание"), line(width * 1.9, 0.86, at + draw * 0.7, 2, "Второе подчёркивание")] };
     if (kind === "зачеркнуть" || kind === "маркером") {

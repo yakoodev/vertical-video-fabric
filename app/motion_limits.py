@@ -105,9 +105,16 @@ FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", 
 FX_MAX_AT_ONCE = 2
 # Реакция слоя на звук (frontend/src/motion/levels.ts): огибающую считает app/audio_react.py.
 REACT_SOURCES = ("voice", "music", "mix")
-REACT_PROPS = ("scale", "glow", "opacity", "y")
+REACT_PROPS = ("scale", "glow", "opacity", "y", "shake")
+# Полоса частот огибающей (app/audio_react.py): full — вся громкость, bass 20–150 Гц (бочка, бас), mid 150–2000 Гц
+# (голос, гитары), high 2–4 кГц (хэты, «с»; верх ограничен анализом 8 кГц).
+REACT_BANDS = ("full", "bass", "mid", "high")
+REACT_BAND_ALIASES = {"all": "full", "wide": "full", "any": "full", "low": "bass", "lows": "bass", "kick": "bass",
+                      "sub": "bass", "бас": "bass", "низ": "bass", "mids": "mid", "middle": "mid", "середина": "mid",
+                      "highs": "high", "treble": "high", "hats": "high", "верх": "high", "full_band": "full"}
 REACT_ALIASES = {"speech": "voice", "mic": "voice", "all": "mix", "audio": "mix", "sound": "mix",
-                 "brightness": "glow", "bounce": "y", "jump": "y", "size": "scale", "alpha": "opacity"}
+                 "brightness": "glow", "bounce": "y", "jump": "y", "size": "scale", "alpha": "opacity",
+                 "jitter": "shake", "tremble": "shake", "тряска": "shake"}
 # scribble — штриховка маркером зигзагом по рамке w×h; cursor — стрелка-курсор мыши (остриё —
 # левый верхний угол рамки). «От руки» (props.rough > 0) умеют ellipse/rect/line/arrow/scribble.
 SHAPE_KINDS = ("rect", "ellipse", "line", "arrow", "triangle", "star", "burst", "star4", "scribble", "cursor")
