@@ -23,7 +23,8 @@ Whisper иногда угадывает мат по контексту даже 
 Проверка Whisper одинакова для всех стилей: рендер и распознавание того, что получилось. Реверс прячет
 мат от Whisper хуже тишины (5 из 12 против 2 из 12 на записях Муры), поэтому слово, которое узнаётся
 и на уровне 3, verify переключает на ``silence``, затем на ``noise`` (``STYLE_FALLBACK``) — только это
-слово и сверх ``max_rounds``, не больше ``STYLE_FALLBACK_ROUNDS`` кругов; ответ это перечисляет.
+слово и в счёт тех же ``max_rounds`` кругов (17.11: при max_rounds 3 шло 5 рендеров — круги сверх лимита
+были «бесплатными», а это минуты CPU); ответ это перечисляет.
 
 ``censor_job`` — проверка фоном (рендер и Whisper — минуты): вызов ждёт не дольше
 ``JOB_WAIT_SEC`` и отвечает ``status: running``; повторный вызов подключается к той же
@@ -56,7 +57,6 @@ DEFAULT_STYLE = "reverse"
 # Слово узнаётся на последнем уровне — следующий стиль для него (только для этого слова).
 STYLE_FALLBACK: dict[str, str] = {"silence": "noise", "beep": "silence", "reverse": "silence",
                                   "lowpass": "silence", "stretch": "silence", "duck": "silence"}
-STYLE_FALLBACK_ROUNDS = 2
 
 
 def clamp_style(value: Any) -> str | None:
@@ -692,7 +692,7 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
     stray: list[dict] = []
     clip: dict = {}
     try:
-        for n in range(1, rounds_max + STYLE_FALLBACK_ROUNDS + 1):
+        for n in range(1, rounds_max + 1):  # не больше max_rounds рендеров — смена стиля тоже в счёт
             if progress:
                 progress({"round": n, "stage": "рендер"})
             clip = render_plan(store, clip_plan_id)
@@ -709,15 +709,16 @@ def verify_plan(store: Any, clip_plan_id: int, levels: Any = None, *, max_rounds
             if not near:
                 break
             bump = {i: level_now[i] + 1 for i in near if level_now.get(i, MAX_LEVEL) < MAX_LEVEL}
-            # Узнаётся на последнем уровне — сначала стиль сильнее (только этому слову, сверх max_rounds),
+            if n >= rounds_max:
+                break  # круги кончились: следующего рендера не будет
+            # Узнаётся на последнем уровне — сначала стиль сильнее (только этому слову, в счёт тех же кругов),
             # потом, если глушится одна дорожка, — слово целиком.
-            switch = ({i: STYLE_FALLBACK[style_now[i]] for i in near
-                       if i not in bump and style_now.get(i) in STYLE_FALLBACK}
-                      if n < rounds_max + STYLE_FALLBACK_ROUNDS else {})
+            switch = {i: STYLE_FALLBACK[style_now[i]] for i in near
+                      if i not in bump and style_now.get(i) in STYLE_FALLBACK}
             widen = ({i for i in near if i not in bump and i not in switch and i not in full}
                      if state.get("track") is not None else set())
-            if not switch and not (n < rounds_max and (bump or widen)):
-                break  # круги кончились или всё узнанное уже на последнем уровне и в последнем стиле
+            if not (bump or switch or widen):
+                break  # всё узнанное уже на последнем уровне и в последнем стиле
             level_now.update(bump)
             full |= widen
             for i, to in switch.items():
