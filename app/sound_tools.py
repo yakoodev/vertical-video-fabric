@@ -80,7 +80,7 @@ def h_list_music(ctx: ToolContext, _args: dict) -> dict:
     return {"tracks": tracks,
             "note": ("громкость фона выставляется сама — заметно тише голоса клипа и приглушается под речь. "
                      "energy_start_sec — с какой секунды трек звучит в полную силу (до неё тихое вступление), "
-                     "drop_sec — самый сильный подъём, bpm — темп. Промо/холст: set_music(start_sec=energy_start_sec)")}
+                     "drop_sec — самый сильный подъём, bpm — темп. Старт set_music подбирает сам (финал трека на конец ролика); start_sec — только для конкретного куска")}
 
 
 def _music_track_hint(track: dict, start: float, promo: bool) -> dict:
