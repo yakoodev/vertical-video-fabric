@@ -81,8 +81,10 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
                 "новый источник из торрента", (
         "get_source_transcript", "get_shots", "source_contact_sheet", "chat_activity", "get_chat", "create_clip",
         "make_compilation", "add_torrent_source", "torrent_status", "start_torrent", "cancel_torrent")),
-    "feed": ("лента готовых работ: сдать версию с файлами, вердикт владельца, отметка «выложено»; сводка сервиса", (
-        "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list", "home_summary")),
+    "feed": ("лента готовых работ: сдать версию с файлами, вердикт владельца, отметка «выложено»; сводка сервиса; "
+             "независимый критик готового ролика перед сдачей", (
+        "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list", "home_summary",
+        "critique_render")),
     # До 17.11 эти лежали в «other», и агент их не находил: реклама сайта (плейбук ad-voiceover) без web_search и
     # page_*, мувик (frag-movie) без game_events — первое задание карточки так и писало «группа other».
     "web": ("сайты как материал: поиск в интернете, снимок страницы, правка копии, слой page, блоки страницы слоями", (
@@ -149,7 +151,7 @@ _PRELOAD = {
                     "music_video"),
     "amv": ("amv", "амв", "аниме-клип", "аниме клип", "аниме-эдит", "аниме эдит", "anime edit", "amv_"),
     "feed": ("лент", "запощ", "выложил", "выложено", "выложен", "сдай работ", "сдать работ", "вердикт", "сводк",
-             "что ждёт"),
+             "что ждёт", "критик", "свежим взглядом", "свежим глазом"),
     "web": ("сайт", "реклам", "страниц", "лендинг", "магазин", "web_search", "page_"),
     "game": ("мувик", "фраг", "мем-эдит", "мем эдит", "боёв", "боев", "килл", "нокнул", "ноки", "апекс", "apex",
              "game_events", "meme_edit"),

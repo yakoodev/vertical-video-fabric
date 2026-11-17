@@ -2961,6 +2961,21 @@
 "module": null,
 "handler": "h_reference_add",
 "label": true
+},
+{
+"name": "critique_render",
+"title": "Зову независимого критика",
+"description": "f05f01781bae717c",
+"parameters": "910eb9a4de8ba888",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_critique_render",
+"label": true,
+"cost": [
+"paid",
+"network"
+]
 }
 ]
 }
