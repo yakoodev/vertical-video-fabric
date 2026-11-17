@@ -227,7 +227,17 @@ function drawRows(fc: FlatFrame, p: FlatUiProps, rows: Row[], x: number, y: numb
     g.translate(0, (1 - showK) * 18);
     const on = doneK > 0;
     const cy = y + ITEM * 0.6;
-    checkCircle(g, pal, x + CIRCLE, cy, CIRCLE, doneK, it.color || pal.accent);
+    if (flatIconName(it.icon)) {
+      // Пункт со своим значком (мини-гайды «что нужно»: микрофон, камера, время) — мягкая плашка значка вместо галочки.
+      const k = appear ? 1 : doneK;
+      g.save();
+      g.translate(x + CIRCLE, cy);
+      g.scale(0.7 + 0.3 * outBack(Math.min(1, k)), 0.7 + 0.3 * outBack(Math.min(1, k)));
+      iconTile(g, pal, it.icon, 0, 0, CIRCLE * 2.5, { soft: true, color: it.color || pal.accent });
+      g.restore();
+    } else {
+      checkCircle(g, pal, x + CIRCLE, cy, CIRCLE, doneK, it.color || pal.accent);
+    }
     const tx = x + CIRCLE * 2 + 22;
     let ty = y;
     // Неотмеченное — бледнее; отмеченное «загорается» вместе с галочкой.

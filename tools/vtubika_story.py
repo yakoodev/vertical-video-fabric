@@ -24,6 +24,11 @@
    рассинхрон — не прошёл, код 4); VRM — ещё скрутка рук (node/vrm/src/twist.ts) и лист кистей крупно
    (hands_sheet.jpg, node/vrm/hands.mjs).
 
+Мини-гайды (``tools/vtubika_plans/guide_*.json``, ``app.vtubika_guide``): ведущая говорит в камеру, а пункты ``gfx``
+фраз (карточки, строки со значками, скрины сайта, примеры аватаров, ведущая в кружке) ложатся поверх кадра на шаге
+субтитров; графику без 3D-рендера смотреть ``tools/vtubika_guide_frames.py``, примеры аватаров из каста —
+``tools/vtubika_guide_assets.py``.
+
 Переозвучка одной фразы (``app.vtubika_revoice``): изменилось, как её читать, или у фразы ``"revoice": true`` —
 платно читается только она и вклеивается в прошлый дубль в тишине, той же длины и громкости.
 
@@ -411,10 +416,14 @@ def extra_voices(plan: dict, words: list[dict], work: Path, report: dict) -> lis
     return out
 
 
-def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float,
-                  y: float | None = None, shots: list[dict] | None = None, lines: list[dict] | None = None) -> None:
+def caption_comp(plan: dict, words: list[dict], video: Path, work: Path, total: float, y: float | None = None,
+                 shots: list[dict] | None = None, lines: list[dict] | None = None) -> tuple[Path, Path, Path | None, Path | None]:
+    """Слои поверх отрисованной сцены → (comp.json, assets.json, videos.json, anims.json — или None): переходы, субтитры,
+    крючок, подписи реплик и графика мини-гайда (``gfx`` фраз, app/vtubika_guide.py; анимации с альфой — APNG)."""
+    from app import vtubika_guide as GUIDE
+    from app.anim_frames import prepare_anim_frames
     from app import vtubika_plan as P
-    from app.motion_render_comp import build_compositor_args, write_comp
+    from app.motion_render_comp import write_comp
     from app.motion_render_video import prepare_video_frames
     from app.stories_3d import _captions
     from app.stories_library import DEFAULT_CAPTIONS
@@ -425,19 +434,36 @@ def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: P
     layer = {"id": "caps", "type": "captions", "start": 0.0, "end": round(total, 3), "x": 0.5,
              "y": float(DEFAULT_CAPTIONS["y"] if y is None else y), "props": props, "track": 9}
     flows = flow_layers(shots or [], total)
-    extra = [*hook_layers(plan), *line_layers(lines or [])]
+    gfx, gassets = GUIDE.layers(plan, words, total)
+    extra = [*hook_layers(plan), *line_layers(lines or []), *gfx]
     comp = write_comp(work / "comp.json", width=1080, height=1920, fps=30, duration=total, layers=[*flows, layer, *extra],
                       camera=[], words=comp_words)
-    (work / "assets.json").write_text(json.dumps({FLOW_ASSET: str(video)} if flows else {}), "utf-8")
+    # Видео-слои — кадры той же сцены: перетекающие переходы и кружок ведущей гайда.
+    vids = [*flows, *GUIDE.video_layers(gfx)]
+    assets = {**({FLOW_ASSET: str(video)} if vids else {}), **gassets}
+    (work / "assets.json").write_text(json.dumps(assets, ensure_ascii=False), "utf-8")
     videos = None
-    if flows:
-        videos, notes = prepare_video_frames(flows, {FLOW_ASSET: str(video)}, work, fps=30, out_width=1080)
+    if vids:
+        videos, notes = prepare_video_frames(vids, {FLOW_ASSET: str(video)}, work, fps=30, out_width=1080)
         if notes or videos is None:
             raise RuntimeError(f"переходы: кадры видео-слоёв не нарезались: {notes}")
+    anims = None
+    if gassets:
+        anims, notes = prepare_anim_frames(gfx, gassets, work, out_width=1080)
+        if notes:
+            raise RuntimeError(f"графика гайда: анимации не разложились: {notes}")
+    return comp, work / "assets.json", videos, anims
+
+
+def burn_captions(plan: dict, words: list[dict], video: Path, out: Path, work: Path, total: float,
+                  y: float | None = None, shots: list[dict] | None = None, lines: list[dict] | None = None) -> None:
+    from app.motion_render_comp import build_compositor_args
+
+    comp, assets, videos, anims = caption_comp(plan, words, video, work, total, y, shots, lines)
     # stdin=DEVNULL: компоновщик (node + @napi-rs/canvas) на Windows падает 0xC0000409 с недействительным
     # унаследованным stdin (запуск из агента/планировщика).
-    proc = subprocess.run(build_compositor_args(comp, work / "assets.json", input_path=video, output_path=out,
-                                                videos_path=videos),
+    proc = subprocess.run(build_compositor_args(comp, assets, input_path=video, output_path=out, videos_path=videos,
+                                                anims_path=anims),
                           capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
                           stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not out.is_file():
