@@ -14,9 +14,15 @@ import { REF_H, REF_W } from "./types";
 
 /**
  * chars — typewriter, words — слова с pop, rise — слова выезжают снизу из-под маски строки,
- * scramble — буквы перебираются случайными символами и «расшифровываются» слева направо.
+ * scramble — буквы перебираются случайными символами и «расшифровываются» слева направо;
+ * входы слов: focus — из размытия в резкость, colorize — из серого в цвет, slot — одно слово
+ * прокручивается барабаном, letters — буквы падают по одной (имя).
  */
-export type Reveal = { mode: "chars" | "words" | "rise" | "scramble"; fraction: number };
+export type RevealMode = "chars" | "words" | "rise" | "scramble" | "focus" | "colorize" | "slot" | "letters";
+export type Reveal = { mode: RevealMode; fraction: number };
+
+/** Входы слов текста (in/out text): у остальных слоёв — fade. */
+export const WORD_ENTRANCES = ["focus", "colorize", "slot", "letters"] as const;
 
 export type LayerState = {
   /** Локальное время слоя (0 = start) и его длина. */
@@ -157,6 +163,8 @@ function effectiveType(type: InOutType, layerType: LayerType): InOutType {
   if (type === "draw" && layerType !== "shape") return "wipe";
   // Глитч и расшифровка букв — только у текста; эффект кадра умеет лишь проявляться.
   if ((type === "glitch" || type === "scramble") && layerType !== "text") return "fade";
+  // Входы слов — только у текста (как нормализация бэкенда: у прочих — fade).
+  if ((WORD_ENTRANCES as readonly string[]).includes(type) && layerType !== "text") return "fade";
   if (layerType === "fx" && type !== "none" && type !== "fade") return "fade";
   return type;
 }
@@ -240,7 +248,11 @@ function applyInOut(st: LayerState, type: InOutType, a: number, seed: number, lo
       st.reveal = mergeReveal(st.reveal, { mode: "rise", fraction: p });
       return;
     case "scramble":
-      st.reveal = mergeReveal(st.reveal, { mode: "scramble", fraction: p });
+    case "focus":
+    case "colorize":
+    case "slot":
+    case "letters":
+      st.reveal = mergeReveal(st.reveal, { mode: type, fraction: p });
       return;
     case "glitch":
       // Расслоение и срезы сильные в начале и сходят на нет к концу входа; мерцает рендерер.

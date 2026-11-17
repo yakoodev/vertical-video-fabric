@@ -18,6 +18,8 @@ export {
   DEFAULT_OUT_DURATION,
   type LayerState,
   type Reveal,
+  type RevealMode,
+  WORD_ENTRANCES,
 } from "./animate";
 export {
   cameraAt,
@@ -83,6 +85,7 @@ export {
   MARKER_COLOR,
   type TextLayout,
 } from "./layers/text";
+export { slotWordIndex, slotReel, letterProgress, grayMix, SLOT_TURNS } from "./layers/textwords";
 export {
   FX_KINDS,
   FX_DEFAULTS,

@@ -1983,6 +1983,63 @@ test("scramble: перебор детерминирован, буквы из н�
   assert.ok(pixels([scr], 10).every((v, i) => i % 4 !== 3 || v === 0), "в начале — пусто");
 });
 
+test("входы слов focus/colorize/slot/letters: детерминированы, в начале пусто, после входа — как без анимации", () => {
+  const props = { text: "Сара Мура 2077", size: 100, color: "#ffd400", stroke: { color: "#000000", width: 6 }, highlight: { words: [1], color: "#3cff7a" } };
+  const plain = pixels([textLayer({ props })], 12);
+  for (const type of E.WORD_ENTRANCES) {
+    const l = textLayer({ props, in: { type, duration: 1 } });
+    assert.equal(E.resolveLayer(l, 10.4).reveal.mode, type);
+    assert.ok(same(pixels([l], 11.5), plain), `${type}: после входа — те же пиксели`);
+    assert.ok(same(pixels([l], 10.4), pixels([l], 10.4)), `${type}: превью == рендер`);
+    assert.ok(!same(pixels([l], 10.4), plain), `${type}: в середине входа — иначе`);
+    assert.ok(pixels([l], 10).every((v, i) => i % 4 !== 3 || v === 0), `${type}: в начале — пусто`);
+  }
+  // У не-текста — fade (как нормализация бэкенда).
+  const shape = { ...textLayer(), type: "shape", props: { kind: "rect" } };
+  for (const type of E.WORD_ENTRANCES) {
+    near(E.resolveLayer({ ...shape, in: { type, duration: 1 } }, 10.5).opacity, E.resolveLayer({ ...shape, in: { type: "fade", duration: 1 } }, 10.5).opacity);
+  }
+});
+
+test("colorize: серое → цвет; slot: слово — подсвеченное или последнее, барабан встаёт на место; focus — без сдвига", () => {
+  // Серый цвета: жёлтый → серый (r = g = b), доля 0 — как есть, rgba() тоже понимается.
+  assert.equal(E.grayMix("#ffd400", 0), "#ffd400");
+  const g = /rgba\((\d+),(\d+),(\d+)/.exec(E.grayMix("rgba(255,212,0,1)", 1));
+  assert.ok(g && g[1] === g[2] && g[2] === g[3], `серый: ${g}`);
+  const L = E.layoutText(createCanvas(10, 10).getContext("2d"), { text: "раз два три", size: 80 }, "sans-serif");
+  assert.equal(E.slotWordIndex(L, null), 2);
+  assert.equal(E.slotWordIndex(L, { words: [1] }), 1);
+  assert.equal(E.slotWordIndex(L, { words: [9] }), 2);
+  near(E.slotReel(0).pos, E.SLOT_TURNS);
+  near(E.slotReel(1).pos, 0);
+  assert.ok(E.slotReel(0.3).speed > E.slotReel(0.9).speed, "барабан замедляется");
+  // По буквам: первая буква раньше последней, к концу — все на месте.
+  assert.ok(E.letterProgress(L, 0.3, 0) > E.letterProgress(L, 0.3, 8));
+  near(E.letterProgress(L, 1, L.totalG - 1), 1);
+  // focus: ни сдвига, ни масштаба слоя — только буквы размыты.
+  const st = E.resolveLayer(textLayer({ in: { type: "focus", duration: 1 } }), 10.3);
+  near(st.x, 0.5);
+  near(st.y, 0.5);
+  near(st.scale, 1);
+  // Серые буквы в начале colorize: у залитых пикселей r ≈ g ≈ b; после входа — жёлтые.
+  const big = { text: "ЖЁЛТЫЙ", size: 200, color: "#ffd400" };
+  const col = textLayer({ props: big, in: { type: "colorize", duration: 1.6 } });
+  const tint = (d) => {
+    let gray = 0;
+    let yellow = 0;
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] < 250) continue;
+      if (Math.abs(d[i] - d[i + 2]) < 12) gray++;
+      else if (d[i] > 200 && d[i + 2] < 60) yellow++;
+    }
+    return { gray, yellow };
+  };
+  const early = tint(pixels([col], 10.5));
+  const done = tint(pixels([col], 13));
+  assert.ok(early.gray > early.yellow, `в начале серое: ${JSON.stringify(early)}`);
+  assert.ok(done.yellow > 500 && done.gray < done.yellow / 10, `после входа — цвет: ${JSON.stringify(done)}`);
+});
+
 test("glitch и wave текста: кадр детерминирован, вне вспышки/без волны — как обычный текст", () => {
   const props = { text: "СБОЙ", size: 140, color: "#ffffff", stroke: { color: "#000000", width: 8 } };
   const plain = pixels([textLayer({ props })], 12);

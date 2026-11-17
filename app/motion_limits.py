@@ -56,14 +56,23 @@ DEFAULT_EASING = "inOutCubic"
 ANIMATIONS = (
     "none", "fade", "pop", "zoom", "slideUp", "slideDown", "slideLeft", "slideRight",
     "drop", "spin", "blur", "wipe", "typewriter", "words", "draw", "rise", "glitch", "scramble", "stomp",
+    "focus", "colorize", "slot", "letters",
 )
 # rise — слова выезжают снизу из-под маски своей строки (frontend/src/motion/layers/text.ts);
 # glitch — RGB-расслоение и срезы букв, scramble — буквы перебираются и «расшифровываются».
 # stomp (удар) — у любого слоя: влетает крупным, «впечатывается» и встряхивается.
-TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise", "glitch", "scramble")
+# Входы слов (frontend/src/motion/layers/text.ts): focus — из размытия в резкость без сдвига, colorize — из серого
+# в цвет, slot — одно слово (подсвеченное, иначе последнее) прокручивается барабаном, letters — буквы падают по
+# одной (имя, ник). В одном ролике один и тот же вход не повторять (lint_clip check entrances).
+WORD_ENTRANCES = ("focus", "colorize", "slot", "letters")
+TEXT_ONLY_ANIMATIONS = ("typewriter", "words", "rise", "glitch", "scramble", *WORD_ENTRANCES)
 # Похожие имена, которые пишут агенты, → наши (с пометкой).
 ANIMATION_ALIASES = {"decode": "scramble", "decrypt": "scramble", "hacker": "scramble", "slam": "stomp",
-                     "stamp": "stomp", "punch": "stomp", "impact": "stomp", "rgb": "glitch", "glitchIn": "glitch"}
+                     "stamp": "stomp", "punch": "stomp", "impact": "stomp", "rgb": "glitch", "glitchIn": "glitch",
+                     "unblur": "focus", "blurWords": "focus", "blurIn": "focus", "focusIn": "focus",
+                     "grayToColor": "colorize", "desaturate": "colorize", "color": "colorize", "colorIn": "colorize",
+                     "slotMachine": "slot", "reel": "slot", "roll": "slot", "spinWord": "slot",
+                     "byLetter": "letters", "perLetter": "letters", "chars": "letters", "name": "letters"}
 # «draw» — обводка рисуется; у формы это линия, стрелка, круг (эллипс) и штриховка маркером.
 DRAW_SHAPE_KINDS = ("line", "arrow", "ellipse", "scribble")
 LOOPS = ("none", "pulse", "float", "shake", "wiggle", "spin", "blink", "glitch", "wave")
