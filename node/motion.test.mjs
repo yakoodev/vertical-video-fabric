@@ -492,6 +492,20 @@ test("шаблоны собираются в валидные слои с уни
   assert.ok(boom.layers.some((l) => l.type === "audio"));
 });
 
+test("шаблон «Карточка-пруф»: строки по одной на своих словах, недостающие — шагом 0.7 с", () => {
+  const res = E.buildTemplate("proof-card", { title: "ПРУФ", lines: "Урон: 3 412|Нокаутов: 14|Место: 1", times: "0.5, 1.3" }, 10);
+  const rows = res.layers.filter((l) => /^Строка /.test(l.name));
+  assert.deepEqual(rows.map((l) => l.props.text), ["Урон: 3 412", "Нокаутов: 14", "Место: 1"]);
+  assert.deepEqual(rows.map((l) => Math.round((l.start - 10) * 100) / 100), [0.5, 1.3, 2]);
+  const card = res.layers.find((l) => l.name === "Карточка");
+  const ys = rows.map((l) => l.y * 1920);
+  assert.ok(ys.every((y, i) => !i || y > ys[i - 1]), "строки сверху вниз");
+  assert.ok(ys[0] > card.y * 1920 - card.props.h / 2 && ys[2] < card.y * 1920 + card.props.h / 2, "строки внутри карточки");
+  assert.ok(!res.layers.some((l) => l.type === "image"), "своя графика, без логотипов площадок");
+  // Слова речи → times: секунды слов от начала шаблона.
+  assert.deepEqual(E.buildTemplate("proof-card", { lines: "а|б", times: "" }, 0).layers.filter((l) => /^Строка /.test(l.name)).map((l) => l.start), [0.45, 1.15]);
+});
+
 test("ссылки на картинки: Twemoji-имена и эмодзи внутри текста", () => {
   assert.equal(E.emojiRef("🔥"), "emoji:1f525");
   assert.equal(E.emojiRef("❤️"), "emoji:2764"); // FE0F без ZWJ выкидывается

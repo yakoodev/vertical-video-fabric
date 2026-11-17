@@ -27,6 +27,7 @@ import { bubblesCloud, cardCarousel, odometerCounter, ratingBadge } from "./temp
 import { dealFlow, karaokeCard, screenTilt, tileWallTpl, voiceWave } from "./templates/ads2";
 import { FLAT_TEMPLATES } from "./templates/flat";
 import { logoIntro, logoOutro } from "./templates/logo";
+import { proofCard } from "./templates/proof";
 
 export { TEMPLATE_CATEGORIES, newLayerId } from "./templates/kit";
 export type { TemplateParamType, TemplateParam, TemplateParams, TemplateResult, MotionTemplate } from "./templates/kit";
@@ -50,6 +51,7 @@ export const TEMPLATES: MotionTemplate[] = [
   barChart,
   donutChart,
   pieChart,
+  proofCard,
   subscribe,
   lookHere,
   handArrow,
