@@ -20,6 +20,7 @@ const NewVideoPage = lazyPage(() => import("@/pages/release/NewVideoPage"), "New
 const ReleasePage = lazyPage(() => import("@/pages/release/ReleasePage"), "ReleasePage");
 const PubsPage = lazyPage(() => import("@/pages/PubsPage"), "PubsPage");
 const FeedPage = lazyPage(() => import("@/pages/FeedPage"), "FeedPage");
+const HomePage = lazyPage(() => import("@/pages/HomePage"), "HomePage");
 const InboxPage = lazyPage(() => import("@/pages/InboxPage"), "InboxPage");
 const HelpPage = lazyPage(() => import("@/pages/HelpPage"), "HelpPage");
 const SettingsPage = lazyPage(() => import("@/pages/SettingsPage"), "SettingsPage");
@@ -55,8 +56,8 @@ function AssetsMoved() {
   return <Navigate to={`/files${search}`} replace />;
 }
 
-/** Первый экран — последний открытый проект; нет проектов или модуля — все видео. */
-function Home() {
+/** /last — последний открытый проект (раньше это был первый экран); нет проектов или модуля — все видео. */
+function LastProject() {
   const { on, isLoading } = useModules();
   const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
   if (isLoading || nav.isLoading) return <Loading />;
@@ -74,7 +75,10 @@ export function App() {
       <Route path="c/:token" element={<Suspense fallback={<Loading />}><SharedCoverEditor /></Suspense>} />
       <Route path="covers/:docId" element={<RequireModule id="covers"><Suspense fallback={<Loading />}><OwnerCoverEditor /></Suspense></RequireModule>} />
       <Route element={<AppShell />}>
-        <Route index element={<Home />} />
+        {/* «Главная»: сводка — что ждёт, что выйдет, что зашло, траты, проекты, примеры (app/home.py). */}
+        <Route index element={<HomePage />} />
+        <Route path="home" element={<Navigate to="/" replace />} />
+        <Route path="last" element={<LastProject />} />
 
         {/* Лестница: проект → видео или выпуск → клип; монтаж клипа — редактор внутри видео (?clip=). */}
         <Route path="p/:projectId" element={<RequireModule id="series"><ProjectPage /></RequireModule>} />

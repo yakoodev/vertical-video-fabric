@@ -33,6 +33,7 @@ const PATHS: Record<string, string> = {
   playbox: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 8l6 4-6 4z",
   down: "m6 9 6 6 6-6",
   feed: "M4 4h16v6H4zM4 14h7v6H4zM15 14h5M15 17h5M15 20h3",
+  home: "M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z",
   trash: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1L5 6M10 11v6M14 11v6",
 };
 
