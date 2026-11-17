@@ -690,6 +690,7 @@ def _project_tools() -> list[Tool]:
     from app.stream_question_tools import tools as stream_question_tools
     from app.torrent_tools import tools as torrent_tools
     from app.feed_tools import tools as feed_tools
+    from app.home_tools import tools as home_tools
     from app.music_video_tools import all_tools as music_video_tools
 
     # ИИ-видео (app/aivideo_tools.py): проект, где ролик рисуется с нуля — тоже проектный;
@@ -700,8 +701,9 @@ def _project_tools() -> list[Tool]:
     # Источник из торрента (app/torrent_tools.py) — не клиповый: ИИ-монтажёру клипа не нужен.
     # «Лента» готовых работ (app/feed_tools.py): сдать версию, вердикт, отметка «выложено».
     # Клип на песню (app/music_video_tools.py): разбор песни → план → карточка на картинки → кадры → клип.
+    # «Главная» (app/home_tools.py): сводка сервиса — что ждёт владельца, что выйдет, что зашло, траты.
     return (tools() + autopilot_tools() + aivideo_tools() + explainer_tools() + stories_tools() + stream_question_tools()
-            + series3d_tools() + torrent_tools() + feed_tools() + music_video_tools())
+            + series3d_tools() + torrent_tools() + feed_tools() + music_video_tools() + home_tools())
 
 
 def list_tools(include_discovery: bool = False, store: Any = None) -> list[Tool]:

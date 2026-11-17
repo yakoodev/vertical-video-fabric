@@ -46,7 +46,7 @@ const typing = (el: EventTarget | null) => {
   return !!t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName));
 };
 
-export type ShellContext = { openNewVideo: () => void };
+export type ShellContext = { openNewVideo: () => void; openNewProject: () => void };
 
 /** Кнопка «Новое видео» на странице проекта открывает диалог каркаса. */
 export const useShell = () => useOutletContext<ShellContext>();
@@ -149,7 +149,7 @@ export function AppShell() {
         </header>
         <div className="content-inner">
           <Suspense fallback={<Loading />}>
-            <Outlet context={{ openNewVideo: openCreate } satisfies ShellContext} />
+            <Outlet context={{ openNewVideo: openCreate, openNewProject } satisfies ShellContext} />
           </Suspense>
         </div>
       </main>

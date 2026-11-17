@@ -2917,6 +2917,17 @@
 "module": "music_video",
 "handler": "h_continue",
 "label": false
+},
+{
+"name": "home_summary",
+"title": "Смотрю сводку сервиса",
+"description": "cbbd36035a56c37d",
+"parameters": "66375f0fa1b03c11",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_home_summary",
+"label": true
 }
 ]
 }

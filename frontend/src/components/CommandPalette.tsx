@@ -74,6 +74,8 @@ export function CommandPalette({
       ...(on("series") ? [{ id: "create-p", group: "Действия", label: "Новый проект", icon: "folder", run: onCreateProject }] : []),
       ...(on("agent_chat") ? [{ id: "gchat", group: "Действия", label: "Общий чат", hint: "вопрос агенту", icon: "chat", run: onOpenChat }] : []),
       { id: "queue", group: "Действия", label: "Очередь задач", keywords: "задачи", icon: "queue", run: go("/inbox?tab=tasks") },
+      { id: "p-home", group: "Разделы", label: "Главная", hint: "сводка: что ждёт, что выйдет, что зашло", keywords: "сводка начало дом траты", icon: "home", run: go("/") },
+      { id: "p-last", group: "Разделы", label: "Последний проект", icon: "folder", run: go("/last") },
       { id: "p-inbox", group: "Разделы", label: "Входящие", keywords: "одобрение вопросы", icon: "inbox", run: go("/inbox") },
       ...(on("autopilot") ? [{ id: "p-appr", group: "Разделы", label: "Одобрение", hint: "Входящие", icon: "check", run: go("/inbox?tab=approve") }] : []),
       ...(on("stream_questions") ? [{ id: "p-q", group: "Разделы", label: "Вопросы всех проектов", hint: "Входящие", icon: "chat", run: go("/inbox?tab=questions") }] : []),

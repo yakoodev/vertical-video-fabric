@@ -356,7 +356,7 @@ export function Ladder({ nav, onCreateVideo }: { nav: NavState | undefined; onCr
         ],
       };
     }
-    const sectionKey = head === "publications" ? "pubs" : head;
+    const sectionKey = head === "publications" ? "pubs" : head || "home";
     const section = SECTIONS[sectionKey];
     const tabs = visibleTabs(section?.tabs ?? [], on);
     const asked = sectionKey === "settings" ? parts[1] : params.get("tab");

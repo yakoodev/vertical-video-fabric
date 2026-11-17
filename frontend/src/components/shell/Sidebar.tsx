@@ -51,6 +51,10 @@ export function Sidebar({
         </svg>
         <span>FABRIC</span>
       </div>
+      <NavLink to="/" end className={link(pathname === "/")} title="Главная: что ждёт, что выйдет, что зашло">
+        <Icon name="home" />
+        <span className="side-t">Главная</span>
+      </NavLink>
       <NavLink to="/projects" className={`side-head${isOn("projects") ? " on" : ""}`} title="Все проекты и видео">
         Проекты
       </NavLink>
