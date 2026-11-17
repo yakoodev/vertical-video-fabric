@@ -114,7 +114,7 @@ export function NewVideoPage() {
     <div className="nv">
       <div className="page-title">
         <h1>Новое видео{project ? ` в проекте «${project.name}»` : ""}</h1>
-        <div className="page-sub">Выберите, что делаем. Готовое всегда открывается как клип, а исходники складываются в файлы проекта.</div>
+        <div className="page-sub">Выберите, что делаем. Готовое всегда открывается как клип, а записи и видео для работы складываются в файлы проекта.</div>
       </div>
       {routeProject ? null : (
         <label className="field nv-project">
@@ -454,7 +454,7 @@ function AmvForm({ projectId }: { projectId: number }) {
   });
   if (videos.isLoading) return <Loading />;
   if (!list.length) {
-    return <EmptyState icon="🎬" title="Нет исходников" hint="Добавьте в проект фильм, серии или официальные трейлеры карточкой «Ссылка или файл», потом возвращайтесь сюда." />;
+    return <EmptyState icon="🎬" title="Нет видео для работы" hint="Добавьте в проект фильм, серии или официальные трейлеры карточкой «Ссылка или файл», потом возвращайтесь сюда." />;
   }
   return (
     <div className="series-col">
@@ -520,7 +520,7 @@ function AmvForm({ projectId }: { projectId: number }) {
           {start.isPending ? "Запускаю…" : `Начать AMV из ${picked.length || "…"} видео`}
         </button>
         <span className="muted">
-          Откроется чат проекта: агент разберёт песню, соберёт сцены исходников, предложит сюжет по частям песни и пришлёт 20-секундную пробу. Полная версия —
+          Откроется чат проекта: агент разберёт песню, соберёт сцены из видео проекта, предложит сюжет по частям песни и пришлёт 20-секундную пробу. Полная версия —
           после вашего «ок», она же попадёт в ленту.
         </span>
       </div>

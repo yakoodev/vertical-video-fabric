@@ -1587,7 +1587,7 @@
 "name": "amv_analyze_song",
 "title": "Разбираю песню AMV",
 "description": "b41f589e373fc62f",
-"parameters": "c3f142adbb9de80b",
+"parameters": "6dd8c045e311ff94",
 "mutating": false,
 "scope": "global",
 "module": "amv",
