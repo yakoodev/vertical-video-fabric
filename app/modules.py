@@ -517,6 +517,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list",
     # «Главная» (app/home_tools.py): сводка сервиса одним вызовом
     "home_summary",
+    # референсы проекта (app/references_tools.py): образцы владельца — смотреть до монтажа
+    "references_list", "reference_get", "reference_add",
     # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
     "tts_preview",
     # озвучка клипа/холста своим текстом и анализатор озвучки (app/voice_tools.py); платное — только с confirm
