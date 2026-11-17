@@ -16,8 +16,9 @@ class PlanRender:
         Рендер тяжёлый (ffmpeg + компоновщик моушна). Два одновременных — два агента
         или агент и кнопка в редакторе — уже трижды роняли Docker по памяти; очередь
         дешевле. Очередь общая с распознаванием и автофокусом (app/heavy_queue.py); рендер
-        может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт."""
-        with heavy_slot("render", f"клип {clip_plan_id}"):
+        может позвать рендер в том же потоке (подборка) — вложенный вызов места не ждёт. Перед стартом
+        сторож памяти (app/memory_guard.py) ждёт, пока на рендер этого размера и длины хватит памяти."""
+        with heavy_slot("render", f"клип {clip_plan_id}", self._render_need_mb(clip_plan_id)):
             from app.clip_groups import capture_quiet, snapshot_render
 
             stamp = self._plan_fingerprint(clip_plan_id)
@@ -34,6 +35,20 @@ class PlanRender:
                 except Exception:  # noqa: BLE001 - отпечаток — удобство, рендер важнее
                     pass
         return self._after_render(clip)
+
+    def _render_need_mb(self, clip_plan_id: int) -> float | None:
+        """Сколько памяти ждать под рендер клипа: по кадру формата и длине; не вышло — по роду «render»."""
+        try:
+            from app.formats import frame_size, settings_render_format
+            from app.memory_guard import render_need_mb
+            from app.piece_speed import seg_length
+
+            plan = self.store.get_clip_plan(clip_plan_id)
+            width, height = frame_size(settings_render_format(plan.get("render_settings") or {}))
+            duration = sum(seg_length(s) for s in plan.get("segments") or [])
+            return render_need_mb(width, height, duration)
+        except Exception:  # noqa: BLE001 - оценка — подсказка сторожу, рендер важнее
+            return None
 
     def _plan_fingerprint(self, clip_plan_id: int) -> str | None:
         try:

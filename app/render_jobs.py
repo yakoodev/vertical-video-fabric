@@ -121,17 +121,33 @@ def _set(render_id: str, **fields: Any) -> None:
         _changed.notify_all()
 
 
+def _waiting(render_id: str) -> Callable[[str | None], None]:
+    """Колбэк очереди тяжёлых задач: ждёт место или память — «queued» с причиной в ``note``, пошла — «rendering»."""
+
+    def note(text: str | None) -> None:
+        if text:
+            _set(render_id, status="queued", note=text)
+        else:
+            _set(render_id, status="rendering", note="")
+
+    return note
+
+
 def _run(store: Any, render_id: str) -> None:
+    from app.heavy_queue import on_wait
+
     job = _jobs[render_id]
-    # «rendering» — поток взял задание; место в очереди тяжёлых он ждёт уже внутри рендера (heavy_slot).
+    # «rendering» — поток взял задание; место в очереди тяжёлых и память он ждёт уже внутри рендера (heavy_slot):
+    # пока ждёт — снова «queued» с ``note`` («жду память: свободно X ГБ, нужно ~Y»).
     _set(render_id, status="rendering", started_at=_now())
     try:
-        clip = render_fn(store, job["clip_id"])
+        with on_wait(_waiting(render_id)):
+            clip = render_fn(store, job["clip_id"])
     except Exception as exc:  # noqa: BLE001 - любой сбой — статус задания, а не упавший поток
         _log.warning("render job %s (клип %s) failed: %s", render_id, job["clip_id"], exc)
         # KeyError/ValueError — ошибки запроса (как 400 у REST): текст как есть; прочее — с именем исключения.
         text = str(exc) if isinstance(exc, (KeyError, ValueError)) else f"{type(exc).__name__}: {exc}"
-        _set(render_id, status="failed", finished_at=_now(), error=text[:500])
+        _set(render_id, status="failed", finished_at=_now(), error=text[:500], note="")
         return
     result = _brief_clip(clip) if isinstance(clip, dict) else {}
     ok = isinstance(clip, dict) and clip.get("status") == "succeeded"
