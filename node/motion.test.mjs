@@ -646,6 +646,25 @@ const SPEECH = [
   { t0: 3.95, t1: 4.3, w: "это!" },
 ];
 
+test("субтитры: разбивка фраз — та же, что у ASS (tests/fixtures/phrase_pages.json)", () => {
+  const data = JSON.parse(readFileSync(join(ROOT, "tests", "fixtures", "phrase_pages.json"), "utf8"));
+  assert.deepEqual([...E.FUNCTION_WORDS].sort(), [...data.lists.function].sort());
+  assert.deepEqual([...E.WEAK_WORDS].sort(), [...data.lists.weak].sort());
+  assert.deepEqual([...E.ATTACH_WORDS].sort(), [...data.lists.attach].sort());
+  for (const c of data.cases) {
+    const got = E.splitPhrase(c.words.map((w) => w[0]), c.words.map((w) => w[1]), c.words.map((w) => w[2]), c.cap, null, c.hold);
+    assert.deepEqual(got, c.pages, c.name);
+  }
+  // Пилот 17.11 слоем captions: «так и буду» вместе, страница не кончается на «так»/«и».
+  const ctx = createCanvas(8, 8).getContext("2d");
+  const pilot = "меня накажут, если я здесь так и буду их булить".split(" ").map((w, i) => ({ t0: i * 0.3, t1: i * 0.3 + 0.26, w }));
+  const pages = E.captionPages(ctx, pilot, { style: "hormozi", maxWords: 3 }, 0, 10, "Montserrat");
+  const texts = pages.map((p) => p.words.map((w) => w.text).join(" "));
+  assert.equal(texts[0], "МЕНЯ НАКАЖУТ");
+  assert.ok(texts.includes("ТАК И БУДУ"), texts.join(" | "));
+  for (const t of texts.slice(0, -1)) assert.ok(!/ (ТАК|И|ЕСЛИ)$/.test(t), t);
+});
+
 test("субтитры: пресет + свои props, null перекрывает, рамки зажаты", () => {
   const r = E.resolveCaptions({ style: "box", size: 70, activeBg: null, maxWords: 20, wordScale: 3 });
   assert.equal(r.size, 70);
@@ -658,12 +677,12 @@ test("субтитры: пресет + свои props, null перекрывае
   for (const s of E.CAPTION_STYLES) assert.ok(s.id && s.name && s.description && s.props, s.id);
 });
 
-test("субтитры: страницы по числу слов, паузам и концу предложения", () => {
+test("субтитры: страницы по фразам, паузам и концу предложения", () => {
   const ctx = createCanvas(8, 8).getContext("2d");
   const pages = E.captionPages(ctx, SPEECH, { style: "hormozi", maxWords: 3 }, 0, 10, "Montserrat");
   assert.deepEqual(pages.map((p) => p.words.map((w) => w.text)), [
-    ["РЕБЯТА", "ВЫ"], // фраза из 4 слов при maxWords 3 — поровну, 2 + 2
-    ["ЭТО", "ВИДИТЕ"],
+    ["РЕБЯТА"], // разрыв по запятой (phrasing.ts), а не 2 + 2 по счёту слов
+    ["ВЫ", "ЭТО", "ВИДИТЕ"],
     ["ОН"], // после «видите?» — новое предложение, после «Он» — пауза
     ["СДЕЛАЛ", "ЭТО"],
   ]);
@@ -671,7 +690,8 @@ test("субтитры: страницы по числу слов, паузам 
   for (let k = 1; k < pages.length; k++) assert.ok(pages[k - 1].t1 <= pages[k].t0 + 1e-9);
   assert.equal(pages[0].t1, pages[1].t0);
   assert.equal(E.captionPageAt(pages, 2.9), null);
-  assert.equal(E.captionPageAt(pages, 1.0).index, 0);
+  assert.equal(E.captionPageAt(pages, 0.5).index, 0);
+  assert.equal(E.captionPageAt(pages, 1.0).index, 1);
   assert.equal(E.captionPageAt(pages, 4.0).index, 3);
   // Окно слоя: слова до start и после end не показываются.
   const late = E.captionPages(ctx, SPEECH, { style: "hormozi" }, 3, 10, "Montserrat");
