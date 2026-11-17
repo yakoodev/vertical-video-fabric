@@ -181,11 +181,12 @@ class MontageRender:
 
     def _join_fx_clips(self, parts: list[Path], durations: list[float], transition: dict,
                        gaps: list[float | None] | None, jumps: list[bool] | None, temp_dir: Path,
-                       fps: float) -> dict[int, Path]:
-        """Окна переходов мувика (slash/panels/sparks) кадрами — app/transitions_fx_render.py; нет — пусто."""
+                       fps: float, region: dict | None = None) -> dict[int, Path]:
+        """Окна переходов кадрами (мувик, хлыст, заливка, размытие…) — app/transitions_fx_render.py; нет — пусто."""
         from app.transitions_fx_render import render_fx_joins
 
-        return render_fx_joins(parts, durations, transition, work_dir=temp_dir, gaps=gaps, jump_joins=jumps, fps=fps)
+        return render_fx_joins(parts, durations, transition, work_dir=temp_dir, gaps=gaps, jump_joins=jumps, fps=fps,
+                               region=region)
 
     @heavy("render")
     def render_montage(
@@ -335,8 +336,11 @@ class MontageRender:
                 if has_audio and any(shifts or []):
                     jl = self._jl_handles(source, base_preset, parts, durations, join, jumps, shifts,
                                           audio_edit, temp_dir)
+                # Раскладка «полоса» (meme): вспышка/вжух — только в полосе видео (transition.scope).
+                region = transition_region(join, preset.get("layout"), int(preset.get("output_width") or 1080),
+                                           int(preset.get("output_height") or 1920), source, parts)
                 fx_clips = self._join_fx_clips(rendered_parts, durations, join, _source_gaps(parts), jumps,
-                                               temp_dir, float(preset.get("fps") or 30))
+                                               temp_dir, float(preset.get("fps") or 30), region)
                 _run_ffmpeg(
                     self._build_join_args(
                         rendered_parts,
@@ -355,9 +359,7 @@ class MontageRender:
                         jump_joins=jumps,
                         jl=jl,
                         fx_clips=fx_clips,
-                        # Раскладка «полоса» (meme): вспышка/вжух — только в полосе видео (transition.scope).
-                        region=transition_region(join, preset.get("layout"), int(preset.get("output_width") or 1080),
-                                                 int(preset.get("output_height") or 1920), source, parts),
+                        region=region,
                     ),
                     timeout=60 * 30,
                 )

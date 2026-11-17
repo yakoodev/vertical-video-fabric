@@ -365,8 +365,16 @@ def sparks(a_img: np.ndarray, b_img: np.ndarray, j: int, n: int, *, seed: int = 
 
 def compose(kind: str, a_img: np.ndarray, b_img: np.ndarray, c_img: np.ndarray | None, j: int, n: int, *,
             direction: Sequence[float] = (1.0, 0.0), color: tuple[float, float, float] = WARM,
-            halo: tuple[float, float, float] = HALO, count: int = 3, seed: int = 0, fps: float = 60.0) -> np.ndarray:
-    """Кадр ``j`` окна перехода ``kind`` (slash / panels / sparks), float32 RGB."""
+            halo: tuple[float, float, float] = HALO, count: int = 3, seed: int = 0, fps: float = 60.0,
+            side: str = "left") -> np.ndarray:
+    """Кадр ``j`` окна перехода ``kind`` (slash / panels / sparks и переходы склеек
+    ``app/transitions_fx_cut.py``), float32 RGB. ``side`` — направление хлыста и заливки (left/right/up/down)."""
+    from app.transitions import CUT_FX
+
+    if kind in CUT_FX:
+        from app.transitions_fx_cut import compose_cut
+
+        return compose_cut(kind, a_img, b_img, j, n, direction=side, color=color)
     if kind == "slash":
         return slash(a_img, b_img, window_progress(j, n), direction, color=color, halo=halo)
     if kind == "panels":

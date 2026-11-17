@@ -21,7 +21,9 @@ from typing import Any, Iterator
 
 import numpy as np
 
-from app.transitions import fx_frames, is_fx, join_kind, plan_joins
+from app.transitions import (
+    CUT_FX, fx_frames, is_fx, join_color, join_kind, join_param, normalize_direction, plan_joins,
+)
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ def plan_fx_joins(transition: dict, durations: list[float], gaps: list[float | N
     """Какие склейки рисуются кадрами: ``[{join, kind, frames}]`` (чистая функция)."""
     out = []
     for index, overlap in enumerate(plan_joins(transition, durations, gaps, jump_joins)):
-        kind = join_kind(transition, index)
+        kind = join_kind(transition, index, jump_joins)
         if overlap > 0 and is_fx(kind):
             out.append({"join": index, "kind": kind, "frames": fx_frames(overlap, fps)})
     return out
@@ -94,9 +96,32 @@ def write_clip(frames: Iterator[np.ndarray], path: Path, width: int, height: int
             proc.kill()
 
 
+def _crop(frame: np.ndarray, region: dict | None) -> np.ndarray:
+    """Плоскости yuv444p (3, h, w) → прямоугольник ``region`` (px); нет — кадр как есть."""
+    if not region:
+        return frame
+    x, y, w, h = (int(region[k]) for k in ("x", "y", "w", "h"))
+    return frame[:, y:y + h, x:x + w]
+
+
+def clip_region(region: dict | None, width: int, height: int) -> dict | None:
+    """Прямоугольник перехода в границах кадра; весь кадр или пустой — None (окно во весь кадр)."""
+    if not region:
+        return None
+    x0, y0 = max(0, int(region["x"])), max(0, int(region["y"]))
+    x1, y1 = min(width, int(region["x"]) + int(region["w"])), min(height, int(region["y"]) + int(region["h"]))
+    if x1 - x0 < 8 or y1 - y0 < 8 or (x0 == 0 and y0 == 0 and x1 == width and y1 == height):
+        return None
+    return {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+
+
 def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, kind: str, frames: int, index: int,
-                   transition: dict, fps: float, info: dict, out_path: Path) -> dict:
-    """Одно окно склейки ``index`` → ``out_path``. Ответ — что нарисовано (вид, кадры, направление и почему)."""
+                   transition: dict, fps: float, info: dict, out_path: Path,
+                   jump_joins: list[bool] | None = None, region: dict | None = None) -> dict:
+    """Одно окно склейки ``index`` → ``out_path``. Ответ — что нарисовано (вид, кадры, направление и почему).
+
+    ``region`` — переход только в этом прямоугольнике (раскладка «полоса», ``transition.scope``): вне его кадр
+    окна — A до середины, B после (жёсткая склейка, как у xfade в полосе)."""
     from app.transitions_fx import (
         HALO, compose, hex_rgb, motion_vector, pick_direction, rgb_to_yuv, small_gray, yuv_to_rgb,
     )
@@ -107,7 +132,8 @@ def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, ki
     # Последние n кадров A: поиск на полкадра раньше первого из них — округление времени не сдвигает окно.
     a = read_frames(a_path, max(0.0, a_dur - (n + 0.5) / fps), n, width, height)
     b = read_frames(b_path, None, n, width, height)
-    count = int(transition.get("panels") or 3)
+    region = clip_region(region, width, height)
+    count = int(join_param(transition, index, "panels", jump_joins) or 3)
     c = None
     if kind == "panels" and count >= 3:
         at = min(b_dur - (n + 1) / fps, n / fps + TEASER_SEC)
@@ -115,20 +141,41 @@ def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, ki
             c = read_frames(b_path, at, n, width, height)
     report: dict[str, Any] = {"join": index, "kind": kind, "frames": n}
     direction: tuple[float, float] = (1.0, 0.0)
+    side = "left"
     if kind == "slash":
         out_v = motion_vector([small_gray(f[0]) for f in a[-FLOW_FRAMES:]], fps)
         in_v = motion_vector([small_gray(f[0]) for f in b[:FLOW_FRAMES]], fps)
-        direction, why = pick_direction(out_v, in_v, index, transition.get("angle"))
+        direction, why = pick_direction(out_v, in_v, index, join_param(transition, index, "angle", jump_joins))
         report.update(direction=[round(float(direction[0]), 3), round(float(direction[1]), 3)], why=why,
                       flow_out=list(out_v), flow_in=list(in_v))
-    color = hex_rgb(transition.get("color"))
-    halo = color if transition.get("color") else HALO
+    if kind in ("whippan", "colorfill"):
+        side, why = _cut_direction(transition, index, jump_joins, a, b, fps)
+        report.update(side=side, why=why)
+    own_color = join_param(transition, index, "color", jump_joins)
+    if kind == "colorfill":
+        color = hex_rgb(join_color(transition, index, jump_joins))
+        report["color"] = join_color(transition, index, jump_joins)
+    else:
+        color = hex_rgb(own_color)
+    halo = color if own_color else HALO
+    if region:
+        report["region"] = dict(region)
 
     def frames_out() -> Iterator[np.ndarray]:
         for j in range(n):
-            rgb = compose(kind, yuv_to_rgb(a[j]), yuv_to_rgb(b[j]), yuv_to_rgb(c[j]) if c is not None else None, j, n,
-                          direction=direction, color=color, halo=halo, count=count, seed=7919 * index + 17, fps=fps)
-            yield rgb_to_yuv(rgb)
+            aj, bj = _crop(a[j], region), _crop(b[j], region)
+            cj = _crop(c[j], region) if c is not None else None
+            rgb = compose(kind, yuv_to_rgb(aj), yuv_to_rgb(bj), yuv_to_rgb(cj) if cj is not None else None, j, n,
+                          direction=direction, color=color, halo=halo, count=count, seed=7919 * index + 17, fps=fps,
+                          side=side)
+            if not region:
+                yield rgb_to_yuv(rgb)
+                continue
+            # Вне полосы — жёсткая склейка посередине окна; в полосе — кадр перехода.
+            full = np.array(a[j] if j < n / 2 else b[j], copy=True)
+            x, y, w, h = (int(region[k]) for k in ("x", "y", "w", "h"))
+            full[:, y:y + h, x:x + w] = rgb_to_yuv(rgb)
+            yield full
 
     rate = info.get("rate") or ""
     try:
@@ -140,10 +187,30 @@ def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, ki
     return report
 
 
+def _cut_direction(transition: dict, index: int, jump_joins: list[bool] | None, a: np.ndarray, b: np.ndarray,
+                   fps: float) -> tuple[str, str]:
+    """Куда едет картинка хлыста/заливки: заданное направление; нет — по движению камеры на склейке
+    (рывок в конце уходящей или в начале входящей части); камера стоит — влево."""
+    from app.transitions_fx import FLOW_MIN, motion_vector, small_gray
+    from app.transitions_fx_cut import nearest_direction
+
+    given = normalize_direction(join_param(transition, index, "direction", jump_joins))
+    if given:
+        return given, "задано"
+    out_v = motion_vector([small_gray(f[0]) for f in a[-FLOW_FRAMES:]], fps)
+    in_v = motion_vector([small_gray(f[0]) for f in b[:FLOW_FRAMES]], fps)
+    best = max((out_v, in_v), key=lambda v: abs(v[0]) + abs(v[1]))
+    if max(abs(best[0]), abs(best[1])) >= FLOW_MIN:
+        return nearest_direction(best), "по движению камеры"
+    return "left", "камера стоит — влево"
+
+
 def render_fx_joins(parts: list[Path], durations: list[float], transition: dict, *, work_dir: Path,
                     gaps: list[float | None] | None = None, jump_joins: list[bool] | None = None,
-                    fps: float = 30.0, report: list[dict] | None = None) -> dict[int, Path]:
-    """Окна всех склеек мувика этих частей: ``{склейка: файл}`` для ``build_join_args(fx_clips=…)``."""
+                    fps: float = 30.0, report: list[dict] | None = None,
+                    region: dict | None = None) -> dict[int, Path]:
+    """Окна всех склеек кадрами этих частей: ``{склейка: файл}`` для ``build_join_args(fx_clips=…)``.
+    ``region`` — переход только в полосе видео (``transition_region``)."""
     plan = plan_fx_joins(transition, durations, gaps, jump_joins, fps)
     if not plan or len(parts) < 2:
         return {}
@@ -160,7 +227,7 @@ def render_fx_joins(parts: list[Path], durations: list[float], transition: dict,
         try:
             done = render_fx_join(parts[i], parts[i + 1], durations[i], durations[i + 1], kind=item["kind"],
                                   frames=item["frames"], index=i, transition=transition, fps=fps, info=info,
-                                  out_path=out)
+                                  out_path=out, jump_joins=jump_joins, region=region)
         except Exception as exc:  # noqa: BLE001 - одно окно не валит рендер
             log.warning("переход мувика на склейке %s (%s) не нарисован: %s", i, item["kind"], exc)
             out.unlink(missing_ok=True)

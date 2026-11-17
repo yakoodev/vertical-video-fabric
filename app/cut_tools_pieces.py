@@ -16,6 +16,8 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
     from app.transitions import AUDIO_MODES, SFX_KINDS, TRANSITIONS
 
     render = _current_render(ctx)
+    if args.get("join") is not None:
+        return _set_join_transition(ctx, render, args)
     transition = dict(render.get("transition") or {})
     problems = []
     if args.get("type") is not None:
@@ -44,10 +46,15 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
 
     if args.get("type") in FX_DURATIONS and args["type"] != (render.get("transition") or {}).get("type") \
             and args.get("duration") is None:
-        transition.pop("duration", None)  # у вида мувика — его длина по умолчанию (срез 0.2 с, панели 0.4 с)
+        transition.pop("duration", None)  # у вида кадрами — его длина по умолчанию (срез 0.2 с, панели 0.4 с)
     problems += _fx_args(args, transition)
     if problems:
         raise ToolError("переход не принят", problems)
+    return _save_transition(ctx, render, transition, args)
+
+
+def _save_transition(ctx: ToolContext, render: dict, transition: dict, args: dict) -> dict:
+    """Проверки речи и мувика, fit_speech, сохранение — общее у общего перехода и перехода стыка."""
     from app.transitions import FRAG_REJECTED, MIN_DURATION, SNAP_DURATIONS, normalize_transition, \
         speech_join_warnings, speech_under_joins
 
@@ -55,14 +62,19 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
     segments = plan.get("segments") or []
     words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
     notes = []
-    kind = normalize_transition(transition)["type"]
+    normal = normalize_transition(transition)
+    kind = normal["type"]
+    kinds = {kind, *(j["type"] for j in normal.get("joins") or [])}
     rule = []
-    if kind in FRAG_REJECTED:
+    if any(k in FRAG_REJECTED for k in kinds):
         game = gaming_hint(ctx)
         if game:
-            rule.append(f"{kind} в записи игры ({game}): белые вспышки и зум-панчи владелец забраковал для мувиков "
+            bad = ", ".join(sorted(k for k in kinds if k in FRAG_REJECTED))
+            rule.append(f"{bad} в записи игры ({game}): белые вспышки и зум-панчи владелец забраковал для мувиков "
                         "(журнал монтажа 15.11) — type frag (срез по движению камеры, панели, искры) или slash")
-    if args.get("fit_speech"):
+    if args.get("fit_speech") and args.get("join") is not None:
+        notes.append("fit_speech — у общего перехода; у стыка задай duration сам (см. warnings)")
+    elif args.get("fit_speech"):
         # Наплыв не должен уводить слова под переход: длину — по самому тесному стыку.
         report = speech_under_joins(segments, transition, words)
         if report["hit"] and kind == "frag":
@@ -86,6 +98,74 @@ def h_set_transition(ctx: ToolContext, args: dict) -> dict:
     return out
 
 
+def _set_join_transition(ctx: ToolContext, render: dict, args: dict) -> dict:
+    """Переход одного стыка (или нескольких): ``join`` — номер стыка кусков, свой вид и параметры в
+    ``transition.joins``; ``type: inherit`` — снять, стык снова как общий переход."""
+    from app.transitions import TRANSITIONS, normalize_direction
+
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    count = max(0, len(plan.get("segments") or []) - 1)
+    raw = args["join"] if isinstance(args["join"], list) else [args["join"]]
+    problems: list[str] = []
+    targets: list[int] = []
+    for item in raw:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            problems.append(f"join: номер стыка 0..{max(0, count - 1)} (0 — между кусками 0 и 1)")
+            continue
+        if not 0 <= index < count:
+            problems.append(f"join {index}: у клипа {count} стык(ов) — 0..{max(0, count - 1)}"
+                            if count else "join: у клипа один кусок — стыков нет")
+        targets.append(index)
+    for key in ("sfx", "sfx_volume", "audio", "smart", "scope", "motion_blur", "kinds", "fit_speech"):
+        if args.get(key) is not None and key != "fit_speech":
+            problems.append(f"{key} — у общего перехода (вызови set_transition без join)")
+    transition = dict(render.get("transition") or {})
+    joins = [dict(j) for j in transition.get("joins") or [] if isinstance(j, dict)]
+    kind = args.get("type")
+    if kind not in (None, "inherit") and (kind not in TRANSITIONS or kind == "frag"):
+        problems.append(f"type стыка: inherit (как общий) или одно из {', '.join(k for k in TRANSITIONS if k != 'frag')}")
+    if args.get("direction") is not None and args["direction"] not in ("", "auto") \
+            and not normalize_direction(args["direction"]):
+        problems.append("direction: left, right, up, down (куда едет картинка) или auto")
+    if problems:
+        raise ToolError("переход стыка не принят", problems)
+    for index in targets:
+        old = next((j for j in joins if j.get("join") == index), None)
+        joins = [j for j in joins if j.get("join") != index]
+        if kind == "inherit":
+            continue
+        entry = dict(old or {"join": index, "type": kind or str(transition.get("type") or "cut")})
+        if kind is not None and kind != entry.get("type"):
+            entry = {"join": index, "type": kind, **({"reason": old["reason"]} if old and old.get("reason") else {})}
+        if entry["type"] == "frag":
+            entry["type"] = "slash"
+        if args.get("duration") is not None:
+            entry["duration"] = args["duration"]
+        problems += _fx_args({k: v for k, v in args.items() if k != "kinds"}, entry)
+        if args.get("direction") is not None:
+            if args["direction"] in ("", "auto"):
+                entry.pop("direction", None)
+            else:
+                entry["direction"] = normalize_direction(args["direction"])
+        if args.get("reason") is not None:
+            text = " ".join(str(args["reason"]).split())[:160]
+            if text:
+                entry["reason"] = text
+            else:
+                entry.pop("reason", None)
+        joins.append(entry)
+    if problems:
+        raise ToolError("переход стыка не принят", problems)
+    transition["joins"] = sorted(joins, key=lambda j: int(j["join"]))
+    if not transition["joins"]:
+        transition.pop("joins")
+    out = _save_transition(ctx, render, transition, args)
+    out["joins"] = out["transition"].get("joins") or []
+    return out
+
+
 def _fx_args(args: dict, transition: dict) -> list[str]:
     """Поля переходов мувика (angle, color, kinds, panels) → в ``transition``; ответ — что не так."""
     from app.transitions import FX_DURATIONS
@@ -100,14 +180,28 @@ def _fx_args(args: dict, transition: dict) -> list[str]:
             transition["angle"] = _num(args["angle"])
     if args.get("color") is not None:
         text = str(args["color"]).strip()
-        if len(text.lstrip("#")) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in text.lstrip("#")):
-            problems.append("color: #rrggbb")
-        transition["color"] = text
+        if text in ("", "auto", "accent"):
+            transition.pop("color", None)  # заливка — цветом бренда (accent) или фирменным
+        else:
+            if len(text.lstrip("#")) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in text.lstrip("#")):
+                problems.append("color: #rrggbb (или accent — цвет бренда)")
+            transition["color"] = text
+    if args.get("direction") is not None and args.get("join") is None:
+        from app.transitions import normalize_direction
+
+        if args["direction"] in ("", "auto"):
+            transition.pop("direction", None)
+        elif not normalize_direction(args["direction"]):
+            problems.append("direction: left, right, up, down (куда едет картинка) или auto — по движению камеры")
+        else:
+            transition["direction"] = normalize_direction(args["direction"])
     if args.get("kinds") is not None:
+        from app.transitions import FRAG_KINDS
+
         kinds = args["kinds"] if isinstance(args["kinds"], list) else []
-        bad = [str(k) for k in kinds if str(k) not in FX_DURATIONS]
+        bad = [str(k) for k in kinds if str(k) not in FRAG_KINDS]
         if bad or not kinds:
-            problems.append(f"kinds: список из {', '.join(FX_DURATIONS)}")
+            problems.append(f"kinds: список из {', '.join(FRAG_KINDS)}")
         transition["kinds"] = kinds
     if args.get("panels") is not None:
         if args["panels"] not in (2, 3):

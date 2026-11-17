@@ -234,10 +234,26 @@ export type TransitionType =
   | "cut" | "whip" | "zoompunch" | "glitch" | "flash"
   | "fade" | "fadeblack" | "fadewhite"
   | "slide" | "smooth" | "wipe" | "zoom" | "dissolve"
-  | "slash" | "panels" | "sparks" | "frag";
+  | "slash" | "panels" | "sparks" | "frag"
+  | "whippan" | "colorfill" | "blurswap" | "dipblack" | "zoomblur";
 
 /** Переходы мувика, которые рендер рисует кадрами (app/transitions_fx.py). */
 export type FxTransitionKind = "slash" | "panels" | "sparks";
+
+/** Куда едет картинка у хлыста и заливки (app/transitions_fx_cut.py). */
+export type TransitionDirection = "left" | "right" | "up" | "down";
+
+/** Свой переход одного стыка кусков (`join` 0 — между кусками 0 и 1). */
+export interface TransitionJoin {
+  join: number;
+  type: Exclude<TransitionType, "frag">;
+  duration?: number;
+  direction?: TransitionDirection;
+  color?: string;
+  angle?: number;
+  /** Почему тут меняется направление движения (линт direction молчит). */
+  reason?: string;
+}
 
 export interface TransitionSettings {
   type: TransitionType;
@@ -257,6 +273,12 @@ export interface TransitionSettings {
   panels?: 2 | 3;
   /** Раскладка «полоса» (meme): переход только в полосе видео (band, по умолчанию) или во весь кадр (frame). */
   scope?: "band" | "frame";
+  /** whippan/colorfill: куда едет картинка; нет — по движению камеры. */
+  direction?: TransitionDirection;
+  /** Цвет бренда (apply_brand) — заливке без своего color. */
+  accent?: string;
+  /** Свои переходы отдельных стыков. */
+  joins?: TransitionJoin[];
 }
 
 /** Clip cover: a frame of the clip or an uploaded picture, optionally burned in first. */
@@ -392,6 +414,13 @@ export interface TransitionOptions {
     color: string;
     frag_pattern: FxTransitionKind[];
     fixed: TransitionType[];
+    /** Коридор длины переходов склеек кадрами (хлыст 0.13–0.3 с …). */
+    ranges?: Partial<Record<TransitionType, [number, number]>>;
+    directions?: TransitionDirection[];
+    /** Виды с направлением (хлыст, заливка). */
+    directional?: TransitionType[];
+    /** Цвет заливки без бренда. */
+    fill_color?: string;
   };
 }
 

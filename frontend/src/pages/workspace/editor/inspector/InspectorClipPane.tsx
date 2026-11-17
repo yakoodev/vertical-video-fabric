@@ -12,6 +12,7 @@ import { playbackApi } from "@/api/playback";
 import { focusWindowPos, focusXAt } from "@/pages/workspace/editor/editorHelpers";
 import { LookPicker } from "@/pages/workspace/editor/LookPicker";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
+import { DIRECTION_LABELS, TransitionJoins } from "@/pages/workspace/editor/inspector/TransitionJoins";
 
 /** Переходы мувика, которые рендер рисует кадрами: у них своя длина 0.1–0.6 с. */
 const FX_KINDS: TransitionSettings["type"][] = ["slash", "panels", "sparks"];
@@ -231,9 +232,11 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
             <span>Длительность — {transition.duration.toFixed(2)} с</span>
             <input
               type="range"
-              min={FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.min ?? 0.1) : 0.1}
-              max={FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.max ?? 0.6) : 1.2}
-              step={FX_KINDS.includes(transition.type) ? 0.02 : 0.05}
+              min={transitionOpts.data?.fx?.ranges?.[transition.type]?.[0]
+                ?? (FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.min ?? 0.1) : 0.1)}
+              max={transitionOpts.data?.fx?.ranges?.[transition.type]?.[1]
+                ?? (FX_KINDS.includes(transition.type) ? (transitionOpts.data?.fx?.max ?? 0.6) : 1.2)}
+              step={FX_KINDS.includes(transition.type) || transitionOpts.data?.fx?.ranges?.[transition.type] ? 0.01 : 0.05}
               value={transition.duration}
               onChange={(e) => patchTransition({ duration: Number(e.target.value) })}
             />
@@ -252,6 +255,34 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
                 <option key={deg} value={String(deg)}>{label}</option>
               ))}
             </select>
+          </label>
+        ) : null}
+        {(transitionOpts.data?.fx?.directional ?? ["whippan", "colorfill"]).includes(transition.type) ? (
+          <label className="field" title="Куда едет картинка. Одно основное направление на ролик — иначе склейки дёргают взгляд.">
+            <span>Направление</span>
+            <select
+              className="input"
+              value={transition.direction ?? "auto"}
+              onChange={(e) => patchTransition({
+                direction: e.target.value === "auto" ? undefined : (e.target.value as TransitionSettings["direction"]),
+              })}
+            >
+              <option value="auto">по движению камеры</option>
+              {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {transition.type === "colorfill" ? (
+          <label className="field" title="Нет своего цвета — цвет бренда (после «Применить бренд») или фирменный.">
+            <span>Цвет заливки</span>
+            <input
+              type="color"
+              className="input"
+              value={transition.color ?? transition.accent ?? transitionOpts.data?.fx?.fill_color ?? "#6c5cff"}
+              onChange={(e) => patchTransition({ color: e.target.value })}
+            />
           </label>
         ) : null}
         {transition.type === "slash" || transition.type === "panels" || transition.type === "frag" ? (
@@ -277,6 +308,14 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
               <option value="frame">во весь кадр</option>
             </select>
           </label>
+        ) : null}
+        {(activePlan?.segments.length ?? 0) > 1 ? (
+          <TransitionJoins
+            count={(activePlan?.segments.length ?? 1) - 1}
+            transition={transition}
+            options={transitionOpts.data}
+            onChange={(joins) => patchTransition({ joins: joins.length ? joins : undefined })}
+          />
         ) : null}
         <label className="field">
           <span>Звук на стыке</span>

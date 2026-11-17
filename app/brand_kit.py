@@ -156,6 +156,9 @@ def apply_brand(
     if brand["sfx_policy"] == "none" and transition.get("sfx", "none") != "none":
         transition["sfx"] = "none"
         changes.append("без звука на склейках")
+    if (brand.get("colors") or {}).get("accent"):
+        # Заливка цветом на склейках (colorfill) без своего color — цветом бренда.
+        transition["accent"] = brand["colors"]["accent"]
 
     # 3b. Плашка канала — весь ролик; место — до призыва, чтобы призыв её обошёл.
     added: list[dict] = []
