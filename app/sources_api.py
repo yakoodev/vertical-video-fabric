@@ -129,6 +129,15 @@ class SourceRenamePayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class LocalWindowPayload(BaseModel):
+    path: str = Field(min_length=1, max_length=1000, description="файл записи в разрешённой папке (app/local_import.py)")
+    start: float | str
+    end: float | str
+    project_id: int | None = None
+    title: str = Field(default="", max_length=200)
+    exact: bool = False
+
+
 class CutStrategyPayload(BaseModel):
     strategy: str = ""
 
@@ -350,6 +359,28 @@ def build_sources_router(
     def api_delete_source(source_id: int, _auth: auth_dep) -> dict:
         try:
             return get_store().delete_source(source_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @router.post(
+        "/api/sources/import-local",
+        tags=["Sources"],
+        summary="Окно локальной записи — новым источником",
+        description=(
+            "Вырезает окно start..end из файла в разрешённой папке (LOCAL_IMPORT_DIRS; по умолчанию "
+            "D:\\vvf-data\\runtime\\feed_import и D:\\vvf-data\\sources) ffmpeg-копией со всеми звуковыми "
+            "дорожками и регистрирует источник в проекте project_id. См. app/local_import.py."
+        ),
+    )
+    def api_import_local_window(payload: LocalWindowPayload, _auth: auth_dep) -> dict:
+        from app import local_import as LI
+
+        try:
+            return LI.import_local_window(get_store(), payload.path, payload.start, payload.end,
+                                          project_id=payload.project_id, title=payload.title, exact=payload.exact,
+                                          ingestor=get_source_ingestor())
+        except LI.LocalImportError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 

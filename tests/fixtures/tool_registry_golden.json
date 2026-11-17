@@ -2826,6 +2826,17 @@
 "label": true
 },
 {
+"name": "import_local_window",
+"title": "Беру окно записи",
+"description": "d12cd3a390561523",
+"parameters": "cbe5b1d9a999eb0a",
+"mutating": true,
+"scope": "global",
+"module": null,
+"handler": "h_import_local_window",
+"label": true
+},
+{
 "name": "feed_create_work",
 "title": "Создаю работу в ленте",
 "description": "39c08f1062f3ebf3",
