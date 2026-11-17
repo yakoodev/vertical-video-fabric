@@ -515,6 +515,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "render_clip", "render_status",
     # «Лента» готовых работ (app/feed_tools.py): сдать версию, вердикт владельца, отметка «выложено»
     "feed_create_work", "feed_add_version", "feed_set_status", "feed_mark_posted", "feed_list",
+    # независимый критик готового ролика перед сдачей (app/critique_tools.py)
+    "critique_render",
     # «Главная» (app/home_tools.py): сводка сервиса одним вызовом
     "home_summary",
     # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
