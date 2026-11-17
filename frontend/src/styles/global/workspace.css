@@ -180,8 +180,12 @@
   .settings-rail {
     position: static;
     grid-auto-flow: column;
+    grid-auto-columns: max-content;
     overflow-x: auto;
+    scrollbar-width: none;
   }
+  .settings-rail::-webkit-scrollbar { display: none; }
+  .settings-tab { white-space: nowrap; }
 }
 
 /* ---------- Focus chips ---------- */

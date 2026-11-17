@@ -1,6 +1,6 @@
 import { Suspense, useCallback, useEffect, useState, type ComponentProps } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
+import { Link, Outlet, useLocation, useNavigate, useOutletContext } from "react-router-dom";
 import { navApi, navKeys } from "@/api/nav";
 import { ActivityCenter } from "@/components/ActivityCenter";
 import { CommandPalette } from "@/components/CommandPalette";
@@ -8,7 +8,7 @@ import { Icon } from "@/components/Icon";
 import { chatPlace, levelTitle } from "@/components/shell/chatPlace";
 import { Ladder, useWhere } from "@/components/shell/Ladder";
 import { NewProjectDialog } from "@/components/shell/NewProjectDialog";
-import { Sidebar } from "@/components/shell/Sidebar";
+import { BrandMark, Sidebar } from "@/components/shell/Sidebar";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
@@ -117,6 +117,10 @@ export function AppShell() {
       <Sidebar nav={nav.data} projectId={projectId} onCreateProject={openNewProject} onKeys={openKeys} />
       <main className="content">
         <header className="top">
+          {/* В монтаже боковой панели нет: знак FABRIC в шапке так же ведёт на «Главную». */}
+          <Link to="/" className="top-home" title="На главную" aria-label="На главную">
+            <BrandMark size={22} />
+          </Link>
           <Ladder nav={nav.data} onCreateVideo={openCreate} />
           <div className="tools">
             <button type="button" className="tool tool-search" onClick={() => setPalette(true)} title="Поиск и команды (Ctrl K)">

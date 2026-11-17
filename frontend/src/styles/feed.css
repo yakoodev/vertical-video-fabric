@@ -333,7 +333,8 @@
 .feed-var-head strong {
   font-size: 14px;
 }
-.feed-dl {
+.feed-dl,
+.feed-open-clip {
   justify-self: start;
   min-height: 38px;
 }

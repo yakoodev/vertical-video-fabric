@@ -164,6 +164,8 @@ def test_clip_variant_shares_postings_with_clip_screen(env):
     version = FEED.add_version(store, work["id"], variants=[{"clip_id": up["clip_id"], "label": "9:16"}])
     variant = version["variants"][0]
     assert variant["source"] == "clip" and variant["clip_id"] == up["clip_id"] and variant["file_present"]
+    # Из ленты — назад на экран клипа (/clips/<план>).
+    assert variant["clip_plan_id"] == up["clip_plan_id"]
     # Выложено с экрана клипа (мимо ленты) — видно в ленте, но снять отсюда нельзя.
     from app.projects_stats import add_manual_publication
 

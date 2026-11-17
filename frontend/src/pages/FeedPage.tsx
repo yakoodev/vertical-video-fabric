@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ApiError } from "@/api/client";
 import {
   FEED_KINDS,
@@ -20,6 +20,7 @@ import {
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, PageHead, formatBytes, formatDuration, plural } from "@/components/ui";
+import { clipPath, projectPath } from "@/lib/paths";
 import "@/styles/feed.css";
 
 const FILTERS: { key: FeedFilter; label: string; countKey: string }[] = [
@@ -169,6 +170,11 @@ function VariantRow({ variant, workId }: { variant: FeedVariant; workId: number 
           <strong>{variant.label}</strong>
           {meta.length ? <span className="muted">{meta.join(" · ")}</span> : null}
         </div>
+        {variant.clip_plan_id ? (
+          <Link className="btn ghost sm feed-open-clip" to={clipPath(variant.clip_plan_id)}>
+            Открыть клип в сервисе
+          </Link>
+        ) : null}
         {variant.download_url ? (
           <a className="btn sm feed-dl" href={variant.download_url} download>
             <Icon name="down" size={15} />
@@ -327,7 +333,13 @@ function WorkView({ workId, onBack }: { workId: number; onBack: () => void }) {
       <header className="feed-work-head">
         <h1>{w.title}</h1>
         <p className="muted">
-          {[w.project_name, w.kind_label, plural(versions.length, "версия", "версии", "версий")].filter(Boolean).join(" · ")}
+          {w.project_id && w.project_name ? (
+            <>
+              <Link to={projectPath(w.project_id)}>{w.project_name}</Link>
+              {" · "}
+            </>
+          ) : null}
+          {[w.kind_label, plural(versions.length, "версия", "версии", "версий")].filter(Boolean).join(" · ")}
         </p>
         <div className="feed-work-flags">
           {w.ready_unposted ? <span className="feed-flag">Готово, не выложено</span> : null}
@@ -337,7 +349,7 @@ function WorkView({ workId, onBack }: { workId: number; onBack: () => void }) {
       {versions.length ? (
         versions.map((v, i) => <VersionBlock key={v.id} version={v} latest={i === 0} />)
       ) : (
-        <EmptyState icon="🎞" title="Версий пока нет" hint="Агент добавит версию через feed_add_version" />
+        <EmptyState icon="🎞" title="Версий пока нет" hint="Версия появится здесь, когда агент сдаст работу" />
       )}
     </div>
   );

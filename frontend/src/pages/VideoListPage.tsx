@@ -5,7 +5,7 @@ import { sourcesApi, looksLikePlayerPage, QUALITY_OPTIONS } from "@/api/sources"
 import { downloadsApi } from "@/api/downloads";
 import { PROJECT_KINDS, projectsApi, type ChannelProject, type ProjectKind } from "@/api/projects";
 import { qk } from "@/api/keys";
-import { navKeys } from "@/api/nav";
+import { navApi, navKeys } from "@/api/nav";
 import type { Source } from "@/api/types";
 import { ApiError } from "@/api/client";
 import { useDeleteMutation } from "@/hooks/useDeleteMutation";
@@ -162,6 +162,8 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [kind, setKind] = useState<ProjectKind>("stream_channel");
+  // Те же числа, что в боковой панели и на странице проекта: видео и выпуски (ролики с нуля) вместе.
+  const nav = useQuery({ queryKey: navKeys.all, queryFn: navApi.get, staleTime: 15_000 });
   const create = useMutation({
     mutationFn: () => projectsApi.create({ name: name.trim(), kind }),
     onSuccess: (p) => {
@@ -209,7 +211,12 @@ function SeriesStrip({ series }: { series: ChannelProject[] }) {
               <strong>{p.name}</strong>
               <span className="muted">{p.kind_label}</span>
               <span className="muted">
-                {plural(p.sources_count ?? 0, "видео", "видео", "видео")} · {plural(p.active_rules_count ?? 0, "правило", "правила", "правил")}
+                {(() => {
+                  const np = nav.data?.projects.find((x) => x.id === p.id);
+                  const videos = plural(np?.sources ?? p.sources_count ?? 0, "видео", "видео", "видео");
+                  const releases = np?.releases ? ` и ${plural(np.releases, "выпуск", "выпуска", "выпусков")}` : "";
+                  return `${videos}${releases} · ${plural(p.active_rules_count ?? 0, "правило", "правила", "правил")}`;
+                })()}
               </span>
             </Link>
           ))}

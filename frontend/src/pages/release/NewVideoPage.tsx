@@ -35,11 +35,11 @@ const TYPES: TypeCard[] = [
   { key: "link", title: "Ссылка или файл", text: "Стрим, серия, запись. Скачать, распознать, нарезать на клипы.", price: "Файл можно перетащить сюда", icon: "film" },
   { key: "story", title: "История", text: "Рассказчик и картинка на фразу. Сценарий, картинки, озвучка.", price: "около 87 ₽ за 50 секунд", icon: "book", module: "stories", project: true },
   { key: "aiv", title: "ИИ-видео", text: "Ролик с нуля через видео-модели. Сценарий, персонажи, раскадровка, видео.", price: "дорого: 468 ₽ за 5 планов", icon: "zap", module: "ai_video", paid: true, project: true },
-  { key: "3d", title: "3D-серия", text: "Blender, рендер на этом компьютере. Сценарий, режиссура, озвучка, рендер.", price: "0 ₽, рендер минуты", icon: "layers", module: "stories", project: true },
+  { key: "3d", title: "3D-серия", text: "Blender, рендер на этом компьютере. Сценарий, режиссура, озвучка, рендер.", price: "0 ₽, считает этот компьютер", icon: "layers", module: "stories", project: true },
   { key: "expl", title: "Объяснялка", text: "Маскот объясняет тему. Тема, сценарий, позы, озвучка.", price: "около 34 ₽", icon: "chat", module: "explainer", project: true },
   { key: "promo", title: "Промо приложения", text: "Телефон с записью экрана. Материалы, сборка.", price: "0 ₽", icon: "pad", module: "promo", project: true },
-  { key: "frag", title: "Мувик под песню", text: "Бои записей игры под песню, текст песни по слогам. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "bolt", module: "frag_movie", project: true },
-  { key: "amv", title: "AMV", text: "Кадры одного аниме или фильма под песню: сюжет по актам, цвет, ритм. Агент проекта по плейбуку.", price: "0 ₽, CPU минуты", icon: "film", module: "amv", project: true },
+  { key: "frag", title: "Мувик под песню", text: "Бои записей игры под песню, текст песни по слогам. Дальше собирает агент проекта.", price: "0 ₽, считает этот компьютер", icon: "bolt", module: "frag_movie", project: true },
+  { key: "amv", title: "AMV", text: "Кадры одного аниме или фильма под песню: сюжет по актам, цвет, ритм. Дальше собирает агент проекта.", price: "0 ₽, считает этот компьютер", icon: "film", module: "amv", project: true },
   { key: "mv", title: "Клип на песню", text: "Своя песня, участок, комикс или рваная бумага. Слова в такт слогам, картинки в 2.5D.", price: "около 3 ₽ за картинку", icon: "play", module: "music_video", paid: true, project: true },
   { key: "canvas", title: "Пустой холст", text: "Собрать руками. Сразу клип.", price: "0 ₽", icon: "image" },
   { key: "top", title: "ТОП-N", text: "Лучшие клипы одного видео подряд с номерами. Новый клип.", price: "0 ₽", icon: "star", module: "compilation", project: true },
@@ -114,7 +114,7 @@ export function NewVideoPage() {
     <div className="nv">
       <div className="page-title">
         <h1>Новое видео{project ? ` в проекте «${project.name}»` : ""}</h1>
-        <div className="page-sub">Тип определяет шаги. Результат всегда клип с одним и тем же экраном, материалы ложатся в файлы проекта.</div>
+        <div className="page-sub">Выберите, что делаем. Готовое всегда открывается как клип, а исходники складываются в файлы проекта.</div>
       </div>
       {routeProject ? null : (
         <label className="field nv-project">

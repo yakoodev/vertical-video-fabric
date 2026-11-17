@@ -61,7 +61,7 @@ export function RenderPresetsSettings() {
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <p className="muted" style={{ fontSize: 13, margin: 0 }}>
-        «Умный кадр» динамически следит за объектом при кадрировании широкого видео в 9:16 (нужны данные фокуса из анализа gemini/polza).
+        «Умный кадр» динамически следит за объектом при кадрировании широкого видео в 9:16 (нужен анализ видео, который отметил, где в кадре главное).
       </p>
       {!q.data?.length ? <span className="muted">Пресетов нет</span> : null}
       {q.data?.map((p) => (

@@ -1,4 +1,5 @@
-import { NavLink, Navigate, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { useActiveInView } from "@/components/PageTabs";
 import { PageHead } from "@/components/ui";
 import { RenderPresetsSettings, BannersSettings, AudioSettings, SubtitlesSettings } from "@/pages/settings/AssetSettings";
 import { PromptsSettings } from "@/pages/settings/PromptsSettings";
@@ -15,11 +16,13 @@ import { SECTIONS, visibleTabs } from "@/lib/tabs";
 export function SettingsPage() {
   const { on } = useModules();
   const telegramOn = on("telegram");
+  const { pathname } = useLocation();
+  const railRef = useActiveInView<HTMLElement>(".settings-tab.active", pathname);
   return (
     <>
       <PageHead title="Настройки" sub="Пресеты рендера, баннеры, музыка, субтитры, бренды, промпты, модули, траты Gemini" />
       <div className="settings-layout">
-        <nav className="settings-rail">
+        <nav className="settings-rail" ref={railRef} aria-label="Разделы настроек">
           {visibleTabs(SECTIONS.settings.tabs, on).map((t) => (
             <NavLink
               key={t.key}
