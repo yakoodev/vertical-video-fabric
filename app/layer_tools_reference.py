@@ -217,7 +217,7 @@ props по типу:
         внутри текста рисуются векторно цветом текста (в шрифтах их нет — без этого был бы квадрат)
   shape: kind {'|'.join(enums['shapes'])} (star4 — четырёхлучевая искра ✦), w, h, fill|null, stroke {{color,width}}, radius, points, dash
          rough 0..1 — «от руки» (ellipse/rect/line/arrow/scribble: линия дрожит, круг заходит сам на себя, наконечник — два штриха),
-         seed, boil (дрожит 8 раз/с); scribble — штриховка маркером по w×h; cursor — курсор мыши (остриё — левый верх w×h)
+         seed, boil (дрожит 8 раз/с), pen "hand" — перо с нажимом маркера (тонкий заход, хвост на нет; готовая пометка — add_annotation); scribble — штриховка маркером по w×h; cursor — курсор мыши (остриё — левый верх w×h)
   image: asset_id (из библиотеки) ИЛИ src ("emoji:1f525", "sticker:<pack>/<file>"), w, radius, border, crop, flipX,
          device "phone" (картинка в корпусе телефона; корпус от w), deviceColor, island,
          statusBar (true или доля ширины экрана 0..0.4: полоса «9:41 · связь · батарея» НАД записью, экран выше на неё;

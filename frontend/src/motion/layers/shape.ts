@@ -10,7 +10,7 @@ import { clamp01 } from "../easing";
 import { sparklePoints } from "../glyphs";
 import type { ShapeLayer, Stroke } from "../types";
 import { clearShadow, partialPolyline, rgba, type LayerRenderer, type Pt } from "./common";
-import { cursorPts, roughOf, scribblePts, sketchHead, sketchOutline, sketchSeed, wobbleAmp } from "./sketch";
+import { cursorPts, handStroke, roughOf, scribblePts, sketchHead, sketchOutline, sketchSeed, wobbleAmp } from "./sketch";
 
 type Outline = { pts: Pt[]; closed: boolean };
 
@@ -164,19 +164,32 @@ export const shapeRenderer: LayerRenderer<ShapeLayer> = {
     if (p.dash) ctx.setLineDash([stroke.width * 1.2, stroke.width * 2.2]);
 
     const head = p.kind === "arrow" ? Math.max(stroke.width * 3.2, 28) : 0;
+    // Перо «от руки» (pen hand): лента с нажимом вместо ровной линии; пунктир — ровной линией, как раньше.
+    const hand = rough > 0 && p.pen === "hand" && !p.dash;
+    if (hand) ctx.fillStyle = rgba(stroke.color);
     if (rough && head) {
       // Стрелка от руки: линия до острия, потом два штриха наконечника (последние 18 % хода).
       const lineFrac = Math.min(1, frac / 0.82);
-      ctx.beginPath();
-      partialPolyline(ctx, pts, false, lineFrac);
-      ctx.stroke();
-      const end = partialEnd(pts, 1);
-      for (const strokePts of sketchHead(end.end, end.angle, head * 0.9, seed, lineFrac >= 1 ? (frac - 0.82) / 0.18 : 0)) {
+      if (hand) {
+        handStroke(ctx, pts, lineFrac, stroke.width, seed);
+      } else {
         ctx.beginPath();
-        strokePts.forEach((pt, i) => (i ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1])));
+        partialPolyline(ctx, pts, false, lineFrac);
         ctx.stroke();
       }
+      const end = partialEnd(pts, 1);
+      const heads = sketchHead(end.end, end.angle, head * 0.9, seed, lineFrac >= 1 ? (frac - 0.82) / 0.18 : 0);
+      heads.forEach((strokePts, i) => {
+        if (hand) return handStroke(ctx, strokePts, 1, stroke.width * 0.9, seed + 31 * (i + 1));
+        ctx.beginPath();
+        strokePts.forEach((pt, k) => (k ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1])));
+        ctx.stroke();
+      });
       if (p.dash) ctx.setLineDash([]);
+      return;
+    }
+    if (hand && !head) {
+      handStroke(ctx, pts, frac, stroke.width, seed);
       return;
     }
     let tip: { end: Pt; angle: number };

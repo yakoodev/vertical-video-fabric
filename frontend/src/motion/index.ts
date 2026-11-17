@@ -123,7 +123,7 @@ export { pageRenderer, pageRef, pageRegion, pageWindow, pageKeyValue, activeTaps
 export { parsePageParam } from "./templates/page";
 export { parseRows, AD_CATEGORY } from "./templates/ads";
 export { screenTiltKeys } from "./templates/ads2";
-export { roughen, scribblePts, cursorPts, sketchOutline, BOIL_RATE } from "./layers/sketch";
+export { roughen, scribblePts, cursorPts, sketchOutline, penWidth, handStroke, BOIL_RATE } from "./layers/sketch";
 export { parsePath, parseTimes } from "./templates/sketch";
 export { nameplateRenderer, nameplateAccent, nameplateMotion, PLATFORM_COLORS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, type NameplateMotion } from "./layers/nameplate";
 export { formatCounter, counterValue } from "./layers/counter";

@@ -24,6 +24,65 @@ function hash01(seed: number, i: number): number {
   return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
 }
 
+/**
+ * Нажим пера `hand` на доле пути `u` (0..1 от начала линии): заход тоньше, середина полная, хвост сходит
+ * на нет; ширина чуть гуляет (две синусоиды с фазами от `seed` — детерминированно).
+ */
+export function penWidth(u: number, seed: number): number {
+  const start = Math.min(1, 0.42 + u * 6);
+  const end = Math.min(1, 0.28 + (1 - u) * 5);
+  const wob = 1 + 0.12 * Math.sin(u * 23 + hash01(seed, 90) * 6) + 0.06 * Math.sin(u * 57 + hash01(seed, 91) * 6);
+  return Math.max(0.18, start * end * wob);
+}
+
+/**
+ * Линия пером `hand` до доли `frac` длины: лента переменной ширины одной заливкой (отрезки — четырёхугольники,
+ * вершины — круги, всё одного обхода — nonzero склеивает без «бусин» на полупрозрачном слое).
+ * Ширина — по доле ВСЕГО пути: пока линия рисуется, кончик полный, сужение — только у готового хвоста.
+ */
+export function handStroke(ctx: CanvasRenderingContext2D, pts: Pt[], frac: number, width: number, seed: number): void {
+  if (pts.length < 2 || frac <= 0 || width <= 0) return;
+  const cum: number[] = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const total = cum[cum.length - 1] || 1;
+  const until = total * Math.min(1, frac);
+  const vs: { p: Pt; r: number }[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (cum[i] <= until) {
+      vs.push({ p: pts[i], r: (width * penWidth(cum[i] / total, seed)) / 2 });
+      continue;
+    }
+    const seg = cum[i] - cum[i - 1];
+    const k = seg > 0 ? (until - cum[i - 1]) / seg : 0;
+    const a = pts[i - 1];
+    const b = pts[i];
+    vs.push({ p: [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k], r: (width * penWidth(until / total, seed)) / 2 });
+    break;
+  }
+  ctx.beginPath();
+  for (const v of vs) {
+    // Против часовой — тот же обход, что у четырёхугольников ниже (nonzero: всё складывается, без дыр).
+    ctx.moveTo(v.p[0] + v.r, v.p[1]);
+    ctx.arc(v.p[0], v.p[1], v.r, 0, Math.PI * 2, true);
+  }
+  for (let i = 1; i < vs.length; i++) {
+    const a = vs[i - 1];
+    const b = vs[i];
+    const dx = b.p[0] - a.p[0];
+    const dy = b.p[1] - a.p[1];
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-6) continue;
+    const nx = -dy / d;
+    const ny = dx / d;
+    ctx.moveTo(a.p[0] + nx * a.r, a.p[1] + ny * a.r);
+    ctx.lineTo(b.p[0] + nx * b.r, b.p[1] + ny * b.r);
+    ctx.lineTo(b.p[0] - nx * b.r, b.p[1] - ny * b.r);
+    ctx.lineTo(a.p[0] - nx * a.r, a.p[1] - ny * a.r);
+    ctx.closePath();
+  }
+  ctx.fill();
+}
+
 /** Сила дрожания 0..1 (нет — 0: ровная фигура, как раньше). */
 export function roughOf(p: ShapeProps): number {
   const r = Number(p.rough);

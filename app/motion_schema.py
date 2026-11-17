@@ -137,6 +137,8 @@ PROPS: dict[str, dict] = {
         "rough": Opt(Num(0, 0, 1, 3)),
         "seed": Opt(Num(0, 0, 999999, integer=True)),
         "boil": Opt(Flag(False)),
+        # Перо у фигуры от руки: hand — нажим маркера (тонкий заход, хвост на нет), even — ровная линия.
+        "pen": Opt(Choice("even", ("even", "hand"))),
     },
     "image": {
         "asset_id": AssetRef(),
