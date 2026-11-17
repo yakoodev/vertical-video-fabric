@@ -12,6 +12,9 @@
 
 ## Шаги
 
+**Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
+`reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
+
 1. **Глазами.** `contact_sheet` по всему ролику (12–16 кадров) и `view_frame` на спорных местах: хук, вставки,
    финал, склейки. Сгенерированные картинки — каждую крупно: лишние руки, ноги и пальцы, слипшиеся предметы, кривой,
    зеркальный или перевёрнутый текст, тот же ли персонаж (владелец ловил трёхлапого медведя и зеркальное слово, которые
@@ -59,7 +62,8 @@
 ## Инструменты MCP
 
 `contact_sheet`, `view_frame`, `lint_clip`, `check_voiceover`, `listen`, `render_clip`, `render_status`, `feed_list`,
-`feed_create_work`, `feed_add_version`, `feed_set_status`, `feed_mark_posted`.
+`feed_create_work`, `feed_add_version`, `feed_set_status`, `feed_mark_posted`,
+`references_list`, `reference_get`.
 
 ## Чек-лист перед сдачей
 

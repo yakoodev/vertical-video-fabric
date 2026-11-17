@@ -23,6 +23,9 @@
 
 ## Шаги
 
+**Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
+`reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
+
 1. **Песня и участок.** `list_music` → `track_id` (нет — `add_music_from_url` ссылкой владельца). Участок — куплет и
    припев, 15–60 с для шортса (`start`, `end`); вся песня — без `end`. Текст песни владельца — `lyrics` (по строке):
    слова на экране будут его написания.
@@ -61,7 +64,7 @@
 ## Инструменты MCP
 
 `list_music`, `add_music_from_url`, `music_video_create`, `music_video_status`, `music_video_plan`,
-`music_video_continue`, `feed_list`, `feed_add_version`.
+`music_video_continue`, `feed_list`, `feed_add_version`, `references_list`, `reference_get`.
 
 ## Чек-лист перед сдачей
 

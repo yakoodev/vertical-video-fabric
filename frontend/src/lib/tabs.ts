@@ -38,7 +38,17 @@ export const VIDEO_TABS: readonly VideoTab[] = [
 
 /* ---------- Проект: /p/:id?tab=<key> ---------- */
 
-export type ProjectTabKey = "videos" | "clips" | "questions" | "files" | "materials" | "chat" | "know" | "stats" | "autopilot";
+export type ProjectTabKey =
+  | "videos"
+  | "clips"
+  | "questions"
+  | "files"
+  | "refs"
+  | "materials"
+  | "chat"
+  | "know"
+  | "stats"
+  | "autopilot";
 
 export type ProjectTab = TabDef & { key: ProjectTabKey };
 
@@ -47,6 +57,8 @@ export const PROJECT_TABS: readonly ProjectTab[] = [
   { key: "clips", label: "Клипы", cmd: "Клипы проекта" },
   { key: "questions", label: "Вопросы", cmd: "Вопросы проекта", module: "stream_questions" },
   { key: "files", label: "Файлы", cmd: "Файлы проекта" },
+  // Чужие ролики, картинки и звуки как пример стиля: «что взять» и разбор (app/references.py).
+  { key: "refs", label: "Референсы", cmd: "Референсы проекта: примеры стиля" },
   // Маскоты и позы, миры и актёры, стиль, персонажи и бюджет ИИ-видео, темы канала (решение 16).
   { key: "materials", label: "Материалы", cmd: "Материалы проекта: маскоты, миры, персонажи" },
   { key: "chat", label: "Чат", cmd: "Чат проекта", module: "agent_chat" },

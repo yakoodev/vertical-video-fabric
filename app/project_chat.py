@@ -185,6 +185,28 @@ MASCOT_NOTE = ("\nУ этого проекта уже есть маскот: {na
                "explainer_overview(project_id={pid}), explainer_create(mascot_id, topic). Нового персонажа не заводи и "
                "внешность не придумывай (aiv_define_character), пока владелец прямо не попросит другого героя; "
                "не ясно, о ком речь, — спроси.\n")
+REFERENCES_NOTE = ("\nУ проекта есть референсы — примеры стиля от владельца (вкладка «Референсы»). Главные (pinned) — "
+                   "это стиль проекта:\n{items}\nПеред монтажом, сценарием или подбором музыки посмотри их "
+                   "(группа references: references_list, reference_get — лист кадров и числа) и следуй приёмам из "
+                   "заметки владельца: темп, склейки, подписи, цвет, переходы, звук. Чужие кадры, музыку и тексты не "
+                   "переиспользуй — только приёмы.{more}\n")
+
+
+def references_note(refs: list[dict], total: int = 0) -> str:
+    """Главные референсы проекта для системного промпта: название, «что взять», короткий разбор."""
+    if not refs and not total:
+        return ""
+    lines = []
+    for ref in refs:
+        what = "; ".join(x for x in (str(ref.get("note") or "")[:300], ", ".join(ref.get("tags") or [])) if x)
+        line = f"• #{ref['reference_id']} {ref.get('kind')} «{ref.get('title') or 'без названия'}»"
+        if what:
+            line += f" — что взять: {what}"
+        if ref.get("summary"):
+            line += f" [{ref['summary']}]"
+        lines.append(line)
+    more = f" Всего референсов: {total}." if total > len(refs) else ""
+    return REFERENCES_NOTE.format(items="\n".join(lines) or "• главных нет — references_list покажет все", more=more)
 
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +288,8 @@ def _system(thread: dict, groups: list[str]) -> str:
         text += PROJECT_NOTE.format(pid=thread["project_id"])
         if thread.get("mascots"):
             text += MASCOT_NOTE.format(names=", ".join(m["name"] for m in thread["mascots"]), pid=thread["project_id"])
+        if thread.get("references_total"):
+            text += references_note(thread.get("references") or [], int(thread["references_total"]))
     elif not thread.get("source_id"):
         text += GENERAL_NOTE
     if thread.get("source_id"):
@@ -434,7 +458,13 @@ def _project_groups(store: Any, project_id: Any) -> tuple[str, ...]:
         kind = P.get_project(store, int(project_id), include_sources=False).get("kind")
     except (KeyError, TypeError, ValueError):
         return ()
-    return PROJECT_KIND_GROUPS.get(str(kind or ""), ())
+    groups = PROJECT_KIND_GROUPS.get(str(kind or ""), ())
+    from app import references as REF
+
+    # Главные референсы — стиль проекта: их инструменты (3 объявления) под рукой в каждом ходе.
+    if REF.count_references(store, int(project_id))["pinned"]:
+        groups = (*groups, "references")
+    return groups
 
 
 def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat:ui", message_id: int | None = None,
@@ -472,7 +502,11 @@ def _run_turn(store: Any, thread: dict, message: str, *, actor: str, message_id:
     if source_id:
         thread = {**thread, "source_title": _video_title(store, int(source_id))}
     if project_id:
-        thread = {**thread, "mascots": K.project_mascots(store, int(project_id))}
+        from app import references as REF
+
+        counts = REF.count_references(store, int(project_id))
+        thread = {**thread, "mascots": K.project_mascots(store, int(project_id)),
+                  "references": REF.pinned_brief(store, int(project_id)), "references_total": counts["total"]}
     learned = decided = remembered = None
     gemini = _gemini(client)
     if project_id:

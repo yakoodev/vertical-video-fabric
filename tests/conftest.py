@@ -49,6 +49,8 @@ os.environ.setdefault("EMBED_MODEL", "off")
 os.environ.setdefault("WORDLIST_DOWNLOAD", "0")
 # Превью «Ленты» собирает ffmpeg фоном — в тестах зовут feed_preview.process_pending сами.
 os.environ.setdefault("FEED_PREVIEW_WORKER", "0")
+# Референсы проектов скачиваются и разбираются фоном — в тестах зовут references.process_pending сами.
+os.environ.setdefault("REFERENCES_WORKER", "0")
 
 
 @pytest.fixture(autouse=True, scope="session")

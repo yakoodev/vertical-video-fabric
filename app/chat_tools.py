@@ -117,6 +117,11 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "music_video": ("клип на песню владельца: разбор песни по слогам, план сцен, карточка на картинки, кадры, клип", (
         "music_video_create", "music_video_status", "music_video_plan", "music_video_continue", "list_music",
         "add_music_from_url")),
+    # Референсы проекта: плейбуки называют references_list — группа подгружается с плейбуком (preload_groups), и
+    # у проекта с главными референсами — в каждом ходе (app/project_chat._project_groups).
+    "references": ("референсы проекта: примеры стиля владельца — список с заметками «что взять», разбор и лист "
+                   "кадров, добавить по ссылке", (
+        "references_list", "reference_get", "reference_add")),
     "amv": ("AMV: кадры одного аниме/фильма под песню — разбор песни, сцены исходников, план по референсу, рендер", (
         "amv_analyze_song", "amv_index_sources", "amv_plan", "amv_render", "amv_status", "source_contact_sheet",
         "list_music", "add_music_from_url")),
@@ -149,6 +154,7 @@ _PRELOAD = {
     "game": ("мувик", "фраг", "мем-эдит", "мем эдит", "боёв", "боев", "килл", "нокнул", "ноки", "апекс", "apex",
              "game_events", "meme_edit"),
     "motion": ("шаблон", "моушн", "3d", "3д", "пресет", "анимац"),
+    "references": ("референс", "как в том ролик", "как в примере", "по примеру", "в стиле этого", "reference"),
     "series3d": ("3d-сери", "3д-сери", "3d сери", "3д сери", "series3d", "серию в 3d", "серию в 3д"),
 }
 
@@ -172,6 +178,8 @@ PROJECT_BOUND = {
     "add_stream_questions", "list_stream_answers", "add_meme_choices", "list_meme_choices", "get_agent_settings",
     # Холст ложится в проект чата; чужой project_id отсюда — отказ (эксперимент 12.11: холсты всех прогонов в одной куче).
     "create_canvas_clip", "list_clips",
+    # Референсы — свои у каждого проекта (app/references_tools.py).
+    "references_list", "reference_get", "reference_add",
 }
 
 # Где лежат кадры из view_frame / contact_sheet для превью в чате.

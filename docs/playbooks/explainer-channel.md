@@ -60,6 +60,9 @@
 
 ## Вести канал (агент, раз в проход)
 
+**Референсы.** Если в проекте есть референсы — сначала посмотри их (`references_list`, лист кадров и числа —
+`reference_get`) и следуй отмеченным в заметке приёмам; чужие кадры/музыку не переиспользуй, только приёмы.
+
 * `explainer_channel_status(project_id)` — счётчики тем, `capacity` (сколько нужно к слотам), `warnings`.
 * `failed` — читай `reason`. Нет Gemini: напиши сценарий сам (`explainer_set_script(video_id, …)` у
   ролика темы), потом `explainer_channel_topic(topic_id, action: "retry")`.
@@ -85,7 +88,8 @@ explainer_channel_propose_topics(project_id: P)           → карточка �
 `explainer_channel_setup`, `explainer_channel_status`, `explainer_channel_add_topics`,
 `explainer_channel_propose_topics`, `explainer_channel_topic`, `explainer_channel_run`; плюс объяснялки
 (`explainer_*`) и автопилот (`list_approvals`, `get_schedule`, `propose_rule`, `add_rule`); ролики, которые владелец
-выкладывает сам, — лента (`feed_create_work`, `feed_add_version`).
+выкладывает сам, — лента (`feed_create_work`, `feed_add_version`); референсы проекта — `references_list`,
+`reference_get`.
 
 ## Чек-лист
 
