@@ -29,6 +29,12 @@ const KIND_LABEL: Record<MontageAsset["kind"], string> = {
   video: "Видео",
   audio: "Звук",
 };
+const KIND_PLURAL: Record<MontageAsset["kind"], string> = {
+  image: "Картинки",
+  gif: "GIF",
+  video: "Видео",
+  audio: "Звуки",
+};
 
 /** Уменьшенная картинка; GIF оживает под курсором, чтобы сотни файлов не качались разом. */
 function AssetPicture({ asset }: { asset: MontageAsset }) {
@@ -251,9 +257,33 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Не удалось удалить"),
   });
 
-  const assets = query.data ?? [];
-  const shown = useShowMore(assets, `${tab}:${projectId}`);
-  const undescribed = assets.filter((a) => !a.description.trim());
+  const all = query.data ?? [];
+  // Фильтр по типу (?kind=) и поиск по подписи/описанию/тегам — на клиенте, список и так весь пришёл.
+  const kindParam = params.get("kind");
+  const kind = kindParam && kindParam in KIND_LABEL ? (kindParam as MontageAsset["kind"]) : null;
+  const [needle, setNeedle] = useState("");
+  const kindCounts = useMemo(() => {
+    const c: Partial<Record<MontageAsset["kind"], number>> = {};
+    for (const a of all) c[a.kind] = (c[a.kind] ?? 0) + 1;
+    return c;
+  }, [all]);
+  const assets = useMemo(() => {
+    const q = needle.trim().toLowerCase();
+    return all.filter(
+      (a) =>
+        (!kind || a.kind === kind) &&
+        (!q || `${a.label} ${a.description} ${a.tags}`.toLowerCase().includes(q)),
+    );
+  }, [all, kind, needle]);
+  const setKind = (k: MontageAsset["kind"] | null) =>
+    setParams((prev) => {
+      const p = new URLSearchParams(prev);
+      if (k) p.set("kind", k);
+      else p.delete("kind");
+      return p;
+    }, { replace: true });
+  const shown = useShowMore(assets, `${tab}:${projectId}:${kind}:${needle}`);
+  const undescribed = all.filter((a) => !a.description.trim());
   return (
     <>
       {fixedProject ? null : (
@@ -358,12 +388,37 @@ export function MontageAssetsPage({ projectId: fixedProject }: { projectId?: num
             </span>
           </div>
 
+          {all.length ? (
+            <div className="asset-filter">
+              <div className="pills" role="group" aria-label="Тип файла">
+                <button className={`pill${kind ? "" : " on"}`} onClick={() => setKind(null)}>
+                  Все · {all.length}
+                </button>
+                {(Object.keys(KIND_LABEL) as MontageAsset["kind"][])
+                  .filter((k) => kindCounts[k])
+                  .map((k) => (
+                    <button key={k} className={`pill${kind === k ? " on" : ""}`} onClick={() => setKind(kind === k ? null : k)}>
+                      {KIND_PLURAL[k]} · {kindCounts[k]}
+                    </button>
+                  ))}
+              </div>
+              <input
+                className="input"
+                type="search"
+                placeholder="Поиск по подписи и описанию"
+                value={needle}
+                onChange={(e) => setNeedle(e.target.value)}
+              />
+            </div>
+          ) : null}
           {query.isLoading || (tab === "project" && projects.isLoading) ? (
             <Loading />
           ) : query.isError ? (
             <ErrorState error={query.error} onRetry={() => query.refetch()} />
           ) : tab === "project" && projects.isSuccess && !projectList.length ? (
             <EmptyState icon="📁" title="Проектов пока нет" hint="Файлы проекта появятся, когда будет создан проект" />
+          ) : all.length && !assets.length ? (
+            <EmptyState icon="🔍" title="Ничего не нашлось" hint="Смените тип или поиск" />
           ) : !assets.length ? (
             <EmptyState
               icon="🧩"
