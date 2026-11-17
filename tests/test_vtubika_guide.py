@@ -94,3 +94,9 @@ def test_plan_guide_model_types_is_valid() -> None:
     kinds = {g["kind"] for s in plan["sentences"] for g in s.get("gfx") or []}
     assert kinds <= {"scrim", "panel", "pip", "title", "rows", "ui", "chip", "image", "seq", "pngtuber", "text", "layer"}
     assert plan["vrm"]["heroine"] == "olya_host"
+    # Владелец 17.11: английские названия в озвучке «уёбищные» — в речи только русские слова, названия — на экране.
+    import re
+
+    from app import vtubika_plan as P
+
+    assert not re.search(r"[A-Za-z]", P.narration_text(plan)), P.narration_text(plan)
