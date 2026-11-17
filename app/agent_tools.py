@@ -530,7 +530,11 @@ def render_clip_frame(store: Any, clip_plan_id: int, t: float, with_layers: bool
         raise ToolError("у клипа нет кусков")
     from app.storyboard import plan_thumb
 
-    local = t - piece["clip_start"]
+    from app.motion_render import frame_source_offset
+
+    # Скорость/реверс куска — как в рендере: секунда исходника, а не клипа (слоу-мо не показывать на 1×).
+    local = frame_source_offset({"start_sec": piece["source_start"], "end_sec": piece["source_end"],
+                                 "speed": piece.get("speed"), "reverse": piece.get("reverse")}, t - piece["clip_start"])
     x = _focus_x_at(piece.get("focus") or [], local)
     source = store.get_source(int(timeline["plan"]["source_id"]))
     path = plan_thumb(source, piece["source_start"] + local, x)
