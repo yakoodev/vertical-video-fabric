@@ -183,7 +183,8 @@ def first_task(*, title: str, sources: list[str], track_id: int, track_label: st
     lines += [
         "",
         "Первый ход:",
-        "1. game_events(source_id) по каждой записи (группа other — load_tools) и source_contact_sheet по окнам "
+        "1. game_events(source_id) по каждой записи (группа game — подгружена с плейбуком) и source_contact_sheet "
+        "по окнам "
         "боёв — хроника боёв: от первого "
         "урона до последнего нока или уничтожения отряда, каждый нок внутри. Пришли список боёв (запись, время, что "
         "в нём) и какие берёшь и в каком порядке.",
@@ -197,7 +198,8 @@ def first_task(*, title: str, sources: list[str], track_id: int, track_label: st
         "Потом по плейбуку: полная версия, заставка с логотипом (бренд проекта) — только на длинной версии; части "
         f"для TikTok — plan_tiktok_parts (≤ {parts.get('max_song_sec', 58):g} с песни, части одной длины, "
         f"«{parts.get('label')}», подписи — caption в ответе, из настроек проекта); после рендера — проверка на "
-        "застывшие куски (lint_clip freezes). Подписи — блоком для копирования.",
+        "застывшие куски (lint_clip freezes). Подписи — блоком для копирования. Каждая готовая версия (пробы, "
+        "полная 16:9 и 9:16, части) — в «Ленту»: feed_create_work один раз, дальше feed_add_version с вариантами.",
     ]
     return "\n".join(lines)
 

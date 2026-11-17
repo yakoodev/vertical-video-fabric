@@ -10,7 +10,8 @@ from app.agent_api import mcp_handle
 from app.agent_tools import ToolContext, run_tool
 
 ROOT = Path(__file__).resolve().parent.parent
-NAMES = {"stream-shorts", "stream-horizontal", "meme-insert", "app-promo", "meme-edit", "frag-movie", "music-video"}
+NAMES = {"stream-shorts", "stream-horizontal", "meme-insert", "app-promo", "meme-edit", "frag-movie", "music-video",
+         "amv", "ad-voiceover", "autopilot", "handoff"}
 # Инструменты, которых в этой ветке может не быть (делает другой агент) — плейбук ссылается условно.
 OPTIONAL_TOOLS = {"censor_profanity"}
 

@@ -141,10 +141,13 @@ SYSTEM = """\
   он выбрал). Держись этого и не выдумывай сверх. Владелец рассказал новое о проекте (кто это, что значит словечко,
   как тут принято) — запиши remember_fact одной фразой; «забудь» — forget_fact. Он видит и правит этот список сам.
   noticed в срезе — что агент заметил сам, владелец не подтвердил: не выдавай за факт, при расхождении верь владельцу.
-- Типовой заказ — сначала плейбук: нарезка стрима — get_playbook("stream-shorts"), реклама сайта или товара —
+- Типовой заказ — сначала плейбук: нарезка стрима — get_playbook("stream-shorts") (горизонталка 10–15 мин —
+  "stream-horizontal", история витубера «говорящая голова» — "vtuber-story"), реклама сайта или товара —
   get_playbook("ad-voiceover"), промо приложения по записям экрана — "app-promo", мувик (бои записей игры под
-  песню) — "frag-movie", AMV (кадры одного аниме/фильма под песню, группа amv) — "amv". Подходящий сервис кладёт ниже
-  сам (блок «АКТИВНЫЙ ПЛЕЙБУК»); его шаги и чек-лист — условие сдачи.
+  песню) — "frag-movie", то же с видеомемами — "meme-edit", мем поверх клипа — "meme-insert", AMV (кадры одного
+  аниме/фильма под песню) — "amv", клип на песню владельца из картинок — "music-video", канал маскота —
+  "explainer-channel", автопилот канала — "autopilot", сдача любой готовой работы — "handoff". Подходящий сервис
+  кладёт ниже сам (блок «АКТИВНЫЙ ПЛЕЙБУК») и сам подгружает его узкие группы; его шаги и чек-лист — условие сдачи.
 - Озвучка своим текстом (реклама, холст, серия) — группа voice: add_voiceover(clip_id, lines [{{text}}]) — фразы без
   style (Gemini зачитывает указания вслух), слои голоса длиной файла, субтитры по голосу; потом check_voiceover
   («озвучка в порядке»). Голос — narrator_voice из брифа. tts_preview — только проба голоса. render_status с
@@ -256,7 +259,9 @@ def rule_judge(gemini: Any) -> Callable[[str], dict | None]:
 
 
 def _system(thread: dict, groups: list[str]) -> str:
-    text = SYSTEM.format(groups=CT.groups_hint())
+    from app.owner_rules import OWNER_RULES
+
+    text = SYSTEM.format(groups=CT.groups_hint()) + "\n" + OWNER_RULES
     if thread.get("project_id"):
         text += PROJECT_NOTE.format(pid=thread["project_id"])
         if thread.get("mascots"):
@@ -321,9 +326,14 @@ class ThreadPolicy(TurnPolicy):
 
     def prompt(self, state: TurnState) -> str:
         # Плейбук по смыслу запроса (как у ИИ-монтажёра клипа): нарезка стрима, реклама с озвучкой, серия.
-        from app.project_chat_playbook import block, pick
+        # Его узкие группы инструментов (game, web, amv, feed…) — сразу в объявления этого и следующих ходов.
+        from app.project_chat_playbook import block, pick, preload_groups
 
-        return _system(self.thread, self.groups) + block(pick(self.message, state.steps, self.thread.get("playbook")))
+        name = pick(self.message, state.steps, self.thread.get("playbook"))
+        for group in preload_groups(name):
+            if group not in self.groups:
+                self.groups.append(group)
+        return _system(self.thread, self.groups) + block(name)
 
     def declarations(self, json_schema: bool) -> list[dict]:
         return CT.declarations(self.groups, json_schema)
@@ -413,6 +423,20 @@ def hold_for_owner(store: Any, thread_id: int, reply_id: int | None, step: dict,
                     "вызов, скажи владельцу, что ждёшь подтверждения"}
 
 
+# Вид проекта → группа его инструментов: «следующую серию» в 3D-проекте не называет 3D словами.
+PROJECT_KIND_GROUPS = {"series3d": ("series3d",)}
+
+
+def _project_groups(store: Any, project_id: Any) -> tuple[str, ...]:
+    if not project_id:
+        return ()
+    try:
+        kind = P.get_project(store, int(project_id), include_sources=False).get("kind")
+    except (KeyError, TypeError, ValueError):
+        return ()
+    return PROJECT_KIND_GROUPS.get(str(kind or ""), ())
+
+
 def run_turn(store: Any, thread: dict | int, message: str, *, actor: str = "chat:ui", message_id: int | None = None,
              reply_id: int | None = None, history: list[dict] | None = None, client: Any = None,
              on_step: Callable[[list], None] | None = None, run: _Run | None = None,
@@ -472,7 +496,8 @@ def _run_turn(store: Any, thread: dict, message: str, *, actor: str, message_id:
         return {"text": text, "steps": [], "learned": learned, "decided": decided, "remembered": remembered,
                 "ai": False, "changes": []}
 
-    groups = list(dict.fromkeys([*thread.get("tool_groups", []), *CT.preload_for(message)]))
+    groups = list(dict.fromkeys([*thread.get("tool_groups", []), *CT.preload_for(message),
+                                 *_project_groups(store, project_id)]))
     if project_id:
         context = project_context(store, project_id, source_id=source_id)
     elif source_id:  # видео вне проектов: лора нет, только оно само

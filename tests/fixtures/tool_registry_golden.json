@@ -1403,8 +1403,8 @@
 {
 "name": "add_voiceover",
 "title": "Озвучиваю клип",
-"description": "0ecb26cec815ecbc",
-"parameters": "89eab9071099b375",
+"description": "040735d8dcde0d23",
+"parameters": "60e5d2057839065f",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -2825,8 +2825,8 @@
 {
 "name": "feed_add_version",
 "title": "Добавляю версию в ленту",
-"description": "09591f073dd774e3",
-"parameters": "a8683f6452d379bc",
+"description": "dfd6155863b43ad5",
+"parameters": "c9707899d0da151d",
 "mutating": true,
 "scope": "global",
 "module": null,

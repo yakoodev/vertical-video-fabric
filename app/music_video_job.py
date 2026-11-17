@@ -573,9 +573,32 @@ def finish(store: Any, job: dict) -> dict:
     clip = register_file_clip(store, video, job["title"], desc, int(job["project_id"]))
     opts = {k: v for k, v in (M.get_job(store, jid).get("options") or {}).items() if k != "remote_mp4"}
     M.update_job(store, jid, notes=notes[-12:], options=opts)
+    if not M.is_dry(job):
+        feed = to_feed(store, M.get_job(store, jid), int(clip["clip_id"]), desc)
+        opts["feed"] = feed if feed.get("work_id") else {**(opts.get("feed") or {}), "error": feed.get("error")}
+        M.update_job(store, jid, options=opts)
     M.set_status(store, jid, "done", ("rendered",), clip_id=int(clip["clip_id"]),
                  clip_plan_id=int(clip["clip_plan_id"]), error="", message=f"готово: клип #{clip['clip_plan_id']}")
     return clip
+
+
+def to_feed(store: Any, job: dict, clip_id: int, note: str) -> dict:
+    """Готовый клип на песню — новой версией его работы в «Ленте» (как у AMV): владелец смотрит всё готовое в одном
+    месте, а не в Telegram. Работа — одна на задание (повторный рендер — следующая версия). Сбой ленты клип не
+    отменяет: ответ с error."""
+    from app import feed as FEED
+
+    try:
+        opts = dict(job.get("options") or {})
+        work_id = (opts.get("feed") or {}).get("work_id")
+        if not work_id:
+            work_id = FEED.create_work(store, f"Клип на песню · {job['title']}", job["project_id"], kind="other",
+                                       made_by="agent")["id"]
+        version = FEED.add_version(store, int(work_id), note=note, variants=[{"clip_id": int(clip_id)}],
+                                   status="review", made_by="agent")  # подпись варианта — по кадру (9:16, 16:9)
+        return {"work_id": int(work_id), "version_id": int(version["id"])}
+    except Exception as exc:  # noqa: BLE001 - лента — витрина, клип уже есть
+        return {"error": f"в ленту не добавлено: {str(exc)[:200]}"}
 
 
 # --------------------------------------------------------------------------- #
@@ -801,6 +824,9 @@ def view(store: Any, job_id: int) -> dict:
     out["blender"] = bool(find_blender())
     if job.get("clip_plan_id"):
         out["clip_url"] = f"/clips/{job['clip_plan_id']}"
+    feed = (job.get("options") or {}).get("feed")
+    if feed:
+        out["feed"] = {**feed, **({"url": f"/feed?work={feed['work_id']}"} if feed.get("work_id") else {})}
     out["next"] = NEXT.get(job["status"], "")
     return out
 
@@ -814,7 +840,8 @@ NEXT = {
     "needs_blender": "рендер — где есть Blender; владельцу честно: всё до рендера готово, кадров нет",
     "remote_render": "кадры рисует компьютер с Blender (tools/render_worker.py); не в сети — скажи владельцу запустить",
     "failed": "прочитай error; поправь (план, потолок max_rub) и music_video_continue",
-    "done": "посмотри sheet.jpg (лист кадров) и sync_check.mp4 перед отправкой владельцу",
+    "done": "посмотри sheet.jpg (лист кадров) и sync_check.mp4; клип (кроме сухого прогона) уже в «Ленте» на проверке (поле feed) — владельцу "
+            "одна строка со ссылкой; брак — правка плана и music_video_continue (новая версия в той же работе)",
 }
 
 

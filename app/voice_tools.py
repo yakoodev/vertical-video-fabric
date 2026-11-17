@@ -33,8 +33,9 @@ def h_check_voiceover(ctx: ToolContext, args: dict) -> dict:
 
 _LINE = {"type": "object", "properties": {
     "text": {"type": "string", "description": "фраза (до 400 знаков; лучше ≤ 200) — она же в субтитрах"},
-    "say": {"type": "string", "description": "как прочитать, если не как написано: «лайв-два-дэ» для Live2D, «фри "
-                                             "десять» для Free10 (синтез и сверка — по say, субтитры — text)"},
+    "say": {"type": "string", "description": "что сказать голосом, если не как написано (синтез и сверка — по say, "
+                                             "субтитры — text). Латиницу русский голос не читает: Live2D → «двумерная "
+                                             "модель», VTube Studio → «бесплатная программа», Free10 → «фри десять»"},
     "start": {"type": "number", "description": "секунда клипа (шкала clip), где начать файл фразы; нет — сразу за "
                                                "прошлой фразой"},
     "pause_after": {"type": "number", "description": "пауза после фразы, с (по умолчанию 0.35)"}},
@@ -55,7 +56,9 @@ def tools() -> list[Tool]:
             "gemini (по умолчанию) — БЕСПЛАТНО; polza — ПЛАТНО: без confirm только оценка ₽, confirm — только по «да» "
             "владельца на сумму. replace: true — заменить прежние vo_* (пересобрать озвучку), без него — фразы "
             "дописываются после прежних. tail_sec — сколько клипа после последнего слова (1.5; финал с логотипом — "
-            "3). Ответ: table и lines (начало/конец/длина/speech — где звучат слова), "
+            "3). Русская озвучка с латиницей в речи (say, а нет — text) — отказ до синтеза: название оставь в text, "
+            "голосом скажи по-русски в say; нарочно английское — allow_latin. "
+            "Ответ: table и lines (начало/конец/длина/speech — где звучат слова), "
             "voice_end, verdict проверки. Долго: ~5–10 с на фразу. Дальше — визуал под lines[].speech, музыка, "
             "auto_mix, render_clip. / Voice-over a clip or canvas from text lines (free Gemini TTS), with subtitles "
             "from the heard words and a check.",
@@ -73,6 +76,8 @@ def tools() -> list[Tool]:
                   "budget_rub": {"type": "number", "minimum": 0},
                   "tail_sec": {"type": "number", "minimum": 0.3, "maximum": 10,
                                "description": "хвост клипа после последнего слова, с (по умолчанию 1.5)"},
+                  "allow_latin": {"type": "boolean",
+                                  "description": "латиница голосом нарочно (английская фраза в русском ролике)"},
                   "style": {"type": "string", "description": "не используется: Gemini зачитывает указание вслух"}},
                  ["lines"]),
             h_add_voiceover, mutating=True, cost=("network", "cpu"),

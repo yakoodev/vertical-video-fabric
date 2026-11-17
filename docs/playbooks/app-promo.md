@@ -24,12 +24,16 @@
    Звуки — docs/AGENTS.md, «Звук слоёв: эффект, дорожка, звук видео».
 7. **Бренд заказчика** — `apply_brand(brand_id)` после монтажа (docs/AGENTS.md, «Бренд»).
 8. **Формат** — квадрат/4:5 по заказу: `set_format` (docs/AGENTS.md, «Квадрат 1:1, 4:5 и 16:9»).
-9. **Рендер** и проверка — чек-лист ниже.
+9. **Рендер** и проверка — `render_clip` → `render_status`, чек-лист ниже.
+10. **Сдача** (плейбук `handoff`): версия в ленте (`feed_create_work(kind: "promo")` один раз, `feed_add_version`
+    с вариантами форматов); владельцу — одна строка со ссылкой. Путь к файлу агенту-заказчику — только после «ок»
+    владельца.
 
 ## Инструменты MCP
 
 `upload_video`, `upload_image`, `create_canvas_clip`, `build_app_promo`, `add_layers`, `update_layer`,
-`set_camera`, `list_music`, `set_music`, `apply_brand`, `set_format`, `contact_sheet`, `view_frame`, `lint_clip`.
+`set_camera`, `list_music`, `set_music`, `apply_brand`, `set_format`, `contact_sheet`, `view_frame`, `lint_clip`,
+`render_clip`, `render_status`, `feed_create_work`, `feed_add_version`.
 
 ## Чек-лист перед сдачей
 
@@ -39,3 +43,4 @@
 - [ ] `contact_sheet` — нет мыла (записи HQ), телефон не обрезан, титры читаются.
 - [ ] Текст живой, без ярлыков и без цифр-обещаний.
 - [ ] Музыка с энергичной части, финал с призывом держится до конца.
+- [ ] Версия в ленте; заказчику — только после «ок» владельца.
