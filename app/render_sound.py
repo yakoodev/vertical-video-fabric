@@ -276,6 +276,14 @@ class SoundRender:
             passes.append("music")
         temp_paths: list[Path] = []
         current = base_output_path
+        if passes and Path(base_output_path).resolve() == Path(output_path).resolve():
+            # Основа уже записана на место итогового файла (вызывающий не знал о проходе — так было с одной
+            # цепочкой голоса, set_audio_chain target=voice): ffmpeg не пишет файл сам в себя («Output … same
+            # as Input»). Основу — во временный, проходы пишут итог как всегда.
+            moved = self._clip_dir() / f"{render_id}.base.mp4"
+            Path(base_output_path).replace(moved)
+            base_output_path = current = moved
+            temp_paths.append(moved)
         for index, name in enumerate(passes):
             is_last = index == len(passes) - 1
             dest = output_path if is_last else self._clip_dir() / f"{render_id}.{name}.mp4"
