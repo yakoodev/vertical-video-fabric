@@ -518,6 +518,12 @@ function CoverCard({ view }: { view: ClipView }) {
     onSuccess: (id) => navigate(`/covers/${id}`),
     onError: (e) => toast.error(errorText(e, "Не удалось открыть редактор превью")),
   });
+  // Превью для YouTube у вертикального клипа — свой документ 16:9 (фоторедактор: кадр, ЧБ с акцентом, надписи).
+  const youtube = useMutation({
+    mutationFn: async () => (await coverDocsApi.create({ clip_id: latest!.id, format: "16:9" })).id,
+    onSuccess: (id) => navigate(`/covers/${id}`),
+    onError: (e) => toast.error(errorText(e, "Не удалось открыть редактор превью")),
+  });
   const generate = useMutation({
     mutationFn: () => clipsApi.generateCovers(latest!.id, { count: 3 }),
     onSuccess: (r) => {
@@ -550,6 +556,11 @@ function CoverCard({ view }: { view: ClipView }) {
           <button type="button" className="btn sm" disabled={(!latest && !view.cover_doc) || editor.isPending} title={latest || view.cover_doc ? "" : "Сначала нужен рендер"} onClick={() => editor.mutate()}>
             {editor.isPending ? "Открываю…" : "Редактор превью"}
           </button>
+          {!wide ? (
+            <button type="button" className="btn sm" disabled={!latest || youtube.isPending} title={latest ? "Картинка 1280×720 для YouTube из кадров клипа" : "Сначала нужен рендер"} onClick={() => youtube.mutate()}>
+              {youtube.isPending ? "Открываю…" : "Превью для YouTube"}
+            </button>
+          ) : null}
           <button type="button" className="btn sm" disabled={!latest || generate.isPending} title={latest ? "Сильные кадры клипа и крупный текст 2–5 слов" : "Сначала нужен рендер"} onClick={() => generate.mutate()}>
             {generate.isPending ? "Делаю…" : list.length ? "Ещё 3 варианта" : "Сделать 3 варианта"}
           </button>

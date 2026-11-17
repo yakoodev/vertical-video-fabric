@@ -120,7 +120,7 @@ def _doc_image(ctx: ToolContext, doc_id: int, info: dict) -> ImageResult | dict:
 def h_create_cover_doc(ctx: ToolContext, args: dict) -> ImageResult | dict:
     render_id = _render_id(ctx, args)
     try:
-        doc = D.create_doc(ctx.store, render_id, str(args.get("title") or ""), None,
+        doc = D.create_doc(ctx.store, render_id, str(args.get("title") or ""), args.get("format"),
                            str(args.get("template") or "avatar-bottom"), str(args.get("text") or ""))
     except ValueError as exc:
         raise ToolError(str(exc)) from None
@@ -191,6 +191,94 @@ def h_share_cover_doc(ctx: ToolContext, args: dict) -> dict:
         raise ToolError(str(exc)) from None
 
 
+# --------------------------------------------------------------------------- #
+# Превью «как в ролике» одним вызовом (app/cover_movie.py): клип или версия «Ленты» → картинка + файл проекта
+# --------------------------------------------------------------------------- #
+
+THUMB_FIELDS = ("big_word", "top_line", "subline", "style", "side", "logo", "accents", "zoom", "center_x", "center_y",
+                "frame_t", "hud", "hud_rects")
+REFRAME_FIELDS = ("frame_t", "hud", "hud_rects")
+
+
+def _thumb_source(ctx: ToolContext, args: dict) -> tuple[int | None, int | None]:
+    """(id готового рендера клипа, id варианта ленты) — ровно один."""
+    from app import cover_photo as PH
+
+    given = [k for k in ("clip_id", "feed_version_id", "feed_variant_id") if args.get(k) not in (None, "", 0)]
+    if len(given) != 1:
+        raise ToolError("нужен ровно один источник: clip_id (клип — берётся его свежий готовый рендер), "
+                        "feed_version_id (версия «Ленты», горизонтальный файл первым) или feed_variant_id")
+    try:
+        if given[0] == "clip_id":
+            return int(V.latest_render(ctx.store, int(args["clip_id"]))["id"]), None
+        if given[0] == "feed_version_id":
+            return None, PH.feed_version_variant(ctx.store, int(args["feed_version_id"]))
+        PH.feed_variant(ctx.store, int(args["feed_variant_id"]))
+        return None, int(args["feed_variant_id"])
+    except KeyError as exc:
+        raise ToolError(f"не найдено: {exc}") from None
+    except ValueError as exc:
+        raise ToolError(str(exc)) from None
+
+
+def h_make_thumbnail(ctx: ToolContext, args: dict) -> ImageResult | dict:
+    from app import cover_movie as M
+    from app import cover_photo as PH
+
+    store = ctx.store
+    given = {k: args[k] for k in THUMB_FIELDS if args.get(k) is not None}
+    if args.get("doc_id") not in (None, ""):
+        try:
+            doc = D.get_doc(store, int(args["doc_id"]))
+        except KeyError:
+            raise ToolError(f"документа #{args['doc_id']} нет") from None
+        params = {**(PH.read_meta(doc["id"]).get("_thumbnail") or {}), **given}
+        keep = not any(k in given for k in REFRAME_FIELDS) and params.get("frame")
+        frame = params["frame"] if keep and D.asset_path(doc["id"], params["frame"]) else ""
+        if frame:  # прежний кадр уже без интерфейса — второй раз не чистим
+            params = {**params, "hud": "off", "hud_rects": None}
+    else:
+        render_id, variant_id = _thumb_source(ctx, args)
+        word = str(given.get("big_word") or "").strip()
+        try:
+            doc = D.create_doc(store, render_id, f"Превью: {word or 'кадр'}", str(args.get("format") or "16:9"),
+                               feed_variant_id=variant_id)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        params, frame = given, ""
+    hint = getattr(ctx, "project_hint", None)
+    if hint is not None and doc.get("project_id") not in (None, int(hint)):
+        raise ToolError(f"ролик из проекта #{doc['project_id']}, а работа в проекте #{hint}: чужое не трогаем")
+    try:
+        built = M.build_movie_doc(
+            store, doc["id"], big_word=str(params.get("big_word") or ""), top_line=str(params.get("top_line") or ""),
+            subline=str(params.get("subline") or ""), style=str(params.get("style") or "movie"),
+            side=str(params.get("side") or "left"), logo=params.get("logo", True) is not False,
+            accents=params.get("accents"), zoom=params.get("zoom", 1), center_x=params.get("center_x"),
+            center_y=params.get("center_y"), t=params.get("frame_t"), frame=frame, hud=str(params.get("hud") or "auto"),
+            hud_rects=params.get("hud_rects") if isinstance(params.get("hud_rects"), list) else None)
+    except (ValueError, KeyError) as exc:
+        raise ToolError(str(exc)) from None
+    word = str(params.get("big_word") or "").strip()
+    saved_doc = D.save_doc(store, doc["id"], {"bg": built["bg"], "layers": built["layers"]},
+                           title=f"Превью: {word or 'кадр'}")
+    PH.note_asset(doc["id"], "_thumbnail", {**params, "hud": params.get("hud") or "auto", "frame": built["frame"],
+                                             **({"frame_t": built["t"]} if built["t"] is not None else {})})
+    info: dict = {"ok": True, "doc_id": doc["id"], "editor": f"/covers/{doc['id']}", "frame_t": built["t"],
+                  "hud_boxes": len(built["hud_boxes"]), "accents": built["accents"], "warnings": built["warnings"],
+                  "size": [saved_doc["doc"]["width"], saved_doc["doc"]["height"]],
+                  "note": "Посмотри картинку: слово читается, герой не закрыт, интерфейс игры убран. Править — "
+                          "make_thumbnail(doc_id, …) теми же полями (новый кадр — frame_t) или в редакторе по editor."}
+    try:
+        jpg = PH.export_limited(store, doc["id"])
+    except RuntimeError as exc:
+        return {**info, "ok": False, "render_error": str(exc)[:200]}
+    if args.get("save", True) is not False:
+        saved = PH.save_to_project(store, doc["id"])
+        info.update(asset_id=saved["asset"]["id"], project_id=saved["project_id"], bytes=saved["bytes"])
+    return ImageResult(data=jpg.read_bytes(), mime_type="image/jpeg", info=info)
+
+
 def tools() -> list[Tool]:
     return [
         Tool(
@@ -229,7 +317,9 @@ def tools() -> list[Tool]:
             "doc_id, слои и их id, empty_slots (пустые места под картинку). Дальше update_cover_doc, render_cover_doc. "
             "/ Create a layered cover document.",
             _obj({"template": {"type": "string", "enum": [t["id"] for t in D.TEMPLATES]}, "text": {"type": "string"},
-                  "title": {"type": "string"}, "render_id": {"type": "integer"}}),
+                  "title": {"type": "string"}, "render_id": {"type": "integer"},
+                  "format": {"type": "string", "enum": list(D.V.COVER_SIZES),
+                             "description": "размер холста; нет — формат клипа (16:9 — превью YouTube 1280×720)"}}),
             h_create_cover_doc, mutating=True, label=lambda a: f"Превью «{(a.get('text') or a.get('template') or '')[:30]}»",
         ),
         Tool(
@@ -238,8 +328,11 @@ def tools() -> list[Tool]:
             "type text|shape|image], remove [id], order [id снизу вверх], bg (#rrggbb), frame {t, origin clean|render|source, "
             "layer_id?} — взять кадр ролика в слой или новым нижним слоем. Текст: text, font, weight, size, color, gradient, "
             "stroke {color,width}, shadow {color,blur,x,y}, glow {color,blur}, plate {color,padX,padY,radius,perLine}, align, "
-            "valign, lineHeight, letterSpacing, uppercase. Фигура: shape rect|ellipse, radius, fill, gradient {from,to,angle}, "
-            "stroke, shadow. Картинка: fit, crop {x,y,w,h в долях}, mask none|round|ellipse, radius, flipX, stroke, shadow. Цвет "
+            "valign, lineHeight, letterSpacing, uppercase, edge {left,right,offset} — кромка двумя цветами, underline "
+            "{color,width,gap,inset} — черта под строкой. Фигура: shape rect|ellipse, radius, fill, gradient {from,to,angle}, "
+            "stroke, shadow. Картинка: fit, crop {x,y,w,h в долях}, mask none|round|ellipse, radius, flipX, stroke, shadow, "
+            "filters {brightness, contrast, saturation −1…1, accent {ranges [{from,to,minSat}], rest} — ЧБ с акцентом, blur, "
+            "sharpen, vignette, shade [{side,size,strength,curve,hold}], shadeColor}. Цвет "
             "#rrggbb или #rrggbbaa. Ответ — картинка. / Edit a layered cover document.",
             _obj({"doc_id": {"type": "integer"}, "changes": {"type": "array", "items": {"type": "object"}},
                   "add": {"type": "array", "items": {"type": "object"}},
@@ -264,5 +357,34 @@ def tools() -> list[Tool]:
             _obj({"doc_id": {"type": "integer"}, "perm": {"type": "string", "enum": list(D.PERMS)},
                   "days": {"type": "integer"}, "revoke": {"type": "integer"}}, ["doc_id"]),
             h_share_cover_doc, mutating=True, label=lambda a: f"Ссылка на превью #{a.get('doc_id')}",
+        ),
+        Tool(
+            "make_thumbnail", "Делаю превью для YouTube",
+            "Превью (миниатюра YouTube 1280×720) «как в ролике» одним вызовом: сильный кадр ролика (frame_t — своя "
+            "секунда), без чёрных полос, интерфейс игры закрашен (hud auto; hud_rects — свои прямоугольники в долях "
+            "кадра), style movie — ЧБ, остаются огонь и красное, тень под текст; color — свои цвета; clean — без "
+            "текста. Надписи на стороне side: top_line — мелкая разреженная строка, big_word — огромное слово с кромкой "
+            "двух цветов (accents [#левый, #правый]; нет — цвета бренда проекта, иначе фиолетовый/оранжевый), subline — "
+            "строка под ним; logo — логотип бренда проекта. Стиль надписей — как в самом ролике; слоганы не придумывай, "
+            "название канала не пиши, если стоит логотип; без жёлтого текста с толстой обводкой. Источник — один: "
+            "clip_id, feed_version_id или feed_variant_id; doc_id — переделать прежнее превью (те же поля поверх, "
+            "кадр меняется только с frame_t/hud/hud_rects). zoom ≥ 1 и center_x/center_y — окно кадра. save "
+            "(по умолчанию true) — в «Файлы» проекта. Ответ — картинка, doc_id, editor, asset_id. "
+            "/ Make a YouTube thumbnail in the video's own text style.",
+            _obj({"clip_id": {"type": "integer", "description": "клип: его свежий готовый рендер"},
+                  "feed_version_id": {"type": "integer"}, "feed_variant_id": {"type": "integer"},
+                  "doc_id": {"type": "integer", "description": "переделать прежнее превью"},
+                  "frame_t": {"type": "number", "description": "секунда ролика; нет — сильнейший кадр"},
+                  "big_word": {"type": "string"}, "top_line": {"type": "string"}, "subline": {"type": "string"},
+                  "style": {"type": "string", "enum": ["movie", "color", "clean"]},
+                  "side": {"type": "string", "enum": ["left", "right"]}, "logo": {"type": "boolean"},
+                  "accents": {"type": "array", "items": {"type": "string"}},
+                  "zoom": {"type": "number"}, "center_x": {"type": "number"}, "center_y": {"type": "number"},
+                  "hud": {"type": "string", "enum": ["auto", "off"]},
+                  "hud_rects": {"type": "array", "items": {"type": "object"}},
+                  "format": {"type": "string", "enum": ["16:9", "9:16", "1:1", "4:5"]},
+                  "save": {"type": "boolean"}}),
+            h_make_thumbnail, mutating=True, scope="global", cost=("cpu",),
+            label=lambda a: f"Превью «{str(a.get('big_word') or '')[:30]}»",
         ),
     ]

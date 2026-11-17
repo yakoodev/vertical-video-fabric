@@ -1258,7 +1258,7 @@
 "name": "create_cover_doc",
 "title": "Собираю превью слоями",
 "description": "2fda487a1e9aae45",
-"parameters": "fcbd54b6509c157b",
+"parameters": "3f9cc322e099a5a4",
 "mutating": true,
 "scope": "clip",
 "module": "covers",
@@ -1268,7 +1268,7 @@
 {
 "name": "update_cover_doc",
 "title": "Правлю превью",
-"description": "57e8700e474aeedd",
+"description": "5c7b4856312bf34e",
 "parameters": "2b5c4a39086934d5",
 "mutating": true,
 "scope": "clip",
@@ -1297,6 +1297,20 @@
 "module": "covers",
 "handler": "h_share_cover_doc",
 "label": true
+},
+{
+"name": "make_thumbnail",
+"title": "Делаю превью для YouTube",
+"description": "ac731709e435d527",
+"parameters": "b20afe38218b4b28",
+"mutating": true,
+"scope": "global",
+"module": "covers",
+"handler": "h_make_thumbnail",
+"label": true,
+"cost": [
+"cpu"
+]
 },
 {
 "name": "lint_clip",

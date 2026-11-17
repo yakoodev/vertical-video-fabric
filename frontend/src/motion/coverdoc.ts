@@ -6,6 +6,9 @@
  * не зависят от масштаба. Правила данных — app/cover_docs.py (sanitize_doc).
  */
 import { DEFAULT_FONT, fontString, graphemes } from "./fonts";
+import { filteredImage, paintShades, type CoverFilters } from "./coverfx";
+
+export type { CoverAccentRange, CoverFilters, CoverShade } from "./coverfx";
 
 export type CoverStroke = { color: string; width: number } | null;
 export type CoverShadow = { color: string; blur: number; x: number; y: number } | null;
@@ -13,6 +16,10 @@ export type CoverGlow = { color: string; blur: number } | null;
 export type CoverGradient = { from: string; to: string; angle: number } | null;
 export type CoverCrop = { x: number; y: number; w: number; h: number } | null;
 export type CoverPlate = { color: string; padX: number; padY: number; radius: number; perLine: boolean } | null;
+/** Цветная кромка: копия текста левым цветом влево и правым вправо на offset px — под заливкой. */
+export type CoverEdge = { left: string; right: string; offset: number } | null;
+/** Тонкая черта под каждой строкой: толщина, отступ от базовой линии, отступ с краёв строки. */
+export type CoverUnderline = { color: string; width: number; gap: number; inset: number } | null;
 
 type CoverLayerBase = {
   id: string;
@@ -40,6 +47,8 @@ export type CoverImageLayer = CoverLayerBase & {
   flipX: boolean;
   stroke: CoverStroke;
   shadow: CoverShadow;
+  /** Фото-фильтры (coverfx.ts): ЧБ с акцентом, яркость, контраст, резкость, затемнение краёв. */
+  filters?: CoverFilters;
 };
 
 export type CoverTextLayer = CoverLayerBase & {
@@ -60,6 +69,8 @@ export type CoverTextLayer = CoverLayerBase & {
   lineHeight: number;
   letterSpacing: number;
   uppercase: boolean;
+  edge?: CoverEdge;
+  underline?: CoverUnderline;
 };
 
 export type CoverShapeLayer = CoverLayerBase & {
@@ -256,6 +267,18 @@ function paintText(ctx: Ctx, layer: CoverTextLayer): void {
       if (line) drawLine(ctx, line, lineX(i), baseline(i), layer.letterSpacing, stroke);
     });
 
+  if (layer.edge && layer.edge.offset > 0) {
+    // Кромка-«глитч» ударного слова: два цвета по сторонам, белое поверх.
+    const edge = layer.edge;
+    ctx.save();
+    for (const [color, dx] of [[edge.left, -edge.offset], [edge.right, edge.offset]] as const) {
+      ctx.fillStyle = color;
+      block.lines.forEach((line, i) => {
+        if (line) drawLine(ctx, line, lineX(i) + dx, baseline(i), layer.letterSpacing, false);
+      });
+    }
+    ctx.restore();
+  }
   // Свечение и тень — под обводкой, иначе обводка их перекрывает, а заливка получает ореол сверху.
   if (layer.glow) {
     ctx.save();
@@ -285,6 +308,16 @@ function paintText(ctx: Ctx, layer: CoverTextLayer): void {
   }
   ctx.fillStyle = fill;
   eachLine(false);
+  if (layer.underline && layer.underline.width > 0) {
+    const u = layer.underline;
+    ctx.fillStyle = u.color;
+    block.lines.forEach((line, i) => {
+      if (!line) return;
+      const x0 = lineX(i) + u.inset;
+      const x1 = lineX(i) + block.widths[i] - u.inset;
+      if (x1 > x0) ctx.fillRect(x0, baseline(i) + u.gap, x1 - x0, u.width);
+    });
+  }
 }
 
 /* ---------- фигуры и картинки ---------- */
@@ -405,7 +438,13 @@ function paintImage(ctx: Ctx, layer: CoverImageLayer, env: CoverPaintEnv): void 
     ctx.scale(-1, 1);
   }
   const p = imagePlacement(layer, img);
-  ctx.drawImage(img as unknown as CanvasImageSource, p.sx, p.sy, p.sw, p.sh, p.dx, p.dy, p.dw, p.dh);
+  const graded = layer.filters ? filteredImage(img, layer.filters, p, env.createCanvas) : null;
+  if (graded) {
+    ctx.drawImage(graded as unknown as CanvasImageSource, p.dx, p.dy, p.dw, p.dh);
+  } else {
+    ctx.drawImage(img as unknown as CanvasImageSource, p.sx, p.sy, p.sw, p.sh, p.dx, p.dy, p.dw, p.dh);
+    if (layer.filters) paintShades(ctx, layer.filters, p.dx, p.dy, p.dw, p.dh);
+  }
   ctx.restore();
   if (layer.stroke && layer.stroke.width > 0) {
     outlinePath(ctx, kind, w, h, radius);
