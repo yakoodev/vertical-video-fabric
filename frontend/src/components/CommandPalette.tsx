@@ -9,7 +9,7 @@ import type { NavState } from "@/api/nav";
 import { Icon } from "@/components/Icon";
 import { useModules } from "@/hooks/useModules";
 import { projectPath, videoPath } from "@/lib/paths";
-import { VIDEO_TABS, projectTabs, visibleTabs } from "@/lib/tabs";
+import { SECTIONS, VIDEO_TABS, projectTabs, visibleTabs } from "@/lib/tabs";
 
 // Searchable words for the source type, so «твич» / «ютуб» find videos.
 const SOURCE_KIND: Record<string, string> = {
@@ -90,8 +90,19 @@ export function CommandPalette({
       { id: "p-assets", group: "Разделы", label: "Общие файлы", keywords: "файлы для монтажа мемы звуки", icon: "file", run: go("/files") },
       { id: "p-all", group: "Разделы", label: "Все проекты и видео", icon: "folder", run: go("/projects") },
       ...(on("automation") ? [{ id: "p-auto", group: "Разделы", label: "Авто", hint: "разовый запуск по ссылке", icon: "zap", run: go("/automation") }] : []),
+      ...(on("agent_chat") ? [{ id: "p-chats", group: "Разделы", label: "Все переписки с агентом", keywords: "чат чаты", icon: "chat", run: go("/chat") }] : []),
       { id: "p-set", group: "Разделы", label: "Настройки", icon: "settings", run: go("/settings") },
-      { id: "p-help", group: "Разделы", label: "Помощь", icon: "help", run: go("/help") },
+      { id: "p-help", group: "Разделы", label: "Помощь", keywords: "справка как", icon: "help", run: go("/help") },
+      // Разделы настроек — сразу, без похода через «Настройки»: «траты», «модули», «прокси».
+      ...visibleTabs(SECTIONS.settings.tabs, on).map((tab) => ({
+        id: `set-${tab.key}`,
+        group: "Настройки",
+        label: tab.label,
+        hint: "Настройки",
+        keywords: "настройки",
+        icon: "settings",
+        run: go(tab.to),
+      })),
     ];
     // Inside a video: its tabs first; inside a project: its tabs. The most frequent jumps.
     const m = location.pathname.match(/^\/v\/(\d+)/);
@@ -179,9 +190,13 @@ export function CommandPalette({
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    // Совпадение в названии — выше совпадения в подсказке или ключевых словах («траты» → «Траты Gemini», потом «Главная»).
+    const inLabel = (c: Cmd) => (c.label.toLowerCase().includes(needle) ? 0 : 1);
     const hits = needle
-      ? commands.filter((c) => `${c.label} ${c.group} ${c.hint ?? ""} ${c.keywords ?? ""}`.toLowerCase().includes(needle))
-      : commands.filter((c) => c.group !== "Клипы" && c.group !== "Клипы этого видео");
+      ? commands
+          .filter((c) => `${c.label} ${c.group} ${c.hint ?? ""} ${c.keywords ?? ""}`.toLowerCase().includes(needle))
+          .sort((a, b) => inLabel(a) - inLabel(b))
+      : commands.filter((c) => c.group !== "Клипы" && c.group !== "Клипы этого видео" && c.group !== "Настройки");
     return hits.slice(0, 40);
   }, [commands, q]);
 

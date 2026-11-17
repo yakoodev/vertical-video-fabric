@@ -537,15 +537,21 @@ def _postings_map(store: Any, variants: list[dict]) -> dict[int, list[dict]]:
 # --------------------------------------------------------------------------- #
 
 
-def variant_media_path(store: Any, variant: dict) -> Path | None:
+def _variant_clip(store: Any, variant: dict) -> dict | None:
+    """Клип сервиса, из которого взят вариант (если он ещё есть)."""
+    if not variant.get("clip_id"):
+        return None
+    try:
+        return store.get_clip(int(variant["clip_id"]))
+    except KeyError:
+        return None
+
+
+def variant_media_path(store: Any, variant: dict, clip: dict | None = None) -> Path | None:
     """Полный файл варианта: файл клипа (если клип ещё есть), иначе сохранённый путь."""
-    if variant.get("clip_id"):
-        try:
-            clip = store.get_clip(int(variant["clip_id"]))
-            if clip.get("output_path") and Path(clip["output_path"]).exists():
-                return Path(clip["output_path"])
-        except KeyError:
-            pass
+    clip = clip if clip is not None else _variant_clip(store, variant)
+    if clip and clip.get("output_path") and Path(clip["output_path"]).exists():
+        return Path(clip["output_path"])
     raw = str(variant.get("file_path") or "")
     return Path(raw) if raw and Path(raw).exists() else None
 
@@ -554,10 +560,14 @@ def _variant_view(store: Any, variant: dict, postings: list[dict]) -> dict:
     vid = int(variant["id"])
     has_preview = variant["preview_status"] == "ready" and bool(variant.get("preview_path"))
     has_poster = bool(variant.get("poster_path"))
-    present = variant_media_path(store, variant) is not None
+    clip = _variant_clip(store, variant)
+    present = variant_media_path(store, variant, clip) is not None
     return {
         "id": vid, "version_id": int(variant["version_id"]), "label": variant["label"], "position": variant["position"],
-        "clip_id": variant["clip_id"], "source": "clip" if variant["clip_id"] else ("file" if variant["owned"] else
+        "clip_id": variant["clip_id"],
+        # План клипа — экран клипа в сервисе (/clips/<id>): из ленты можно вернуться туда, где работу делали.
+        "clip_plan_id": (clip or {}).get("clip_plan_id"),
+        "source": "clip" if variant["clip_id"] else ("file" if variant["owned"] else
                                                                                     "server"),
         "original_name": variant["original_name"], "size_bytes": variant["size_bytes"],
         "duration_sec": variant["duration_sec"], "width": variant["width"], "height": variant["height"],

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import type { NavProject, NavState } from "@/api/nav";
 import { Icon } from "@/components/Icon";
 import { useModules } from "@/hooks/useModules";
@@ -13,6 +13,16 @@ function projectIcon(p: NavProject): string {
   if (p.kind === "explainer" || /сов|истор/.test(name)) return "book";
   if (/apex|игр/.test(name)) return "pad";
   return "folder";
+}
+
+/** Знак FABRIC: в боковой панели и в шапке монтажа, где панели нет. Клик по нему — «Главная». */
+export function BrandMark({ size = 24 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden width={size} height={size}>
+      <path d="M4 7c0-2 1.6-3.5 3.5-3.5H21l-3 5H9L4 13z" fill="#a78bfa" />
+      <path d="M4 16c0-2 1.6-3.5 3.5-3.5H17l-3 4.5H9l-5 4z" fill="#8b5cf6" />
+    </svg>
+  );
 }
 
 const shortName = (name: string) => name.replace(/\s*\(.*\)$/, "") || name;
@@ -36,27 +46,28 @@ export function Sidebar({
   const link = (active: boolean) => `side-link${active ? " on" : ""}`;
   const seriesOn = on("series");
   const ref = useRef<HTMLElement>(null);
-  // Телефон: меню лентой, текущий пункт должен быть виден.
+  // Телефон: меню лентой, текущий пункт должен быть виден. Список проектов приходит позже первого кадра
+  // и сдвигает пункты вправо — поэтому пересчёт и после его загрузки.
+  const projectCount = nav?.projects.length ?? 0;
   useEffect(() => {
     if (window.innerWidth > 760) return;
     const link = ref.current?.querySelector<HTMLElement>(".side-link.on");
     if (link && ref.current) ref.current.scrollLeft = link.offsetLeft - (ref.current.clientWidth - link.offsetWidth) / 2;
-  }, [pathname, projectId]);
+  }, [pathname, projectId, projectCount]);
   return (
     <aside className="side" ref={ref}>
-      <div className="side-brand">
-        <svg viewBox="0 0 24 24" aria-hidden width="24" height="24">
-          <path d="M4 7c0-2 1.6-3.5 3.5-3.5H21l-3 5H9L4 13z" fill="#a78bfa" />
-          <path d="M4 16c0-2 1.6-3.5 3.5-3.5H17l-3 4.5H9l-5 4z" fill="#8b5cf6" />
-        </svg>
+      <Link to="/" className="side-brand" title="На главную" aria-label="FABRIC — на главную">
+        <BrandMark />
         <span>FABRIC</span>
-      </div>
+      </Link>
       <NavLink to="/" end className={link(pathname === "/")} title="Главная: что ждёт, что выйдет, что зашло">
         <Icon name="home" />
         <span className="side-t">Главная</span>
       </NavLink>
       <NavLink to="/projects" className={`side-head${isOn("projects") ? " on" : ""}`} title="Все проекты и видео">
-        Проекты
+        {/* Значок виден, когда панель узкая (одни значки) — иначе «Все проекты» с панели не открыть. */}
+        <Icon name="folder" />
+        <span className="side-head-t">Проекты</span>
       </NavLink>
       {seriesOn
         ? (nav?.projects ?? []).map((p) => (

@@ -66,8 +66,8 @@ export function ApprovalsPage({ embedded }: { embedded?: boolean } = {}) {
     <>
       {embedded ? (
         <p className="inbox-line">
-          Ждут решения: {counts.data?.pending ?? 0}. Всего карточек: разрешено {counts.data?.approved ?? 0}, просрочено{" "}
-          {counts.data?.expired ?? 0}. Без «Публиковать» ничего не выходит, если в проекте не включено «Публиковать самому».
+          Что агент хочет выложить или запомнить. Без вашего «Публиковать» ничего не выйдет (кроме проектов, где включено
+          «Публиковать самому»). Ждут решения: {counts.data?.pending ?? 0}.
         </p>
       ) : (
         <PageHead
@@ -338,7 +338,7 @@ export function Feed({ projectId }: { projectId?: number }) {
   const events: FeedEvent[] = feed.data ?? [];
   return (
     <section className="panel series-panel" style={{ marginTop: 18 }}>
-      <h3>Лента автопилота</h3>
+      <h3>Журнал автопилота</h3>
       {feed.isLoading ? <Loading /> : null}
       {!feed.isLoading && !events.length ? <p className="muted">Пока тихо.</p> : null}
       <ul className="series-list approval-feed">

@@ -52,6 +52,8 @@ export interface FeedVariant {
   label: string;
   position: number;
   clip_id: number | null;
+  /** План клипа сервиса: экран клипа /clips/<id>. Нет — файл загрузили со стороны. */
+  clip_plan_id?: number | null;
   source: "clip" | "file" | "server";
   original_name: string;
   size_bytes: number | null;

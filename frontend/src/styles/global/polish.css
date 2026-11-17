@@ -67,7 +67,7 @@ ol.series-list { list-style: decimal inside; }
 .approval-kind--alert { border-color: var(--warn); color: var(--warn); font-weight: 600; }
 .stats-badge { font-variant-numeric: tabular-nums; }
 .stats-badge--alert { color: var(--warn); border-color: var(--warn); font-weight: 600; }
-.approval-feed li { font-size: 13px; }
+.approval-feed li { font-size: 13px; overflow-wrap: anywhere; min-width: 0; }
 .approval-digest { white-space: pre-wrap; font: inherit; font-size: 13px; margin: 0; }
 .project-chat { min-height: 480px; grid-template-rows: auto minmax(0, 1fr) auto; }
 @media (max-width: 720px) { .approval-card { grid-template-columns: 1fr; } }

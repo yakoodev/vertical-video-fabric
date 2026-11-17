@@ -31,6 +31,19 @@
   padding: 2px 10px 12px;
 }
 .side-brand svg { flex: none; }
+/* Знак — ссылка на «Главную» (во всех видах панели и в шапке монтажа). */
+a.side-brand, a.side-brand:hover { color: var(--text); text-decoration: none; border-radius: 9px; }
+a.side-brand:focus-visible, .top-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.top-home { display: none; }
+body.vvf-studio .top { grid-template-columns: auto minmax(0, 1fr) auto; }
+body.vvf-studio .top-home {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-right: 1px solid var(--border);
+}
+body.vvf-studio .top-home:hover { background: var(--surface); }
 .side-head {
   font-size: 14.5px;
   color: #c9c5d6;
@@ -38,6 +51,7 @@
   padding: 4px 10px 6px;
 }
 .side-head:hover, .side-head.on { color: var(--text); }
+.side-head .icon { display: none; }
 .side-link {
   display: flex;
   align-items: center;
@@ -440,7 +454,12 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
 @media (max-width: 1180px) {
   .shell { grid-template-columns: 64px minmax(0, 1fr); }
   .side { padding: 12px 8px; align-items: stretch; }
-  .side-head, .side-sep, .side-t, .side-n, .side-badge, .side-mini span { display: none; }
+  .side-sep, .side-t, .side-n, .side-badge, .side-mini span, .side-head-t { display: none; }
+  /* Узкая панель: «Все проекты» — значком, как остальные пункты. */
+  .side-head { display: flex; justify-content: center; padding: 9px; border-radius: 9px; }
+  .side-head .icon { display: block; }
+  .side-head:hover { background: var(--surface); }
+  .side-head.on { background: #2a2142; }
   .side-link { justify-content: center; padding: 9px; position: relative; }
   .side-brand { justify-content: center; padding: 2px 0 10px; }
   .side-brand span { display: none; }
@@ -463,7 +482,14 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
     scrollbar-width: none;
   }
   .side::-webkit-scrollbar { display: none; }
-  .side-sp, .side-brand, .side-head, .side-sep { display: none; }
+  .side-sp, .side-sep { display: none; }
+  /* Телефон: «Проекты» — пункт ленты перед списком проектов, ведёт на все проекты и видео. */
+  .side-head { flex: none; display: flex; align-items: center; gap: 7px; padding: 6px 10px; font-size: 14px; }
+  .side-head .icon { display: none; }
+  .side-head-t { display: inline; }
+  /* Телефон: знак первым в ленте меню, без надписи — тоже ведёт на «Главную». */
+  .side-brand { flex: none; padding: 4px 6px; }
+  .side-brand span { display: none; }
   .side-link { flex: none; width: auto; gap: 7px; padding: 6px 10px; }
   .side-t { display: inline; flex: none; font-size: 14px; overflow: visible; }
   .side-n, .side-badge { display: inline; font-size: 12.5px; }
@@ -472,6 +498,9 @@ body.vvf-studio .content-inner { padding: 10px 14px 20px; }
   .side-mini span { display: inline; }
   .side-mini button { flex: none; padding: 0 8px; }
   .top { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  body.vvf-studio .top { grid-template-columns: auto minmax(0, 1fr); }
+  body.vvf-studio .top-home { padding: 0 10px; }
+  body.vvf-studio .tools { grid-column: 1 / -1; }
   .tools { border-left: 0; border-top: 1px solid var(--border); padding: 6px 10px; gap: 6px; }
   .tool span { display: inline; }
   .tool em { display: none; }
