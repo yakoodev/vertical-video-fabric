@@ -273,7 +273,19 @@ def _norm_react(raw: Any, rep: _Report, where: str, ltype: str) -> dict | None:
         for name, options in (("source", REACT_SOURCES), ("prop", REACT_PROPS)):
             if name in raw:
                 raw[name] = _alias(raw[name], REACT_ALIASES, options, rep, f"{where}.{name}")
-    return Obj(REACT).norm(raw, rep, where)
+        if "band" in raw:
+            from app.motion_limits import REACT_BAND_ALIASES, REACT_BANDS
+
+            if raw["band"] in (None, "", "full"):
+                raw.pop("band")  # вся громкость — как без поля
+            else:
+                raw["band"] = _alias(raw["band"], REACT_BAND_ALIASES, REACT_BANDS, rep, f"{where}.band")
+                if raw["band"] == "full":
+                    raw.pop("band")
+    out = Obj(REACT).norm(raw, rep, where)
+    if isinstance(out, dict) and out.get("band") == "full":
+        out.pop("band")  # неизвестная полоса → вся громкость, как без поля
+    return out
 
 
 def _fx_rules(layer: dict, raw: dict, rep: _Report, where: str) -> None:

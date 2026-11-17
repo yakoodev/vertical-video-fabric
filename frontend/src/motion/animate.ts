@@ -358,6 +358,17 @@ function applyReact(st: LayerState, layer: Layer, t: number, levels: Levels | nu
     case "glow":
       st.glow = Math.max(st.glow, r.amount * r.value);
       return;
+    case "shake": {
+      // Тряска от звука: шум по клиповому времени (детерминированно), размах — от громкости.
+      // amount 1 на пике: до 16 опорн. px и 2.5°.
+      const seed = hashString(layer.id || "layer") + 0x3eac7;
+      const f = 18 * t;
+      const k = r.amount * r.value;
+      st.x += (16 * k * noise1(seed, f)) / ref.w;
+      st.y += (16 * k * noise1(seed + 101, f)) / ref.h;
+      st.rotation += 2.5 * k * noise1(seed + 202, f);
+      return;
+    }
   }
 }
 

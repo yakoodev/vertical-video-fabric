@@ -8,7 +8,7 @@ from app.motion_schema_ads import AD_PROPS, COUNTER_ROLL, PIVOT
 from app.motion_schema_flat import FLAT_PROPS
 from app.motion_limits import (
     MAX_TRACK, MAX_TIME_SEC, MAX_TEXT, MAX_CHART_ITEMS, MAX_NAME, MIN_ANIM_SEC, MAX_ANIM_SEC, ANIMATIONS, LOOPS,
-    BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
+    BLENDS, FX_KINDS, REACT_SOURCES, REACT_PROPS, REACT_BANDS, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES, MAX_PARTICLES,
     CHART_KINDS, CALLOUT_STYLES, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, PAGE_MAX_KEYS, PAGE_MAX_ZOOM,
     PAGE_EASES, NAMEPLATE_PLATFORMS,
     NAMEPLATE_STYLES, NAMEPLATE_ANIMS, NAMEPLATE_OUTROS,
@@ -518,6 +518,8 @@ LOOP = {"type": Choice("none", LOOPS), "speed": Num(1, 0.1, 5, 3), "amount": Num
 REACT = {
     "source": Choice("voice", REACT_SOURCES),
     "prop": Choice("scale", REACT_PROPS),
+    # Полоса частот: нет — вся громкость (как раньше); bass — пульс бочки и баса (frontend/src/motion/levels.ts).
+    "band": Opt(Choice("full", REACT_BANDS)),
     "amount": Num(1, 0, 3, 3),
     "smooth": Num(0.15, 0, 1, 3),
     "color": Opt(Color("#ffffff")),

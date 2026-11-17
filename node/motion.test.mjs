@@ -2237,6 +2237,31 @@ test("react: огибающая по кадрам, сглаживание окн
   assert.ok(lit(glow) > lit(pixels([textLayer({ props })], 10.05)) * 1.3);
 });
 
+test("react band: огибающая «источник:полоса» (music:bass), тряска от звука детерминирована", () => {
+  assert.equal(E.reactLevelKey("music", "bass"), "music:bass");
+  assert.equal(E.reactLevelKey("music", "full"), "music");
+  assert.equal(E.reactLevelKey(undefined, "nope"), "voice");
+  const levels = {
+    music: { t0: 0, fps: 10, v: [100, 100, 100, 100] },          // вокал громкий всё время
+    "music:bass": { t0: 0, fps: 10, v: [100, 0, 100, 0] },      // бочка — через кадр
+  };
+  const L = (react) => textLayer({ id: "pulse", start: 0, end: 1, react });
+  const at = (react, t) => E.resolveLayer(L(react), t, undefined, levels);
+  near(at({ source: "music", band: "bass", prop: "scale", smooth: 0 }, 0.05).scale, 1.25);
+  near(at({ source: "music", band: "bass", prop: "scale", smooth: 0 }, 0.15).scale, 1);
+  near(at({ source: "music", prop: "scale", smooth: 0 }, 0.15).scale, 1.25); // без полосы — вся громкость
+  // полосы нет в levels — слой глух (а не берёт всю громкость)
+  near(at({ source: "music", band: "high", prop: "scale", smooth: 0 }, 0.05).scale, 1);
+  // shake: в тишине полосы на месте, на ударе — сдвиг и поворот, повтор — тот же кадр
+  const still = at({ source: "music", band: "bass", prop: "shake", smooth: 0 }, 0.15);
+  const hit = at({ source: "music", band: "bass", prop: "shake", amount: 2, smooth: 0 }, 0.27);
+  const base = E.resolveLayer(L(null), 0.27, undefined, levels);
+  near(still.x, E.resolveLayer(L(null), 0.15, undefined, levels).x);
+  assert.ok(Math.abs(hit.x - base.x) + Math.abs(hit.y - base.y) > 0.0005 || Math.abs(hit.rotation - base.rotation) > 0.05);
+  assert.deepEqual(at({ source: "music", band: "bass", prop: "shake", amount: 2, smooth: 0 }, 0.27), hit);
+  assert.ok(E.REACT_PROPS.includes("shake") && E.REACT_BANDS.join() === "full,bass,mid,high");
+});
+
 test("субтитры stomp: слово видно с момента и «впечатывается», подсвеченное — сильнее; кадр детерминирован", () => {
   const words = [{ t0: 1, t1: 1.3, w: "БАХ" }, { t0: 1.4, t1: 1.8, w: "БУМ" }];
   const caps = (hl = []) => ({ id: "c", type: "captions", start: 0, end: 3, x: 0.5, y: 0.5, props: { style: "stomp", highlightWords: hl } });

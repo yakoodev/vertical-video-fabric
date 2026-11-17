@@ -293,11 +293,37 @@ def has_pngtuber(layers: Any) -> bool:
     )
 
 
+def react_level_key(source: Any, band: Any = None) -> str:
+    """Ключ огибающей в ``comp.levels``: ``voice`` (вся громкость) или ``music:bass`` (полоса частот) — как
+    ``reactLevelKey`` движка (frontend/src/motion/levels.ts)."""
+    from app.motion_limits import REACT_BANDS
+
+    src = str(source or "voice")
+    return src if band in (None, "", "full") or band not in REACT_BANDS else f"{src}:{band}"
+
+
+def parse_level_key(key: Any) -> tuple[str, str] | None:
+    """``music:bass`` → (music, bass), ``voice`` → (voice, full); не огибающая react — None."""
+    from app.motion_limits import REACT_BANDS
+
+    src, _, band = str(key or "").partition(":")
+    band = band or "full"
+    return (src, band) if src in REACT_SOURCES and band in REACT_BANDS else None
+
+
+def level_keys(keys: Any) -> list[str]:
+    """Годные ключи огибающих по порядку источников и полос (``voice``, ``voice:bass``, ``music``, …)."""
+    from app.motion_limits import REACT_BANDS
+
+    parsed = {p for p in (parse_level_key(k) for k in keys or []) if p}
+    return [react_level_key(s, b) for s in REACT_SOURCES for b in REACT_BANDS if (s, b) in parsed]
+
+
 def react_sources(layers: Any) -> list[str]:
     """Чьи огибающие громкости нужны видимым слоям с ``react`` и волнам ``waveform`` с source voice/music/mix
-    (тогда их считает app/audio_react.py)."""
+    (тогда их считает app/audio_react.py). У реакции с полосой частот ключ ``источник:полоса`` (``music:bass``)."""
     found = {
-        str((layer.get("react") or {}).get("source") or "voice")
+        react_level_key((layer.get("react") or {}).get("source") or "voice", (layer.get("react") or {}).get("band"))
         for layer in layers or []
         if isinstance(layer, dict) and isinstance(layer.get("react"), dict) and not layer.get("hidden")
         and layer.get("type") != "audio"
@@ -307,7 +333,7 @@ def react_sources(layers: Any) -> list[str]:
         for layer in layers or []
         if isinstance(layer, dict) and layer.get("type") == "waveform" and not layer.get("hidden")
     }
-    return [source for source in REACT_SOURCES if source in found]
+    return level_keys(found)
 
 
 def fx_crowding(layers: Any) -> list[str]:
@@ -585,8 +611,10 @@ def schema_summary() -> dict:
         "react": {
             "sources": list(REACT_SOURCES),
             "props": list(REACT_PROPS),
-            "levels": "comp.levels = {voice|music|mix: {t0, fps, v [0..100]}} — огибающая громкости клипа по "
-                      "кадрам; считает сервер (рендер и POST /api/clip-plans/{id}/levels для превью)",
+            "bands": ["full", "bass", "mid", "high"],
+            "levels": "comp.levels = {voice|music|mix[:bass|mid|high]: {t0, fps, v [0..100]}} — огибающая громкости "
+                      "клипа по кадрам (с полосой — громкость полосы частот: bass 20–150 Гц, mid 150–2000, high "
+                      "2–4 кГц); считает сервер (рендер и POST /api/clip-plans/{id}/levels для превью)",
             **Obj(REACT).describe(),
         },
         "highlight_styles": list(HIGHLIGHT_STYLES),

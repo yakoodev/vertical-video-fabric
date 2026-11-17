@@ -1,5 +1,5 @@
 // Разделы инспектора: время слоя, появление и исчезание, реакция на звук, тень и наложение.
-import type { InOutType, Layer, LoopType, ReactProp, ReactSource } from "@/motion";
+import type { InOutType, Layer, LoopType, ReactBand, ReactProp, ReactSource } from "@/motion";
 import { Color, Num, r2, Section, Toggle } from "./fields";
 
 const IN_TYPES: { v: InOutType; label: string }[] = [
@@ -51,6 +51,14 @@ const REACT_PROPS_UI: { v: ReactProp; label: string }[] = [
   { v: "glow", label: "Свечение" },
   { v: "opacity", label: "Прозрачность" },
   { v: "y", label: "Подскок" },
+  { v: "shake", label: "Тряска" },
+];
+/** Полоса частот огибающей (app/audio_react.py): бас — пульс под бочку, а не под вокал. */
+const REACT_BANDS_UI: { v: ReactBand; label: string }[] = [
+  { v: "full", label: "Вся громкость" },
+  { v: "bass", label: "Бас 20–150 Гц" },
+  { v: "mid", label: "Середина" },
+  { v: "high", label: "Верх (хэты)" },
 ];
 
 export function TimeSection({
@@ -211,6 +219,26 @@ export function AnimationSection({ layer, onChange }: { layer: Exclude<Layer, { 
               <span className="li-cap">Что</span>
               <select className="input" value={layer.react.prop ?? "scale"} onChange={(e) => onChange({ ...layer, react: { ...layer.react!, prop: e.target.value as ReactProp } })}>
                 {REACT_PROPS_UI.map((o) => (
+                  <option key={o.v} value={o.v}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label title="Полоса частот: бас — слой качает в бочку и бас, а не от вокала">
+              <span className="li-cap">Частоты</span>
+              <select
+                className="input"
+                value={layer.react.band ?? "full"}
+                onChange={(e) => {
+                  const band = e.target.value as ReactBand;
+                  const next = { ...layer.react! };
+                  if (band === "full") delete next.band;
+                  else next.band = band;
+                  onChange({ ...layer, react: next });
+                }}
+              >
+                {REACT_BANDS_UI.map((o) => (
                   <option key={o.v} value={o.v}>
                     {o.label}
                   </option>

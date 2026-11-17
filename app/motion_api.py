@@ -47,7 +47,8 @@ class VoicePayload(BaseModel):
 
 
 class LevelsPayload(BaseModel):
-    """Чьи огибающие нужны (voice/music/mix; нет — по react сохранённых слоёв) и частота кадров."""
+    """Чьи огибающие нужны (voice/music/mix, с полосой — music:bass; нет — по react сохранённых слоёв) и частота
+    кадров."""
 
     sources: list[str] | None = None
     fps: float | None = None
@@ -294,7 +295,7 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
     ) -> dict:
         """``{levels: {voice|music|mix: {t0, fps, v [0..100]}}, notes}`` — шкала clip (как слои)."""
         from app.audio_react import plan_levels
-        from app.motion import REACT_SOURCES, react_sources
+        from app.motion import level_keys, react_sources
 
         store = get_store()
         try:
@@ -303,7 +304,7 @@ def build_motion_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRoute
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         saved = normalize_render_settings(plan.get("render_settings") or {})["layers"]
         if payload and payload.sources is not None:
-            sources = [s for s in REACT_SOURCES if s in set(payload.sources)]
+            sources = level_keys(payload.sources)  # voice, music:bass … (полоса частот реакции)
         else:
             sources = react_sources(saved)
         # Волны со своим звуком (wave:<id>): слои из запроса (несохранённые правки) или сохранённые.
