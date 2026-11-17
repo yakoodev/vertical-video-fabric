@@ -242,10 +242,15 @@ def h_add_sound_from_url(ctx: ToolContext, args: dict) -> dict:
 
 def h_set_music(ctx: ToolContext, args: dict) -> dict:
     """Фоновая музыка клипа: on + track_id (list_music), start_sec — с какой секунды трека."""
+    from app.music_fit import describe, fit_plan, min_start_for, normalize_fit
+
     render = _current_render(ctx)
     on = args.get("on") is not False
     track_id = args.get("track_id")
     start = render.get("music_start_sec") or 0.0
+    cfg = normalize_fit(render.get("music_fit"))
+    fit_end = args.get("fit_end")
+    fit = None
     if on:
         changed_track = bool(track_id) and int(track_id) != render.get("track_id")
         track_id = track_id or render.get("track_id")
@@ -255,23 +260,72 @@ def h_set_music(ctx: ToolContext, args: dict) -> dict:
             track = ctx.store.get_audio_track(int(track_id))
         except (KeyError, ValueError, TypeError) as exc:
             raise ToolError(f"нет трека {track_id} — см. list_music") from exc
+        if args.get("start_sec") is not None and fit_end is True:
+            raise ToolError("либо start_sec (свой старт), либо fit_end=true (старт подберёт сервис под концовку)")
         if args.get("start_sec") is not None:
             start = _num(args.get("start_sec"), 0.0) or 0.0
-        elif changed_track:
-            start = 0.0  # новый трек — с начала, если не сказано иное
+            cfg = {"mode": "off"}  # старт выбран — подбор его не трогает
+        elif fit_end is False:
+            cfg = {"mode": "off"}
+            if changed_track:
+                start = 0.0  # новый трек — с начала
+        elif fit_end is True or changed_track or args.get("track_end_sec") is not None:
+            # Новый трек без start_sec (или fit_end) — концовка трека на конец ролика (app/music_fit.py).
+            from app.music_energy import ensure_energy
+
+            [track] = ensure_energy(ctx.store, [track])
+            min_start = _num(args.get("min_start_sec"))
+            cfg = {"mode": "end",
+                   "min_start": min_start if min_start is not None else min_start_for(track, _is_promo(ctx, render))}
+            if args.get("track_end_sec") is not None:
+                cfg["end_at"] = _num(args.get("track_end_sec"), 0.0) or 0.0
+            cfg = normalize_fit(cfg)
+            plan = ctx.store.get_clip_plan(ctx.plan_id)
+            try:
+                fit = fit_plan(ctx.store, plan, track, cfg)
+            except Exception as exc:  # noqa: BLE001 - подбор — надстройка: музыка встанет и без него
+                fit = {"ok": False, "reason": str(exc)[:160]}
+            if fit.get("ok"):
+                start = float(fit["start_sec"])
+                cfg["start"] = start
+            elif changed_track:
+                start = 0.0
         length = float(track.get("duration_sec") or 0)
         if length and start >= length:
             raise ToolError(f"start_sec {start:g} — за концом трека ({length:g} с)")
     fresh = _save_render(ctx, {**render, "music_on": on, "track_id": int(track_id) if on else render.get("track_id"),
-                               "music_start_sec": start})
+                               "music_start_sec": start, "music_fit": cfg})
     out = {"ok": True, "music_on": fresh["music_on"], "track_id": fresh["track_id"],
            "music_start_sec": fresh["music_start_sec"]}
+    if on and fresh.get("music_fit"):
+        out["music_fit"] = _fit_view(fresh["music_fit"], fit, describe)
     if on:
         from app.music_energy import ensure_energy
 
         [track] = ensure_energy(ctx.store, [track])
         out.update(_music_track_hint(track, float(fresh["music_start_sec"] or 0.0), _is_promo(ctx, fresh)))
     return out
+
+
+def _fit_view(cfg: dict, fit: dict | None, describe) -> dict:
+    """Подбор старта под концовку — для ответа агенту: режим, что легло на конец и почему так."""
+    view: dict = {"mode": cfg["mode"]}
+    if cfg["mode"] == "off":
+        view["note"] = "старт выбран — сервис его не двигает (fit_end=true — подобрать под концовку трека)"
+        return view
+    if fit is None:
+        view["note"] = "старт подбирается под концовку трека; перед рендером пересчитается под длину ролика"
+        return view
+    view["note"] = describe(fit)
+    if fit.get("ok"):
+        ending = fit["ending"]
+        view.update({"ending": {"kind": ending["kind"], "track_sec": ending["anchor"]},
+                     "lands_at": fit["lands_at"], "clip_end": fit["clip_end"]})
+        view["note"] += (". Перед рендером старт пересчитается под длину ролика (на целые такты). Не та концовка "
+                         "— set_music(track_end_sec=секунда финального удара) или свой start_sec")
+    if cfg.get("min_start"):
+        view["min_start_sec"] = cfg["min_start"]
+    return view
 
 
 def _is_promo(ctx: ToolContext, render: dict) -> bool:
@@ -506,12 +560,21 @@ def tools() -> list[Tool]:
         ),
         Tool(
             "set_music", "Подкладываю музыку",
-            "Фоновая музыка клипа: on, track_id (list_music), start_sec — с какой секунды трека играть на 0 с "
-            "клипа (пропустить тихое вступление и начать сразу с барабанов/дропа — energy_start_sec трека из "
-            "list_music; 0 — с начала, новый трек без start_sec — с начала). Громкость сама: заметно тише "
-            "голоса и приглушается под речь; эффекты при музыке — реже. / Background music for the clip.",
+            "Фоновая музыка клипа: on, track_id (list_music). Новый трек без start_sec — сервис сам подбирает "
+            "старт так, чтобы НАСТОЯЩАЯ концовка трека (финальный удар, затухание) легла на конец ролика, а не "
+            "обрыв посреди фразы; старт — на сильной доле, у промо — не раньше energy_start_sec; перед рендером "
+            "пересчитывается под длину ролика (music_fit в ответе: что и где легло). start_sec — свой старт "
+            "(секунда трека на 0 с клипа, подбор тогда выключен); fit_end=false — без подбора (с начала трека), "
+            "fit_end=true — подобрать заново; track_end_sec — секунда финального удара трека, если найдена не та "
+            "концовка; min_start_sec — старт не раньше. Громкость сама: заметно тише голоса и приглушается под "
+            "речь; эффекты при музыке — реже. / Background music; by default its real ending lands on the clip end.",
             _obj({"on": {"type": "boolean"}, "track_id": {"type": "integer"},
-                  "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа"}}),
+                  "start_sec": {"type": "number", "description": "секунда трека на 0 с клипа (свой старт)"},
+                  "fit_end": {"type": "boolean",
+                              "description": "true — старт под концовку трека (по умолчанию у нового трека); "
+                                             "false — без подбора"},
+                  "track_end_sec": {"type": "number", "description": "секунда трека, где его финальный удар"},
+                  "min_start_sec": {"type": "number", "description": "старт не раньше этой секунды трека"}}),
             h_set_music, mutating=True,
             label=lambda a: "Музыка " + ("выкл" if a.get("on") is False else f"трек {a.get('track_id') or ''}".strip()),
         ),

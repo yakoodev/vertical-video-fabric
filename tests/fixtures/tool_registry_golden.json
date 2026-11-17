@@ -619,8 +619,8 @@
 {
 "name": "set_music",
 "title": "Подкладываю музыку",
-"description": "eab2ff9a0077d6e6",
-"parameters": "feacdb03b568f9f2",
+"description": "544e2a5a430f4a5e",
+"parameters": "377fb5303bd8e036",
 "mutating": true,
 "scope": "clip",
 "module": null,

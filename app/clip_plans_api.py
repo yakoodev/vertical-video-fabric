@@ -590,6 +590,13 @@ def build_clip_plans_router(
                 # Цветокоррекция кусков (app/piece_color.py) — так же: ставит инструмент или инспектор.
                 current = get_store().get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
                 settings_in["color_fix"] = current.get("color_fix") or []
+            if "music_fit" not in settings_in:
+                # Концовка трека на конец ролика (app/music_fit.py): редактор о ней не знает — новый трек в нём
+                # подбирается рендером, сдвинутый владельцем старт становится его выбором.
+                from app.music_fit import editor_save
+
+                current = get_store().get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+                settings_in = editor_save(current, settings_in)
             if not {"format", "aspect", "layers_format"} <= set(settings_in):
                 # Формат вывода и формат разметки слоёв (app/formats.py) — так же: редактор,
                 # что их не шлёт, их не сбрасывает (старый шлёт aspect — он и есть формат).
