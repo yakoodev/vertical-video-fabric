@@ -69,8 +69,8 @@
 {
 "name": "contact_sheet",
 "title": "Смотрю весь клип",
-"description": "2770df10e20f773d",
-"parameters": "a64d1e988b7b54b2",
+"description": "c2517e447b8a796d",
+"parameters": "5df3fe608a964ba1",
 "mutating": false,
 "scope": "clip",
 "module": null,
@@ -168,8 +168,8 @@
 {
 "name": "add_layers",
 "title": "Добавляю слои",
-"description": "de3ee860d35d6e2b",
-"parameters": "c5996facdabab990",
+"description": "174ff7b4a374fdf8",
+"parameters": "79217b34f62a2d0e",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -1301,8 +1301,8 @@
 {
 "name": "lint_clip",
 "title": "Проверяю клип перед сдачей",
-"description": "bb5b15671275eec2",
-"parameters": "741112d481484077",
+"description": "bcddb85ba2c51fce",
+"parameters": "b48d15b7a834544c",
 "mutating": false,
 "scope": "clip",
 "module": null,

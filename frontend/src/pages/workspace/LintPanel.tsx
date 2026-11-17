@@ -20,6 +20,11 @@ type Props = {
 };
 
 const PLATFORM_NAMES: Record<string, string> = { tiktok: "TikTok", reels: "Reels", shorts: "Shorts" };
+const PRIORITY_TITLES: Record<string, string> = {
+  P0: "P0 — брак: сдавать нельзя",
+  P1: "P1 — поправить до сдачи",
+  P2: "P2 — шлифовка",
+};
 
 const fmt = (t: number) => {
   const m = Math.floor(t / 60);
@@ -101,7 +106,7 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
                 onClick={() => setFilter((prev) => (prev === c ? null : c))}
                 title="Показать только эту проверку"
               >
-                {LINT_CHECK_LABELS[c]} {result.by_check[c] ?? 0}
+                {LINT_CHECK_LABELS[c] ?? c} {result.by_check[c] ?? 0}
               </button>
             ))}
             {typeof loopScore === "number" ? (
@@ -126,8 +131,12 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
             <ul className="lint-list">
               {shown.map((f, i) => (
                 <li key={`${f.check}-${i}`} className={`lint-item ${f.severity}`}>
-                  <span className="lint-sev" aria-label={f.severity === "warn" ? "предупреждение" : "подсказка"}>
-                    {f.severity === "warn" ? "⚠" : "ℹ"}
+                  <span
+                    className={`lint-sev${f.priority ? ` lint-${f.priority.toLowerCase()}` : ""}`}
+                    aria-label={f.severity === "warn" ? "предупреждение" : "подсказка"}
+                    title={f.priority ? PRIORITY_TITLES[f.priority] : undefined}
+                  >
+                    {f.priority ?? (f.severity === "warn" ? "⚠" : "ℹ")}
                   </span>
                   <span className="lint-msg">{f.message}</span>
                   {f.fix ? <span className="lint-fix" title={f.fix}>→ {humanFix(f.fix)}</span> : null}
@@ -143,7 +152,7 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
                         {typeof f.until === "number" && f.until > f.t + 0.05 ? `–${fmt(f.until)}` : ""}
                       </button>
                     ) : null}
-                    <span>{LINT_CHECK_LABELS[f.check]}</span>
+                    <span>{LINT_CHECK_LABELS[f.check] ?? f.check}</span>
                     {f.layer ? <span className="mono">{f.layer}</span> : null}
                   </span>
                 </li>
@@ -164,8 +173,10 @@ export function LintPanel({ clipPlanId, beforeRun, onSeek }: Props) {
         </>
       ) : (
         <p className="cut-empty">
-          Текст и субтитры под кнопками TikTok/Reels/Shorts, титры, которые не успеть прочитать, вспышки чаще 3 в секунду
-          и стык конца с началом. Только предупреждения — сдавать не мешает.
+          Текст и субтитры под кнопками TikTok/Reels/Shorts, титры, которые не успеть прочитать, вспышки чаще 3 в секунду,
+          стык конца с началом; перед сдачей — кадр 0 (обложка), мёртвые куски дольше 3 с, «встало и сразу ушло»,
+          длинная концовка, мелкий главный объект, слайдовая обвязка, рост из нуля, повтор входов слов. P0 — брак,
+          P1 — поправить до сдачи, P2 — шлифовка.
         </p>
       )}
     </div>
