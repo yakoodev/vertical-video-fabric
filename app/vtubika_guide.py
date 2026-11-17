@@ -44,6 +44,9 @@ SCRIM = "#12141a"
 INK = "#0b0812"
 # Слои по дорожкам: подложка ниже карточек, кружок ведущей — над ними, субтитры (9) и крючок (10) — сверху.
 TRACK = {"scrim": 2, "panel": 3, "media": 4, "ui": 5, "chip": 6, "pip": 7, "text": 6, "badge": 8}
+# Карточка «что нужно» (checklist плоской темы: строка 34 px, подпись 26 px) — ×1.7 и 570 px → 970 px, 90 % кадра.
+ROWS_SCALE = 1.7
+ROWS_W = 570
 PIP_ASSET = "1"  # тот же ключ, что у перетекающих переходов (vtubika_story.FLOW_ASSET): кадр самой сцены
 
 
@@ -233,8 +236,8 @@ def _pip(lid: str, t0: float, t1: float, item: dict, accent: str) -> list[dict]:
     """Ведущая в кружке: её же кадр (видео сцены, ключ PIP_ASSET), вырезан вокруг лица, рамка акцентом."""
     # Окно вокруг лица на крупном плане face (ведущая смотрит в объектив, лицо правее центра): квадрат 605 px.
     crop = item.get("crop") or {"x": 0.34, "y": 0.29, "w": 0.56, "h": 0.315}
-    size = float(item.get("w", 280))
-    x, y = float(item.get("x", 0.82)), float(item.get("y", 0.635))
+    size = float(item.get("w", 230))
+    x, y = float(item.get("x", 0.85)), float(item.get("y", 0.70))
     ring = {"id": f"{lid}r", "type": "shape", "start": t0, "end": t1, "x": x, "y": y, "track": TRACK["pip"],
             "props": {"kind": "ellipse", "w": size + 20, "h": size + 20, "fill": item.get("color") or accent},
             "shadow": {"color": "#000000", "blur": 36, "y": 12, "opacity": 0.5}, **_io(item)}
@@ -297,8 +300,8 @@ def layers(plan: dict, words: list[dict], total: float) -> tuple[list[dict], dic
                 out += _pip(lid, t0, t1, item, accent)
             elif kind == "title":
                 props = {"component": "title", "variant": item.get("variant", "plain"), "label": item.get("chip"),
-                         "title": item["text"], "text": item.get("sub"), "size": int(item.get("size", 96)), "w": float(item.get("w", 960))}
-                out.append(_ui(lid, t0, t1, {"y": 0.12, **item}, {k: v for k, v in props.items() if v is not None}, accent, plate, TRACK["ui"]))
+                         "title": item["text"], "text": item.get("sub"), "size": int(item.get("size", 100)), "w": float(item.get("w", 860))}
+                out.append(_ui(lid, t0, t1, {"y": 0.12, "scale": 1.2, **item}, {k: v for k, v in props.items() if v is not None}, accent, plate, TRACK["ui"]))
             elif kind == "rows":
                 rows = []
                 for it in item["items"]:
@@ -307,10 +310,11 @@ def layers(plan: dict, words: list[dict], total: float) -> tuple[list[dict], dic
                         row["at"] = _row_at(it, n, times, t0)
                     rows.append(row)
                 props = {"component": "checklist", "variant": item.get("variant", "card"), "reveal": item.get("reveal", "appear"),
-                         "label": item.get("label"), "title": item.get("title"), "items": rows, "w": float(item.get("w", 720)),
+                         "label": item.get("label"), "title": item.get("title"), "items": rows, "w": float(item.get("w", ROWS_W)),
                          "stagger": float(item.get("stagger", 0.5)), "delay": float(item.get("delay", 0.3)), "icon": item.get("icon")}
-                # Кегли плоской темы рассчитаны на кадр, где карточка — часть экрана; в гайде карточка — главное: крупнее.
-                out.append(_ui(lid, t0, t1, {"y": 0.42, "scale": 1.32, **item}, {k: v for k, v in props.items() if v is not None},
+                # Кегли плоской темы рассчитаны на кадр, где карточка — часть экрана; в гайде карточка — главное и читается
+                # с телефона: масштаб ROWS_SCALE (текст строки ≈ 58 px, подпись ≈ 44 px), ширина ≈ 90 % кадра.
+                out.append(_ui(lid, t0, t1, {"y": 0.42, "scale": ROWS_SCALE, **item}, {k: v for k, v in props.items() if v is not None},
                                accent, plate, TRACK["ui"]))
             elif kind == "ui":
                 props = dict(item["props"])
@@ -322,7 +326,7 @@ def layers(plan: dict, words: list[dict], total: float) -> tuple[list[dict], dic
                 out.append(_ui(lid, t0, t1, item, props, accent, plate, int(item.get("track", TRACK["ui"]))))
             elif kind == "chip":
                 props = {"component": "chip", "variant": item.get("variant", "solid"), "text": item["text"], "icon": item.get("icon"),
-                         "size": int(item.get("size", 40))}
+                         "size": int(item.get("size", 46))}
                 out.append(_ui(lid, t0, t1, item, {k: v for k, v in props.items() if v is not None}, accent, plate, TRACK["chip"]))
             elif kind == "image":
                 out.append(_image(lid, t0, t1, item, assets, accent))
