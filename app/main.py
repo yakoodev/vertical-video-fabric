@@ -491,6 +491,10 @@ app.include_router(build_webpages_router(AuthDep, lambda: store))
 from app.feed_api import build_feed_router  # noqa: E402
 
 app.include_router(build_feed_router(AuthDep, lambda: store))
+# 🏠 «Главная»: сводка всего сервиса одним ответом (app/home.py).
+from app.home_api import build_home_router  # noqa: E402
+
+app.include_router(build_home_router(AuthDep, lambda: store))
 
 # In dev the SPA is served by the Vite dev server (:5173) which proxies here, so
 # `frontend/dist` may not exist — guarded accordingly.
