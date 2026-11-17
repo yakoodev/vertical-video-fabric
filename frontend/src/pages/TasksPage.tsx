@@ -5,6 +5,7 @@ import { tasksApi } from "@/api/tasks";
 import { qk } from "@/api/keys";
 import { isActive } from "@/hooks/useActiveTasks";
 import type { ActiveTask } from "@/api/types";
+import { ErrorNote } from "@/components/ErrorNote";
 import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
 const KIND_RU: Record<string, string> = {
@@ -114,7 +115,15 @@ export function TasksPage({ embedded }: { embedded?: boolean } = {}) {
                     {t.label ? <span className="muted task-label">{t.label}</span> : null}
                     <Badge status={t.status} />
                   </div>
-                  {t.error ? <div className="task-error">{t.error}</div> : null}
+                  {t.error ? (
+                    t.error_view ? (
+                      <div className="task-error task-error--human">
+                        <ErrorNote raw={t.error} view={t.error_view} />
+                      </div>
+                    ) : (
+                      <div className="task-error">{t.error}</div>
+                    )
+                  ) : null}
                   <div className="task-meta mono">
                     <span>обновлено {fmtTime(t.updated_at)}</span>
                     {fmtDuration(t.created_at, t.updated_at) ? (

@@ -10,6 +10,7 @@ import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import type { ActiveTask } from "@/api/types";
 import { Badge } from "@/components/ui";
+import { ErrorNote } from "@/components/ErrorNote";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 
@@ -159,7 +160,11 @@ export function ActivityCenter() {
                       {t.kind === "torrent" && isActive(t.status) && t.detail ? (
                         <div className="muted mono" style={{ fontSize: 11 }}>{t.detail}</div>
                       ) : null}
-                      {t.error ? <div style={{ color: "var(--danger)", fontSize: 12 }}>{t.error}</div> : null}
+                      {t.error ? (
+                        <div style={{ color: "var(--danger)", fontSize: 12 }}>
+                          <ErrorNote raw={t.error} view={t.error_view} className="err-note err-note--sm" />
+                        </div>
+                      ) : null}
                       <div className="activity-foot mono">
                         <span>{fmtAgo(t.updated_at)}</span>
                         {t.kind === "download" && isActive(t.status) ? (

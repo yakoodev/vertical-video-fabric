@@ -15,7 +15,9 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-log = logging.getLogger(__name__)
+from app import error_text
+
+log =logging.getLogger(__name__)
 
 RECENT_WORKS = 6
 UPCOMING_LIMIT = 8
@@ -149,8 +151,11 @@ def _waiting(ctx: _Ctx) -> dict:
             "  AND k.status IN ('succeeded', 'queued', 'running')) ORDER BY j.updated_at DESC LIMIT ?",
             (since, FAILED_LIMIT),
         ):
+            # Простыми словами — по площадке и аккаунту, на которых упало (app/error_text.py).
+            view = error_text.explain_job(dict(row), error_text.job_targets_context(store, row["id"]))
             items.append({"kind": "job", "id": int(row["id"]), "status": row["status"], "label": row["title"],
-                          "error": (row["error"] or "")[:200], "at": row["updated_at"], "to": f"/pubs/{row['id']}"})
+                          "error": (row["error"] or "")[:200], "error_view": view, "at": row["updated_at"],
+                          "to": f"/pubs/{row['id']}"})
         # Рендер упал, и у его плана нет более нового удачного или идущего файла.
         for row in store.db.query_all(
             "SELECT c.id, c.title, c.error, c.updated_at, c.clip_plan_id, c.source_id FROM clips c "
@@ -163,7 +168,8 @@ def _waiting(ctx: _Ctx) -> dict:
             to = (f"/clips/{row['clip_plan_id']}" if row["clip_plan_id"] else
                   f"/v/{row['source_id']}" if row["source_id"] else "/inbox?tab=tasks")
             items.append({"kind": "clip", "id": int(row["id"]), "status": "failed", "label": row["title"],
-                          "error": (row["error"] or "")[:200], "at": row["updated_at"], "to": to})
+                          "error": (row["error"] or "")[:200], "error_view": error_text.explain(row["error"]),
+                          "at": row["updated_at"], "to": to})
         items.sort(key=lambda i: str(i["at"] or ""), reverse=True)
         return {"count": len(items), "items": items[:FAILED_LIMIT], "days": FAILED_DAYS}
 

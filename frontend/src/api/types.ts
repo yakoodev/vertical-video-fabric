@@ -400,6 +400,14 @@ export interface SourceDetail extends Source {
   clips: Clip[];
 }
 
+/** Ошибка простыми словами (app/error_text.py): «text — action», action ведёт на to. Сырой текст — рядом в error. */
+export interface ErrorView {
+  key: string;
+  text: string;
+  action: string;
+  to: string;
+}
+
 export interface JobTarget {
   id: number;
   job_id: number;
@@ -409,6 +417,8 @@ export interface JobTarget {
   remote_id: string;
   remote_url: string;
   error: string;
+  /** Ошибка простыми словами (app/error_text.py); null — незнакомая, показываем сырой текст. */
+  error_view?: ErrorView | null;
   account_label: string;
 }
 
@@ -423,6 +433,7 @@ export interface Job {
   created_at: string;
   updated_at: string;
   error: string;
+  error_view?: ErrorView | null;
   targets: JobTarget[];
   /** 'agent' — поставила настройка проекта «Публиковать самому». */
   made_by?: string;
@@ -476,6 +487,7 @@ export interface ActiveTask {
   status: string;
   label: string;
   error: string;
+  error_view?: ErrorView | null;
   created_at: string;
   updated_at: string;
   scheduled_at?: string | null;

@@ -12,6 +12,7 @@ import {
 import { accountsApi } from "@/api/accounts";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
+import { ErrorNote } from "@/components/ErrorNote";
 import { useToast } from "@/components/Toast";
 import { Loading } from "@/components/ui";
 import { ApprovalCard, Feed } from "@/pages/ApprovalsPage";
@@ -292,7 +293,7 @@ function ScheduleList({ projectId }: { projectId: number }) {
               <span className="chip">{PUBLISH_STATUS_LABEL[u.publish_status] ?? u.publish_status}</span>
               <span className="muted">{u.platforms.map((p) => PLATFORM_LABEL[p] ?? p).join(", ")}</span>
             </div>
-            {u.publish_error ? <div style={{ color: "var(--danger)", fontSize: 12.5 }}>{u.publish_error}</div> : null}
+            {u.publish_error ? <div style={{ fontSize: 12.5 }}><ErrorNote raw={u.publish_error} view={u.publish_error_view} /></div> : null}
             {u.publish_status === "scheduled" || u.publish_status === "failed" ? (
               <div className="series-row" style={{ marginTop: 6 }}>
                 {moving?.id === u.id ? (

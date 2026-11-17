@@ -1,4 +1,5 @@
 import { api } from "@/api/client";
+import type { ErrorView } from "@/api/types";
 
 /** «Лента» готовых работ (app/feed.py): работа → версии (новые сверху) → варианты файлов с превью и отметками. */
 
@@ -62,7 +63,7 @@ export interface FeedVariant {
   height: number | null;
   orientation: "vertical" | "horizontal";
   file_present: boolean;
-  preview: { status: "queued" | "running" | "ready" | "failed"; error: string; url: string | null; same_as_file: boolean };
+  preview: { status: "queued" | "running" | "ready" | "failed"; error: string; error_view?: ErrorView | null; url: string | null; same_as_file: boolean };
   poster_url: string | null;
   download_url: string | null;
   postings: FeedPosting[];

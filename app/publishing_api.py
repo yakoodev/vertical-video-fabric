@@ -108,6 +108,8 @@ class JobTargetRead(BaseModel):
     error: str
     response_json: str
     maybe_posted: bool = False  # запрос поста ушёл, а ответа нет: проверить на площадке
+    # Ошибка простыми словами (app/error_text.py): {key, text, action, to}; None — незнакомая, на экране сырой текст.
+    error_view: dict | None = None
     created_at: str
     updated_at: str
     started_at: str | None = None
@@ -133,6 +135,7 @@ class JobRead(BaseModel):
     started_at: str | None = None
     finished_at: str | None = None
     error: str
+    error_view: dict | None = None  # app/error_text.py
     result_json: str
     targets: list[JobTargetRead]
     made_by: str = ""  # 'agent' — поставила настройка проекта «Публиковать самому»
