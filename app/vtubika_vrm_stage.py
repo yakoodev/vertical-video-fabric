@@ -124,6 +124,13 @@ CAST: dict[str, dict[str, Any]] = {
     "gosha": _cast("vroid_base_male.vrm", 0.889, "#8ff0e0", ("#1c1d22", "#35d0c0")),
 }
 HEROINES.update(CAST)
+# Ведущая мини-гайдов (17.11, tools/vtubika_plans/guide_*.json): Оля в цветах бренда — школьная форма образца
+# перекрашена (жилет графитовый, блуза кремовая, бант и лента — оранжевые), гарнитура с оранжевым кольцом vtubika.
+HEROINES["olya_host"] = {**CAST["olya"], "cast_of": "olya",
+                         "headphones": {**CAST["olya"]["headphones"], "color": "#22252c", "accent": "#ff8a4c"},
+                         "look": {**CAST["olya"]["look"], "rim": "#ffb48a",
+                                  "repaint": {"Tops": ["#1a1b21", "#fff4ec"], "Accessory": ["#6a2208", "#ffb47e"],
+                                              "Bottoms": ["#1c1e24", "#5a5e6a"]}}}
 
 # Модели на мониторе: «пробная» (готовая 3D-модель: светлые мятные волосы, тёмно-синяя спортивная кофта, ушки) и
 # свой персонаж Веры (сиреневые волосы, белый верх, звезда-заколка, фиолетовые глаза).
@@ -187,7 +194,9 @@ AV_CAMS: dict[str, dict] = {
     "two_bust": {"pos": [0, 1.42, 1.42], "target": [0, 1.36, 0], "fov": 30},
     "solo_bust": {"pos": [0, 1.42, 1.1], "target": [0, 1.37, 0], "fov": 30},
 }
-LOOKS = {"webcam": [0.0, 1.5, 1.1], "monitor": [0, 1.43, 1.15], "chat": [-0.5, 1.36, 0.9], "down": [0.05, 1.08, 0.4]}
+# lens — в объектив крупных планов (ведущая гайда говорит зрителю; камера face — [0.36, 1.42, 2.6]).
+LOOKS = {"webcam": [0.0, 1.5, 1.1], "monitor": [0, 1.43, 1.15], "chat": [-0.5, 1.36, 0.9], "down": [0.05, 1.08, 0.4],
+         "lens": [0.3, 1.42, 2.6]}
 
 
 def heroine(plan: dict) -> dict[str, Any]:

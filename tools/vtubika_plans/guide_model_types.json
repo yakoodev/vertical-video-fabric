@@ -1,0 +1,1063 @@
+{
+  "id": "guide_model_types",
+  "title": "Мини-гайд 1: PNGTuber, Live2D или 3D",
+  "format": "guide",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "lily",
+    "paid_ok": true
+  },
+  "script": "мини-гайд 1 по гайду сайта https://vtubika.store/guides/model-dlya-strima-kakuyu-vybrat (+ pngtuber-vs-live2d-dlya-novichkov, 3d-vtuber-model-vrm): ведущая Оля (olya_host — каст olya в цветах бренда) объясняет в камеру, какую модель выбрать новичку; три блока — что это, что нужно (программа + камера), сколько до первого стрима, цены каталога vtubika.store (17.11.2026, сортировка «сначала дешёвые/дорогие»: PNGTuber 74 шт. 450–5 090 ₽, Live2D 290 шт. 450–46 090 ₽, 3D 55 шт. 950–8 390 ₽); вердикт «кому что»; концовка — гайд целиком на сайте + промокод Free10. Примеры — только свои и GREEN: PNGtuber-картинка из VRM Вари (каст, CC0), поворот VRM Аси (каст, CC0), Live2D-ассет «Сезонный кафе-фраппе» すやみや (GREEN); скрины сайта — только шапки каталога без превью товаров и страница гайда.",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {
+    "word": "Какую модель?",
+    "until": 1.6,
+    "y": 0.13,
+    "size": 150,
+    "accent": "#ff8a4c"
+  },
+  "vrm": {
+    "heroine": "olya_host",
+    "monitor": false,
+    "tail_wide": false
+  },
+  "guide": {
+    "accent": "#ff8a4c",
+    "plate": "#2b2f36",
+    "badge": {
+      "text": "МИНИ-ГАЙД №1",
+      "from": 1.65,
+      "y": 0.045,
+      "size": 28
+    }
+  },
+  "pronounce": {
+    "PNGtuber": "пи-эн-джи-тубер",
+    "veadotube mini": "веадо-тьюб мини",
+    "VSeeFace": "ви-си-фейс",
+    "Warudo": "варудо",
+    "VRM": "ви-ар-эм",
+    "3D": "три-дэ",
+    "Free10": "фри десять",
+    "витубер": "виту́бер"
+  },
+  "music": {
+    "file": "chill-keys.mp3",
+    "under_db": 9.0
+  },
+  "tail": 0.6,
+  "pace": {
+    "tempo_cap": 1.0,
+    "tempo": 1.12,
+    "lead": 0.15
+  },
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1770,
+    "duration": 3.0,
+    "music_fade": 3.0
+  },
+  "presets3d": {
+    "room": {
+      "name": "cozy_desk"
+    },
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": [
+      "bloom",
+      "dust_motes",
+      {
+        "name": "depth_of_field",
+        "amount": 2
+      },
+      "film_grain"
+    ]
+  },
+  "room3d": {
+    "origin": [
+      0.1,
+      0.2,
+      0.9
+    ],
+    "dof": 2.8,
+    "vrm_light": {
+      "keyColor": "#fff4ec",
+      "keyPower": 2.1,
+      "fill": "#6a6a9a",
+      "fillPower": 0.9
+    }
+  },
+  "screen": {
+    "uptime": 600,
+    "title": "мини-гайд",
+    "camBg": [
+      "#1a1630",
+      "#0c0a18"
+    ],
+    "viewers": [],
+    "chat": []
+  },
+  "highlight": {
+    "витубером,": "#ffd7bf",
+    "модели": "#ff8a4c",
+    "PNGTuber": "#8edfd1",
+    "PNGTuber,": "#8edfd1",
+    "PNGTuber.": "#8edfd1",
+    "Live2D": "#bda7f7",
+    "Live2D.": "#bda7f7",
+    "3D": "#ff8a4c",
+    "3D.": "#ff8a4c",
+    "микрофона": "#8edfd1",
+    "час.": "#8edfd1",
+    "мимику.": "#bda7f7",
+    "вечер.": "#bda7f7",
+    "танцы.": "#ff8a4c",
+    "вечеров.": "#ff8a4c",
+    "«Гайды».": "#ffd7bf",
+    "Free10": "#ffd35c"
+  },
+  "sentences": [
+    {
+      "text": "Хочешь стать витубером, но не знаешь, с какой модели начать?",
+      "pause_after": 0.2,
+      "show": [
+        "кадр 0 (обложка): ведущая крупно смотрит в камеру, огромное «КАКУЮ МОДЕЛЬ?»"
+      ],
+      "shots": [
+        {
+          "cam": "smile",
+          "push": 0.06
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true,
+          "dt": -0.2
+        },
+        {
+          "act": "Talk_Loop",
+          "dt": -0.2
+        }
+      ],
+      "vrm": [
+        {
+          "look": "lens",
+          "dt": -0.3,
+          "span": 12,
+          "dt_end": 1.0
+        },
+        {
+          "at": "начать?",
+          "nod": 1,
+          "amp": 6
+        }
+      ]
+    },
+    {
+      "text": "Вариантов три: PNGTuber, Live2D и 3D.",
+      "pause_after": 0.25,
+      "show": [
+        "притушенный кадр, ведущая в кружке справа внизу; заголовок «Три вида моделей»; три карточки по словам: PNGtuber-картинка Вари, Live2D-ассет (фраппе), поворот 3D-модели Аси"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        },
+        {
+          "sfx": "whoosh",
+          "dt": -0.1
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "scrim",
+          "dt": -0.15,
+          "until_s": 7,
+          "until": "Как",
+          "dt_end": -0.1
+        },
+        {
+          "kind": "pip",
+          "dt": -0.15,
+          "until_s": 7,
+          "until": "Как",
+          "dt_end": -0.1
+        },
+        {
+          "kind": "title",
+          "dt": -0.1,
+          "chip": "Разбор за минуту",
+          "text": "Три вида моделей",
+          "size": 84,
+          "y": 0.13
+        },
+        {
+          "kind": "panel",
+          "at": "PNGTuber,",
+          "dt": -0.15,
+          "x": 0.19,
+          "y": 0.39,
+          "w": 316,
+          "h": 540,
+          "color": "#8edfd1"
+        },
+        {
+          "kind": "image",
+          "at": "PNGTuber,",
+          "dt": -0.1,
+          "src": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/idle.png",
+          "w": 290,
+          "x": 0.19,
+          "y": 0.375
+        },
+        {
+          "kind": "chip",
+          "at": "PNGTuber,",
+          "dt": -0.05,
+          "text": "PNGTuber",
+          "color": "#8edfd1",
+          "x": 0.19,
+          "y": 0.5,
+          "size": 30
+        },
+        {
+          "kind": "panel",
+          "at": "Live2D",
+          "dt": -0.15,
+          "x": 0.5,
+          "y": 0.39,
+          "w": 316,
+          "h": 540,
+          "color": "#bda7f7"
+        },
+        {
+          "kind": "seq",
+          "at": "Live2D",
+          "dt": -0.1,
+          "pattern": "D:/vvf-offload/vtubika/guide1_model_types/assets/l2d_frappe/f_{:03d}.png",
+          "count": 36,
+          "fps": 15,
+          "w": 250,
+          "x": 0.5,
+          "y": 0.37
+        },
+        {
+          "kind": "chip",
+          "at": "Live2D",
+          "dt": -0.05,
+          "text": "Live2D",
+          "color": "#bda7f7",
+          "x": 0.5,
+          "y": 0.5,
+          "size": 30
+        },
+        {
+          "kind": "panel",
+          "at": "3D.",
+          "dt": -0.15,
+          "x": 0.81,
+          "y": 0.39,
+          "w": 316,
+          "h": 540,
+          "color": "#ff8a4c"
+        },
+        {
+          "kind": "seq",
+          "at": "3D.",
+          "dt": -0.1,
+          "pattern": "D:/vvf-offload/vtubika/guide1_model_types/assets/turn_asya/f_{:03d}.png",
+          "count": 48,
+          "fps": 12,
+          "w": 170,
+          "x": 0.81,
+          "y": 0.37
+        },
+        {
+          "kind": "chip",
+          "at": "3D.",
+          "dt": -0.05,
+          "text": "3D",
+          "color": "#ff8a4c",
+          "x": 0.81,
+          "y": 0.5,
+          "size": 30
+        }
+      ]
+    },
+    {
+      "text": "PNGTuber — это пара картинок: молчишь — одна, говоришь — другая.",
+      "pause_after": 0.2,
+      "show": [
+        "заголовок «1 из 3 · PNGTuber»; большая PNGtuber-картинка: на «молчишь» — молчит и моргает, на «говоришь» — говорит и подпрыгивает в такт; подписи «молчу · картинка 1» / «говорю · картинка 2»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        },
+        {
+          "sfx": "whoosh",
+          "dt": -0.1
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "title",
+          "dt": -0.1,
+          "chip": "1 из 3",
+          "text": "PNGTuber",
+          "color": "#8edfd1",
+          "y": 0.13
+        },
+        {
+          "kind": "pngtuber",
+          "at": "пара",
+          "dt": -0.15,
+          "voice_from": "говоришь",
+          "voice_dt": -0.05,
+          "idle": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/idle.png",
+          "talk": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/talk.png",
+          "blink": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/blink.png",
+          "w": 560,
+          "x": 0.5,
+          "y": 0.42
+        },
+        {
+          "kind": "chip",
+          "at": "молчишь",
+          "dt": -0.1,
+          "until": "говоришь",
+          "dt_end": -0.1,
+          "text": "молчу — картинка 1",
+          "icon": "circle",
+          "variant": "soft",
+          "color": "#8edfd1",
+          "x": 0.4,
+          "y": 0.655,
+          "size": 34
+        },
+        {
+          "kind": "chip",
+          "at": "говоришь",
+          "dt": -0.1,
+          "text": "говорю — картинка 2",
+          "icon": "mic",
+          "color": "#8edfd1",
+          "x": 0.4,
+          "y": 0.655,
+          "size": 34
+        }
+      ]
+    },
+    {
+      "text": "Камера не нужна — хватит микрофона и бесплатной veadotube mini. Запуск — за час.",
+      "pause_after": 0.15,
+      "show": [
+        "карточка «PNGTuber · что нужно»: камера не нужна / veadotube mini — бесплатно / первый стрим — за час — строки по словам"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        }
+      ],
+      "vrm": [
+        {
+          "at": "час.",
+          "nod": 1,
+          "amp": 6
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "rows",
+          "dt": -0.15,
+          "color": "#8edfd1",
+          "label": "PNGTuber · что нужно",
+          "y": 0.33,
+          "items": [
+            {
+              "icon": "mic",
+              "text": "Камера не нужна",
+              "sub": "хватит микрофона",
+              "at": "Камера"
+            },
+            {
+              "icon": "monitor",
+              "text": "veadotube mini",
+              "sub": "или PNGTuber Plus — бесплатно",
+              "at": "бесплатной"
+            },
+            {
+              "icon": "timer",
+              "text": "Первый стрим — за час",
+              "sub": "с готовой моделью",
+              "at": "Запуск"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "text": "А модели на Витубике — от четырёхсот пятидесяти рублей.",
+      "pause_after": 0.3,
+      "show": [
+        "настоящий скрин каталога vtubika.store «PNGTuber-модели · найдено 74» (только шапка, без превью) + карточка «от 450 ₽ · 74 модели, до 5 090 ₽»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        },
+        {
+          "at": "четырёхсот",
+          "sfx": "ping",
+          "dt": -0.05
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "image",
+          "dt": -0.15,
+          "src": "D:/vvf-offload/vtubika/guide1_model_types/site/cat_png_head.png",
+          "w": 600,
+          "x": 0.5,
+          "y": 0.29,
+          "radius": 30,
+          "border": true,
+          "color": "#8edfd1"
+        },
+        {
+          "kind": "ui",
+          "at": "четырёхсот",
+          "dt": -0.15,
+          "x": 0.37,
+          "y": 0.6,
+          "color": "#8edfd1",
+          "props": {
+            "component": "stat",
+            "label": "PNGTuber на Витубике",
+            "value": 450,
+            "from": 450,
+            "prefix": "от ",
+            "unit": "₽",
+            "text": "74 модели, самая дорогая — 5 090 ₽",
+            "w": 540,
+            "size": 130
+          },
+          "scale": 1.3
+        }
+      ]
+    },
+    {
+      "text": "Live2D — рисунок на слоях: модель моргает, наклоняет голову и повторяет твою мимику.",
+      "pause_after": 0.2,
+      "show": [
+        "заголовок «2 из 3 · Live2D»; живой Live2D-ассет すやみや (рука с фраппе, кадры превью); чипы по словам: «моргает», «наклоняет голову», «повторяет мимику»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        },
+        {
+          "sfx": "whoosh",
+          "dt": -0.1
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "title",
+          "dt": -0.1,
+          "chip": "2 из 3",
+          "text": "Live2D",
+          "color": "#bda7f7",
+          "y": 0.13
+        },
+        {
+          "kind": "panel",
+          "dt": -0.1,
+          "x": 0.3,
+          "y": 0.42,
+          "w": 420,
+          "h": 640,
+          "color": "#bda7f7"
+        },
+        {
+          "kind": "seq",
+          "dt": -0.05,
+          "pattern": "D:/vvf-offload/vtubika/guide1_model_types/assets/l2d_frappe/f_{:03d}.png",
+          "count": 36,
+          "fps": 15,
+          "w": 340,
+          "x": 0.3,
+          "y": 0.41
+        },
+        {
+          "kind": "text",
+          "dt": 0.1,
+          "text": "Live2D-арт с Витубики",
+          "size": 30,
+          "weight": 700,
+          "color": "#d9cffb",
+          "stroke": false,
+          "x": 0.3,
+          "y": 0.6,
+          "maxWidth": 400
+        },
+        {
+          "kind": "chip",
+          "at": "моргает,",
+          "dt": -0.1,
+          "text": "моргает",
+          "icon": "eye",
+          "color": "#bda7f7",
+          "x": 0.74,
+          "y": 0.32,
+          "size": 36
+        },
+        {
+          "kind": "chip",
+          "at": "наклоняет",
+          "dt": -0.1,
+          "text": "наклоняет голову",
+          "icon": "refresh-cw",
+          "color": "#bda7f7",
+          "x": 0.74,
+          "y": 0.4,
+          "size": 32
+        },
+        {
+          "kind": "chip",
+          "at": "повторяет",
+          "dt": -0.1,
+          "text": "твоя мимика",
+          "icon": "smile",
+          "color": "#bda7f7",
+          "x": 0.74,
+          "y": 0.48,
+          "size": 36
+        }
+      ]
+    },
+    {
+      "text": "Нужны веб-камера или телефон и VTube Studio. Готовую модель настроишь за вечер.",
+      "pause_after": 0.15,
+      "show": [
+        "карточка «Live2D · что нужно»: веб-камера или телефон / VTube Studio — бесплатно в Steam / готовую — за вечер"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        }
+      ],
+      "vrm": [
+        {
+          "at": "вечер.",
+          "nod": 1,
+          "amp": 6
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "rows",
+          "dt": -0.15,
+          "color": "#bda7f7",
+          "label": "Live2D · что нужно",
+          "y": 0.33,
+          "items": [
+            {
+              "icon": "camera",
+              "text": "Веб-камера или телефон",
+              "sub": "точнее всего — iPhone с Face ID",
+              "at": "веб-камера"
+            },
+            {
+              "icon": "monitor",
+              "text": "VTube Studio",
+              "sub": "бесплатно в Steam",
+              "at": "VTube"
+            },
+            {
+              "icon": "timer",
+              "text": "Готовую модель — за вечер",
+              "sub": "свою с нуля — недели",
+              "at": "Готовую"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Цены — от четырёхсот пятидесяти рублей за чиби до десятков тысяч.",
+      "pause_after": 0.3,
+      "show": [
+        "скрин каталога «Live2D-модели для VTuber · найдено 290» (шапка) + карточка «от 450 ₽ · чиби; до 46 090 ₽»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        },
+        {
+          "at": "четырёхсот",
+          "sfx": "ping",
+          "dt": -0.05
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "image",
+          "dt": -0.15,
+          "src": "D:/vvf-offload/vtubika/guide1_model_types/site/cat_l2d_head.png",
+          "w": 560,
+          "x": 0.5,
+          "y": 0.29,
+          "radius": 30,
+          "border": true,
+          "color": "#bda7f7"
+        },
+        {
+          "kind": "ui",
+          "at": "четырёхсот",
+          "dt": -0.15,
+          "x": 0.37,
+          "y": 0.61,
+          "color": "#bda7f7",
+          "props": {
+            "component": "stat",
+            "label": "Live2D на Витубике",
+            "value": 450,
+            "from": 450,
+            "prefix": "от ",
+            "unit": "₽",
+            "text": "290 моделей: чиби — от 450, в полный рост — до 46 090 ₽",
+            "w": 540,
+            "size": 130
+          },
+          "scale": 1.3
+        }
+      ]
+    },
+    {
+      "text": "3D — объёмная VRM-модель: полный рост, повороты, даже танцы. Как я, кстати.",
+      "pause_after": 0.25,
+      "show": [
+        "заголовок «3 из 3 · 3D · VRM»; 3D-модель Аси медленно поворачивается; чипы «полный рост», «поворот на 360°», «танцы и 3D-сцены»",
+        "на «Как я, кстати» — графика уходит, ведущая крупно улыбается; чип «я — тоже VRM-модель»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        },
+        {
+          "cam": "smile",
+          "at": "Как",
+          "dt": -0.1,
+          "push": 0.06
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        },
+        {
+          "sfx": "whoosh",
+          "dt": -0.1
+        },
+        {
+          "at": "Как",
+          "face": "happy",
+          "talk": true,
+          "dt": -0.1
+        }
+      ],
+      "vrm": [
+        {
+          "at": "кстати.",
+          "nod": 1,
+          "amp": 7
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "title",
+          "dt": -0.1,
+          "until": "Как",
+          "dt_end": -0.1,
+          "chip": "3 из 3",
+          "text": "3D · VRM",
+          "color": "#ff8a4c",
+          "y": 0.13
+        },
+        {
+          "kind": "panel",
+          "dt": -0.1,
+          "until": "Как",
+          "dt_end": -0.1,
+          "x": 0.3,
+          "y": 0.42,
+          "w": 420,
+          "h": 700,
+          "color": "#ff8a4c"
+        },
+        {
+          "kind": "seq",
+          "dt": -0.05,
+          "until": "Как",
+          "dt_end": -0.1,
+          "pattern": "D:/vvf-offload/vtubika/guide1_model_types/assets/turn_asya/f_{:03d}.png",
+          "count": 48,
+          "fps": 12,
+          "w": 250,
+          "x": 0.3,
+          "y": 0.415
+        },
+        {
+          "kind": "chip",
+          "at": "полный",
+          "dt": -0.1,
+          "until": "Как",
+          "dt_end": -0.1,
+          "text": "полный рост",
+          "icon": "user",
+          "color": "#ff8a4c",
+          "x": 0.74,
+          "y": 0.32,
+          "size": 36
+        },
+        {
+          "kind": "chip",
+          "at": "повороты,",
+          "dt": -0.1,
+          "until": "Как",
+          "dt_end": -0.1,
+          "text": "поворот на 360°",
+          "icon": "refresh-cw",
+          "color": "#ff8a4c",
+          "x": 0.74,
+          "y": 0.4,
+          "size": 34
+        },
+        {
+          "kind": "chip",
+          "at": "танцы.",
+          "dt": -0.1,
+          "until": "Как",
+          "dt_end": -0.1,
+          "text": "танцы и 3D-сцены",
+          "icon": "sparkles",
+          "color": "#ff8a4c",
+          "x": 0.74,
+          "y": 0.48,
+          "size": 32
+        },
+        {
+          "kind": "chip",
+          "at": "Как",
+          "dt": 0.05,
+          "until": "next",
+          "dt_end": -0.1,
+          "text": "я — тоже VRM-модель",
+          "icon": "sparkles",
+          "color": "#ff8a4c",
+          "x": 0.5,
+          "y": 0.66,
+          "size": 38
+        }
+      ]
+    },
+    {
+      "text": "Нужны VSeeFace или Warudo — они бесплатные — и компьютер помощнее. Настройка — пара вечеров.",
+      "pause_after": 0.15,
+      "show": [
+        "карточка «3D · что нужно»: VSeeFace или Warudo — бесплатные / компьютер помощнее / настройка — пара вечеров"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "scrim",
+          "dt": -0.15,
+          "span": 3,
+          "dt_end": 1.0
+        },
+        {
+          "kind": "pip",
+          "dt": -0.15,
+          "span": 3,
+          "dt_end": 1.0
+        },
+        {
+          "kind": "rows",
+          "dt": -0.1,
+          "color": "#ff8a4c",
+          "label": "3D · что нужно",
+          "y": 0.33,
+          "items": [
+            {
+              "icon": "monitor",
+              "text": "VSeeFace или Warudo",
+              "sub": "обе бесплатные",
+              "at": "VSeeFace"
+            },
+            {
+              "icon": "cpu",
+              "text": "Компьютер помощнее",
+              "sub": "3D сильнее грузит видеокарту",
+              "at": "компьютер"
+            },
+            {
+              "icon": "timer",
+              "text": "Настройка — пара вечеров",
+              "sub": "веб-камера тоже подойдёт",
+              "at": "Настройка"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "text": "3D-модели на Витубике — от девятисот пятидесяти рублей.",
+      "pause_after": 0.3,
+      "show": [
+        "скрин каталога «3D VTuber-модели в формате VRM · найдено 55» (шапка) + карточка «от 950 ₽ · 55 моделей, до 8 390 ₽»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        },
+        {
+          "at": "девятисот",
+          "sfx": "ping",
+          "dt": -0.05
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "image",
+          "dt": -0.15,
+          "src": "D:/vvf-offload/vtubika/guide1_model_types/site/cat_3d_head.png",
+          "w": 600,
+          "x": 0.5,
+          "y": 0.27,
+          "radius": 30,
+          "border": true,
+          "color": "#ff8a4c"
+        },
+        {
+          "kind": "ui",
+          "at": "девятисот",
+          "dt": -0.15,
+          "x": 0.37,
+          "y": 0.58,
+          "color": "#ff8a4c",
+          "props": {
+            "component": "stat",
+            "label": "3D на Витубике",
+            "value": 950,
+            "from": 950,
+            "prefix": "от ",
+            "unit": "₽",
+            "text": "55 моделей, самая дорогая — 8 390 ₽",
+            "w": 540,
+            "size": 130
+          },
+          "scale": 1.3
+        }
+      ]
+    },
+    {
+      "text": "Итого: нет камеры или слабый ноутбук — PNGTuber. Хочешь мимику — Live2D. Полный рост и танцы — 3D.",
+      "pause_after": 0.3,
+      "show": [
+        "карточка «Итого: кому что» — три строки цветом типа по словам"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "talk",
+          "talk": true
+        },
+        {
+          "sfx": "whoosh",
+          "dt": -0.1
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "title",
+          "dt": -0.1,
+          "chip": "Итого",
+          "text": "Кому что",
+          "size": 92,
+          "y": 0.13
+        },
+        {
+          "kind": "rows",
+          "at": "нет",
+          "dt": -0.2,
+          "label": "выбираем модель",
+          "y": 0.38,
+          "scale": 1.45,
+          "items": [
+            {
+              "icon": "laptop",
+              "text": "PNGTuber",
+              "sub": "нет камеры или слабый ноутбук",
+              "color": "#8edfd1",
+              "at": "нет"
+            },
+            {
+              "icon": "smile",
+              "text": "Live2D",
+              "sub": "хочешь живую мимику",
+              "color": "#bda7f7",
+              "at": "Хочешь"
+            },
+            {
+              "icon": "sparkles",
+              "text": "3D",
+              "sub": "полный рост и танцы",
+              "color": "#ff8a4c",
+              "at": "Полный"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "text": "Подробный гайд — на Витубике, в разделе «Гайды». А промокод Free10 — минус десять процентов.",
+      "pause_after": 0.0,
+      "show": [
+        "телефон: настоящая страница гайда vtubika.store «Модель для стрима: PNGTuber, 2D Live2D или 3D — какую выбрать»; ссылка vtubika.store/guides; на «промокод» — чип «Промокод Free10 · −10%»"
+      ],
+      "shots": [
+        {
+          "cam": "face",
+          "push": 0.04
+        }
+      ],
+      "do": [
+        {
+          "face": "happy",
+          "talk": true
+        },
+        {
+          "at": "Free10",
+          "sfx": "ping",
+          "dt": -0.1
+        }
+      ],
+      "gfx": [
+        {
+          "kind": "image",
+          "dt": -0.1,
+          "until": "end",
+          "dt_end": 1.0,
+          "src": "D:/vvf-offload/vtubika/guide1_model_types/site/guide_model_top.png",
+          "device": "phone",
+          "w": 400,
+          "x": 0.4,
+          "y": 0.355
+        },
+        {
+          "kind": "chip",
+          "at": "Витубике,",
+          "dt": -0.1,
+          "until": "end",
+          "dt_end": 1.0,
+          "text": "vtubika.store/guides",
+          "icon": "link",
+          "variant": "soft",
+          "x": 0.37,
+          "y": 0.665,
+          "size": 38
+        },
+        {
+          "kind": "chip",
+          "at": "промокод",
+          "dt": -0.1,
+          "until": "end",
+          "dt_end": 1.0,
+          "text": "Промокод Free10 · −10%",
+          "icon": "percent",
+          "x": 0.4,
+          "y": 0.72,
+          "size": 40
+        }
+      ]
+    }
+  ]
+}

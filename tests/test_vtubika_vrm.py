@@ -65,7 +65,9 @@ def test_cast_heroes_are_distinct_models_and_reach_the_spec():
     assert len(CAST) >= 6 and set(CAST) <= set(HEROINES)
     models = [h["model"] for h in CAST.values()]
     assert len(set(models)) == len(models) and all(m.startswith("cast/") and m.endswith(".vrm") for m in models)
-    assert not {h["model"] for k, h in HEROINES.items() if k not in CAST} & set(models)
+    # Чужая перекраска модели каста запрещена; свой наряд того же героя (cast_of — ведущая гайдов Оля) — можно.
+    assert not {h["model"] for k, h in HEROINES.items() if k not in CAST and not h.get("cast_of")} & set(models)
+    assert all(HEROINES[k]["model"] == CAST[h["cast_of"]]["model"] for k, h in HEROINES.items() if h.get("cast_of"))
     plan, built, words, total = _built()
     for name in ("taya", "shura", "lilya"):
         her = CAST[name]
