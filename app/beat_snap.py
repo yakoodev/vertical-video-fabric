@@ -38,9 +38,23 @@ MIN_PIECE_SEC = 0.5
 EPS = 1e-6
 
 
+def grid_period(grid: dict) -> float:
+    """Длина доли сетки. ``period`` карты звука — ``60/bpm``, округлённое до 4 знаков: доля k = first + k·period
+    с ним за трек уходит на кадр и больше (128 BPM: 0.46875 → 0.4688, к 384-й доле +19 мс). Такой period — точное
+    60/bpm; свой period (точнее bpm, как у мем-эдита) — как есть."""
+    period = float(grid.get("period") or 0)
+    bpm = float(grid.get("bpm") or 0)
+    if bpm > 0:
+        exact = 60.0 / bpm
+        if period <= 0 or (abs(period - round(period, 4)) < 1e-9 and abs(period - exact) <= 5e-5 + 1e-9):
+            return exact
+    return period
+
+
 def grid_times(grid: dict, duration: float, kind: str = "beat") -> list[float]:
-    """Моменты сетки ``kind`` на отрезке [0, duration] (секунды шкалы сетки)."""
-    period = float(grid.get("period") or 0) or (60.0 / float(grid["bpm"]) if grid.get("bpm") else 0.0)
+    """Моменты сетки ``kind`` на отрезке [0, duration] (секунды шкалы сетки). Каждая доля — от своего номера
+    (first + k·period), без накопления округлённой доли."""
+    period = grid_period(grid)
     if period <= 0.05:
         raise ValueError("у сетки нет периода (bpm)")
     first = float(grid.get("first_beat") or 0.0)
@@ -157,7 +171,7 @@ def snap_camera(camera: list[dict], beats: list[float], tolerance: float, scale:
 
 
 def describe_grid(grid: dict, kind: str, source: str) -> dict:
-    period = float(grid.get("period") or (60.0 / float(grid["bpm"]) if grid.get("bpm") else 0))
+    period = grid_period(grid)
     return {"source": source, "grid": kind, "bpm": grid.get("bpm"), "period": round(period, 4),
             "first_beat": grid.get("first_beat"), "first_downbeat": grid.get("first_downbeat"),
             "time": grid.get("time") or ("final" if source == "music" else "clip")}

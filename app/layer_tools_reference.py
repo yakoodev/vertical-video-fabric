@@ -194,6 +194,12 @@ react {{source voice|music|mix, prop scale|glow|opacity|y, amount 0..3, smooth 0
   pivot {{x, y}} (доли кадра) у слоя — rotX/rotY и ключи scale вокруг этой точки: одинаковые pivot и ключи у группы
   слоёв — наклон и наезд группы как одного экрана
 ease: {', '.join(enums['easings'])} или bezier(x1,y1,x2,y2)
+ДВИЖЕНИЕ ГРУППЫ (подробно — docs/motion/spec.md, «Как ставить движение»): ведущий слой движется первым и дальше всех,
+  второстепенные меньше, декор только проявляется (fade); шаг задержек к концу короче (0, 0.12, 0.21, 0.27), не
+  одинаковый; масштаб входа с 0.9–0.97, не с 0 (pop — только мелким акцентам: стикер, значок); out на 40–50% короче in;
+  вход — outCubic (длинный хвост), камера — inOutCubic, уход за край — inCubic; «дорогой» перелёт 1–5%
+  (bezier(0.3,1.3,0.5,1)), outBack ~10% — игриво, для мемов; opacity и цвет не пружинят; в интерфейсной графике
+  без outBounce/outElastic/drop; титр после входа замер — без pulse/wiggle/float.
 props по типу:
   text: text (≤400, \\n), font (family из list_fonts; свой — upload_font), weight 100..900, size 12..400, color, gradient [c1,c2]|null, stroke {{color,width}},
         bg {{color,opacity,radius,padX,padY}}|null, align, maxWidth, lineHeight, letterSpacing, uppercase, italic,
