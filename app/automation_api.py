@@ -10,6 +10,7 @@ from typing import Annotated, Any, Callable
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse
 
+from app import error_text
 from app.api_common import _optional_form_int, _parse_schedule_dt
 from app.auth import is_agent_request
 from app.settings_api import _settings_panel_data
@@ -147,6 +148,20 @@ def build_automation_router(
 
     def _merge_tasks(stored: list[dict], downloads: list[dict]) -> list[dict]:
         """Downloads live in memory, the rest in SQLite — the UI wants one feed."""
-        return sorted([*downloads, *stored], key=lambda task: str(task.get("updated_at") or ""), reverse=True)
+        tasks = sorted([*downloads, *stored], key=lambda task: str(task.get("updated_at") or ""), reverse=True)
+        for task in tasks:
+            _explain(task)
+        return tasks
+
+    def _explain(task: dict) -> None:
+        """``error_view`` — ошибка задачи простыми словами (app/error_text.py); у публикации — по её площадке."""
+        if not task.get("error"):
+            task["error_view"] = None
+            return
+        if task.get("kind") == "job":
+            targets = error_text.job_targets_context(get_store(), task.get("id"))
+            task["error_view"] = error_text.explain_job(task, targets)
+        else:
+            task["error_view"] = error_text.explain(task.get("error"), status=str(task.get("status") or ""))
 
     return router

@@ -6,6 +6,7 @@ import { jobsApi } from "@/api/jobs";
 import type { Job } from "@/api/types";
 import { qk } from "@/api/keys";
 import { formatCount, formatSnapshotTime, statsApi, sumKnown, type PostAlert, type TargetStats, type ZeroViewsSettings } from "@/api/stats";
+import { ErrorNote } from "@/components/ErrorNote";
 import { usePublicationStats } from "@/components/StatsBadge";
 import { useToast } from "@/components/Toast";
 import { Badge, EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
@@ -195,7 +196,7 @@ function JobDetail({ jobId }: { jobId: string }) {
         <Badge status={job.status} />
         <MadeByAgent job={job} />
         {job.scheduled_at ? <span className="muted">по расписанию: {formatSnapshotTime(job.scheduled_at)}</span> : null}
-        {job.error ? <span style={{ color: "var(--danger)" }}>{job.error}</span> : null}
+        {job.error ? <ErrorNote raw={job.error} view={job.error_view} /> : null}
       </div>
       <div className="panel">
         <table className="table">
@@ -240,7 +241,7 @@ function JobDetail({ jobId }: { jobId: string }) {
                   <td className="muted" title={st?.error || undefined}>
                     {st?.captured_at ? formatSnapshotTime(st.captured_at) : st?.error ? "нет данных" : "—"}
                   </td>
-                  <td style={{ color: t.error ? "var(--danger)" : "inherit" }}>{t.error || "—"}</td>
+                  <td style={{ minWidth: t.error ? 220 : undefined }}>{t.error ? <ErrorNote raw={t.error} view={t.error_view} /> : "—"}</td>
                 </tr>
               );
             })}
@@ -315,6 +316,12 @@ export function PublicationsPage({ embedded }: { embedded?: boolean } = {}) {
                   </td>
                   <td>
                     <Link to={`/pubs/${job.id}`}>{job.title || "—"}</Link> <MadeByAgent job={job} />
+                    {/* Упала — что случилось простыми словами, подробности на странице публикации. */}
+                    {job.error_view && job.status !== "succeeded" ? (
+                      <div className="pub-row-err" title={job.error}>
+                        {job.error_view.text}
+                      </div>
+                    ) : null}
                   </td>
                   <td>{job.targets?.length ?? 0}</td>
                   <td>

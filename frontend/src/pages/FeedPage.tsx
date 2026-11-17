@@ -17,6 +17,8 @@ import {
   type FeedVersion,
   type FeedWork,
 } from "@/api/feed";
+import { ErrorNote } from "@/components/ErrorNote";
+import { SECTION_SUBS } from "@/lib/tabs";
 import { Icon } from "@/components/Icon";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, PageHead, formatBytes, formatDuration, plural } from "@/components/ui";
@@ -152,11 +154,17 @@ function VariantRow({ variant, workId }: { variant: FeedVariant; workId: number 
         ) : (
           <div className="feed-player-wait">
             {variant.poster_url ? <img src={variant.poster_url} alt="" /> : null}
-            <span>
-              {preview.status === "failed"
-                ? `Превью не собралось${preview.error ? `: ${preview.error}` : ""}`
-                : "Готовлю лёгкое превью…"}
-            </span>
+            {preview.status === "failed" && preview.error_view ? (
+              <span>
+                Превью не собралось: <ErrorNote raw={preview.error} view={preview.error_view} />
+              </span>
+            ) : (
+              <span>
+                {preview.status === "failed"
+                  ? `Превью не собралось${preview.error ? `: ${preview.error}` : ""}`
+                  : "Готовлю лёгкое превью…"}
+              </span>
+            )}
             {preview.status === "failed" && variant.file_present ? (
               <button type="button" className="btn ghost sm" disabled={rebuild.isPending} onClick={() => rebuild.mutate()}>
                 Ещё раз
@@ -389,7 +397,7 @@ export function FeedPage() {
   const counts = list.data?.counts ?? {};
   return (
     <div className="feed-page">
-      <PageHead title="Лента" sub="Готовые работы: версии, вердикты и где уже выложено" />
+      <PageHead title="Лента" sub={SECTION_SUBS.feed} />
       <div className="feed-filters">
         <div className="feed-chips">
           {FILTERS.map((f) => (

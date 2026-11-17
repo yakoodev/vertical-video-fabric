@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app import error_text
 from app import feed_files as F
 from app.projects_core import _date, _long_text, _text
 
@@ -574,6 +575,7 @@ def _variant_view(store: Any, variant: dict, postings: list[dict]) -> dict:
         "orientation": ("vertical" if (variant["height"] or 0) > (variant["width"] or 0) else "horizontal"),
         "file_present": present,
         "preview": {"status": variant["preview_status"], "error": variant["preview_error"],
+                    "error_view": error_text.explain(variant["preview_error"]),  # простыми словами
                     "url": f"/media/feed/variants/{vid}/preview" if has_preview else None,
                     "same_as_file": has_preview and variant["preview_path"] == variant["file_path"]},
         "poster_url": f"/media/feed/variants/{vid}/poster" if has_poster else None,

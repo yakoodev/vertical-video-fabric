@@ -4,7 +4,7 @@ import { PageTabs } from "@/components/PageTabs";
 import { Loading } from "@/components/ui";
 import { useModules } from "@/hooks/useModules";
 import { lazyPage } from "@/lazyPage";
-import { SECTIONS, visibleTabs } from "@/lib/tabs";
+import { SECTION_SUBS, SECTIONS, visibleTabs } from "@/lib/tabs";
 
 const PublicationsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/PublicationsPage"), "PublicationsPage");
 const AccountsPage = lazyPage<{ embedded?: boolean }>(() => import("@/pages/AccountsPage"), "AccountsPage");
@@ -23,6 +23,8 @@ export function PubsPage() {
     <>
       <div className="page-title">
         <h1>{publishing ? "Публикации и аккаунты" : "Готовые ролики"}</h1>
+        {/* Чем вкладка отличается от Ленты и соседей — одной фразой (lib/tabs.ts SECTION_SUBS). */}
+        <p className="page-sub">{SECTION_SUBS[tab as keyof typeof SECTION_SUBS] ?? ""}</p>
       </div>
       <PageTabs tabs={tabs} active={tab} label="Разделы публикаций" />
       <Suspense fallback={<Loading />}>

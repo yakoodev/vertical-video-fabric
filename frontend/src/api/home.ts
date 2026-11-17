@@ -1,5 +1,6 @@
 import { api } from "@/api/client";
 import type { FeedKind, FeedStatus } from "@/api/feed";
+import type { ErrorView } from "@/api/types";
 
 /** «Главная» (app/home.py): сводка сервиса одним ответом. Каждый блок может прийти как { error } — остальные на месте. */
 
@@ -16,6 +17,8 @@ export interface HomeFailed {
   status: string;
   label: string;
   error: string;
+  /** error простыми словами (app/error_text.py); null — незнакомая ошибка. */
+  error_view?: ErrorView | null;
   at: string;
   to: string;
 }

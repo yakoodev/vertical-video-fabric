@@ -746,7 +746,7 @@ def get_schedule(store: Any, project_id: int, free: int = 6) -> dict:
         (int(project_id), fmt_utc(now() - timedelta(days=2))),
     )
     keys = ("id", "title", "platforms", "scheduled_at", "scheduled_local", "publish_status", "publish_error",
-            "job_id", "clip_id", "clip_plan_id", "content_type", "decided_by", "media_url", "thumb_url")
+            "publish_error_view", "job_id", "clip_id", "clip_plan_id", "content_type", "decided_by", "media_url", "thumb_url")
     upcoming = [{k: a.get(k) for k in keys} for a in (_approval_from_row(store, r) for r in rows)]
     free_slots = []
     if cfg["slots"]:

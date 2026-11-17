@@ -1,4 +1,5 @@
 import { api, request } from "@/api/client";
+import type { ErrorView } from "@/api/types";
 
 /**
  * Автопилот канала (app/autopilot.py): очередь одобрения, доверие, расписание, лента,
@@ -61,6 +62,8 @@ export interface Approval {
   job_id: number | null;
   publish_status: string;
   publish_error: string;
+  /** publish_error простыми словами (app/error_text.py). */
+  publish_error_view?: ErrorView | null;
   tg_state: string;
   tg_error: string;
   media_url: string | null;
@@ -108,6 +111,8 @@ export interface ScheduleItem {
   scheduled_local: string;
   publish_status: string;
   publish_error: string;
+  /** publish_error простыми словами (app/error_text.py). */
+  publish_error_view?: ErrorView | null;
   job_id: number | null;
   clip_id: number | null;
   decided_by: string;

@@ -7,6 +7,7 @@ import re
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any, Callable
 
+from app import error_text
 from app import projects as P
 
 # --------------------------------------------------------------------------- #
@@ -421,6 +422,10 @@ def _approval_from_row(store: Any, row: Any) -> dict:
     data["thumb_url"] = f"/media/clip-plans/{data['clip_plan_id']}/thumb" if data.get("clip_plan_id") else None
     data.pop("cover_path", None)
     data["buttons"] = [{"action": a, "label": label} for a, label in buttons_for(data)]
+    # Ошибка выкладки простыми словами (app/error_text.py): площадка и аккаунт — от задания публикации.
+    publish_error = data.get("publish_error") or ""
+    data["publish_error_view"] = (error_text.explain_job(
+        {"error": publish_error}, error_text.job_targets_context(store, data.get("job_id"))) if publish_error else None)
     return data
 
 

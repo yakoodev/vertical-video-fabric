@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
+from app import error_text
 from app.settings import settings
 from app.store_common import VALID_PRIVACY
 
@@ -521,6 +522,12 @@ class JobsStore:
         data["allow_comments"] = bool(data["allow_comments"])
         if include_targets:
             data["targets"] = self._targets_for_job(data["id"])
+            # Ошибка простыми словами (app/error_text.py); сырой текст остаётся в error.
+            for target in data["targets"]:
+                target["error_view"] = error_text.explain_target(target)
+            data["error_view"] = error_text.explain_job(data)
+        else:
+            data["error_view"] = error_text.explain(data.get("error"), status=data.get("status") or "")
         return data
 
     def _targets_for_job(self, job_id: int) -> list[dict]:

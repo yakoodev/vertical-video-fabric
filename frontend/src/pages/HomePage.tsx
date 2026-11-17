@@ -17,6 +17,7 @@ import { qk } from "@/api/keys";
 import { tasksApi } from "@/api/tasks";
 import type { ActiveTask } from "@/api/types";
 import { useShell } from "@/components/AppShell";
+import { ErrorNote } from "@/components/ErrorNote";
 import { Icon } from "@/components/Icon";
 import { ErrorState, Loading, plural } from "@/components/ui";
 import { isActive } from "@/hooks/useActiveTasks";
@@ -198,10 +199,21 @@ function Waiting({ block }: { block: Block<HomeWaiting> }) {
                     <span className="home-row-tag home-row-tag--danger">{f.kind === "job" ? (f.status === "needs_reauth" ? "Нужен вход" : "Публикация") : "Рендер"}</span>
                     <span className="home-row-main">
                       <span className="home-row-t">{f.label || `#${f.id}`}</span>
-                      {f.error ? <span className="home-row-s">{f.error}</span> : null}
+                      {f.error_view ? (
+                        <ErrorNote raw={f.error} view={f.error_view} inLink className="home-row-s home-row-err" />
+                      ) : f.error ? (
+                        <span className="home-row-s">{f.error}</span>
+                      ) : null}
                     </span>
                     <span className="home-row-side">{ago(f.at)}</span>
                   </Link>
+                  {/* Строка — ссылка: сырой текст площадки раскрывается под ней, а не внутри. */}
+                  {f.error_view && f.error ? (
+                    <details className="home-row-raw">
+                      <summary>подробнее</summary>
+                      <pre>{f.error}</pre>
+                    </details>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -18,6 +18,7 @@ import { projectsApi } from "@/api/projects";
 import { qk } from "@/api/keys";
 import { ApiError } from "@/api/client";
 import { formatSnapshotTime } from "@/api/stats";
+import { ErrorNote } from "@/components/ErrorNote";
 import { useToast } from "@/components/Toast";
 import { EmptyState, ErrorState, Loading, PageHead } from "@/components/ui";
 
@@ -215,7 +216,7 @@ export function ApprovalCard({ approval: a, highlighted }: { approval: Approval;
                   : "ближайший свободный слот"}
               {a.publish_status ? ` · ${PUBLISH_STATUS_LABEL[a.publish_status] ?? a.publish_status}` : ""}
             </div>
-            {a.publish_error ? <div style={{ color: "var(--danger)", fontSize: 13 }}>{a.publish_error}</div> : null}
+            {a.publish_error ? <div style={{ fontSize: 13 }}><ErrorNote raw={a.publish_error} view={a.publish_error_view} /></div> : null}
           </>
         ) : a.kind === "alert" ? (
           <>
