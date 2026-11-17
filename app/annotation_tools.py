@@ -83,7 +83,8 @@ def annotation_layers(args: dict, frame: tuple[float, float] = (1080.0, 1920.0))
         props.update(kind="scribble", w=round(tw * W, 1), h=round(th * H, 1))
         props["stroke"] = {"color": color, "width": round(max(14.0, min(40.0, th * H / 3)), 1)}
         props["rough"] = min(rough, 0.4)
-        layer.update(x=tx, y=ty, opacity=0.6)
+        # Маркер поверх слова: «осветление» — белые буквы остаются белыми, тёмный фон под ними желтеет.
+        layer.update(x=tx, y=ty, opacity=0.8, blend="screen")
         label_at = (tx, ty - th / 2 - 0.035)
     else:  # arrow
         to = _point(args.get("to"), "to", problems) or (tx, ty)
@@ -115,7 +116,7 @@ def annotation_layers(args: dict, frame: tuple[float, float] = (1080.0, 1920.0))
     out = [layer]
     text = " ".join(str(args.get("text") or "").split())
     if text:
-        size = min(140.0, max(36.0, _num(args.get("text_size")) or 76.0))
+        size = min(140.0, max(36.0, _num(args.get("text_size")) or 84.0))
         label = {"type": "text", "name": "пометка: подпись", "x": min(0.92, max(0.08, label_at[0])),
                  "y": min(0.95, max(0.04, label_at[1])), "start": start + draw * 0.6, "end": start + hold,
                  "rotation": -3 if seed % 2 else 2,
