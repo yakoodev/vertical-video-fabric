@@ -32,6 +32,20 @@ def test_grid_and_nearest():
         grid_times({}, 2.0)
 
 
+def test_grid_counts_beats_from_index_not_rounded_period():
+    """Доля — от своего номера: period карты звука округлён до 4 знаков (128 BPM: 0.4688 вместо 0.46875), с ним
+    384-я доля (3 минуты) уехала бы на 19 мс — больше кадра при 60 fps."""
+    grid = {"bpm": 128.0, "period": round(60 / 128, 4), "first_beat": 0.0}
+    beats = grid_times(grid, 200.0)
+    assert beats[384] == pytest.approx(180.0, abs=1e-3)
+    fps = 60
+    frames = [round(t * fps) for t in beats[:400]]
+    assert frames == [round(i * fps * 60 / 128) for i in range(400)]
+    # Свой точный period (мем-эдит: 5 знаков, bpm округлён по нему) не подменяется грубым 60/bpm.
+    own = {"bpm": round(60 / 0.468731, 2), "period": 0.46873, "first_beat": 0.0}
+    assert grid_times(own, 200.0)[384] == pytest.approx(384 * 0.46873, abs=1e-3)
+
+
 def test_snap_layers_keys_camera_pure():
     beats = [k * 0.5 for k in range(20)]
     layers = [_text("a", 1.07), _text("b", 3.25), {**_text("cap", 1.05), "type": "captions"},

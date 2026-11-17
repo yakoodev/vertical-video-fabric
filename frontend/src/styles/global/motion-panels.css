@@ -390,6 +390,10 @@
 .lint-sev { font-size: 12px; line-height: 1.35; }
 .lint-item.warn .lint-sev { color: var(--warn); }
 .lint-item.info .lint-sev { color: var(--info); }
+/* Важность находки: P0 — брак, P1 — поправить до сдачи, P2 — шлифовка. */
+.lint-sev.lint-p0, .lint-sev.lint-p1, .lint-sev.lint-p2 { font-size: 10.5px; font-weight: 700; letter-spacing: 0.02em; }
+.lint-item .lint-sev.lint-p0 { color: var(--danger); }
+.lint-item .lint-sev.lint-p2 { color: var(--info); }
 .lint-msg { color: var(--text); line-height: 1.35; overflow-wrap: anywhere; }
 .lint-fix { grid-column: 2; color: var(--text-dim); font-size: 11.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .lint-meta { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 11px; color: var(--text-faint); }

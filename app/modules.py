@@ -293,7 +293,7 @@ MODULES: list[Module] = [
         "Варианты обложки готового клипа (сильные кадры + крупный хук) и обложка-кадр с заголовком.",
         cost=("cpu",), cost_note="ffmpeg-кадры + композиция",
         tools=("generate_covers", "list_covers", "choose_cover", "compose_cover", "create_cover_doc", "update_cover_doc",
-               "render_cover_doc", "share_cover_doc"),
+               "render_cover_doc", "share_cover_doc", "make_thumbnail"),
         routes=("/api/clips/{id}/covers*", "/media/clips/{id}/covers/*", "POST /api/clip-plans/{id}/cover/compose",
                 "/api/cover-docs*", "/api/c/*", "/c/*"),
         ui=("варианты обложки в окне публикации", "редактор превью и ссылка на редактирование"),
@@ -519,6 +519,8 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "critique_render",
     # «Главная» (app/home_tools.py): сводка сервиса одним вызовом
     "home_summary",
+    # референсы проекта (app/references_tools.py): образцы владельца — смотреть до монтажа
+    "references_list", "reference_get", "reference_add",
     # проба голоса TTS (озвучка клипа и голоса персонажей ИИ-видео); платное — только с confirm
     "tts_preview",
     # озвучка клипа/холста своим текстом и анализатор озвучки (app/voice_tools.py); платное — только с confirm

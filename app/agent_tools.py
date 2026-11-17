@@ -458,6 +458,25 @@ def h_view_frame(ctx: ToolContext, args: dict) -> ImageResult:
 def h_contact_sheet(ctx: ToolContext, args: dict) -> ImageResult:
     from app.motion_render import contact_sheet_jpeg
 
+    mode = str(args.get("mode") or "even")
+    if mode in ("cuts", "phone"):
+        # Перед сдачей (app/quality_lint_sheets.py): склейки −0.2/склейка/+0.2 и лист «на телефоне» 360 px.
+        from app.quality_lint_sheets import cut_strip_jpeg, phone_sheet_jpeg
+
+        subs = args.get("subtitles", True) is not False and bool(_current_render(ctx).get("subs_on"))
+        try:
+            if mode == "cuts":
+                data, info = cut_strip_jpeg(ctx.store, ctx.plan_id, page=int(_num(args.get("page"), 1) or 1),
+                                            subtitles=subs)
+            else:
+                times = args.get("times")
+                times = [float(_num(t)) for t in times if _num(t) is not None] if isinstance(times, list) else None
+                data, info = phone_sheet_jpeg(ctx.store, ctx.plan_id, n=int(_num(args.get("n"), 8) or 8),
+                                              subtitles=subs, times=times)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        return ImageResult(data=data, mime_type="image/jpeg", info={"mode": mode, "subtitles": subs, **info})
+
     n = int(_num(args.get("n"), 8) or 8)
     times = args.get("times")
     if times is not None and (not isinstance(times, list) or not all(_num(t) is not None for t in times)):
@@ -616,15 +635,24 @@ def _clip_view_tools() -> list[Tool]:
             "проверить ритм графики, не перегружен ли кадр, где пусто. times — свои моменты, до 16: по "
             "умолчанию секунды ГОТОВОГО ролика (после вырезов, как подписи на листе); before_cuts=true — "
             "секунды ДО вырезов, как у слоёв и камеры. Субтитры клипа (если включены) прожжены как в рендере; "
-            "subtitles=false — без них. Кадры исходника вне клипа — source_contact_sheet. / "
-            "Contact sheet of n frames or of chosen times.",
+            "subtitles=false — без них. Кадры исходника вне клипа — source_contact_sheet. "
+            "ПЕРЕД СДАЧЕЙ: mode cuts — на каждую склейку строка −0.2 с / склейка / +0.2 с (скачки, мигнувший титр, "
+            "дёрнувшаяся камера; по 8 склеек, page — дальше); mode phone — кадры шириной 360 px, как на телефоне "
+            "(мелкий текст и тонкие линии там не читаются). Кадры — из свежего рендера, иначе по плану. / "
+            "Contact sheet of n frames or of chosen times; cut strips; phone-width sheet.",
             _obj({"n": {"type": "integer", "minimum": 2, "maximum": 16},
+                  "mode": {"type": "string", "enum": ["even", "cuts", "phone"],
+                           "description": "even (по умолчанию) — равномерно; cuts — кадры вокруг склеек; "
+                                          "phone — ширина 360 px"},
+                  "page": {"type": "integer", "minimum": 1, "description": "mode cuts: страница по 8 склеек"},
                   "subtitles": {"type": "boolean", "description": "прожечь субтитры клипа (по умолчанию да)"},
                   "times": {"type": "array", "items": {"type": "number"}},
                   "before_cuts": {"type": "boolean",
                                   "description": "times в секундах ДО вырезов — как у слоёв, камеры и view_frame"}}),
             h_contact_sheet,
-            label=lambda a: "Смотрю весь клип сеткой кадров",
+            label=lambda a: ("Смотрю склейки клипа" if a.get("mode") == "cuts" else
+                             "Смотрю клип на ширине телефона" if a.get("mode") == "phone" else
+                             "Смотрю весь клип сеткой кадров"),
         ),
     ]
 

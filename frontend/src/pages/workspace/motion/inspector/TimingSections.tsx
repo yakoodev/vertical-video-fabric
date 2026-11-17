@@ -22,6 +22,11 @@ const IN_TYPES: { v: InOutType; label: string }[] = [
   { v: "glitch", label: "Глитч (текст)" },
   { v: "scramble", label: "Расшифровка (текст)" },
   { v: "stomp", label: "Удар" },
+  // Входы слов текста: в одном ролике один и тот же не повторять (проверка «входы слов»).
+  { v: "focus", label: "Из размытия (текст)" },
+  { v: "colorize", label: "Из серого в цвет (текст)" },
+  { v: "slot", label: "Слот-машина (текст)" },
+  { v: "letters", label: "По буквам — имя (текст)" },
 ];
 const LOOP_TYPES: { v: LoopType; label: string }[] = [
   { v: "none", label: "Нет" },

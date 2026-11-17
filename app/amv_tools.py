@@ -199,7 +199,7 @@ def tools() -> list[Tool]:
             "(breaths: там картинка уйдёт в чёрное и вернётся на ударе), уровни тактов 0–3 строкой. amv_id — работа "
             "из карточки «AMV»; без неё — новая работа: project_id, track_id, source_ids, title (aspect, notes). Идёт "
             "фоном: status \"running\" — позови снова. / Analyse the AMV song: tempo, drops, parts, quiet dips.",
-            _obj({**_ID, "project_id": {"type": "integer"}, "track_id": {"type": "integer"},
+            _obj({**_ID, "project_id": {"type": "integer", "description": "проект-серия, куда кладётся новая работа AMV"}, "track_id": {"type": "integer"},
                   "source_ids": {"type": "array", "items": {"type": "integer"}}, "title": {"type": "string"},
                   "aspect": {"type": "string", "enum": ["9:16", "16:9"]}, "notes": {"type": "string"},
                   "refresh": {"type": "boolean"}, **_WAIT}),

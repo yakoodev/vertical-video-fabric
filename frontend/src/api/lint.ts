@@ -5,8 +5,30 @@
  */
 import { api } from "@/api/client";
 
-export type LintCheck = "ui_zones" | "reading" | "flashes" | "freezes" | "loop" | "audio_mix" | "montage" | "fragments";
+export type LintCheck =
+  | "ui_zones"
+  | "reading"
+  | "flashes"
+  | "freezes"
+  | "loop"
+  | "audio_mix"
+  | "montage"
+  | "fragments"
+  | "sub_sync"
+  | "voice"
+  // Перед сдачей (app/quality_lint_delivery.py, quality_lint_craft.py, quality_lint_assert.py).
+  | "frame0"
+  | "dead"
+  | "hold"
+  | "outro"
+  | "subject"
+  | "slide_chrome"
+  | "zero_scale"
+  | "entrances"
+  | "assertions";
 export type LintSeverity = "warn" | "info";
+/** P0 — брак, сдавать нельзя; P1 — поправить до сдачи; P2 — шлифовка. */
+export type LintPriority = "P0" | "P1" | "P2";
 
 export type LintFinding = {
   check: LintCheck;
@@ -20,6 +42,9 @@ export type LintFinding = {
   final_t?: number;
   layer?: string;
   platforms?: string[];
+  priority?: LintPriority;
+  /** Одна строка: «P1 · t=… · где · что не так → что поменять» (t — секунды готового ролика). */
+  line?: string;
   [key: string]: unknown;
 };
 
@@ -31,6 +56,8 @@ export type LintResult = {
   checks: LintCheck[];
   findings: LintFinding[];
   counts: { warn: number; info: number };
+  by_priority?: Partial<Record<LintPriority, number>>;
+  lines?: string[];
   by_check: Partial<Record<LintCheck, number>>;
   skipped: Partial<Record<LintCheck, string>>;
   summary: string;
@@ -49,6 +76,17 @@ export const LINT_CHECK_LABELS: Record<LintCheck, string> = {
   audio_mix: "Сведение звука",
   montage: "Монтаж",
   fragments: "Обрывки",
+  sub_sync: "Субтитры и голос",
+  voice: "Озвучка",
+  frame0: "Кадр 0",
+  dead: "Мёртвые куски",
+  hold: "Держать кадр",
+  outro: "Концовка",
+  subject: "Главный объект",
+  slide_chrome: "Слайдовая обвязка",
+  zero_scale: "Рост из нуля",
+  entrances: "Входы слов",
+  assertions: "Проверки клипа",
 };
 
 export const lintApi = {
