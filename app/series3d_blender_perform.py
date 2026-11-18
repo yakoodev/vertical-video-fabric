@@ -12,10 +12,13 @@ from app.series3d_blender_stage import (
     S, H, FRONT, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL, DISPLAY, DOORWAY, CEIL_LIGHT, HATCH, CLIP_LEN, WALK_CLIP,
     WALK_FEET, MAX_WALK_STEPS, WALK_CYCLE_UNITS, STEP_LEN, stance_units, walk_plan, walk_seconds, button_pos,
     reachable, facing, to_world, KNOCK_POINT, press_stand, spot_for, LOCS, loc_of, loc_spot, loc_target, inside_loc,
-    show_items, _low, HATCH_LID, LATCH, SHOULDER_R, REACH
+    show_items, _low, HATCH_LID, LATCH, SHOULDER_R, REACH, BAG_SPOT, BAG_FROM, BAG_H
 )
 from app.series3d_blender_direction import EMOTIONS, HAND_ACTIONS
 from app.series3d_blender_camera import SIT_DROP, PHONE_SHOW, _rot, camera_plan
+
+LID_AJAR = 0.40          # «крышка приподнялась»: доля HATCH_OPEN_DEG (≈ 44°) — щель, в неё светит фонарик
+TORCH_POS = (HATCH_LID[0], HATCH_LID[1] - 0.17, H + 0.30)   # фонарик над щелью люка (крышка поднимается с ближнего края)
 
 FPS = 30
 
@@ -182,6 +185,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     hatch_track = _Track(0.0)         # люк в потолке: 0 — закрыт, 1 — крышка поднята (HATCH_OPEN_DEG)
     latch_track = _Track(0.0)         # защёлка люка: 0 — заперта, 1 — повёрнута на 90°
     hatch_used = False
+    rz_track = _Track(0.0)            # корень выше пола: стоит на рюкзаке (BAG_H)
+    bag_track = _Track(0.0)           # рюкзак: 0 — на спине, 1 — лежит на полу под люком
+    torch_track = _Track(0.0)         # чужой фонарик в щели люка
+    on_bag = False
     contacts: list[dict] = []         # касания (для подгонки IK по мешу и звуков)
     shout_bursts: list[tuple[float, float]] = []
     speak_windows: list[tuple[float, float]] = []
@@ -251,7 +258,25 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         # автор снимает проём: от первого такого кадра до «сомкнулись» герой держит створки у края, за ним видно шахту
         at_door = door_from is not None and door_from <= t0 < door_until and loc == "cabin" and posture == "stand" \
             and a not in HAND_ACTIONS
-        if at_door:
+        if on_bag:
+            spot, hd = pos, heading       # стоит на рюкзаке под люком: никуда не ходит и не разворачивается
+        elif a == "stand_bag" and loc == "cabin" and posture == "stand":
+            # склейкой рюкзак уже снят и лежит под люком, герой за ним; дальше — шаг на рюкзак (подъём корня)
+            pos_keys.append((t_cut, BAG_FROM))
+            head_keys.key(t_cut - 1e-3, heading)
+            head_keys.key(t_cut, math.pi)
+            pos, heading = BAG_FROM, math.pi
+            bag_track.key(t_cut - 1e-3, 0.0)
+            bag_track.key(t_cut, 1.0)
+            if phone_out:     # руки заняты: телефон в карман
+                phone_iv[-1][1] = t_cut
+                if phone_hold is not None:
+                    phone_hold["t1"] = t_cut
+                phone_out = False
+            if seg_clip != "Idle_A":
+                add_clip("Idle_A", t0, blend=0.01)
+            spot, hd = BAG_SPOT, math.pi
+        elif at_door:
             spot, hd = DOORWAY["spot"], DOORWAY["heading"]    # встаёт склейкой
         elif a == "press_button":
             want = ["1", "3", "2", "4"] if s.get("button") == "all" else [reachable(s.get("button") or "1")]
@@ -465,6 +490,34 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             gkey(a0 - 0.1, (kp[0], kp[1], 0.85))
             lean_v = 0.12
             cam_subject = "doors"
+        elif a == "stand_bag" and loc == "cabin" and not any(c_["kind"] == "bag_step" for c_ in contacts):
+            # шаг на рюкзак: корень поднимается на BAG_H на конце шага (или сразу после склейки)
+            w_ = walks[-1] if walks and walks[-1]["t0"] >= t0 - 1e-6 and walks[-1].get("target") == BAG_SPOT else None
+            r0 = (w_["t1"] - 0.4 - 0.55) if w_ else a0 + 0.15
+            r0 = max(t0 + 0.05, r0)
+            rz_track.key(r0, 0.0)
+            rz_track.key(r0 + 0.35, BAG_H)
+            gkey(t0 + 0.05, (BAG_SPOT[0], BAG_SPOT[1], 0.1))      # под ноги, на рюкзак
+            gkey(r0 + 0.55, LATCH)                                # встал — смотрит на защёлку
+            contacts.append({"kind": "bag_step", "t": r0 + 0.3, "point": (BAG_SPOT[0], BAG_SPOT[1], BAG_H)})
+            on_bag = True
+            lean_v = 0.06
+            cam_subject = "face"
+        elif a == "open_hatch" and loc == "cabin" and re.search(r"\bсам[аи]?\b", _low(s.get("text"))):
+            # тянется к защёлке, а она поворачивается сама — рука отдёргивается (крышку не толкает)
+            hatch_used = True
+            ev = next((e for e in events if e["kind"] == "latch" and t0 - 0.1 <= e["t"] < t1), None)
+            t_turn = ev["t"] if ev else min(t1 - 0.4, a0 + 0.9)
+            t_turn = max(a0 + 0.45, t_turn)
+            latch_track.key(t_turn, latch_track.keys[-1][1])
+            latch_track.key(t_turn + 0.35, 1.0)
+            holds.append({"side": "r", "t0": a0, "t1": t_turn + 0.3, "grip": max(a0 + 0.2, t_turn - 0.1), "mode": "reach_up",
+                          "point": LATCH, "fade": 0.2})
+            contacts.append({"kind": "latch", "t": t_turn, "point": LATCH})
+            startles.append((t_turn + 0.08, 0.85))
+            gkey(a0, LATCH)
+            lean_v = -0.12
+            cam_subject = "hatch"
         elif a == "open_hatch" and loc == "cabin":
             # тянется к защёлке, поворачивает её, толкает крышку вверх; крышка поднимается на петле
             hatch_used = True
@@ -550,6 +603,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                     first_ = second_ = (0.10, DOORWAY["wall"][1], 0.86)
                 gkey(a0 + 0.25, first_)
                 gkey(a0 + max(0.9, (t1 - a0) * 0.55), second_)
+            elif aim and loc == "cabin" and (s.get("frame") == "hatch" or re.search(r"вверх|потол|\bлюк", _low(s.get("text")))):
+                # светит вверх: на люк и защёлку
+                gkey(a0 + 0.9, LATCH)
+                gkey(a0 + 0.9 + max(0.6, (t1 - a0) * 0.45), (HATCH_LID[0] - 0.08, HATCH_LID[1] + 0.05, H))
             elif aim:
                 # светит туда, куда смотрит: на двери, потом ведёт лучом по кабине
                 if loc == "cabin":
@@ -565,6 +622,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         elif a == "look_ceiling":
             if s.get("by") == "author" and s.get("camera") == "overhead":
                 gkey(a0, "camera")      # смотрит вверх и камера сверху: лицо в объектив, а не макушка
+            elif loc == "cabin" and (on_bag or s.get("frame") == "hatch"):
+                gkey(a0, (HATCH_LID[0], HATCH_LID[1] - 0.12, H))   # под люком — на люк и щель, не на лампу
             elif loc == "cabin":
                 gkey(a0, HATCH)
                 gkey(a0 + max(0.6, span * 0.55), (CEIL_LIGHT[0] - 0.15, CEIL_LIGHT[1] - 0.2, H))
@@ -579,7 +638,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             startles.append((tf + 0.05, 1.0))
             add_clip("Hit_A", max(tt, tf), blend=0.12, loop=False) if posture == "stand" else None
             add_clip("Idle_A", max(tt, tf) + clip_len["Hit_A"] - 0.05, blend=0.3) if posture == "stand" else None
-            gkey(tf + 0.1, (CEIL_LIGHT[0], CEIL_LIGHT[1], H) if loc == "cabin" else loc_target(loc, "ceiling"))
+            up = (HATCH_LID[0], HATCH_LID[1] - 0.12, H) if (on_bag or s.get("frame") == "hatch") else (CEIL_LIGHT[0], CEIL_LIGHT[1], H)
+            gkey(tf + 0.1, up if loc == "cabin" else loc_target(loc, "ceiling"))
         elif a == "shout":
             gkey(a0, (0.0, DOOR_FACE_Y, 1.05) if loc == "cabin" else loc_target(loc, "sound"))
             lean_v = 0.18
@@ -599,6 +659,13 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 gkey(a0, loc_target(loc, "key"))
                 gkey(a0 + span * 0.5, loc_target(loc, "sound"))
             lean_v = -0.05
+        if s.get("frame") == "hatch" and loc == "cabin" and a not in HAND_ACTIONS and a not in ("look_camera",
+                                                                                                 "phone_out"):
+            # автор снимает люк (голос сверху, щель): смотрит на люк, деталь — потолок снизу с лицом в профиль
+            if a in ("shout", "listen", "flinch", "wait"):
+                gkey(a0 + (0.16 if a == "flinch" else 0.01), (HATCH_LID[0], HATCH_LID[1] - 0.12, H))
+            if s.get("camera") == "detail":
+                cam_subject = "hatch"
         if re.search(r"(выключил|погасил)\w*\s+(\w+\s+)?фонар", _low(s.get("text"))):
             # выключил фонарик: луч гаснет на этом кадре и сам больше не загорается
             flash_track.key(a0 + 0.1, flash_track.keys[-1][1])
@@ -625,6 +692,29 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                          "origin": list(origin), "key_target": list(loc_target(loc, "key")),
                          "show": show_items(loc, s)})
 
+    # над кабиной: защёлка сама (если её не повернул план «тянется»), крышка приоткрылась, фонарик в щели
+    torch_used = False
+    for e in sorted(events, key=lambda x: x["t"]):
+        t_ = float(e["t"])
+        if e["kind"] == "latch" and not any(c["kind"] == "latch" and abs(c["t"] - t_) < 0.6 for c in contacts):
+            hatch_used = True
+            latch_track.key(t_, latch_track.keys[-1][1])
+            latch_track.key(t_ + 0.35, 1.0)
+            contacts.append({"kind": "latch", "t": t_, "point": LATCH})
+        elif e["kind"] == "lid":
+            hatch_used = True
+            if latch_track.curve().at(t_) < 0.99:
+                latch_track.key(t_ - 0.45, latch_track.keys[-1][1])
+                latch_track.key(t_ - 0.1, 1.0)
+            hatch_track.key(t_, hatch_track.keys[-1][1])
+            hatch_track.key(t_ + 1.8, max(LID_AJAR, hatch_track.keys[-1][1]))
+            contacts.append({"kind": "lid", "t": t_, "point": HATCH_LID})
+        elif e["kind"] == "torch":
+            torch_used = True
+            torch_track.key(t_, 0.0)
+            torch_track.key(t_ + 0.1, 1.0)
+            startles.append((t_ + 0.05, 0.6))
+
     # события → испуг, взгляд на источник
     for e in events:
         if e["kind"] in ("blackout", "jolt", "knock", "scrape", "flash"):
@@ -638,6 +728,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     head_c = head_keys.curve()
     heads = [round(head_c.at(t), 5) for t in times]
     root = walk_root(tl, sorted(pos_keys, key=lambda k: k[0]), walks, heads, times)
+    rz_c = rz_track.curve()
+    rzs = [round(rz_c.at(t), 4) for t in times]
+    bag_c = bag_track.curve(ease="step")
+    bags = [1 if bag_c.at(t) > 0.5 else 0 for t in times]
 
     # руки: правая (нажатия/стук), левая и обе (телефон, двери)
     hand = {"r": [None] * nf, "l": [None] * nf}
@@ -699,13 +793,15 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 # рука вверх к точке (защёлка люка): цель — на вытянутой руке по направлению к ней (чиби не достаёт
                 # потолок 2.15 м — тянется изо всех сил)
                 sh = to_world(rp, hd, SHOULDER_R)
+                sh = (sh[0], sh[1], sh[2] + rzs[f])     # на рюкзаке плечо выше
                 d = [h["point"][i] - sh[i] for i in range(3)]
                 n_ = math.sqrt(sum(c * c for c in d)) or 1.0
                 k = min(REACH * 0.97, n_) / n_
                 p = tuple(round(sh[i] + d[i] * k, 5) for i in range(3))
                 w = m.smoothstep((t - h["t0"]) / max(h["grip"] - h["t0"], 1e-3))
                 if h["t1"] is not None:
-                    w *= 1.0 - m.smoothstep((t - (h["t1"] - 0.35)) / 0.35)
+                    fade = float(h.get("fade") or 0.35)     # отдёрнул руку — быстрее
+                    w *= 1.0 - m.smoothstep((t - (h["t1"] - fade)) / fade)
                 if w > 0 and (hand["r"][f] is None or hand["r"][f][1] < w):
                     hand["r"][f] = (p, round(w, 4), "hatch")
     # телефон виден в своих интервалах (в кармане — нет), левая рука держит его только тогда
@@ -767,8 +863,17 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     door_c = door_c0
     fl_c = flash_track.curve(ease="linear")
     hatch_c, latch_c = hatch_track.curve(), latch_track.curve()
+    torch_c = torch_track.curve(ease="linear")
     named_display = [(float(x_["t0"]), float(x_["t1"])) for x_ in shot_out if x_["location"] == "cabin"
                      and any(it["item"] == "display" or str(it["item"]).startswith("надпись") for it in x_["show"])]
+    # «Кабина дёрнулась вниз. На табло 22.» — цифра меняется на рывке (фразой раньше), а не на слове «22»
+    jolt_ev = [e for e in events if e["kind"] == "jolt"]
+    floors = [dict(e) for e in floors]          # копии: задание (job.events) не трогаем
+    for e in floors[1:]:
+        j_ = next((x for x in jolt_ev if e["t"] - 3.5 <= x["t"] < e["t"] and x.get("sentence") is not None
+                   and e.get("sentence") is not None and int(e["sentence"]) - int(x["sentence"]) == 1), None)
+        if j_ is not None:
+            e["t"] = round(float(j_["t"]) + 0.3, 3)
     for t in times:
         main = 1.0
         if blackout is not None:
@@ -823,6 +928,11 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                        "lit": lit, "dark": dark(t), "reveal": round(reveal, 4)})
         if hatch_used:   # поля только у серий с люком: дорожки (и ключи кэша) старых серий не меняются
             lights[-1].update(hatch=round(hatch_c.at(t), 4), latch=round(latch_c.at(t), 4))
+        if torch_used:   # чужой фонарик в щели люка: вспыхивает и чуть дрожит в руке
+            tv = torch_c.at(t)
+            if tv > 0:
+                tv *= 0.93 + 0.07 * math.sin(2 * math.pi * t * 0.7) * math.sin(2 * math.pi * t * 1.9)
+            lights[-1]["torch"] = round(tv, 4)
 
     phone = []
     pm = phone_mode.curve()
@@ -846,6 +956,16 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         "root": root, "heading": heads, "hands": hand, "gaze": gz, "face": face, "body": body, "lights": lights,
         "phone": phone, "contacts": contacts, "shots": shot_out, "startles": startles,
         "blackout": blackout, "light_back": light_back, "speak_windows": speak_windows}
+    # поля только у серий, где они есть (ключи кэша старых серий не меняются)
+    if any(rzs):
+        perf["root_z"] = rzs
+    if any(bags):
+        perf["bag"] = bags
+        perf["bag_pose"] = [BAG_SPOT[0], BAG_SPOT[1], round(math.pi, 5), BAG_H]
+    if torch_used:
+        fi = next((f for f, t in enumerate(times) if torch_c.at(t) > 0), nf - 1)
+        face = to_world(root[fi], heads[fi], (0.0, 0.07, 0.81 + rzs[fi]))
+        perf["torch"] = {"pos": [round(c, 4) for c in TORCH_POS], "aim": [round(c, 4) for c in face]}
     perf["cameras"] = camera_plan(perf, int(job.get("seed") or 7))
     # луч фонарика не в объектив: камера в конусе — увести луч вбок-вниз (иначе кадр — белая вспышка)
     beam_raw = _beam_off_camera(perf, beam_raw)

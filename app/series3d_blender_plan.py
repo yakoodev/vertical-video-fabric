@@ -7,7 +7,7 @@
 Что понимается (закрытый словарь, остальное игнорируется, тогда решает режиссёр):
 
 * план: ``лицо``, ``сверху``, ``за плечом``, ``деталь``. Два плана через «затем»/«потом» режут бит на два кадра;
-* что в кадре: ``проём`` (открытые двери и шахта за ними), ``двери``, ``табло``;
+* что в кадре: ``проём`` (открытые двери и шахта за ними), ``двери``, ``табло``, ``люк`` (потолок снизу: люк, защёлка);
 * до «План:» — действие и лицо: ``светит``, ``кричит``, ``слушает``, ``страх``, ``тревога``… (см. ``ACTION_WORDS``).
 
 Модуль без ``bpy`` и без настроек: его импортирует и Blender.
@@ -21,9 +21,11 @@ from app.series3d_blender_stage import _low
 
 PLAN_MARK = re.compile(r"план\s*:", re.I)
 CAMERA_WORDS = (("face", r"лицо|крупно"), ("overhead", r"сверху|общий"), ("ots", r"плеч"), ("detail", r"детал"))
-FRAME_WORDS = (("doorway", r"проем"), ("display", r"табло"), ("doors", r"двер|створ"))
-# Порядок важен: «смотрит на табло» раньше «смотрит», «встаёт, стучит» — это стук, а не «встать».
-ACTION_WORDS = (("look_camera", r"в камеру"), ("look_display", r"на табло"), ("look_ceiling", r"потолок|смотрит вверх"),
+FRAME_WORDS = (("doorway", r"проем"), ("display", r"табло"), ("doors", r"двер|створ"), ("hatch", r"\bлюк|защелк|потол"))
+# Порядок важен: «смотрит на табло» раньше «смотрит», «встаёт, стучит» — это стук, а не «встать»; «встаёт на рюкзак» —
+# не «встать с пола».
+ACTION_WORDS = (("look_camera", r"в камеру"), ("stand_bag", r"рюкзак|встает на"), ("open_hatch", r"тянется|открывает люк"),
+                ("look_display", r"на табло"), ("look_ceiling", r"потолок|смотрит вверх"),
                 ("pry_doors", r"раздвига"), ("phone_light", r"светит"), ("flinch", r"вздрагива"), ("shout", r"кричит"),
                 ("listen", r"прислушива|слушает"), ("sit_corner", r"садится|сидит"), ("knock", r"стучит"),
                 ("phone_out", r"телефон|на экране"), ("stand_up", r"встает"), ("wait", r"ждет"),
@@ -33,7 +35,8 @@ EMOTION_WORDS = (("scared", r"страх|испуг"), ("worried", r"трево�
 # Лицо по действию, когда автор его не назвал и режиссёра не спрашивали.
 ACTION_EMOTION = {"shout": "worried", "flinch": "startled", "listen": "worried", "look_display": "worried", "knock": "determined",
                   "wait": "worried", "phone_out": "worried", "pry_doors": "determined", "sit_corner": "exhausted",
-                  "look_ceiling": "scared", "look_camera": "worried", "phone_light": "worried", "approach": "worried"}
+                  "look_ceiling": "scared", "look_camera": "worried", "phone_light": "worried", "approach": "worried",
+                  "stand_bag": "determined", "open_hatch": "scared"}
 PART_MIN_SEC = 0.7             # кусок бита короче не выйдет: кадр не успеет прочитаться
 
 

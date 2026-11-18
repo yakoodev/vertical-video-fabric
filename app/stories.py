@@ -397,6 +397,13 @@ def create_episode(store: Any, world_id: int, premise: str, duration: Any = None
         options["renderer"] = P._choice(str(options["renderer"]), RENDERERS, "renderer")
         if options["renderer"] == RENDERER_BLENDER:
             options["engine"] = ENGINE_3D
+    if options.get("render_backend") in (None, ""):
+        options.pop("render_backend", None)
+    else:
+        from app.series3d_blender import RENDER_BACKENDS
+
+        options["render_backend"] = P._choice(str(options["render_backend"]).strip().lower(), RENDER_BACKENDS,
+                                              "render_backend")
     if options.get("quality") in (None, ""):
         options.pop("quality", None)
     else:

@@ -39,11 +39,16 @@ def _rot(v: tuple[float, float], ang: float) -> tuple[float, float]:
     return (v[0] * c - v[1] * s_, v[0] * s_ + v[1] * c)
 
 
-def face_point(root: tuple[float, float], heading: float, posture: str) -> tuple[float, float, float]:
-    """Середина лица (оценка без Blender): над корнем, чуть впереди, по позе."""
+def face_point(root: tuple[float, float], heading: float, posture: str, rz: float = 0.0) -> tuple[float, float, float]:
+    """Середина лица (оценка без Blender): над корнем, чуть впереди, по позе; ``rz`` — корень выше пола (на рюкзаке)."""
     fx, fy = facing(heading)
     fwd = 0.07 if posture == "stand" else 0.02
-    return (root[0] + fx * fwd, root[1] + fy * fwd, FACE_Z["sit" if posture == "sit" else "stand"])
+    return (root[0] + fx * fwd, root[1] + fy * fwd, FACE_Z["sit" if posture == "sit" else "stand"] + rz)
+
+
+def _rz(perf: dict, f: int) -> float:
+    rz = perf.get("root_z")
+    return float(rz[min(f, len(rz) - 1)]) if rz else 0.0
 
 
 def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float, posture: str,
@@ -58,7 +63,7 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         return cam_inside(p) and all(math.dist(p, q) > 0.22 for q in avoid)
     fx, fy = facing(heading)
     fwd = (fx, fy)
-    face = face_point(root, heading, posture)
+    face = face_point(root, heading, posture, float(shot.get("rz") or 0.0))
     subject = shot.get("subject") or "face"
     side = 1.0 if rnd.random() < 0.5 else -1.0
 
@@ -89,11 +94,13 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         # экран со значением (часы, заряд): телефон в руке экраном к камере и лицо над ним — близко, длинный фокус
         phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0)))
         # телефон — в середине кадра (выше субтитров), лицо — сверху
-        center = tuple(phone_c[i] * 0.8 + face[i] * 0.2 for i in range(3))
+        msg = str(shot.get("screen")).startswith("msg|")
+        # переписка — строки мельче цифр: телефон крупнее, лицо краем (кадр ≈ 0.40 м против 0.62)
+        center = tuple(phone_c[i] * (0.9 if msg else 0.8) + face[i] * (0.1 if msg else 0.2) for i in range(3))
         p = around(0.62, (-20, 20, -32, 32, 0, -45, 45), 0.0, center)
         if p:
             # кадр ≈ 0.62 м по высоте (телефон и лицо целиком) при любом отступе камеры от стен
-            lens = max(20.0, min(40.0, 58.0 * math.dist(p, center)))
+            lens = max(20.0, min(85.0 if msg else 40.0, (125.0 if msg else 58.0) * math.dist(p, center)))
             return out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
     if kind == "detail" and subject == "phone":
         hand_l = to_world(root, heading, (-0.04, 0.22, 0.52 - (SIT_DROP if posture == "sit" else 0.0)))
@@ -113,11 +120,19 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         return None
     if kind == "detail" and subject == "hatch":
         # потолок снизу: камера низко сбоку от героя, смотрит вверх — поднятое лицо в профиль, рука, люк и защёлка
-        for dist, dz in ((0.7, 0.5), (0.6, 0.45), (0.5, 0.4)):
-            for ang in (80, -80, 100, -100, 60, -60):
+        roof = bool(shot.get("rz")) and shot.get("action") != "stand_bag"
+        # на рюкзаке под люком (ч.3) — спереди со стороны правой руки: поднятое лицо, рука к защёлке и люк в кадре
+        dists = ((0.52, 0.55), (0.45, 0.5), (0.7, 0.5), (0.6, 0.45)) if roof else ((0.7, 0.5), (0.6, 0.45), (0.5, 0.4))
+        angs = (-50, -65, -80, -100, 80, 100, 60) if roof else (80, -80, 100, -100, 60, -60)
+        for dist, dz in dists:
+            for ang in angs:
                 d = _rot(fwd, math.radians(ang))
                 p = (face[0] + d[0] * dist, face[1] + d[1] * dist, dz)
                 if fresh(p):
+                    if shot.get("rz") or shot.get("frame") == "hatch":
+                        # ч.3: люк — главное в кадре (крышка, щель, рука к защёлке), лицо снизу краем
+                        pt = tuple(HATCH_LID[i] * 0.85 + face[i] * 0.15 for i in range(3))
+                        return out("detail", p, pt, 0.05, 21.0, fstop=5.6, focus="point", push=0.95)
                     pt = tuple(HATCH_LID[i] * 0.55 + face[i] * 0.45 for i in range(3))
                     return out("detail", p, pt, 0.3, 16.0, fstop=5.6, focus="point", push=0.95)
         return None
@@ -258,7 +273,9 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
         aim = g if isinstance(g, (list, tuple)) else None
         prev = out[-1]["kind"] if out else ""
         root, head = tuple(perf["root"][f]), perf["heading"][f]
-        face = face_point(root, head, posture)
+        if _rz(perf, f):
+            s["rz"] = round(_rz(perf, f), 4)     # стоит на рюкзаке: лицо выше
+        face = face_point(root, head, posture, _rz(perf, f))
         authored = s.get("by") == "author" and s.get("planned")
         if authored and (s.get("at_door") or (s["action"] == "knock" and s["camera"] == "overhead")):
             cam = doorway_camera(s["camera"], face, None if s.get("at_door") else KNOCK_CAM)
@@ -329,7 +346,7 @@ def face_bands(perf: dict) -> list[dict]:
     for c in perf["cameras"]:
         s = shots[c["n"]]
         fi = min(perf["frames"] - 1, int((c["t0"] + c["t1"]) / 2 * perf["fps"]))
-        face = face_point(tuple(perf["root"][fi]), perf["heading"][fi], s.get("posture_end", "stand"))
+        face = face_point(tuple(perf["root"][fi]), perf["heading"][fi], s.get("posture_end", "stand"), _rz(perf, fi))
         dist = max(0.2, math.dist(c["pos_a"], face))
         h = max(0.05, min(0.75, 0.42 * c["lens"] / (36.0 * dist)))   # лоб–подбородок с капюшоном ≈ 0.42 м
         y = c.get("face_y") if c.get("face_w", 0) > 0.3 else None

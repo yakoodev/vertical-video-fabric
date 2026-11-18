@@ -35,6 +35,11 @@ HATCH_LID = (0.37, 0.62, H)
 HATCH_HINGE_Y = HATCH_LID[1] + 0.20
 LATCH = (HATCH_LID[0], HATCH_LID[1], H - 0.03)
 HATCH_OPEN_DEG = 110.0
+# Рюкзак под люком (ч.3: «поставил под люк и встал на него»): лежит плашмя на полу под местом «hatch», герой встаёт
+# на него шагом с BAG_FROM; верх рюкзака — на BAG_H от пола (столько же поднят корень героя, пока он на рюкзаке).
+BAG_SPOT = (HATCH_LID[0], HATCH_LID[1] - 0.22)
+BAG_FROM = (HATCH_LID[0], HATCH_LID[1] - 0.50)
+BAG_H = 0.16
 
 
 REACH = (0.242 + 0.259 + 0.074 + 0.10) * S
@@ -263,8 +268,9 @@ def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
 
 # Что фраза называет → что сцена показывает (точка для проверки «видно в кадре»): по словам и реквизиту Gemini.
 SHOW_WORDS = (("лампочк|лампа|светильник", "lamp"), ("календар|надпис|на стене|1998|цифр\\w* на стен", "decal"),
-              ("двер|\\bствор", "doors"), ("\\bтрос", "cables"), ("противовес", "counterweight"), ("номер", "decal"),
-              ("\\bлюк", "hatch"), ("защ[её]лк|задвижк", "latch"), ("стен\\w* шахт", "wall"), ("\\bщит|электрощит", "cabinet"), ("\\bмотор|лебёдк|лебедк", "key"),
+              ("двер|\\bствор", "doors"), ("\\bтрос", "cables"), ("противовес", "counterweight"),
+              ("номер(?!\\w*\\s+(\\w+\\s+)?(бригад|телефон|машин))", "decal"),
+              ("\\bлюк|крышк|в щел", "hatch"), ("защ[её]лк|задвижк", "latch"), ("рюкзак", "bag"), ("стен\\w* шахт", "wall"), ("\\bщит|электрощит", "cabinet"), ("\\bмотор|лебёдк|лебедк", "key"),
               ("коридор|\\bпроход[аеу]?\\b|в глубин", "deep"), ("табло", "display"), ("кнопк", "buttons"), ("квартир", "apartment"))
 
 
@@ -282,7 +288,11 @@ def show_items(loc: str, shot: dict) -> list[dict]:
         out += [{"item": name, "point": [round(c, 3) for c in DOORWAY[key]]}
                 for name, key in (("край плиты", "slab"), ("дверь этажа", "floor_door"), ("стена шахты", "wall"))]
     if shot.get("screen"):
-        out.append({"item": f"экран «{shot['screen']}»", "point": None, "screen": True})
+        scr = str(shot["screen"])
+        if scr.startswith("msg|"):
+            _m, to, body, state, net, batt, clock = (scr.split("|") + [""] * 7)[:7]
+            scr = " · ".join(x for x in (f"{to}: {body}", state, net, batt, clock) if x)
+        out.append({"item": f"экран «{scr}»", "point": None, "screen": True})
     if shot.get("show_none"):
         return out            # крючок: лицо, названное — следующим куском фразы
     seen = set()
@@ -292,7 +302,8 @@ def show_items(loc: str, shot: dict) -> list[dict]:
         seen.add(name)
         if loc == "cabin":
             pt = {"display": DISPLAY, "buttons": button_pos("1"), "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH_LID,
-                  "latch": LATCH, "lamp": CEIL_LIGHT, "cables": (HATCH_LID[0], HATCH_LID[1], H + 0.6)}.get(name)
+                  "latch": LATCH, "lamp": CEIL_LIGHT, "cables": (HATCH_LID[0], HATCH_LID[1], H + 0.6),
+                  "bag": (BAG_SPOT[0], BAG_SPOT[1], BAG_H * 0.5)}.get(name)
         else:
             t = loc_of(loc)["targets"]
             pt = loc_world(loc, t[name]) if name in t else None

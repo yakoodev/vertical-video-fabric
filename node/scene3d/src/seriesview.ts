@@ -108,6 +108,8 @@ function lerpM(ra: number, rb: number, o: number, u: number, out: THREE.Matrix4)
   m34(data, ra * st + o, _ma).decompose(_pa, _qa, _sa);
   m34(data, rb * st + o, _mb).decompose(_pb, _qb, _sb);
   if (Math.min(_sa.x, _sa.y, _sa.z, _sb.x, _sb.y, _sb.z) < 1e-4) return out.copy(_ma);
+  // унос за кадр (спрятать вещь, рюкзак снят) — тоже ступенькой: иначе размытие движения тянет след через кадр
+  if (_pa.distanceToSquared(_pb) > 4.0) return out.copy(_ma);
   _pa.lerp(_pb, u);
   _qa.slerp(_qb, u);
   _sa.lerp(_sb, u);

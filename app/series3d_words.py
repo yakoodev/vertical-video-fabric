@@ -206,6 +206,17 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
             k = find_word(words, sp["w0"], sp["w1"], r"^(загорел|включил|вернул|дали|появил)")
             events.append({"kind": "light_back", "t": float(words[k]["start"]) if k is not None else sp["t0"],
                            "sentence": sp["i"], "role": sp["role"]})
+        # Над кабиной (ч.3): шаги по крыше, защёлка люка повернулась сама, крышка приподнялась, в щель светит фонарик.
+        for kind, rx, word in (("steps", r"шаг\w*.{0,30}(над голов|сверху|по крыш|наверху)|(над голов|сверху|по крыш|наверху)\w*.{0,30}шаг",
+                                r"^шаг"),
+                               ("latch", r"защ[еёе]лк\w*.{0,40}\bсам[аи]?\b|\bсам[аи]?\b.{0,20}повернул\w*\s+защ", r"^поверн|^щелкн"),
+                               ("lid", r"крышк\w*.{0,25}(приподн|приоткр|подня|подним|откры)", r"^(приподн|приоткр|подня|подним|откры)"),
+                               ("torch", r"(в щел|из щел|из люка|сверху)\w*.{0,25}свет|свет\w*\s.{0,15}(в щел|из щел|из люка)",
+                                r"^свет")):
+            if re.search(rx, low):
+                k = find_word(words, sp["w0"], sp["w1"], word)
+                events.append({"kind": kind, "t": float(words[k]["start"]) if k is not None else sp["t0"],
+                               "sentence": sp["i"], "role": sp["role"]})
         if re.search(r"одна проблем|лишь одн", low):
             k = find_word(words, sp["w0"], sp["w1"], r"^(был|одн|лишь)")
             events.append({"kind": "sting", "t": float(words[k]["start"]) if k is not None else sp["t0"],
@@ -214,6 +225,11 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
     story = [e for e in blackouts if e["role"] != "hook"]
     keep = (story or blackouts)[:1]
     events = [e for e in events if e["kind"] != "blackout" or e in keep]
+    first_low = spans[0]["text"].lower().replace("ё", "е") if spans else ""
+    if keep and keep[0]["sentence"] == (spans[0]["i"] if spans else -1) and \
+            re.search(r"\bв (блэкаут|блекаут|темноте)|во время (блэкаута|блекаута)", first_low):
+        # «Если в блэкаут…» — продолжение серии: свет уже погас, кадр с первой секунды в аварийном красном
+        keep[0]["t"] = -1.0
     # Повторы одного события ближе 1.2 с — один.
     out: list[dict] = []
     for e in sorted(events, key=lambda x: x["t"]):

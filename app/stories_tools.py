@@ -216,7 +216,7 @@ def h_create(ctx: ToolContext, args: dict) -> dict:
 
 def h_draft(ctx: ToolContext, args: dict) -> dict:
     options = {k: args[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part", "music",
-                                    "engine", "location", "renderer", "quality") if args.get(k) is not None}
+                                    "engine", "location", "renderer", "quality", "render_backend") if args.get(k) is not None}
     ep = _call(X.create_draft, ctx.store, _need(args, "world_id", "story_overview"), str(args.get("premise") or ""),
                args.get("duration"), str(args.get("tone") or ""), {k: args.get(k) for k in (*_SCRIPT_KEYS, "beats")}, options,
                "agent")
@@ -382,7 +382,8 @@ def tools() -> list[Tool]:
                    "render": {"type": "boolean"}, "cover": {"type": "boolean"}, "title_card": {"type": "boolean"},
                    "cut_sfx": {"type": "boolean"}, "music_track_id": {"type": "integer"},
                    "engine": {"type": "string", "enum": list(S.ENGINES)}, "renderer": {"type": "string", "enum": list(S.RENDERERS)},
-                   "quality": {"type": "string"}, "location": {"type": "string"}}, ["world_id"]),
+                   "quality": {"type": "string"}, "location": {"type": "string"},
+                    "render_backend": {"type": "string", "enum": ["blender", "threejs"]}}, ["world_id"]),
              h_draft, mutating=True, scope="project",
              label=lambda a: f"Сценарий: {str(a.get('title') or a.get('premise') or '')[:60]}"),
         Tool("story_start", "Запускаю черновик",
