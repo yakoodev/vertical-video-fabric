@@ -1004,8 +1004,8 @@
 {
 "name": "set_transition",
 "title": "Ставлю переход",
-"description": "d016e1bed093d449",
-"parameters": "65c2c158b5e8b2ae",
+"description": "8a7b9990c8e6c932",
+"parameters": "8116104777b09528",
 "mutating": true,
 "scope": "clip",
 "module": null,

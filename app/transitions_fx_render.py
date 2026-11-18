@@ -7,6 +7,9 @@
 xfade. Длина окна — целые кадры (``fx_frames``), склейка берёт ровно такой же наплыв — шкала клипа не плывёт
 (отличие от плана — меньше полукадра).
 
+Шейдерные переходы (``gl_…``, ``app/transitions_gl.py``) рисует WebGL: один браузер на все такие склейки рендера
+(``GlSession``), остальное — то же окно, обрезка полосой и запись.
+
 Сбой одного окна — не сбой рендера: эта склейка пойдёт запасным xfade своего вида (``TRANSITIONS``).
 """
 
@@ -15,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+from contextlib import contextmanager
 from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterator
@@ -22,7 +26,7 @@ from typing import Any, Iterator
 import numpy as np
 
 from app.transitions import (
-    CUT_FX, fx_frames, is_fx, join_color, join_kind, join_param, normalize_direction, plan_joins,
+    CUT_FX, GL_FX, fx_frames, is_fx, join_color, join_kind, join_param, normalize_direction, plan_joins,
 )
 
 log = logging.getLogger(__name__)
@@ -117,11 +121,12 @@ def clip_region(region: dict | None, width: int, height: int) -> dict | None:
 
 def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, kind: str, frames: int, index: int,
                    transition: dict, fps: float, info: dict, out_path: Path,
-                   jump_joins: list[bool] | None = None, region: dict | None = None) -> dict:
+                   jump_joins: list[bool] | None = None, region: dict | None = None, gl: Any = None) -> dict:
     """Одно окно склейки ``index`` → ``out_path``. Ответ — что нарисовано (вид, кадры, направление и почему).
 
     ``region`` — переход только в этом прямоугольнике (раскладка «полоса», ``transition.scope``): вне его кадр
-    окна — A до середины, B после (жёсткая склейка, как у xfade в полосе)."""
+    окна — A до середины, B после (жёсткая склейка, как у xfade в полосе). ``gl`` — открытый ``GlSession``
+    (шейдерные виды ``gl_…``)."""
     from app.transitions_fx import (
         HALO, compose, hex_rgb, motion_vector, pick_direction, rgb_to_yuv, small_gray, yuv_to_rgb,
     )
@@ -160,14 +165,20 @@ def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, ki
     halo = color if own_color else HALO
     if region:
         report["region"] = dict(region)
+    shaded = None
+    if kind in GL_FX:
+        shaded = _gl_frames(gl, kind, a, b, region, index, transition, jump_joins, report)
 
     def frames_out() -> Iterator[np.ndarray]:
         for j in range(n):
-            aj, bj = _crop(a[j], region), _crop(b[j], region)
-            cj = _crop(c[j], region) if c is not None else None
-            rgb = compose(kind, yuv_to_rgb(aj), yuv_to_rgb(bj), yuv_to_rgb(cj) if cj is not None else None, j, n,
-                          direction=direction, color=color, halo=halo, count=count, seed=7919 * index + 17, fps=fps,
-                          side=side)
+            if shaded is not None:
+                rgb = shaded[j].astype(np.float32)
+            else:
+                aj, bj = _crop(a[j], region), _crop(b[j], region)
+                cj = _crop(c[j], region) if c is not None else None
+                rgb = compose(kind, yuv_to_rgb(aj), yuv_to_rgb(bj), yuv_to_rgb(cj) if cj is not None else None, j,
+                              n, direction=direction, color=color, halo=halo, count=count, seed=7919 * index + 17,
+                              fps=fps, side=side)
             if not region:
                 yield rgb_to_yuv(rgb)
                 continue
@@ -185,6 +196,21 @@ def render_fx_join(a_path: Path, b_path: Path, a_dur: float, b_dur: float, *, ki
         rate = f"{fps:g}"
     write_clip(frames_out(), out_path, width, height, rate, info.get("sar") or "1:1")
     return report
+
+
+def _gl_frames(gl: Any, kind: str, a: np.ndarray, b: np.ndarray, region: dict | None, index: int,
+               transition: dict, jump_joins: list[bool] | None, report: dict) -> np.ndarray:
+    """Кадры шейдерного перехода (n, h, w, 3) uint8 RGB по прямоугольнику ``region`` (нет — весь кадр)."""
+    from app.transitions_fx import yuv_to_rgb
+    from app.transitions_gl import GlError, gl_params
+
+    if gl is None:
+        raise GlError("нет браузера с WebGL")
+    to_rgb = lambda f: np.clip(np.rint(yuv_to_rgb(_crop(f, region))), 0, 255).astype(np.uint8)  # noqa: E731
+    direction = normalize_direction(join_param(transition, index, "direction", jump_joins))
+    params = gl_params(kind, direction, join_param(transition, index, "color", jump_joins) or transition.get("color"))
+    report.update(shader=kind, params=params)
+    return gl.render(kind, (to_rgb(f) for f in a), (to_rgb(f) for f in b), params)
 
 
 def _cut_direction(transition: dict, index: int, jump_joins: list[bool] | None, a: np.ndarray, b: np.ndarray,
@@ -221,18 +247,47 @@ def render_fx_joins(parts: list[Path], durations: list[float], transition: dict,
         log.warning("переходы мувика: %s", exc)
         return {}
     clips: dict[int, Path] = {}
-    for item in plan:
-        i = item["join"]
-        out = work_dir / f"fx-join-{i:03d}.mp4"
-        try:
-            done = render_fx_join(parts[i], parts[i + 1], durations[i], durations[i + 1], kind=item["kind"],
-                                  frames=item["frames"], index=i, transition=transition, fps=fps, info=info,
-                                  out_path=out, jump_joins=jump_joins, region=region)
-        except Exception as exc:  # noqa: BLE001 - одно окно не валит рендер
-            log.warning("переход мувика на склейке %s (%s) не нарисован: %s", i, item["kind"], exc)
-            out.unlink(missing_ok=True)
-            continue
-        clips[i] = out
-        if report is not None:
-            report.append(done)
+    with _gl_session(plan, work_dir, report) as gl:
+        for item in plan:
+            i = item["join"]
+            out = work_dir / f"fx-join-{i:03d}.mp4"
+            if item["kind"] in GL_FX and gl is None:
+                continue  # браузера с WebGL нет — запасной xfade (причина уже в отчёте)
+            try:
+                done = render_fx_join(parts[i], parts[i + 1], durations[i], durations[i + 1], kind=item["kind"],
+                                      frames=item["frames"], index=i, transition=transition, fps=fps, info=info,
+                                      out_path=out, jump_joins=jump_joins, region=region, gl=gl)
+            except Exception as exc:  # noqa: BLE001 - одно окно не валит рендер
+                log.warning("переход мувика на склейке %s (%s) не нарисован: %s", i, item["kind"], exc)
+                out.unlink(missing_ok=True)
+                if report is not None:
+                    report.append({"join": i, "kind": item["kind"], "fallback": "xfade", "why": str(exc)[:300]})
+                continue
+            clips[i] = out
+            if report is not None:
+                report.append(done)
     return clips
+
+
+@contextmanager
+def _gl_session(plan: list[dict], work_dir: Path, report: list[dict] | None) -> Iterator[Any]:
+    """Браузер с WebGL, если в плане есть шейдерные склейки (один на все); не поднялся — None, стыки xfade."""
+    if not any(item["kind"] in GL_FX for item in plan):
+        yield None
+        return
+    from app.transitions_gl import GlSession
+
+    session = GlSession(work_dir / "gl")
+    try:
+        session.__enter__()
+    except Exception as exc:  # noqa: BLE001 - нет браузера/WebGL — шейдерные стыки пойдут запасным xfade
+        log.warning("шейдерные переходы: браузер не поднялся — запасной xfade: %s", exc)
+        if report is not None:
+            report.extend({"join": item["join"], "kind": item["kind"], "fallback": "xfade", "why": str(exc)[:300]}
+                          for item in plan if item["kind"] in GL_FX)
+        yield None
+        return
+    try:
+        yield session
+    finally:
+        session.close()

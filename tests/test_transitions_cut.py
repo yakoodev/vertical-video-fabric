@@ -56,7 +56,7 @@ def test_cut_kinds_registered_with_ranges_and_options():
     assert fx_frames(FX_DURATIONS["dipblack"], 30) // 2 == 3
     opts = transition_options()["fx"]
     assert opts["ranges"]["whippan"] == [0.13, 0.3] and opts["directions"] == ["left", "right", "up", "down"]
-    assert opts["directional"] == ["whippan", "colorfill"] and opts["fill_color"] == "#6c5cff"
+    assert opts["directional"] == ["whippan", "colorfill", "gl_wipe"] and opts["fill_color"] == "#6c5cff"
     # мувик — прежний общий коридор
     assert normalize_transition({"type": "slash", "duration": 2})["duration"] == 0.6
 

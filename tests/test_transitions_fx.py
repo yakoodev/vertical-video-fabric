@@ -40,8 +40,10 @@ def test_fx_default_and_clamped_durations():
     assert normalize_transition({"type": "panels"})["duration"] == FX_DURATIONS["panels"]
     assert normalize_transition({"type": "slash", "duration": 2})["duration"] == 0.6
     assert normalize_transition({"type": "sparks", "duration": 0.01})["duration"] == 0.1
-    # 6–12 кадров: по умолчанию при 30 и 60 к/с
+    # 6–12 кадров: по умолчанию при 30 и 60 к/с (шейдерные gl_… длиннее — их коридор в test_transitions_gl.py)
     for kind, sec in FX_DURATIONS.items():
+        if kind.startswith("gl_"):
+            continue
         assert 5 <= fx_frames(sec, 30) <= 12, kind
         assert 6 <= fx_frames(sec, 60) <= 24, kind
 

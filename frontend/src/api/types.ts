@@ -235,7 +235,14 @@ export type TransitionType =
   | "fade" | "fadeblack" | "fadewhite"
   | "slide" | "smooth" | "wipe" | "zoom" | "dissolve"
   | "slash" | "panels" | "sparks" | "frag"
-  | "whippan" | "colorfill" | "blurswap" | "dipblack" | "zoomblur";
+  | "whippan" | "colorfill" | "blurswap" | "dipblack" | "zoomblur"
+  | GlTransitionKind;
+
+/** Шейдерные переходы gl-transitions (app/transitions_gl.py): кадры рисует WebGL в рендере. */
+export type GlTransitionKind =
+  | "gl_curtains" | "gl_wipe" | "gl_glass" | "gl_shatter" | "gl_ripple" | "gl_drop" | "gl_tear"
+  | "gl_pixels" | "gl_circle" | "gl_squeeze" | "gl_cube" | "gl_doors" | "gl_swirl" | "gl_glitch"
+  | "gl_page" | "gl_honeycomb" | "gl_grid" | "gl_tvoff" | "gl_burn" | "gl_melt";
 
 /** Переходы мувика, которые рендер рисует кадрами (app/transitions_fx.py). */
 export type FxTransitionKind = "slash" | "panels" | "sparks";
@@ -400,7 +407,8 @@ export interface MontageInsert {
 }
 
 export interface TransitionOptions {
-  types: { key: TransitionType; label: string }[];
+  /** group "gl" — шейдерные (gl-transitions), редактор показывает их отдельной группой. */
+  types: { key: TransitionType; label: string; group?: "gl" }[];
   audio: { key: "smooth" | "hard"; label: string }[];
   sfx: { key: TransitionSettings["sfx"]; label: string }[];
   /** Переходы с фиксированной длиной — для них ползунок длительности не нужен. */
@@ -421,6 +429,8 @@ export interface TransitionOptions {
     directional?: TransitionType[];
     /** Цвет заливки без бренда. */
     fill_color?: string;
+    /** Шейдерные виды (gl-transitions). */
+    gl?: GlTransitionKind[];
   };
 }
 

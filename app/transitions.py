@@ -71,6 +71,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from app.transitions_gl import GL_DIRECTIONAL, GL_KINDS, GL_RANGE, gl_xfade, resolve_gl
+
 # key -> (label, xfade transition name or None for a hard cut)
 TRANSITIONS: dict[str, tuple[str, str | None]] = {
     "cut": ("Встык", None),
@@ -97,22 +99,26 @@ TRANSITIONS: dict[str, tuple[str, str | None]] = {
     "blurswap": ("Смена через размытие", "hblur"),
     "dipblack": ("Затемнение (3 кадра)", "fadeblack"),
     "zoomblur": ("Зум-размытие", "zoomin"),
+    # Шейдерные переходы gl-transitions (app/transitions_gl.py, WebGL кадрами); xfade — запасной вид.
+    **{key: (kind.label, kind.xfade) for key, kind in GL_KINDS.items()},
 }
 
 # Переходы мувика кадрами (app/transitions_fx.py) и их длина по умолчанию, с: срез — быстрый
 # (как в одобренном BURN v4: 9–14 кадров при 60 к/с), панелям нужны въезд, пауза и захват кадра.
 FX_DURATIONS: dict[str, float] = {"slash": 0.2, "panels": 0.4, "sparks": 0.3,
                                    "whippan": 0.2, "colorfill": 0.38, "blurswap": 0.32, "dipblack": 0.2,
-                                   "zoomblur": 0.3}
+                                   "zoomblur": 0.3, **{key: kind.duration for key, kind in GL_KINDS.items()}}
 FX_MIN_DURATION, FX_MAX_DURATION = 0.1, 0.6
 # Свой коридор длины у переходов склеек (короче — не читается, длиннее — вяло); у мувика — общий.
 FX_RANGES: dict[str, tuple[float, float]] = {"whippan": (0.13, 0.3), "colorfill": (0.3, 0.45),
                                              "blurswap": (0.25, 0.4), "dipblack": (0.1, 0.3),
-                                             "zoomblur": (0.2, 0.45)}
+                                             "zoomblur": (0.2, 0.45), **{key: GL_RANGE for key in GL_KINDS}}
 # Виды фраг-мувика (смесь ``frag``) — только они.
 FRAG_KINDS = ("slash", "panels", "sparks")
 # Переходы склеек кадрами (app/transitions_fx_cut.py).
 CUT_FX = ("whippan", "colorfill", "blurswap", "dipblack", "zoomblur")
+# Шейдерные переходы (app/transitions_gl.py): кадры рисует WebGL в headless Chromium.
+GL_FX = tuple(GL_KINDS)
 DIRECTIONS = ("left", "right", "up", "down")
 _DIRECTION_ALIASES = {"left": "left", "влево": "left", "налево": "left", "l": "left", "right": "right",
                       "вправо": "right", "направо": "right", "r": "right", "up": "up", "вверх": "up", "u": "up",
@@ -179,7 +185,7 @@ def normalize_transition(raw: object) -> dict:
     """Coerce stored/requested settings into a complete, safe dict."""
     src = raw if isinstance(raw, dict) else {}
     out = dict(DEFAULT_TRANSITION)
-    kind = str(src.get("type") or "cut")
+    kind = resolve_kind(src.get("type"))
     out["type"] = kind if kind in TRANSITIONS else "cut"
     try:
         duration = float(src.get("duration", DEFAULT_TRANSITION["duration"]))
@@ -217,6 +223,14 @@ def normalize_transition(raw: object) -> dict:
     return out
 
 
+def resolve_kind(name: object) -> str:
+    """Вид перехода по ключу; шейдерные — и по-русски («шторка», «стекло», ``app/transitions_gl.GL_ALIASES``)."""
+    text = str(name or "cut").strip()
+    if text in TRANSITIONS:
+        return text
+    return resolve_gl(text) or text
+
+
 def _kind_duration(kind: str, duration: float, default: bool) -> float:
     """Длина перехода этого вида: резкие — свои, кадрами — их коридор (нет длины — их по умолчанию)."""
     if kind in SNAP_DURATIONS:
@@ -252,7 +266,7 @@ def _join_overrides(raw: object) -> list[dict]:
             index = int(item.get("join"))
         except (TypeError, ValueError):
             continue
-        kind = str(item.get("type") or "")
+        kind = resolve_kind(item.get("type"))
         if index < 0 or kind not in TRANSITIONS or kind == "frag":
             continue
         entry: dict = {"join": index, "type": kind}
@@ -376,6 +390,8 @@ def join_xfade(transition: dict, index: int, jump_joins: list[bool] | None = Non
         return WHIP_XFADES[direction]
     if kind == "colorfill":
         return WIPE_XFADES[direction]
+    if kind in GL_KINDS:
+        return gl_xfade(kind, normalize_direction(join_param(transition, index, "direction", jump_joins)))
     return TRANSITIONS.get(kind, (None, None))[1]
 
 
@@ -864,7 +880,9 @@ def _elapsed(durations: list[float], overlaps: list[float], upto: int) -> float:
 def transition_options() -> dict:
     """What the UI offers — one source of truth for labels."""
     return {
-        "types": [{"key": k, "label": v[0]} for k, v in TRANSITIONS.items()],
+        # group gl — шейдерные (редактор кладёт их отдельной группой списка).
+        "types": [{"key": k, "label": v[0], **({"group": "gl"} if k in GL_KINDS else {})}
+                  for k, v in TRANSITIONS.items()],
         "audio": [{"key": k, "label": v} for k, v in AUDIO_MODES.items()],
         "sfx": [{"key": k, "label": v} for k, v in SFX_KINDS.items()],
         # Раскладка «полоса» (meme): где идёт переход-наплыв.
@@ -876,5 +894,6 @@ def transition_options() -> dict:
                "color": FX_DEFAULT_COLOR, "frag_pattern": list(FRAG_PATTERN), "fixed": ["frag"],
                # Переходы склеек кадрами: коридор длины, направление (хлыст, заливка), цвет заливки.
                "ranges": {k: list(v) for k, v in FX_RANGES.items()}, "directions": list(DIRECTIONS),
-               "directional": ["whippan", "colorfill"], "fill_color": DEFAULT_ACCENT},
+               "directional": ["whippan", "colorfill", *GL_DIRECTIONAL], "fill_color": DEFAULT_ACCENT,
+               "gl": list(GL_KINDS)},
     }
