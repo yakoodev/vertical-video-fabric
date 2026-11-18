@@ -1,5 +1,6 @@
 """Хост-воркер 3D-рендера: берёт у сервиса задания 3D-серий и «клипа на песню» (kind ``music_video``,
-tools/music_video/remote.py), рендерит Blender'ом на этом компьютере, отдаёт mp4.
+tools/music_video/remote.py), рендерит Blender'ом на этом компьютере, отдаёт mp4. Задание 3D-серии с
+``render_backend: threejs``: Blender только ставит позы, кадры рисует three.js в headless Chromium на GPU (нужен node).
 
 В Docker сервиса нет GPU и Blender — поэтому рендер идёт здесь (Windows-хост, RTX). Сервис ставит задание
 («Истории» → 3D-серия → Blender), воркер забирает его, шлёт пульс с процентом (в UI: «рендер на компьютере… N%»),
@@ -166,7 +167,7 @@ def run_job(api: Api, job: dict, worker: str, work_root: Path, cache: Path) -> d
                                should_stop=lambda: pulse.stop)
         pulse.update(1.0, "загрузка mp4")
         result = {"seconds": info.get("seconds"), "frames": info.get("frames"), "rendered": info.get("rendered"),
-                  "cached": info.get("cached"), "chunks": info.get("chunks"), "worker": worker,
+                  "cached": info.get("cached"), "chunks": info.get("chunks"), "worker": worker, "backend": info.get("backend"),
                   "wall_sec": round(time.time() - t0, 1)}
         api.complete(jid, worker, out, result)
         print(f"задание {jid} готово за {result['wall_sec']} с (рендер {info.get('rendered')} кадров, "

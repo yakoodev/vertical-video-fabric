@@ -44,7 +44,8 @@ from app import motion3d as m
 
 from app.series3d_blender_stage import (  # noqa: F401
     S, W, D, H, FRONT, LEFT, PANEL_Y, BTN_X, BTN_Z0, BTN_DZ, BTN_DY, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL,
-    DISPLAY, CEIL_LIGHT, HATCH, REACH, SHOULDER_R, MAX_PRESS_Z, CLIP_LEN, WALK_CLIP, WALK_FEET, MAX_WALK_STEPS,
+    DISPLAY, CEIL_LIGHT, HATCH, HATCH_LID, HATCH_HINGE_Y, LATCH, HATCH_OPEN_DEG, REACH, SHOULDER_R, MAX_PRESS_Z,
+    CLIP_LEN, WALK_CLIP, WALK_FEET, MAX_WALK_STEPS,
     _walk_stance, WALK_STANCE, WALK_CYCLE_UNITS, STEP_LEN, _STANCE_CUM, _v, stance_units, walk_plan, walk_seconds,
     CLIPS_NEEDED, button_pos, reachable, facing, to_world, PRESS_TURN, KNOCK_POINT, press_stand, spot_for, LOCS,
     LOC_NAMES, LOC_TARGETS, loc_of, loc_world, loc_spot, loc_target, FILL_W, RIM_W, EXPOSURE, inside_loc, DOORWAY,
@@ -131,6 +132,10 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(SFX["bell" if c.get("button") == "bell" else "press"], c["t"] - 0.01, "кнопка", "press")
         elif c["kind"] == "knock":
             add(SFX["knock_hit"], c["t"] - 0.01, "удар в дверь", "knock_hit")
+        elif c["kind"] == "hatch":
+            add(SFX["press"], c["t"] - 0.6, "защёлка", "latch")
+            add(SFX["doors_strain"], c["t"], "крышка люка", "hatch")
+            add(SFX["doors_open"], c["t"] + 1.1, "люк открыт", "hatch_open")
         elif c["kind"] == "doors":
             add(SFX["doors_strain"], c["t"], "створки", "doors")
             if c.get("full"):
@@ -188,6 +193,19 @@ def preset(job: dict) -> dict:
     return {"name": name, **QUALITY[name]}
 
 
+# Чем рисовать кадры (``job["render_backend"]``): blender — Eevee, как раньше (по умолчанию); threejs — Blender только
+# ставит позы (тело, IK, лицо, телефон, свет, двери, камера) и выгружает их потоком (tools/blender/series_export.py,
+# формат app/series3d_pose.py), кадры рисует three.js в headless Chromium на GPU (node/scene3d/series_render.mjs).
+RENDER_BACKENDS = ("blender", "threejs")
+DEFAULT_BACKEND = "blender"
+
+
+def backend(job: dict) -> str:
+    """Бэкенд рендера задания (неизвестный — ``DEFAULT_BACKEND``)."""
+    b = str(job.get("render_backend") or DEFAULT_BACKEND).strip().lower()
+    return b if b in RENDER_BACKENDS else DEFAULT_BACKEND
+
+
 def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
     """Какие дорогие эффекты нужны плану: объём — когда в кадре луч фонарика или мигает/гаснет свет; размытие
     движения — шаги, рывок/испуг, стук, двери, тряска камеры; глубина резкости — крупные планы и детали."""
@@ -218,7 +236,8 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
 
 def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
               envelope: list[float] | None = None, lipsync_mode: str = "speaking", quality: str = DEFAULT_QUALITY,
-              look: dict | None = None, seed: int = 7, beats: list[dict] | None = None) -> dict:
+              look: dict | None = None, seed: int = 7, beats: list[dict] | None = None,
+              render_backend: str = DEFAULT_BACKEND) -> dict:
     """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество. ``beats`` —
     биты эпизода: строка «План:» в бите сильнее режиссёра (``app/series3d_blender_plan.py``)."""
     plan = plan_shots(script, words, total, gemini=gemini, client=client, beats=beats)
@@ -227,7 +246,8 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
             "speech": plan["speech"],
             "director_error": plan["director_error"], "envelope": [round(x, 4) for x in (envelope or [])],
             "lipsync": lipsync_mode if lipsync_mode in LIPSYNC_MODES else "speaking",
-            "quality": quality if quality in QUALITY else DEFAULT_QUALITY, "look": look or {}, "seed": int(seed)}
+            "quality": quality if quality in QUALITY else DEFAULT_QUALITY, "look": look or {}, "seed": int(seed),
+            "render_backend": backend({"render_backend": render_backend})}
 
 
 def chunks(perf: dict) -> list[dict]:
@@ -253,9 +273,38 @@ def _code_hash() -> str:
     return h.hexdigest()[:12]
 
 
+THREE_SOURCES = ("tools/blender/series_export.py", "tools/blender/bake_view_lut.py", "app/series3d_pose.py",
+                 "node/scene3d/series_render.mjs", "node/scene3d/render.mjs", "node/scene3d/src/seriesview.ts",
+                 "node/scene3d/src/haze.ts", "node/scene3d/src/dof.ts", "node/scene3d/src/viewlut.ts",
+                 "node/scene3d/src/post.ts", "node/scene3d/src/surfaces.ts")
+# Настройки рисования three.js (спека seriesview.ts): свет, GI, взвесь, размытие движения, ГРИП, пост. Единицы света
+# откалиброваны по кадрам Blender (ч.2, планы 4–8, 16 кадров): lightScale 0.85, areaScale 0.53, haze 0.6 — средняя
+# разница пикселя 19.9 → 14.7 из 255 (tools/series3d_compare.py; «глазной» свет — площадным, как у Blender).
+THREE_SPEC = {"envIntensity": 1.2, "metalEnv": 1.4, "lightScale": 0.85, "areaScale": 0.53, "haze": 0.6, "blurSteps": 6,
+              "shadowMap": 2048, "areaShadow": 0.5,
+              "camFillSpot": False, "camFillRadius": 0.65,
+              "eyeEnv": 0.06, "dofMax": 28, "lut": True, "gi": True, "brushed": True,
+              "post": {"ao": 0.9, "aoRadius": 0.25, "aoScale": 0.5, "bloom": {"strength": 0.32, "radius": 0.55, "threshold": 1.1},
+                       "grade": {"contrast": 1.0, "saturation": 1.0}, "vignette": 0.42, "grain": 0.015, "ca": 0.6}}
+
+
+def _three_hash() -> str:
+    """Код рисования three.js (выгрузка поз + рендер): кадры кэша бэкенда threejs зависят и от него."""
+    root = Path(__file__).resolve().parent.parent
+    h = hashlib.sha1(json.dumps(THREE_SPEC, sort_keys=True).encode())
+    for rel in THREE_SOURCES:
+        p = root / rel
+        if p.is_file():
+            h.update(p.read_bytes())
+    return h.hexdigest()[:12]
+
+
 def chunk_keys(job: dict, perf: dict) -> list[dict]:
-    """Хэш куска — от покадровых дорожек его кадров (+ соседей на наплыв), плана камеры, качества и кода сцены."""
+    """Хэш куска — от покадровых дорожек его кадров (+ соседей на наплыв), плана камеры, качества и кода сцены.
+    Бэкенд threejs добавляет в хэш своё имя и код рисования; у blender хэш прежний (поля не добавляются)."""
     code = _code_hash()
+    be = backend(job)
+    three = _three_hash() if be != "blender" else None
     pr = preset(job)
     fx = shot_fx(perf, pr["fx"])
     rset = {k: pr[k] for k in ("samples", "scale", "frames", "comp_gpu", "blur_steps")}
@@ -275,8 +324,11 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
                           sg["start"] + 60 > a / perf["fps"] - 2],
                 "camera": next((c for c in perf["cameras"] if c["n"] == c_n), None),
                 "look": job.get("look") or {}}
+        if three:
+            blob["backend"] = {"name": be, "code": three}
         key = hashlib.sha1(json.dumps(blob, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
-        out.append({**c, "key": key, "fx": fx.get(c["n"]), "ext": "jpg" if pr["frames"] == "JPEG" else "png"})
+        ext = "jpg" if pr["frames"] == "JPEG" or three else "png"
+        out.append({**c, "key": key, "fx": fx.get(c["n"]), "ext": ext})
     return out
 
 
@@ -411,6 +463,126 @@ def split_chunks(keys: list[dict], todo: dict[str, list[int]], workers: int) -> 
     return [g for g in groups if g]
 
 
+def _run_logged(cmd: list[str], log_path: Path, on_progress: Callable[[int, int], Any], should_stop: Callable[[], bool] | None,
+                deadline: float, cwd: Path | None = None) -> tuple[int, str | None]:
+    """Процесс со строками ``PROGRESS n total`` в stdout: лог в файл, прогресс наружу; отмена/лимит — убить только
+    этот процесс (по его PID). → (код выхода, причина остановки или None)."""
+    stop = None
+    with log_path.open("w", encoding="utf-8", errors="replace") as log:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8",
+                                errors="replace", cwd=str(cwd) if cwd else None)
+        assert proc.stdout is not None
+        try:
+            for line in proc.stdout:
+                log.write(line)
+                if not line.startswith("PROGRESS "):
+                    continue
+                log.flush()
+                parts = line.split()
+                try:
+                    on_progress(int(parts[1]), int(parts[2]))
+                except (IndexError, ValueError):
+                    pass
+                if should_stop is not None and should_stop():
+                    stop = "рендер остановлен (задание отменено) — готовые кадры в кэше"
+                elif time.time() > deadline:
+                    stop = "рендер дольше лимита — остановлен (кадры в кэше, повторный запуск продолжит)"
+                if stop:
+                    proc.kill()
+                    break
+        finally:
+            code = proc.wait()
+    return code, stop
+
+
+def node_bin() -> str | None:
+    return os.environ.get("NODE_BIN") or shutil.which("node")
+
+
+def seriesview_bundle() -> Path:
+    """Бандл рисования three.js (``npm run build:seriesview``); нет или старше исходников — собрать esbuild'ом."""
+    root = Path(__file__).resolve().parent.parent
+    out = root / "node" / "scene3d" / "dist" / "seriesview.js"
+    src = sorted((root / "node" / "scene3d" / "src").glob("*.ts"))
+    if out.is_file() and all(p.stat().st_mtime <= out.stat().st_mtime for p in src):
+        return out
+    esb = next((d / "node_modules" / "esbuild" / "bin" / "esbuild" for d in [root, *root.parents]
+                if (d / "node_modules" / "esbuild" / "bin" / "esbuild").is_file()), None)
+    node = node_bin()
+    if esb is None or node is None:
+        raise RenderError("нет esbuild/node для бандла seriesview.js — npm install, потом npm run build:seriesview")
+    subprocess.run([node, str(esb), str(root / "node" / "scene3d" / "src" / "seriesview.ts"), "--bundle", "--format=iife",
+                    "--platform=browser", "--target=chrome110", "--minify", f"--outfile={out}", "--log-level=warning"],
+                   check=True, cwd=str(root))
+    return out
+
+
+def three_plan(job: dict, keys: list[dict], todo: dict[str, list[int]], pose: Path, cache: Path, work: Path,
+               bundle: Path | str) -> dict:
+    """План рисования для ``node/scene3d/series_render.mjs``: куски с недостающими кадрами, размер кадра пресета."""
+    pr = preset(job)
+    scale = float(pr.get("scale", 100))
+    return {"dir": str(pose), "cache": str(cache), "bundle": str(bundle), "gl": os.environ.get("SERIES3D_THREE_GL", "gpu"),
+            "width": int(round(1080 * scale / 100 / 2)) * 2, "height": int(round(1920 * scale / 100 / 2)) * 2, "quality": 95,
+            "spec": THREE_SPEC, "timing": str(work / "three_timing.json"),
+            "chunks": [{**{k: c[k] for k in ("key", "n", "f0", "f1", "fx", "ext")}, "todo": todo[c["key"]]}
+                       for c in keys if c["key"] in todo]}
+
+
+def render_threejs(job: dict, perf: dict, keys: list[dict], todo: dict[str, list[int]], *, work: Path, cache: Path, exe: str,
+                   base: dict, progress: Callable[[float, str], Any] | None = None,
+                   should_stop: Callable[[], bool] | None = None, timeout: float = 4 * 3600) -> dict:
+    """Бэкенд threejs: (1) один Blender собирает сцену и выгружает позы нужных кадров без рендера (``work/pose``);
+    (2) один Chromium рисует кадры в кэш кусков. Строго по очереди — тяжёлый процесс один (память ПК)."""
+    from app import series3d_pose as PZ
+
+    t0 = time.time()
+    deadline = t0 + timeout
+    root = Path(__file__).resolve().parent.parent
+    pose = work / "pose"
+    pose.mkdir(parents=True, exist_ok=True)
+    for name in ("frames.bin", "scene.json", "scene.glb"):
+        (pose / name).unlink(missing_ok=True)
+    frames = PZ.export_frames(keys, todo)
+    total = sum(len(v) for v in todo.values())
+    cfg = {**base, "out_dir": str(work), "backend": "threejs", "chunks": keys, "todo": {}, "pose_frames": frames,
+           "export_dir": str(pose)}
+    (work / "report.json").unlink(missing_ok=True)
+    (work / "config.json").write_text(json.dumps(cfg, ensure_ascii=False, indent=1), "utf-8")
+    scene = root / "tools" / "blender" / "series_scene.py"
+
+    def say(p: float, note: str) -> None:
+        if progress:
+            progress(p, note)
+
+    say(0.0, f"Blender: позы {len(frames)} кадров (без рендера), потом three.js: {total} кадров")
+    code, stop = _run_logged([exe, "-b", "--factory-startup", "-P", str(scene), "--", "--config", str(work / "config.json")],
+                             work / "blender.log", lambda n, m: say(0.25 * n / max(1, m), f"позы {n}/{m}"), should_stop, deadline)
+    if stop:
+        raise RenderError(stop)
+    if code != 0 or not (pose / "frames.bin").is_file():
+        tail = (work / "blender.log").read_text("utf-8", errors="replace")[-600:]
+        raise RenderError(f"Blender (позы) упал (код {code}). {tail}")
+    t_pose = round(time.time() - t0, 1)
+    node = node_bin()
+    if not node:
+        raise RenderError("нет node для рендера three.js (NODE_BIN)")
+    plan = three_plan(job, keys, todo, pose, cache, work, seriesview_bundle())
+    (work / "three_plan.json").write_text(json.dumps(plan, ensure_ascii=False), "utf-8")
+    t1 = time.time()
+    code, stop = _run_logged([node, str(root / "node" / "scene3d" / "series_render.mjs"), "--plan", str(work / "three_plan.json")],
+                             work / "three.log", lambda n, m: say(0.25 + 0.74 * n / max(1, m), f"кадр {n}/{m} (three.js)"),
+                             should_stop, deadline)
+    if stop:
+        raise RenderError(stop)
+    if code != 0:
+        tail = (work / "three.log").read_text("utf-8", errors="replace")[-800:]
+        raise RenderError(f"three.js-рендер упал (код {code}); кадры в кэше — повторный запуск продолжит. {tail}")
+    timing = json.loads((work / "three_timing.json").read_text("utf-8")) if (work / "three_timing.json").is_file() else {}
+    return {"pose_sec": t_pose, "render_sec": round(time.time() - t1, 1), "frames": total, "pose_frames": len(frames),
+            "ms_per_frame": timing.get("ms_per_frame"), "black": timing.get("black"), "warnings": timing.get("warnings")}
+
+
 def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Path | str | None = None,
                  blender: str | None = None, progress: Callable[[float, str], Any] | None = None,
                  only: list[int] | None = None, stills: list[int] | None = None, timeout: float = 4 * 3600,
@@ -418,7 +590,8 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
     """Рендер серии Blender'ом здесь: сцена один раз на процесс → недостающие кадры кусков в кэш (возобновляемо)
     → склейка в mp4 без звука. ``progress(доля 0..1, заметка)``; ``only`` — номера планов; ``stills`` — только эти
     кадры (номера с 1, PNG в ``work``) для проверки; ``should_stop()`` — True: остановить Blender (отмена задания);
-    ``workers`` — процессов Blender (по умолчанию из пресета: куски делятся между ними)."""
+    ``workers`` — процессов Blender (по умолчанию из пресета: куски делятся между ними). Бэкенд ``threejs``
+    (``job["render_backend"]``, см. ``render_threejs``): Blender только ставит позы, кадры рисует three.js; склейка та же."""
     import threading
 
     work = Path(work)
@@ -486,6 +659,14 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
             tail = (wdir / "blender.log").read_text("utf-8", errors="replace")[-600:]
             stop["err"] = f"Blender упал (код {code}); кадры в кэше — повторный запуск продолжит. {tail}"
 
+    if backend(job) == "threejs" and not stills:
+        three = None
+        if total_missing:
+            three = render_threejs(job, perf, keys, todo, work=work, cache=cache, exe=exe, base=base, progress=progress,
+                                   should_stop=should_stop, timeout=timeout)
+        reports = [json.loads(p_.read_text("utf-8")) for p_ in sorted(work.glob("report.json"))] if total_missing else []
+        report = {**(reports[0] if reports else {}), "backend": "threejs", **({"threejs": three} if three else {})}
+        return _stitch(job, perf, keys, cache, work, out_mp4, pr, t0, total_missing, report, 1, progress)
     if total_missing or stills:
         for old in [work / "report.json", *work.glob("w*/report.json")]:
             old.unlink(missing_ok=True)   # отчёт прошлого прогона (другие планы) не выдавать за этот
@@ -508,6 +689,12 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
     if stills:
         return {"ok": True, "stills": [str(work / f"still_{int(f):04d}.png") for f in stills], "report": report,
                 "seconds": render_sec}
+    return _stitch(job, perf, keys, cache, work, out_mp4, pr, t0, total_missing, report, len(groups), progress)
+
+
+def _stitch(job: dict, perf: dict, keys: list[dict], cache: Path, work: Path, out_mp4: Path | str, pr: dict, t0: float,
+            total_missing: int, report: dict, processes: int, progress: Callable[[float, str], Any] | None) -> dict:
+    """Кадры кусков из кэша → mp4 без звука (общая склейка обоих бэкендов)."""
     left = missing_frames(cache, keys)
     if left:
         raise RenderError(f"не дорисованы куски: {', '.join(list(left)[:5])} — повторный запуск продолжит")
@@ -543,7 +730,7 @@ def render_local(job: dict, out_mp4: Path | str, *, work: Path | str, cache: Pat
         progress(1.0, "склеено")
     return {"ok": True, "out": str(out), "frames": n, "rendered": total_missing, "cached": n - total_missing,
             "seconds": round(time.time() - t0, 1), "encode_sec": round(time.time() - t_enc, 1), "report": report,
-            "chunks": len(keys), "preset": pr["name"], "processes": len(groups)}
+            "chunks": len(keys), "preset": pr["name"], "processes": processes, "backend": backend(job)}
 
 
 # --------------------------------------------------------------------------- #

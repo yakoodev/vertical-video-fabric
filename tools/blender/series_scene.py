@@ -12,6 +12,9 @@
 (правая жмёт и стучит); двери раздвигаются, за ними — шахта с краем этажа; камера — по плану кадра с наведением на
 настоящую голову и поправкой, чтобы лицо было выше субтитров.
 
+С ``backend: threejs`` в конфиге — не рендерит, а выгружает сцену и позы кадров ``pose_frames`` в ``export_dir``
+(``series_export.py``, формат ``app/series3d_pose.py``); кадры рисует three.js (``node/scene3d/series_render.mjs``).
+
 Кадры: ``<cache>/<ключ куска>/f_<номер кадра серии>.png`` — уже готовые пропускаются (дописанные до конца PNG,
 оборванный кадр рисуется заново), упавший рендер продолжает с того же кадра. ``PROGRESS n`` в stdout.
 """
@@ -473,6 +476,13 @@ def build_lights(L, perf, frames, phone):
     dw = B.DOOR_W
     kit.fcurve(L["door_l"], "location", 0, frames, [-dw / 4 - lt[i]["doors"] for i in range(n)])
     kit.fcurve(L["door_r"], "location", 0, frames, [dw / 4 + lt[i]["doors"] for i in range(n)])
+    # люк в потолке: защёлка поворачивается, крышка поднимается на петле (поля есть только у серий с люком)
+    if any(lt[i].get("hatch") or lt[i].get("latch") for i in range(n)):
+        kit.fcurve(L["hatch_hinge"], "rotation_euler", 0, frames,
+                   [-math.radians(B.HATCH_OPEN_DEG) * lt[i].get("hatch", 0.0) for i in range(n)])
+        kit.fcurve(L["hatch_latch"], "rotation_euler", 2, frames, [math.radians(90) * lt[i].get("latch", 0.0) for i in range(n)])
+        # в открытый люк видно шахту: тусклый холодный отсвет сверху на тросах
+        kit.fcurve(L["above_light"].data, "energy", 0, frames, [6.0 * lt[i].get("hatch", 0.0) for i in range(n)])
     # телефон: экран (на лицо) + фонарик (луч в объёме)
     flash = kit.make_light("phone_flash", "SPOT", (0.86, 0.92, 1.0), 0.0, (0, 0, 0), size=0.004,
                            spot=(math.radians(30), 0.25), volume=8.0)
@@ -973,7 +983,15 @@ def main():
         report["exported"] = export_frames(Path(CFG.get("export_dir") or out_dir / "export"),
                                            [int(f) for f in CFG["export_frames"]], cam)
     stills = CFG.get("stills")
-    if stills:
+    if CFG.get("backend") == "threejs":
+        # «Blender ставит позу, three.js рисует»: сцена и позы кадров — в поток (series_export.py), без рендера
+        import series_export
+
+        t_r = time.time()
+        report["pose"] = series_export.export_pose(Path(CFG["export_dir"]), [int(f) for f in CFG["pose_frames"]], cam, arm,
+                                                   face_pts, CFG.get("chunks") or [], log=log)
+        report["render_sec"], report["rendered"] = round(time.time() - t_r, 1), 0
+    elif stills:
         t_r = time.time()
         try:
             sc.render.motion_blur_position = "END"

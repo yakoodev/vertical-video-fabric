@@ -30,6 +30,8 @@ export interface HazeSpec {
   extinction: number;
   anisotropy?: number;
   steps?: number;
+  /** Готовая глубина сцены (общий проход глубины, seriesview.ts) — тогда свой проход глубины не нужен. */
+  depth?: THREE.DepthTexture;
 }
 
 const MAX = 8;
@@ -41,18 +43,21 @@ export class HazePass extends Pass {
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
   private blank = new THREE.MeshBasicMaterial({ colorWrite: false });
+  private external: boolean;
 
   constructor(scene: THREE.Scene, camera: THREE.PerspectiveCamera, W: number, H: number, spec: HazeSpec, lights: HazeLight[]) {
     super();
     this.scene = scene;
     this.camera = camera;
-    this.depthRT = new THREE.WebGLRenderTarget(W, H, { depthTexture: new THREE.DepthTexture(W, H, THREE.FloatType) });
+    this.external = !!spec.depth;
+    this.depthRT = new THREE.WebGLRenderTarget(this.external ? 1 : W, this.external ? 1 : H,
+      { depthTexture: new THREE.DepthTexture(this.external ? 1 : W, this.external ? 1 : H, THREE.FloatType) });
     const n = Math.min(MAX, lights.length);
     const arr = (f: (l: HazeLight) => THREE.Vector3) => Array.from({ length: MAX }, (_, i) => (i < n ? f(lights[i]) : new THREE.Vector3()));
     this.mat = new THREE.ShaderMaterial({
       defines: { STEPS: spec.steps ?? 48, MAXL: MAX },
       uniforms: {
-        tDiffuse: { value: null }, tDepth: { value: this.depthRT.depthTexture },
+        tDiffuse: { value: null }, tDepth: { value: spec.depth || this.depthRT.depthTexture },
         projInv: { value: new THREE.Matrix4() }, camWorld: { value: new THREE.Matrix4() }, camPos: { value: new THREE.Vector3() },
         boxMin: { value: new THREE.Vector3(...spec.boxMin) }, boxMax: { value: new THREE.Vector3(...spec.boxMax) },
         sigmaS: { value: spec.scatter }, sigmaT: { value: spec.extinction }, g: { value: spec.anisotropy ?? 0.45 },
@@ -114,9 +119,45 @@ export class HazePass extends Pass {
     this.quad = new FullScreenQuad(this.mat);
   }
 
+  /** Источники на этот кадр (сила меняется по кадрам: мигание, блэкаут); больше MAX — самые сильные. */
+  setLights(lights: HazeLight[]) {
+    const ls = [...lights].sort((a, b) => b.power - a.power).slice(0, MAX);
+    const u = this.mat.uniforms;
+    u.nL.value = ls.length;
+    ls.forEach((l, i) => {
+      u.lPos.value[i].copy(l.pos);
+      u.lDir.value[i].copy(l.dir ? l.dir.clone().normalize() : new THREE.Vector3(0, -1, 0));
+      u.lCol.value[i].set(l.color.r, l.color.g, l.color.b).multiplyScalar(l.power);
+      if (l.angle === undefined) u.lCone.value[i].set(-2, -1, 0);
+      else u.lCone.value[i].set(Math.cos(l.angle), Math.cos(l.angle * (1 - (l.penumbra ?? 0))), 0);
+    });
+  }
+
+  /** Коробка объёма и плотность (плотность взвеси кабины меняется по кадрам). */
+  setVolume(boxMin: number[], boxMax: number[], density: number, anisotropy = 0.45) {
+    const u = this.mat.uniforms;
+    u.boxMin.value.set(boxMin[0], boxMin[1], boxMin[2]);
+    u.boxMax.value.set(boxMax[0], boxMax[1], boxMax[2]);
+    // Principled Volume Blender: цвет 0.5 → рассеяние ≈ половина плотности, ослабление = плотность
+    u.sigmaS.value = density * 0.5;
+    u.sigmaT.value = density;
+    u.g.value = anisotropy;
+  }
+
   render(renderer: THREE.WebGLRenderer, writeBuffer: THREE.WebGLRenderTarget, readBuffer: THREE.WebGLRenderTarget) {
     const cam = this.camera;
     cam.updateMatrixWorld();
+    if (!this.external) this.renderDepth(renderer, cam);
+    const u = this.mat.uniforms;
+    u.tDiffuse.value = readBuffer.texture;
+    u.projInv.value.copy(cam.projectionMatrixInverse);
+    u.camWorld.value.copy(cam.matrixWorld);
+    u.camPos.value.setFromMatrixPosition(cam.matrixWorld);
+    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
+    this.quad.render(renderer);
+  }
+
+  private renderDepth(renderer: THREE.WebGLRenderer, cam: THREE.PerspectiveCamera) {
     // глубина сцены без слоя эффектов (лучи/ореолы прозрачные — объём за ними не обрезаем)
     const layers = cam.layers.mask;
     cam.layers.set(0);
@@ -129,12 +170,5 @@ export class HazePass extends Pass {
     this.scene.overrideMaterial = ov;
     this.scene.background = bg;
     cam.layers.mask = layers;
-    const u = this.mat.uniforms;
-    u.tDiffuse.value = readBuffer.texture;
-    u.projInv.value.copy(cam.projectionMatrixInverse);
-    u.camWorld.value.copy(cam.matrixWorld);
-    u.camPos.value.setFromMatrixPosition(cam.matrixWorld);
-    renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
-    this.quad.render(renderer);
   }
 }

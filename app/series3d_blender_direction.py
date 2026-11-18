@@ -24,13 +24,14 @@ ACTIONS = {
     "phone_light": "светить фонариком телефона",
     "look_display": "посмотреть на табло этажа над дверью",
     "look_ceiling": "посмотреть на потолок/люк",
+    "open_hatch": "открыть люк в потолке кабины изнутри: повернуть защёлку и толкнуть крышку вверх",
     "look_camera": "посмотреть в камеру — обращается к зрителю",
     "flinch": "вздрогнуть от испуга",
     "shout": "кричать/звать на помощь",
     "listen": "прислушиваться",
     "wait": "ждать",
 }
-TARGETS = ("panel", "doors", "corner", "center", "display")
+TARGETS = ("panel", "doors", "corner", "center", "display", "hatch")
 BUTTONS = tuple(str(n) for n in range(1, 13)) + ("bell", "all")
 EMOTIONS = {
     # брови вверх (−1..1), «домиком» (−1 — сведены, сердито .. 1), глаза шире (−1 прищур .. 1)
@@ -60,13 +61,14 @@ CAMERA_PREFS = {
     "phone_light": ("ots", "face", "overhead"),
     "look_display": ("detail", "ots", "face"),
     "look_ceiling": ("face", "overhead"),
+    "open_hatch": ("detail", "overhead", "face"),
     "look_camera": ("face", "overhead"),
     "flinch": ("face", "overhead"),
     "shout": ("face", "ots"),
     "listen": ("face", "ots", "overhead"),
     "wait": ("overhead", "face"),
 }
-HAND_ACTIONS = ("press_button", "knock", "pry_doors")
+HAND_ACTIONS = ("press_button", "knock", "pry_doors", "open_hatch")
 SIT_OK = ("sit_corner", "wait", "listen", "look_display", "look_ceiling", "look_camera", "phone_out", "phone_light",
           "flinch", "shout", "stand_up")
 
@@ -88,6 +90,8 @@ _RX = {
     "phone": r"телефон|заряд|связи|сети нет|смартфон|звонит|позвон",
     "display": r"табло|цифр|этаж",
     "ceiling": r"потол|\bлюк|сверху|наверх|над голов|\bтрос|крыш",
+    "hatch": r"(откр|толкн|поверн|отодвин|сдвин|отщ[её]лкн|подн)\w*\s.{0,25}(люк|защ[её]лк|задвижк|крышк)|"
+             r"(люк|защ[её]лк|задвижк)\w*\s.{0,25}(откр|подда|поверн|щ[её]лкн|скрипн)",
     "listen": r"слыш|слуша|голос|шаг|тишин|шорох|постуча|стук",
     "flinch": r"дерн|тряс|рывок|тряхн|качну|опусти|провали|\bупал|рухну|грохн",
     "wait": r"ждал|ждет|ждать|минут|\bчас\b|сберечь|\bсил",
@@ -113,7 +117,9 @@ def rule_choice(shot: dict, events: list[dict], dark: bool) -> dict:
     role = shot.get("role") or ""
     kinds = {e["kind"] for e in events}
     action, target, button = "wait", "center", "1"
-    if re.search(_RX["pry"], low):
+    if re.search(_RX["hatch"], low):
+        action, target = "open_hatch", "hatch"
+    elif re.search(_RX["pry"], low):
         action, target = "pry_doors", "doors"
     elif re.search(_RX["press"], low) or re.search(_RX["bell"], low):
         action, target, button = "press_button", "panel", button_from_text(low)

@@ -28,7 +28,13 @@ DOOR_NORMAL = (0.0, 1.0, 0.0)
 
 DISPLAY = (0.0, FRONT + 0.03, 1.93)
 CEIL_LIGHT = (0.0, 0.05, H - 0.02)
-HATCH = (0.25, 0.30, H)            # люк в потолке
+HATCH = (0.25, 0.30, H)            # люк в потолке (точка взгляда «на потолок», как было — кэш старых серий)
+# Люк открывается изнутри: крышка 0.40 × 0.40 на петле по дальнему краю (y = HATCH_HINGE_Y) поднимается вверх, под ней
+# защёлка-ручка поворачивается на 90°. Над кабиной — тёмная шахта с тросами (series_lift.py).
+HATCH_LID = (0.37, 0.62, H)
+HATCH_HINGE_Y = HATCH_LID[1] + 0.20
+LATCH = (HATCH_LID[0], HATCH_LID[1], H - 0.03)
+HATCH_OPEN_DEG = 110.0
 
 
 REACH = (0.242 + 0.259 + 0.074 + 0.10) * S
@@ -155,6 +161,9 @@ def spot_for(name: str) -> tuple[tuple[float, float], float]:
         return (0.47, 0.50), m.heading_of((-0.55, -1.0))
     if name == "display":
         return (0.05, -0.25), 0.0
+    if name == "hatch":
+        # под люком, лицом к задней стене: защёлка над головой чуть впереди
+        return (HATCH_LID[0], HATCH_LID[1] - 0.22), math.pi
     return (0.0, 0.05), 0.0   # center
 
 
@@ -168,7 +177,8 @@ def spot_for(name: str) -> tuple[tuple[float, float], float]:
 LOCS: dict[str, dict] = {
     "cabin": {"label": "кабина лифта", "origin": (0.0, 0.0),
               "bounds": (LEFT + 0.06, -LEFT - 0.06, FRONT + 0.06, D / 2 - 0.06, 0.12, H - 0.1),
-              "props": ("кнопки", "табло", "двери лифта", "люк", "поручни", "аварийный свет"),
+              "props": ("кнопки", "табло", "двери лифта", "люк в потолке (открывается изнутри, защёлка поворачивается)",
+                        "поручни", "аварийный свет", "тросы над кабиной (видны в открытый люк)"),
               "keywords": r"кабин|лифт\w*(?! шахт)|кнопк|табло|поручн",
               "spots": {}, "targets": {}},
     "shaft": {"label": "шахта лифта (на крыше кабины)", "origin": (12.0, 0.0), "bounds": (-1.05, 1.05, -1.15, 1.15, 0.2, 3.2),
@@ -230,7 +240,7 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
     """Точка интереса локации (мир): key — главная вещь (надпись, номер этажа, тросы), ceiling, sound, …"""
     if loc == "cabin":
         cab = {"key": DISPLAY, "display": DISPLAY, "ceiling": HATCH, "sound": (0.05, DOOR_FACE_Y, 0.8),
-               "doors": (0.0, DOOR_FACE_Y, 0.8)}
+               "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH_LID, "latch": LATCH}
         return cab.get(name) or default or DISPLAY
     t = loc_of(loc)["targets"]
     p = t.get(name) or t.get("key")
@@ -254,7 +264,7 @@ def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
 # Что фраза называет → что сцена показывает (точка для проверки «видно в кадре»): по словам и реквизиту Gemini.
 SHOW_WORDS = (("лампочк|лампа|светильник", "lamp"), ("календар|надпис|на стене|1998|цифр\\w* на стен", "decal"),
               ("двер|\\bствор", "doors"), ("\\bтрос", "cables"), ("противовес", "counterweight"), ("номер", "decal"),
-              ("\\bлюк", "hatch"), ("стен\\w* шахт", "wall"), ("\\bщит|электрощит", "cabinet"), ("\\bмотор|лебёдк|лебедк", "key"),
+              ("\\bлюк", "hatch"), ("защ[её]лк|задвижк", "latch"), ("стен\\w* шахт", "wall"), ("\\bщит|электрощит", "cabinet"), ("\\bмотор|лебёдк|лебедк", "key"),
               ("коридор|\\bпроход[аеу]?\\b|в глубин", "deep"), ("табло", "display"), ("кнопк", "buttons"), ("квартир", "apartment"))
 
 
@@ -281,8 +291,8 @@ def show_items(loc: str, shot: dict) -> list[dict]:
             continue
         seen.add(name)
         if loc == "cabin":
-            pt = {"display": DISPLAY, "buttons": button_pos("1"), "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH,
-                  "lamp": CEIL_LIGHT}.get(name)
+            pt = {"display": DISPLAY, "buttons": button_pos("1"), "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH_LID,
+                  "latch": LATCH, "lamp": CEIL_LIGHT, "cables": (HATCH_LID[0], HATCH_LID[1], H + 0.6)}.get(name)
         else:
             t = loc_of(loc)["targets"]
             pt = loc_world(loc, t[name]) if name in t else None

@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import math
 
+import bpy
+
 import hero_shot as kit
 from app import series3d_blender as B
 
@@ -35,10 +37,36 @@ def build_lift(fonts, floors: list[str]):
     cl = B.CEIL_LIGHT
     kit.box("ceil_diffuser", (0.86, 0.86, 0.012), (cl[0], cl[1], H - 0.006), L["ceil_mat"], bevel=0.002)
     kit.box("ceil_frame", (0.92, 0.92, 0.01), (cl[0], cl[1], H - 0.004), steel_dark, bevel=0.002)
-    # люк в потолке (над правым задним углом): рамка и крышка
-    hx, hy = B.HATCH[0] + 0.12, B.HATCH[1] + 0.32
+    # люк в потолке (над правым задним углом): рамка, проём в потолке, крышка на петле по дальнему краю и защёлка-ручка
+    # под ней. Крышку поднимает дорожка lights.hatch (0..1 → HATCH_OPEN_DEG), ручку поворачивает lights.latch (0..1 → 90°)
+    hx, hy = B.HATCH_LID[0], B.HATCH_LID[1]
     kit.box("hatch_frame", (0.44, 0.44, 0.012), (hx, hy, H - 0.006), steel_dark, bevel=0.003)
-    kit.box("hatch_lid", (0.40, 0.40, 0.012), (hx, hy, H - 0.009), steel, bevel=0.004)
+    hole = kit.principled("hatch_hole", kit.hexc("#030304"), rough=1.0)
+    kit.box("hatch_hole", (0.40, 0.40, 0.05), (hx, hy, H + 0.03), hole, bevel=0)   # тёмная шахта над проёмом
+    hinge = kit.link(bpy.data.objects.new("hatch_hinge", None))
+    hinge.location = (hx, B.HATCH_HINGE_Y, H - 0.003)
+    lid = kit.box("hatch_lid", (0.40, 0.40, 0.012), (0, -0.20, -0.006), steel, bevel=0.004)
+    lid.parent = hinge
+    for i, x in enumerate((-0.12, 0.12)):     # петли
+        h_ = kit.cylinder(f"hatch_knuckle{i}", 0.008, 0.05, (x, 0.0, 0.0), steel_dark, rot=(0, math.radians(90), 0), verts=12)
+        h_.parent = hinge
+    latch = kit.link(bpy.data.objects.new("hatch_latch", None))
+    latch.parent = hinge
+    latch.location = (0.0, -0.20, -0.012)
+    knob = kit.cylinder("hatch_latch_hub", 0.018, 0.012, (0, 0, -0.006), steel_dark, verts=20, bevel=0.002)
+    knob.parent = latch
+    bar = kit.box("hatch_latch_bar", (0.11, 0.022, 0.016), (0.035, 0, -0.016), kit.principled("latch_paint", kit.hexc("#c23a1c"),
+                  rough=0.45), bevel=0.004)
+    bar.parent = latch
+    L["hatch_hinge"], L["hatch_latch"] = hinge, latch
+    # над кабиной (видно в открытый люк): тросы подвеса, балка-траверса, тусклый холодный отсвет сверху
+    for i, x in enumerate((-0.05, 0.0, 0.05)):
+        kit.cylinder(f"cab_rope{i}", 0.009, 4.0, (x, 0.0, H + 2.15), steel_dark, verts=10)
+    kit.box("cab_crosshead", (W - 0.1, 0.16, 0.12), (0, 0.0, H + 0.16), steel_dark, bevel=0.01)
+    for i, y in enumerate((hy - 0.35, hy + 0.3)):
+        kit.cylinder(f"cab_far_rope{i}", 0.007, 5.0, (hx + 0.25, y, H + 2.6), steel_dark, verts=8)
+    L["above_light"] = kit.make_light("above_hatch", "POINT", (0.6, 0.7, 0.9), 0.0, (hx + 0.1, hy, H + 1.6), size=0.3,
+                                      shadow=False, volume=0.0)
 
     def panels(axis, coord, normal_sign, span, n, height_z=(0.10, H - 0.02)):
         lo, hi = span
