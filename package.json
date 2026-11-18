@@ -22,6 +22,9 @@
   "devDependencies": {
     "@pixiv/three-vrm": "3.5.5",
     "esbuild": "0.28.2",
-    "three": "0.185.0"
+    "three": "0.185.0",
+    "three-gpu-pathtracer": "0.0.27",
+    "three-mesh-bvh": "0.9.17",
+    "xatlas-web": "0.1.0"
   }
 }
