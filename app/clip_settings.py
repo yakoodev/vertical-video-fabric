@@ -197,7 +197,16 @@ def normalize_render_settings(raw: object) -> dict:
         # Концовка-баннер {duration, blur, dim, template|svg_asset_id, asset_id, тексты} или None
         # (app/end_screen.py): размытие основы на хвосте + слой end_banner. Рендер читает из плана.
         "end_screen": _end_screen(src),
+        # Стиль ролика (app/style_cards.py, apply_style): {id, version, entrances, templates, theme} или None.
+        # Входы новых текстов без своего in берутся отсюда (add_layers).
+        "style": _style_mark(src.get("style")),
     }
+
+
+def _style_mark(raw: object) -> dict | None:
+    from app.style_cards import normalize_style_mark
+
+    return normalize_style_mark(raw)
 
 
 def _end_screen(src: dict) -> dict | None:

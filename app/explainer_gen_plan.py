@@ -17,7 +17,7 @@ def plan_schema() -> dict:
         "beats": {"type": "array", "items": {"type": "object", "properties": {
             "i": {"type": "integer"}, "pose_id": {"type": "integer"}, "new_pose_key": {"type": "string"},
             "chip": {"type": "string"}, "chip_word": {"type": "string"},
-            "emphasis": {"type": "array", "items": {"type": "string"}}},
+            "emphasis": {"type": "array", "items": {"type": "string"}}, "graphic": {"type": "string"}},
             "required": ["i", "pose_id"]}},
         "new_poses": {"type": "array", "items": {"type": "object", "properties": {
             "key": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"},
@@ -36,12 +36,92 @@ def plan_context(store: Any, video: dict, beats: list[dict], poses: list[dict]) 
     mascot = E.get_mascot(store, int(video["mascot_id"]))
     text_all = " ".join(b["text"] for b in beats)
     ranked = [p for p, _s in E.candidates(poses, text_all, k=80)] if len(poses) > 80 else poses
+    hints = graphic_hints(beats)
     return {"mascot": {"name": mascot["name"], "what": mascot["identity_card"], "persona": mascot["persona"]},
             "topic": video["topic"], "library": _library_brief(ranked),
             "beats": [{"i": b["i"], "text": b["text"], "section": b["section"],
                        **({"point_start": b["point_start"]} if b.get("point_start") else {}),
+                       **({"graphic_hint": _hint_brief(hints[b["i"]])} if b["i"] in hints else {}),
                        "candidates": [p["id"] for p, s in E.candidates(poses, b["text"], 6) if s > 0]}
                       for b in beats]}
+
+
+# --------------------------------------------------------------------------- #
+# Графика по типу фразы (app/phrase_graphics.py): подсказка на ключевых битах
+# --------------------------------------------------------------------------- #
+
+
+def graphic_hints(beats: list[dict]) -> dict[int, dict]:
+    """Подсказки графики на ключевых битах: тип фразы и компактные шаблоны, годные поверх совы. Бит пункта (плашка
+    «#N») и число (чип) уже со своим элементом — им шаблон не нужен: подсказка говорит, чем он показан."""
+    from app import phrase_graphics as PG
+
+    # Тип — по целой фразе: бит бывает частью предложения («Раньше я засыпал в три ночи, | а теперь в одиннадцать.»),
+    # подсказка — первому биту фразы.
+    groups: list[list[dict]] = []
+    for b in beats:
+        if not groups or re.search(r"[.!?…]\s*$", groups[-1][-1]["text"]) or b.get("point_start"):
+            groups.append([])
+        groups[-1].append(b)
+    phrases, t = [], 0.0
+    for group in groups:
+        dur = sum(float(b.get("est_sec") or max(0.8, len(b["text"]) / PG.CHARS_PER_SEC)) for b in group)
+        phrases.append({"text": " ".join(b["text"] for b in group), "start": round(t, 2), "end": round(t + dur, 2)})
+        t += dur
+    rows = PG.suggest(phrases, owl=True)
+    out: dict[int, dict] = {}
+    for group, row in zip(groups, rows):
+        beat = group[0]
+        if not row["key"]:
+            continue
+        hint = {"type": row["type"], "label": row["label"], "why": row["why"], "candidates": row["candidates"]}
+        if beat.get("point_start") or beat.get("badge"):
+            hint.update(candidates=[], shown_by="badge")
+        elif row["type"] == "number":
+            hint.update(candidates=[], shown_by="chip")
+        if hint["candidates"] or hint.get("shown_by"):
+            out[int(beat["i"])] = hint
+    return out
+
+
+def _hint_brief(hint: dict) -> dict:
+    return {"type": hint["type"], "why": hint["why"], **({"shown_by": hint["shown_by"]} if hint.get("shown_by") else {}),
+            "templates": [c["template"] for c in hint["candidates"]]}
+
+
+def _accept_graphic(hint: dict | None, template: Any) -> dict | None:
+    """Принять шаблон из подсказки бита: только из её кандидатов (компактные, поверх совы)."""
+    name = P._text(template, 40) if isinstance(template, str) else ""
+    if not hint or not name:
+        return None
+    chosen = next((c for c in hint.get("candidates") or [] if c["template"] == name), None)
+    if chosen is None:
+        return None
+    return {"type": hint["type"], "template": chosen["template"], "params": dict(chosen["params"])}
+
+
+def _graphic(value: Any, beat: dict) -> dict | None:
+    """Графика бита из правки агента: шаблон из подсказки (строкой), ``{template, params}`` или пусто — снять."""
+    from app import phrase_graphics as PG
+
+    if value in (None, "", False):
+        return None
+    hint = beat.get("graphic_hint") or graphic_hints([beat]).get(int(beat["i"]))
+    if isinstance(value, str):
+        accepted = _accept_graphic(hint, value)
+        if accepted:
+            return accepted
+        value = {"template": value}
+    if not isinstance(value, dict) or not isinstance(value.get("template"), str):
+        raise E.ExplError(f"бит {beat['i']}: graphic — id шаблона из graphic_hint или {{template, params}}")
+    owl = {t for spec in PG.PHRASE_TYPES.values() for t, _w, ok in spec["templates"] if ok}
+    if value["template"] not in owl:
+        raise E.ExplError(f"бит {beat['i']}: шаблон «{value['template']}» закрыл бы маскота — поверх совы только "
+                          + ", ".join(sorted(owl)))
+    info = PG.classify(beat["text"])
+    params = value.get("params") if isinstance(value.get("params"), dict) else PG.template_params(
+        value["template"], info["type"], info["fields"], beat["text"])
+    return {"type": info["type"], "template": value["template"], "params": dict(params)}
 
 
 _CHIP_RE = re.compile(r"\b(\d{1,2}[:.]\d{2})\b|(\d+(?:[.,]\d+)?)\s*(%|час\w*|ч\b|мин\w*|раз\w*|л\b|кг|км|шаг\w*)",
@@ -152,10 +232,19 @@ def _assign_fallback(beats: list[dict], poses: list[dict], dry: bool = False) ->
         raise E.ExplError("библиотека поз пуста, а Gemini недоступен — опиши позы сами: explainer_update_beats "
                           "(new_pose у каждого бита) или добавь позы (explainer_add_pose)")
     notes = ["Gemini недоступен — позы подобраны по тегам библиотеки, новых нет; биты можно поправить"]
+    hints = graphic_hints(beats)
     for beat, pose_id in zip(beats, assign_by_tags(beats, ready)):
         beat["pose_id"] = pose_id
         beat["chip"] = _not_point_number(_fallback_chip(beat["text"]), beat)
         beat["emphasis"] = _fallback_emphasis(beat["text"])
+        # Без Gemini графику сами не ставим (вид совы одобрен владельцем): подсказка — агенту,
+        # explainer_update_beats {i, graphic} её примет.
+        hint = hints.get(int(beat["i"]))
+        if hint and hint["candidates"]:
+            beat["graphic_hint"] = hint
+    if any(b.get("graphic_hint") for b in beats):
+        notes.append("графика по типу фразы — только подсказки (graphic_hint): принять — explainer_update_beats "
+                     "{i, graphic: шаблон}")
     return notes
 
 
@@ -193,6 +282,7 @@ def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[
     reused_similar: dict[str, int] = {}
     answers = {int(b.get("i", -1)): b for b in data.get("beats") or [] if isinstance(b, dict)}
     library = list(poses)
+    hints = graphic_hints(beats)
     for beat in beats:
         ans = answers.get(int(beat["i"])) or {}
         pid = int(ans.get("pose_id") or 0)
@@ -231,6 +321,15 @@ def _apply_gemini_plan(store: Any, mascot: dict, beats: list[dict], poses: list[
         beat["pose_id"] = pid
         beat["chip"] = _not_point_number(_chip(ans.get("chip"), ans.get("chip_word")), beat)
         beat["emphasis"] = _words_of(ans.get("emphasis"), 2)
+        hint = hints.get(int(beat["i"]))
+        graphic = None if beat.get("chip") or beat.get("badge") else _accept_graphic(hint, ans.get("graphic"))
+        if graphic:
+            beat["graphic"] = graphic
+        elif hint and hint["candidates"]:
+            beat["graphic_hint"] = hint
+        if ans.get("graphic") and not graphic:
+            notes.append(f"бит {beat['i']}: графика «{P._text(ans['graphic'], 40)}» не из подсказки или рядом чип/плашка "
+                         "— не ставлю")
     return notes
 
 
@@ -295,6 +394,12 @@ def update_beats(store: Any, video_id: int, changes: list[dict]) -> dict:
             beat["emphasis"] = _words_of(ch.get("emphasis"), 3)
         if "badge" in ch:
             beat["badge"] = _badge(ch.get("badge"))
+        if "graphic" in ch:
+            try:
+                beat["graphic"] = _graphic(ch.get("graphic"), beat)
+            except E.ExplError as exc:
+                problems.append(str(exc))
+                continue
     if problems:
         raise E.ExplError("биты не приняты: " + "; ".join(problems))
     if any(not b.get("pose_id") for b in beats):

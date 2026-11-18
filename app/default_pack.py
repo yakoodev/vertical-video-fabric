@@ -9,6 +9,13 @@ import logging
 
 _log = logging.getLogger(__name__)
 
+# Версия пака: растёт, когда в пак добавляют вещи (17.11 — образы и стили субтитров пяти карточек стилей ролика,
+# app/style_cards.json). Сеется по-прежнему по подписи: недостающее создаётся, правки владельца не трогаются, так что
+# и старая установка получает новое при запуске; версия записывается в настройку DEFAULT_PACK_KEY — видно, до
+# какой версии установка уже дошла.
+DEFAULT_PACK_VERSION = 2
+DEFAULT_PACK_KEY = "default_pack_version"
+
 # FFmpeg render presets ("looks"/filters). Fields map to create_ffmpeg_preset.
 DEFAULT_FFMPEG_PRESETS = [
     {"label": "Чистый 9:16", "scale_mode": "cover", "color_style": "none"},
@@ -20,6 +27,13 @@ DEFAULT_FFMPEG_PRESETS = [
     {"label": "Нуар", "scale_mode": "cover", "color_style": "noir", "color_strength": 1.0, "vignette": 0.4},
     {"label": "Плёнка (недоэдит)", "scale_mode": "cover", "color_style": "vintage", "color_strength": 1.2, "grain": 0.55, "vignette": 0.45},
     {"label": "Размытый фон", "scale_mode": "blur_background", "color_style": "none"},
+    # Пак v2: образы карточек стилей (app/style_cards.json → apply.render_look). Цвет — мягко: главное в стиле
+    # делают фон, шрифт и эффект слоем, образ только подравнивает видео под него.
+    {"label": "Стиль: Новости", "scale_mode": "cover", "color_style": "vibrant", "color_strength": 0.5, "vignette": 0.15},
+    {"label": "Стиль: Бумага", "scale_mode": "cover", "color_style": "warm", "color_strength": 0.5, "grain": 0.1},
+    {"label": "Стиль: Рисограф", "scale_mode": "cover", "color_style": "vintage", "color_strength": 0.6, "grain": 0.2},
+    {"label": "Стиль: 1-бит", "scale_mode": "cover", "color_style": "noir", "color_strength": 1.4},
+    {"label": "Стиль: Чертёж", "scale_mode": "cover", "color_style": "cold", "color_strength": 0.8},
 ]
 
 # Subtitle styles. Fields map to create_subtitle_profile.
@@ -63,6 +77,47 @@ DEFAULT_SUBTITLE_PROFILES = [
         "outline_color": "#2E1065", "back_color": "#000000",
         "alignment": 2, "margin_v": 210, "max_words_per_line": 4,
         "uppercase": 1, "outline_width": 6, "shadow": 2,
+    },
+    # Пак v2: субтитры дорожкой карточек стилей (app/style_cards.json → apply.subtitle_profile); шрифты — из пака.
+    {
+        "label": "Стиль: Новости",
+        "font_family": "Oswald", "font_size": 80,
+        "primary_color": "#FFFFFF", "active_word_color": "#E11D2E",
+        "outline_color": "#0B1020", "back_color": "#000000",
+        "alignment": 2, "margin_v": 230, "max_words_per_line": 3,
+        "uppercase": 1, "outline_width": 5, "shadow": 0,
+    },
+    {
+        "label": "Стиль: Маркер",
+        "font_family": "Caveat", "font_size": 92,
+        "primary_color": "#1F1B16", "active_word_color": "#E94F37",
+        "outline_color": "#FFF6D6", "back_color": "#000000",
+        "alignment": 2, "margin_v": 220, "max_words_per_line": 4,
+        "uppercase": 0, "outline_width": 3, "shadow": 0,
+    },
+    {
+        "label": "Стиль: Рисограф",
+        "font_family": "Rubik Mono One", "font_size": 70,
+        "primary_color": "#FF4F8B", "active_word_color": "#2546C2",
+        "outline_color": "#F6EEDF", "back_color": "#000000",
+        "alignment": 2, "margin_v": 220, "max_words_per_line": 3,
+        "uppercase": 1, "outline_width": 4, "shadow": 0,
+    },
+    {
+        "label": "Стиль: 1-бит",
+        "font_family": "Press Start 2P", "font_size": 48,
+        "primary_color": "#FFFFFF", "active_word_color": "#FFFFFF",
+        "outline_color": "#000000", "back_color": "#000000",
+        "alignment": 2, "margin_v": 220, "max_words_per_line": 3,
+        "uppercase": 1, "outline_width": 6, "shadow": 0,
+    },
+    {
+        "label": "Стиль: Чертёж",
+        "font_family": "Roboto Condensed", "font_size": 70,
+        "primary_color": "#E8F1FF", "active_word_color": "#FFD166",
+        "outline_color": "#0E3A78", "back_color": "#000000",
+        "alignment": 2, "margin_v": 220, "max_words_per_line": 4,
+        "uppercase": 1, "outline_width": 4, "shadow": 0,
     },
 ]
 
@@ -155,3 +210,8 @@ def seed_default_pack(store) -> None:
         except Exception as exc:  # noqa: BLE001 - never let seeding break startup
             # Раньше ошибка глоталась молча — и на чистой установке стилей не было вовсе.
             _log.warning("default pack: subtitle style %r not seeded: %s", spec["label"], exc)
+    try:
+        if int(store.get_app_setting_value(DEFAULT_PACK_KEY) or 0) < DEFAULT_PACK_VERSION:
+            store.set_app_setting(DEFAULT_PACK_KEY, DEFAULT_PACK_VERSION)
+    except Exception as exc:  # noqa: BLE001 - never let seeding break startup
+        _log.warning("default pack: version not recorded: %s", exc)

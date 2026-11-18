@@ -18,11 +18,15 @@
    пользователей, «за 3 минуты», рейтинги) — только факты из брифа и записей. Черновик текста — на утверждение до
    монтажа.
 3. **Холст.** `create_canvas_clip(duration, background)` — пустой холст с анимированным фоном
-   (docs/AGENTS.md, «Пустой холст», «Фоны»).
+   (docs/AGENTS.md, «Пустой холст», «Фоны»). Нужен цельный вид — `list_styles` → `apply_style(clip_id, style)`
+   (новости, маркер на бумаге, рисограф, 1-бит, чертёж): образ, субтитры, переход, фон, эффект и входы одной
+   карточкой; родные приёмы и грабли стиля — в его карточке (`list_styles(id)`).
 4. **Заготовка.** `build_app_promo(clip_id, spec, dry_run: true)` → посмотреть план → без `dry_run`
    (docs/AGENTS.md, «Заготовка одним вызовом: build_app_promo»).
 5. **Правки** поверх заготовки — docs/AGENTS.md, «Вручную (правки поверх заготовки)»: телефон
-   (`device: "phone"`), наезды ключами, `particles` на кульминации, `rise` у титров.
+   (`device: "phone"`), наезды ключами, `particles` на кульминации, `rise` у титров. Графика к словам —
+   `suggest_graphics(text: <текст ролика>)`: тип каждой фразы и шаблоны с параметрами из неё; ставить только на
+   ключевые фразы (`key`), не на каждую.
 6. **Музыка** — `set_music(track_id, start_sec: energy_start_sec)`: сразу энергичная часть.
    Звуки — docs/AGENTS.md, «Звук слоёв: эффект, дорожка, звук видео».
 7. **Бренд заказчика** — `apply_brand(brand_id)` после монтажа (docs/AGENTS.md, «Бренд»).
@@ -34,7 +38,8 @@
 
 ## Инструменты MCP
 
-`upload_video`, `upload_image`, `create_canvas_clip`, `build_app_promo`, `add_layers`, `update_layer`,
+`upload_video`, `upload_image`, `create_canvas_clip`, `build_app_promo`, `list_styles`, `apply_style`,
+`suggest_graphics`, `add_motion_template`, `add_layers`, `update_layer`,
 `set_camera`, `list_music`, `set_music`, `apply_brand`, `set_format`, `contact_sheet`, `view_frame`, `lint_clip`,
 `render_clip`, `render_status`, `feed_create_work`, `feed_add_version`.
 

@@ -175,7 +175,11 @@ PLAN_RULES = """\
   отдельная плашка;
 - emphasis — одно ключевое слово на фразу бита (точно как в тексте бита; две фразы — максимум два):
   его выделит субтитр — число, главное существительное или глагол. Не служебное слово и не всё подряд:
-  выделено всё — не выделено ничего.
+  выделено всё — не выделено ничего;
+- graphic — только у бита с graphic_hint (это ключевая фраза: сравнение, цитата, до/после, вывод…): id
+  шаблона из её templates, если графика правда помогает понять фразу, иначе пусто. Новый элемент — только
+  на ключевой фразе, не на каждом бите; у бита с чипом или плашкой «#N» graphic пусто (shown_by — чем он
+  уже показан).
 Верни ТОЛЬКО JSON по схеме: beats — ровно столько, сколько в запросе, в том же порядке (i).
 """
 
@@ -396,6 +400,54 @@ def _sfx_ok(ref: str) -> bool:
         return False
 
 
+GRAPHIC_MAX_SEC = 2.6
+# Где графика по типу фразы стоит поверх совы: верх кадра, над маскотом (чипы — 0.22, плашки «#N» — 0.2).
+GRAPHIC_Y = {"flat-chip": 0.2, "flat-counter": 0.2, "flat-error": 0.12, "lower-third-pill": 0.2, "punchline": 0.24}
+
+
+def _build_template(template: str, params: dict, at: float) -> dict:
+    """Слои шаблона галереи (компоновщик). Тесты подменяют."""
+    from app.motion_template_tools import build_template
+
+    return build_template(template, params, at, None)
+
+
+def graphic_layers(mascot: dict, placed: list[dict], words: list[dict], total: float, sfx_ok: bool,
+                   notes: list[str]) -> list[dict]:
+    """Графика по типу фразы (app/phrase_graphics.py) на битах, где её принял план (Gemini или агент): шаблон
+    галереи в цветах маскота, вверху кадра, без размытия фона — вид совы (плоский фон, позы) не меняется.
+    Бит с чипом или плашкой «#N» её не получает: один элемент на ключевую фразу."""
+    out: list[dict] = []
+    n = 0
+    for item in placed:
+        gfx = item.get("graphic")
+        if not isinstance(gfx, dict) or not gfx.get("template") or item.get("chip") or item.get("badge"):
+            continue
+        k = _word_in(words, (gfx.get("params") or {}).get("word") if isinstance((gfx.get("params") or {}).get("word"),
+                                                                                str) else None, item["w0"], item["w1"])
+        start = max(item["start"], round(float(words[k]["start"]) - 0.15, 3)) if k is not None else item["start"]
+        length = round(min(GRAPHIC_MAX_SEC, item["end"] - start), 3)
+        if length < 0.8:
+            continue
+        params = {**gfx.get("params", {}), "theme": "brand", "accent": mascot["accent_color"],
+                  "plate": mascot["chip_color"], "backdrop": False, "duration": length,
+                  "y": GRAPHIC_Y.get(gfx["template"], 0.2),
+                  # Пилюля поверх совы — крупнее умолчания (40): на телефоне читается рядом с чипами 120 px.
+                  **({"size": 56} if gfx["template"] == "flat-chip" else {})}
+        try:
+            built = _build_template(gfx["template"], params, start)
+        except Exception as exc:  # noqa: BLE001 - без компоновщика ролик собирается без графики
+            notes.append(f"графика «{gfx['template']}» на бите {item['i']} не собрана: {str(exc)[:120]}")
+            continue
+        for j, layer in enumerate(l for l in built.get("layers") or [] if isinstance(l, dict)):
+            out.append({**layer, "id": f"gfx{n}_{j}", "end": round(min(float(layer.get("end") or total), total), 3)})
+        if sfx_ok:
+            out.append({"id": f"gfxpop{n}", "type": "audio", "start": start, "end": round(min(total, start + 0.6), 3),
+                        "props": {"asset_id": CHIP_SFX, "mode": "track", "volume": POP_VOLUME, "role": "sfx"}})
+        n += 1
+    return out
+
+
 def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict], narration_asset: int,
                  total: float, notes: list[str], dry: bool = False) -> list[dict]:
     """Слои как в пилоте 887 (позы, вжухи, плашки, чипы, голос, субтитры)."""
@@ -461,6 +513,7 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
             layers.append({"id": f"pop{chip_n}", "type": "audio", "start": s, "end": round(min(total, s + 0.6), 3),
                            "props": {"asset_id": CHIP_SFX, "mode": "track", "volume": POP_VOLUME, "role": "sfx"}})
         chip_n += 1
+    layers += graphic_layers(mascot, placed, words, total, sfx.get(CHIP_SFX, False), notes)
     layers.append({"id": "narr", "type": "audio", "name": "Озвучка", "start": 0.0, "end": round(total, 3),
                    "props": {"asset_id": str(narration_asset), "mode": "track", "volume": 1.0, "role": "voice"}})
     layers.append({"id": "caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": round(total, 3),
@@ -603,7 +656,7 @@ def assemble(store: Any, video_id: int) -> dict:
                              "text": "script" if heard is not None else "script_no_speech"},
                 "skipped": skipped,
                 "beats": [{k: p.get(k) for k in ("i", "start", "end", "text", "pose_id", "pose_title", "badge", "chip",
-                                                  "variant")} for p in placed],
+                                                  "graphic", "variant")} for p in placed],
                 "emphasis_words": len(marks), "layers": len(layers), "music_track_id": track,
                 **({"mix": mixed} if mixed else {})}
     E.update_video(store, video_id, clip_id=clip_id, words=words, timeline=timeline, notes=notes, error="")

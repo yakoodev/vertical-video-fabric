@@ -58,8 +58,11 @@ def _video_brief(store: Any, video_id: int) -> dict:
                          "est_sec": script.get("est_sec"), "points": script.get("points"),
                          "warnings": script.get("warnings"), "source": script.get("source")}
     beats = (video.get("timeline") or {}).get("beats") or video.get("beats") or []
-    out["beats"] = [{k: b.get(k) for k in ("i", "start", "end", "text", "pose_id", "pose_title", "pose_new", "badge",
-                                           "chip", "emphasis", "variant") if b.get(k) not in (None, [], "")}
+    out["beats"] = [{**{k: b.get(k) for k in ("i", "start", "end", "text", "pose_id", "pose_title", "pose_new", "badge",
+                                              "chip", "emphasis", "graphic", "variant") if b.get(k) not in (None, [], "")},
+                     **({"graphic_hint": {"type": b["graphic_hint"]["type"], "why": b["graphic_hint"].get("why"),
+                                          "templates": [c["template"] for c in b["graphic_hint"].get("candidates") or []]}}
+                        if isinstance(b.get("graphic_hint"), dict) and not b.get("graphic") else {})}
                     for b in beats]
     if video["status"] in ("planned", "awaiting_approval", "generating", "failed") and video.get("beats"):
         try:
@@ -287,14 +290,18 @@ def tools() -> list[Tool]:
         Tool("explainer_update_beats", "Правлю биты объяснялки",
              "До сборки: beats [{i, pose_id (из библиотеки) | new_pose {description по-английски, title, tags, "
              "number_shown}, chip (≤8 символов: «07:00», «8 ч»; или {text, word}, как в explainer_status), chip_word, "
-             "emphasis [слова], badge «#1»}]. "
+             "emphasis [слова], badge «#1», graphic — шаблон из graphic_hint бита (ключевая фраза: сравнение, "
+             "цитата, до/после, вывод; компактный, вверху кадра, в цветах маскота) или {template, params}; "
+             "\"\" — снять}]. "
              "Новая поза, похожая на готовую, берётся готовой. Потом новая оценка и карточка (continue=false — "
              "не сразу). / Override pose choice and overlays per beat.",
              _obj({"video_id": {"type": "integer"}, "beats": {"type": "array", "items": _obj({
                  "i": {"type": "integer"}, "pose_id": {"type": "integer"}, "new_pose": _NEW_POSE,
                  "chip": {"anyOf": [{"type": "string"}, _obj({"text": {"type": "string"}, "word": {"type": "string"}})]},
                  "chip_word": {"type": "string"},
-                 "emphasis": {"type": "array", "items": {"type": "string"}}, "badge": {"type": "string"}}, ["i"])},
+                 "emphasis": {"type": "array", "items": {"type": "string"}}, "badge": {"type": "string"},
+                 "graphic": {"anyOf": [{"type": "string"}, _obj({"template": {"type": "string"},
+                                                                 "params": {"type": "object"}})]}}, ["i"])},
                    "continue": {"type": "boolean"}}, ["video_id", "beats"]),
              h_update_beats, mutating=True, scope="project"),
         Tool("explainer_continue", "Продолжаю объяснялку",

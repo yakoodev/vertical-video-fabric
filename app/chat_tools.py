@@ -91,8 +91,10 @@ GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
         "web_search", "page_snapshot", "page_edit", "page_to_layers", "list_pages", "view_page")),
     "game": ("записи игры: события (ноки, киллы, бои, уничтожение отряда), мем-эдит боёв одним вызовом", (
         "game_events", "meme_edit")),
-    "motion": ("шаблоны моушна и 3D-пресеты слоя scene: галерея шаблонов, вставка, 3D-стиль/свет/камера, анимации", (
-        "list_motion_templates", "add_motion_template", "list_3d_presets", "check_3d_plan", "list_animations")),
+    "motion": ("шаблоны моушна и 3D-пресеты слоя scene: галерея шаблонов, вставка, графика по типу фразы, стили ролика "
+               "(карточки), 3D-стиль/свет/камера, анимации", (
+        "list_motion_templates", "add_motion_template", "suggest_graphics", "list_styles", "apply_style",
+        "list_3d_presets", "check_3d_plan", "list_animations")),
     # 3D-серии были в базе (9 объявлений в каждом ходе любого проекта) — теперь группа: по словам и у проекта series3d.
     "series3d": ("3D-серии своим движком: эпизоды, шаблоны, план по сценарию, правка плана, рендер, библиотека", (
         "series3d_list", "series3d_create_episode", "series3d_list_templates", "series3d_from_template",
@@ -156,7 +158,8 @@ _PRELOAD = {
     "web": ("сайт", "реклам", "страниц", "лендинг", "магазин", "web_search", "page_"),
     "game": ("мувик", "фраг", "мем-эдит", "мем эдит", "боёв", "боев", "килл", "нокнул", "ноки", "апекс", "apex",
              "game_events", "meme_edit"),
-    "motion": ("шаблон", "моушн", "3d", "3д", "пресет", "анимац"),
+    "motion": ("шаблон", "моушн", "3d", "3д", "пресет", "анимац", "стиль ролика", "рисограф", "чертёж", "1-бит",
+               "маркер на бумаге", "графику к"),
     "references": ("референс", "как в том ролик", "как в примере", "по примеру", "в стиле этого", "reference"),
     "series3d": ("3d-сери", "3д-сери", "3d сери", "3д сери", "series3d", "серию в 3d", "серию в 3д"),
 }
