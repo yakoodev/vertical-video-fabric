@@ -421,6 +421,25 @@ select.input { padding-top: 0; padding-bottom: 0; }
 .mplayer--watch .mplayer-stage { container-type: size; }
 .mplayer--watch .mplayer-frame { height: min(100cqh, calc(100cqw / var(--frame-k, 0.5625))); width: auto; }
 .ed-watch-btn { font-weight: 700; }
+.ed-play-btn { min-width: 108px; justify-content: center; }
+.ed-full-btn { font-size: 15px; padding-inline: 8px; }
+/* Монтаж прямо в телефоне редактора (editor/useInlineMontage.ts): ролик поверх кадра правки, пока играет. */
+.ed-montage { position: absolute; inset: 0; z-index: 5; visibility: hidden; pointer-events: none; background: #000; }
+.ed-montage.is-on { visibility: visible; pointer-events: auto; }
+.mplayer--inline { height: 100%; width: 100%; gap: 0; color: #eee; }
+.mplayer--inline .mplayer-stage { height: 100%; }
+.mplayer--inline .mplayer-frame { width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; aspect-ratio: auto !important; }
+.mplayer--inline .mplayer-video { cursor: pointer; }
+.mplayer--inline .mplayer-status { font-size: 12.5px; padding: 12px 14px; gap: 8px; max-width: 88%; }
+.mplayer--inline .mplayer-progress { width: 120px; }
+/* Тот же плеер на весь экран: настоящий полный экран или, где браузер не даёт, окно поверх всего. */
+.ed-montage:fullscreen,
+.ed-montage.is-full { visibility: visible; pointer-events: auto; display: flex; padding: 12px 16px; background: #05050a; }
+.ed-montage.is-full { position: fixed; inset: 0; z-index: 200; }
+@media (max-width: 640px) {
+  .ed-montage:fullscreen,
+  .ed-montage.is-full { padding: 8px; }
+}
 @media (max-width: 640px) {
   .mwatch.modal-backdrop { padding: 8px; }
 }

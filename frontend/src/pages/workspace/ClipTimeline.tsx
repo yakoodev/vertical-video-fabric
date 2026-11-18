@@ -117,6 +117,7 @@ export function ClipTimeline({
   subLines,
   assets,
   videoRef,
+  clockRef,
   selected,
   onSelect,
   onSeekClip,
@@ -146,6 +147,8 @@ export function ClipTimeline({
   subLines: SubtitleLine[];
   assets: MontageAsset[];
   videoRef: React.RefObject<HTMLVideoElement>;
+  /** Своё время клипа поверх плеера записи (идёт ролик «Смотреть монтаж»): null — время плеера записи. */
+  clockRef?: React.MutableRefObject<() => number | null>;
   selected: Selection;
   onSelect: (s: Selection) => void;
   onSeekClip: (clipSec: number) => void;
@@ -217,7 +220,9 @@ export function ClipTimeline({
     let raf = 0;
     const tick = () => {
       const v = videoRef.current;
-      if (v) {
+      const own = clockRef?.current();
+      if (own != null) setPlayhead(own);
+      else if (v) {
         const t = sourceToClip(pieces, v.currentTime);
         if (t != null) setPlayhead(t);
       }
@@ -225,7 +230,7 @@ export function ClipTimeline({
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [pieces, videoRef]);
+  }, [pieces, videoRef, clockRef]);
 
   const xToClip = useCallback(
     (clientX: number) => {
@@ -467,7 +472,7 @@ export function ClipTimeline({
     }
     // Время берём у плеера, а не у плейхеда: тот обновляется кадром анимации и
     // сразу после перемотки может отставать.
-    const now = sourceToClip(pieces, videoRef.current?.currentTime ?? 0) ?? playhead;
+    const now = clockRef?.current() ?? sourceToClip(pieces, videoRef.current?.currentTime ?? 0) ?? playhead;
     if (muteMark == null) {
       setMuteMark(now);
       return;

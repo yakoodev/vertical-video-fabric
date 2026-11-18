@@ -10,6 +10,9 @@
  *
  * Горячие клавиши работают, пока фокус внутри плеера (на весь экран — всегда): пробел — плей,
  * ←/→ — кадр, Shift+←/→ — секунда, Home/End, M — звук, F — на весь экран.
+ *
+ * Встроенный в редактор (editor/useInlineMontage.ts): без своих кнопок и клавиш (`bare`, `keys={false}`), плеем
+ * и перемоткой правит редактор через сам <video> (`onMedia`), а старт — с секунды `startAt`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { playbackApi, type StreamStatus } from "@/api/playback";
@@ -74,8 +77,15 @@ export function MontagePlayer({
   onClose,
   rootRef,
   title,
+  startAt,
+  onMedia,
+  onRevision,
+  bare = false,
+  controls = true,
+  keys = true,
 }: {
   clipPlanId: number;
+  /** Играть, как только видео подключится (читается в момент подключения). */
   autoPlay?: boolean;
   className?: string;
   /** Кнопка «закрыть» (и Esc) — у полноэкранной обёртки. */
@@ -83,8 +93,30 @@ export function MontagePlayer({
   /** Элемент, который разворачивать на весь экран (по умолчанию сам плеер). */
   rootRef?: React.RefObject<HTMLElement>;
   title?: string;
+  /** С какой секунды ролика начать при первом подключении. */
+  startAt?: number;
+  /** Сам <video> ролика — для внешнего плея, паузы и перемотки. */
+  onMedia?: (video: HTMLVideoElement | null) => void;
+  /** Монтаж сменился (правка здесь, у агента или в другой вкладке). */
+  onRevision?: () => void;
+  /** Без строки под кадром (название, чипы, ⛶, ✕). */
+  bare?: boolean;
+  /** Кнопки браузера у видео. */
+  controls?: boolean;
+  /** Свои горячие клавиши при фокусе в плеере. */
+  keys?: boolean;
 }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const autoPlayRef = useRef(autoPlay);
+  autoPlayRef.current = autoPlay;
+  const startAtRef = useRef(startAt);
+  startAtRef.current = startAt;
+  const onRevisionRef = useRef(onRevision);
+  onRevisionRef.current = onRevision;
+  const setVideo = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el;
+    onMedia?.(el);
+  }, [onMedia]);
   const selfRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<import("hls.js").default | null>(null);
   const [status, setStatus] = useState<StreamStatus | null>(null);
@@ -134,6 +166,7 @@ export function MontagePlayer({
   useClipRevision(clipPlanId, () => {
     setUpdatedAt(Date.now());
     pollNow.current();
+    onRevisionRef.current?.();
   });
 
   const playlist = status?.playlist;
@@ -146,6 +179,7 @@ export function MontagePlayer({
     let cancelled = false;
     const wasPlaying = attachedKey.current != null && !video.paused;
     if (attachedKey.current != null) resumeAt.current = video.currentTime;
+    else if (startAtRef.current != null && startAtRef.current > 0) resumeAt.current = startAtRef.current;
     attachedKey.current = streamKey;
     setMediaError(null);
     const start = () => {
@@ -157,7 +191,7 @@ export function MontagePlayer({
           /* ещё нельзя: начнём с начала */
         }
       }
-      if (autoPlay || wasPlaying) {
+      if (autoPlayRef.current || wasPlaying) {
         video.play().then(() => setNeedsTap(false)).catch(() => setNeedsTap(true));
       }
     };
@@ -214,7 +248,7 @@ export function MontagePlayer({
     return () => {
       cancelled = true;
     };
-  }, [playlist, streamKey, autoPlay]);
+  }, [playlist, streamKey]);
   useEffect(() => () => {
     hlsRef.current?.destroy();
     hlsRef.current = null;
@@ -351,7 +385,7 @@ export function MontagePlayer({
 
   if (noSource || (showRender && render)) {
     return (
-      <div ref={selfRef} className={`mplayer ${className}`} tabIndex={0} onKeyDown={onClose ? undefined : (e) => void onKeyDown(e)}>
+      <div ref={selfRef} className={`mplayer ${className}`} tabIndex={keys ? 0 : -1} onKeyDown={onClose || !keys ? undefined : (e) => void onKeyDown(e)}>
         <div className="mplayer-stage">
           <div className="mplayer-fallback">
             {render ? <video key={render.url} src={render.url} poster={render.poster} controls autoPlay={autoPlay} preload="metadata" playsInline /> : null}
@@ -373,8 +407,8 @@ export function MontagePlayer({
     <div
       ref={selfRef}
       className={`mplayer ${className}`}
-      tabIndex={0}
-      onKeyDown={onClose ? undefined : (e) => void onKeyDown(e)}
+      tabIndex={keys ? 0 : -1}
+      onKeyDown={onClose || !keys ? undefined : (e) => void onKeyDown(e)}
       data-state={showStatus ? "waiting" : "video"}
     >
       <div className="mplayer-stage">
@@ -382,7 +416,7 @@ export function MontagePlayer({
           className="mplayer-frame"
           style={frame ? ({ aspectRatio: `${frame.w} / ${frame.h}`, "--frame-k": frame.w / frame.h } as React.CSSProperties) : undefined}
         >
-          <video ref={videoRef} className="mplayer-video" controls playsInline preload="auto" />
+          <video ref={setVideo} className="mplayer-video" controls={controls} playsInline preload="auto" />
           {showStatus ? (
             <div className="mplayer-status" role="status" data-testid="stream-status">
               <div className="mplayer-spinner" aria-hidden />
@@ -418,7 +452,7 @@ export function MontagePlayer({
           ) : null}
         </div>
       </div>
-      <div className="mplayer-meta muted">
+      {bare ? null : <div className="mplayer-meta muted">
         {title ? <span className="mplayer-title">{title}</span> : null}
         {status?.playlist && total && ready < total && hasFrame ? (
           <span className="mplayer-chip" data-testid="stream-chip">собрано {ready} из {total}</span>
@@ -428,7 +462,7 @@ export function MontagePlayer({
         <span className="mplayer-spacer" />
         <button type="button" className="btn sm ghost" onClick={toggleFullscreen} title="На весь экран (F)">⛶</button>
         {onClose ? <button type="button" className="btn sm ghost" onClick={onClose} title="Закрыть (Esc)">✕</button> : null}
-      </div>
+      </div>}
     </div>
   );
 }
