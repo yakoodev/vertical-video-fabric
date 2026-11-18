@@ -661,6 +661,13 @@ def blender_quality(ep: dict) -> str:
     return q if q in SB.QUALITY else SB.DEFAULT_QUALITY
 
 
+def render_backend(ep: dict) -> str:
+    """Чем рисовать 3D-серию (опция эпизода ``render_backend``: blender | threejs), по умолчанию blender."""
+    from app import series3d_blender as SB
+
+    return SB.backend({"render_backend": (ep.get("options") or {}).get("render_backend")})
+
+
 def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
     """Что рендерим: фразы сценария + озвучка + версия сцены (+ пресет) — то же задание не ставим дважды.
     Без пресета — ключ режиссуры: другой пресет той же серии берёт ту же режиссуру (сравнимо, без нового Gemini)."""
@@ -672,6 +679,8 @@ def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
             "narration": str(ref.get("asset_id")), "lipsync": opts.get("lipsync") or "speaking",
             "v": SB.SCENE_VERSION, "episode": int(ep["id"]), "voice": VF.VERSION if options_fit(ep) else 0,
             "plans": SB.plan_key(ep.get("beats"))}
+    if render_backend(ep) != SB.DEFAULT_BACKEND:   # другой бэкенд — другое задание; ключ blender прежний
+        blob["backend"] = render_backend(ep)
     base = "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
     return f"{base}-{blender_quality(ep)}" if with_quality else base
 
@@ -730,6 +739,7 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
         if payload.get("director_error"):
             notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")
     payload["quality"] = blender_quality(ep)
+    payload["render_backend"] = render_backend(ep)
     if local:
         cache = settings.data_dir / "render3d_cache"
         out = work / "series.mp4"

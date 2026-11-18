@@ -12,7 +12,7 @@ from app.series3d_blender_stage import (
     S, H, FRONT, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL, DISPLAY, DOORWAY, CEIL_LIGHT, HATCH, CLIP_LEN, WALK_CLIP,
     WALK_FEET, MAX_WALK_STEPS, WALK_CYCLE_UNITS, STEP_LEN, stance_units, walk_plan, walk_seconds, button_pos,
     reachable, facing, to_world, KNOCK_POINT, press_stand, spot_for, LOCS, loc_of, loc_spot, loc_target, inside_loc,
-    show_items, _low
+    show_items, _low, HATCH_LID, LATCH, SHOULDER_R, REACH
 )
 from app.series3d_blender_direction import EMOTIONS, HAND_ACTIONS
 from app.series3d_blender_camera import SIT_DROP, PHONE_SHOW, _rot, camera_plan
@@ -179,6 +179,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     phone_mode = _Track(0.0)          # 0 — экран, 1 — фонарик
     show_track = _Track(0.0)          # 1 — телефон вытянут экраном к камере (значение на экране)
     flash_track = _Track(0.0)         # фонарик включён
+    hatch_track = _Track(0.0)         # люк в потолке: 0 — закрыт, 1 — крышка поднята (HATCH_OPEN_DEG)
+    latch_track = _Track(0.0)         # защёлка люка: 0 — заперта, 1 — повёрнута на 90°
+    hatch_used = False
     contacts: list[dict] = []         # касания (для подгонки IK по мешу и звуков)
     shout_bursts: list[tuple[float, float]] = []
     speak_windows: list[tuple[float, float]] = []
@@ -264,6 +267,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             spot = W(spot)
         elif a == "sit_corner":
             spot, hd = spot_for("corner")
+        elif a == "open_hatch" and loc == "cabin":
+            spot, hd = spot_for("hatch")
         elif a == "approach":
             spot, hd = loc_spot(loc, s.get("target") or "center")
         elif loc == "cabin" and a in ("shout", "listen") and posture == "stand" and abs(_ang(heading)) > math.radians(35):
@@ -460,6 +465,21 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             gkey(a0 - 0.1, (kp[0], kp[1], 0.85))
             lean_v = 0.12
             cam_subject = "doors"
+        elif a == "open_hatch" and loc == "cabin":
+            # тянется к защёлке, поворачивает её, толкает крышку вверх; крышка поднимается на петле
+            hatch_used = True
+            t_turn, t_push = a0 + 0.3, a0 + 0.75
+            latch_track.key(t_turn, latch_track.keys[-1][1])
+            latch_track.key(t_turn + 0.4, 1.0)
+            hatch_track.key(t_push, hatch_track.keys[-1][1])
+            hatch_track.key(t_push + 1.0, 1.0)
+            holds.append({"side": "r", "t0": a0, "t1": min(t1, t_push + 1.0) + 0.3, "grip": t_turn, "mode": "reach_up",
+                          "point": LATCH})
+            contacts.append({"kind": "hatch", "t": t_push, "point": LATCH})
+            gkey(a0, LATCH)
+            gkey(t_push + 0.5, (HATCH_LID[0], HATCH_LID[1] + 0.1, H + 0.6))
+            lean_v = -0.15
+            cam_subject = "hatch"
         elif a == "pry_doors":
             full = bool(re.search(r"раздвинул|открыл|разжал|распахнул", _low(s.get("text"))))
             t_grip = a0 + 0.45
@@ -675,6 +695,19 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                     p = (ox + sx * (0.045 + op), oy + DOOR_FACE_Y + 0.025, 0.62)
                     if w > 0 and (hand[side][f] is None or hand[side][f][1] < w):
                         hand[side][f] = (p, round(w, 4), "doors")
+            elif h["mode"] == "reach_up":
+                # рука вверх к точке (защёлка люка): цель — на вытянутой руке по направлению к ней (чиби не достаёт
+                # потолок 2.15 м — тянется изо всех сил)
+                sh = to_world(rp, hd, SHOULDER_R)
+                d = [h["point"][i] - sh[i] for i in range(3)]
+                n_ = math.sqrt(sum(c * c for c in d)) or 1.0
+                k = min(REACH * 0.97, n_) / n_
+                p = tuple(round(sh[i] + d[i] * k, 5) for i in range(3))
+                w = m.smoothstep((t - h["t0"]) / max(h["grip"] - h["t0"], 1e-3))
+                if h["t1"] is not None:
+                    w *= 1.0 - m.smoothstep((t - (h["t1"] - 0.35)) / 0.35)
+                if w > 0 and (hand["r"][f] is None or hand["r"][f][1] < w):
+                    hand["r"][f] = (p, round(w, 4), "hatch")
     # телефон виден в своих интервалах (в кармане — нет), левая рука держит его только тогда
     vis = [1.0 if any(a <= t < (b if b is not None else 1e9) for a, b in phone_iv) else 0.0 for t in times]
     for f in range(nf):
@@ -733,6 +766,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             lit_at.setdefault(c["button"], c["t"])
     door_c = door_c0
     fl_c = flash_track.curve(ease="linear")
+    hatch_c, latch_c = hatch_track.curve(), latch_track.curve()
     named_display = [(float(x_["t0"]), float(x_["t1"])) for x_ in shot_out if x_["location"] == "cabin"
                      and any(it["item"] == "display" or str(it["item"]).startswith("надпись") for it in x_["show"])]
     for t in times:
@@ -787,6 +821,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                        "floor": value, "doors": round(door_c.at(t), 4), "shake": round(shake, 5), "drop": round(drop, 5),
                        "ldoors": {k: round(c_.at(t), 4) for k, c_ in door_cs.items() if k != "cabin"},
                        "lit": lit, "dark": dark(t), "reveal": round(reveal, 4)})
+        if hatch_used:   # поля только у серий с люком: дорожки (и ключи кэша) старых серий не меняются
+            lights[-1].update(hatch=round(hatch_c.at(t), 4), latch=round(latch_c.at(t), 4))
 
     phone = []
     pm = phone_mode.curve()

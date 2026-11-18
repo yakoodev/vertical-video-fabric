@@ -6,7 +6,7 @@ import math
 import random
 
 from app.series3d_blender_stage import (
-    S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, DOORWAY, button_pos, facing, to_world, loc_of,
+    S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, DOORWAY, HATCH_LID, button_pos, facing, to_world, loc_of,
 )
 from app.series3d_blender_direction import CAMERA_PREFS
 
@@ -110,6 +110,16 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
             return out("detail", p, key, 0.0, 62.0 if key == DISPLAY else 40.0, fstop=4.0, focus="point", push=0.95)
         if key == DISPLAY:
             return out("detail", (0.30, FRONT + 0.45, 1.20), DISPLAY, 0.0, 30.0, fstop=4.0, focus="point")
+        return None
+    if kind == "detail" and subject == "hatch":
+        # потолок снизу: камера низко сбоку от героя, смотрит вверх — поднятое лицо в профиль, рука, люк и защёлка
+        for dist, dz in ((0.7, 0.5), (0.6, 0.45), (0.5, 0.4)):
+            for ang in (80, -80, 100, -100, 60, -60):
+                d = _rot(fwd, math.radians(ang))
+                p = (face[0] + d[0] * dist, face[1] + d[1] * dist, dz)
+                if fresh(p):
+                    pt = tuple(HATCH_LID[i] * 0.55 + face[i] * 0.45 for i in range(3))
+                    return out("detail", p, pt, 0.3, 16.0, fstop=5.6, focus="point", push=0.95)
         return None
     if kind == "detail" and subject == "doors":
         # сбоку у дверей, почти анфас: руки на створках и лицо (герой стоит к дверям вплотную)
