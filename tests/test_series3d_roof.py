@@ -62,6 +62,9 @@ def test_message_screen_states_and_status():
     assert screens[1].split("|")[3:6] == ["не доставлено", "нет сети", "11%"]
     assert any(p.get("screen", "").startswith("msg|") for p in perf["phone"])
     assert message_screen([{"text": "На табло 22.", "sentences": [0]}]) == {}
+    after = next(s for s in perf["shots"] if "шаги" in s["text"])
+    f = int((after["t0"] + after["t1"]) / 2 * 30)
+    assert not perf["phone"][f]["on"], "переписку показал — телефон в карман, луч не бьёт из-под подбородка"
 
 
 def test_bag_root_height_and_hand_reach():

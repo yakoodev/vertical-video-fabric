@@ -189,6 +189,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     bag_track = _Track(0.0)           # рюкзак: 0 — на спине, 1 — лежит на полу под люком
     torch_track = _Track(0.0)         # чужой фонарик в щели люка
     on_bag = False
+    msg_seen = False                  # экран переписки уже показан (дальше телефон убирается)
     contacts: list[dict] = []         # касания (для подгонки IK по мешу и звуков)
     shout_bursts: list[tuple[float, float]] = []
     speak_windows: list[tuple[float, float]] = []
@@ -443,6 +444,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if t < shot_end - 0.05:
                 gaze.key(max(t, t0), v)
         cam_subject = "face"
+        if phone_out and msg_seen and not s.get("screen") and a not in ("phone_out", "phone_light"):
+            # переписку показал (сообщение не ушло) — фонарик гаснет, телефон в карман: иначе на крупных планах
+            # луч бьёт из-под подбородка поперёк кадра
+            flash_track.key(a0, flash_track.keys[-1][1])
+            flash_track.key(a0 + 0.05, 0.0)
+            flash_off = True
         if phone_out and flash_off and a not in ("phone_out", "phone_light", "sit_corner"):
             # фонарик выключен, экран уже посмотрел — телефон в карман: иначе он до конца серии закрывает подбородок
             phone_iv[-1][1] = a0 + 0.3
@@ -682,6 +689,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             phone_mode.key(a0 + 0.1, phone_mode.keys[-1][1])
             phone_mode.key(a0 + 0.5, 1.0)
 
+        if str(s.get("screen") or "").startswith("msg|"):
+            msg_seen = True
         show_track.key(t0, show_track.keys[-1][1])
         show_track.key(a0 + 0.5 if s.get("screen") else t0 + 0.35, 1.0 if s.get("screen") else 0.0)
         lean.key(t0 + 0.4, lean_v)
