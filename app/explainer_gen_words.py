@@ -77,6 +77,8 @@ def place(beats: list[dict], words: list[dict], total: float) -> list[dict]:
                 placed[-1]["badge"] = beat["badge"]
             if beat.get("chip") and not placed[-1].get("chip"):
                 placed[-1]["chip"] = beat["chip"]
+            if beat.get("graphic") and not placed[-1].get("graphic"):
+                placed[-1]["graphic"] = beat["graphic"]
             placed[-1]["emphasis"] = (placed[-1].get("emphasis") or []) + (beat.get("emphasis") or [])
             continue
         placed.append({**beat, "start": start, "w0": w0})
@@ -93,7 +95,8 @@ def place(beats: list[dict], words: list[dict], total: float) -> list[dict]:
             k = min(inner, key=lambda j: abs(words[j]["start"] - mid))
             cut = round(float(words[k]["start"]), 3)
             first = {**item, "end": cut, "w1": k - 1}
-            second = {**item, "start": cut, "w0": k, "variant": "punch", "badge": None, "split_of": item["i"]}
+            second = {**item, "start": cut, "w0": k, "variant": "punch", "badge": None, "graphic": None,
+                      "split_of": item["i"]}
             if item.get("chip") and _word_in(words, item["chip"].get("word"), item["w0"], k - 1) is None:
                 first["chip"] = None
             else:

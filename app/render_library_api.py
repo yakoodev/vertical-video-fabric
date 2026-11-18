@@ -137,6 +137,12 @@ class SubtitleProfilePatchPayload(BaseModel):
     shadow: float | None = None
 
 
+class ApplyStyleRequest(BaseModel):
+    style: str = Field(min_length=1, max_length=40)
+    # Запомнить стилем проекта клипа (подсказка агентам и следующим клипам проекта).
+    project_default: bool = False
+
+
 class ApplyBrandRequest(BaseModel):
     brand_id: int = Field(gt=0)
     # Заставка/концовка логотипом на этот ролик: true — поставить, false — нет, нет поля — как в бренде.
@@ -365,6 +371,27 @@ def build_render_library_router(auth_dep: Any, get_store: Callable[[], Any]) -> 
                                logo_intro=payload.logo_intro, logo_outro=payload.logo_outro)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.get("/api/styles", tags=["Brands"], summary="Карточки стилей ролика (app/style_cards.json)")
+    def api_styles(_auth: auth_dep) -> list[dict]:
+        from app.style_cards import brief, styles
+
+        return [{**brief(c), "card": c["card"], "apply": c["apply"]} for c in styles()]
+
+    @router.post(
+        "/api/clip-plans/{clip_plan_id}/apply-style",
+        tags=["Brands"],
+        summary="Оформить клип по карточке стиля: образ, субтитры, переход, фон, эффект, входы",
+    )
+    def api_apply_style(clip_plan_id: int, payload: ApplyStyleRequest, _auth: auth_dep) -> dict:
+        from app.style_cards import apply_style
+
+        try:
+            return apply_style(get_store(), clip_plan_id, payload.style, project_default=payload.project_default)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc).strip("'\"")) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 

@@ -550,7 +550,12 @@ export type FxKind =
   // Негатив на отрезке: цвета инвертированы с силой intensity; color — оттенок поверх негатива (синий — «запретная зона»).
   | "negate"
   // Фон под плашками: всё ниже по дорожкам размыто (size — радиус, опорн. px) и притушено (intensity, color).
-  | "backdrop";
+  | "backdrop"
+  // Две краски (рисограф, чертёж): яркость кадра → colors[0] (тени) … colors[1] (свет); size — сдвиг второй
+  // краски, опорн. px (несовпадение печати), лёгкое зерно бумаги.
+  | "duotone"
+  // 1 бит: упорядоченный растр Байера, точка size опорн. px, colors[0] — чернила, colors[1] — бумага.
+  | "dither";
 
 export type FxProps = {
   kind?: FxKind;
@@ -562,7 +567,7 @@ export type FxProps = {
   blend?: BlendMode | "auto";
   /** Цвет вспышки (flash_frame), #ffffff; оттенок негатива (negate), нет — чистый негатив. */
   color?: string;
-  /** Краски пятен света (light_leak), до 4; нет — тёплые. */
+  /** Краски пятен света (light_leak), до 4; нет — тёплые. Две краски duotone/dither: [тени, свет]. */
   colors?: string[];
   /** Размер зерна / шаг строк, опорн. px. */
   size?: number;
@@ -1109,7 +1114,7 @@ export type PinnedRect = PixelRect & { sy?: number };
 export type PixelRect = { x: number; y: number; w: number; h: number };
 
 /** Стиль фона: четыре анимированных (по умолчанию) и две статичные заливки. */
-export type BackgroundKind = "aurora" | "grid" | "bokeh" | "waves" | "gradient" | "solid";
+export type BackgroundKind = "aurora" | "grid" | "bokeh" | "waves" | "paper" | "blueprint" | "gradient" | "solid";
 
 /** Процедурный фон (backgrounds.ts): цвета `[]` — «в цветах клипа» (тёмный + акцент). */
 export type Background = {

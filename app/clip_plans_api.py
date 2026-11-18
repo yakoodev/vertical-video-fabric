@@ -569,6 +569,10 @@ def build_clip_plans_router(
                 # Концовку ставит агент/бренд (app/end_screen.py): редактор без этого поля её не стирает.
                 current = get_store().get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
                 settings_in["end_screen"] = current.get("end_screen")
+            if "style" not in settings_in:
+                # Стиль ролика ставит apply_style / кнопка «Стиль»: автосохранение редактора без поля его не стирает.
+                current = get_store().get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}
+                settings_in["style"] = current.get("style")
             if "motion_blur" not in settings_in:
                 # Motion blur клипа ставит агент (set_motion_blur): клиент без этого поля его не стирает.
                 current = get_store().get_clip_plan(clip_plan_id, include_segments=False).get("render_settings") or {}

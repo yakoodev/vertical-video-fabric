@@ -309,6 +309,39 @@
 "label": true
 },
 {
+"name": "suggest_graphics",
+"title": "Подбираю графику к фразам",
+"description": "c1aa5b642771db6b",
+"parameters": "eb00271bde640f9f",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_suggest_graphics",
+"label": true
+},
+{
+"name": "list_styles",
+"title": "Смотрю стили ролика",
+"description": "ade58002973316ff",
+"parameters": "c718df2bf7cf967f",
+"mutating": false,
+"scope": "global",
+"module": null,
+"handler": "h_list",
+"label": true
+},
+{
+"name": "apply_style",
+"title": "Оформляю клип стилем",
+"description": "c68e717f050ca4fc",
+"parameters": "9c2e9494386cbb26",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_apply",
+"label": true
+},
+{
 "name": "list_3d_presets",
 "title": "Смотрю 3D-пресеты",
 "description": "f2943f2a14888679",
@@ -707,8 +740,8 @@
 {
 "name": "set_backdrop",
 "title": "Ставлю фон за персонажем",
-"description": "7e298e6c0d0d99fb",
-"parameters": "b9750b10b9251907",
+"description": "fbcb402e066b70cf",
+"parameters": "d910a565a4af3d00",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -2349,8 +2382,8 @@
 {
 "name": "explainer_update_beats",
 "title": "Правлю биты объяснялки",
-"description": "e3841093c4ef0ed7",
-"parameters": "420eff6511205986",
+"description": "58ec189f51f2765b",
+"parameters": "b5e1372bcb1c3fb8",
 "mutating": true,
 "scope": "project",
 "module": "explainer",

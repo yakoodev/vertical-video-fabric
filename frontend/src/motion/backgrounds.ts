@@ -14,15 +14,17 @@
 import type { Background, BackgroundKind, Ctx2D, Layer, RenderEnv, ScratchCanvas } from "./types";
 import { resolveCaptions } from "./layers/captions";
 
-export const BACKGROUND_KINDS: readonly BackgroundKind[] = ["aurora", "grid", "bokeh", "waves", "gradient", "solid"];
+export const BACKGROUND_KINDS: readonly BackgroundKind[] = ["aurora", "grid", "bokeh", "waves", "paper", "blueprint", "gradient", "solid"];
 /** Стили с движением (по умолчанию берётся один из них, а не заливка). */
-export const ANIMATED_BACKGROUNDS: readonly BackgroundKind[] = ["aurora", "grid", "bokeh", "waves"];
+export const ANIMATED_BACKGROUNDS: readonly BackgroundKind[] = ["aurora", "grid", "bokeh", "waves", "paper", "blueprint"];
 
 export const BACKGROUND_INFO: Record<BackgroundKind, { label: string; hint: string }> = {
   aurora: { label: "Аврора", hint: "плавные цветовые переливы" },
   grid: { label: "Неон-сетка", hint: "светящаяся перспективная решётка, едет на зрителя" },
   bokeh: { label: "Боке", hint: "мягкие блики плывут вверх" },
   waves: { label: "Волны", hint: "светящиеся линии-волны" },
+  paper: { label: "Бумага", hint: "светлый лист с волокнами, «дышит» покадрово, как стоп-моушн" },
+  blueprint: { label: "Чертёж", hint: "синий лист с сеткой, едет по диагонали, строятся окружности-разметка" },
   gradient: { label: "Градиент", hint: "статичный, только если просили" },
   solid: { label: "Заливка", hint: "статичный цвет, только если просили" },
 };
@@ -183,8 +185,19 @@ export function clipAccent(layers: readonly Layer[] | null | undefined): string 
  * Три цвета фона: [тёмная основа, акцент, второй акцент].
  * Свои цвета: 1 — акцент, 2 — основа + акцент, 3 — все три. Пусто — акцент клипа.
  */
+/** Свои цвета «листов» без заданных: [бумага, чернила, акцент]. */
+const SHEET_DEFAULTS: Partial<Record<BackgroundKind, [string, string, string]>> = {
+  paper: ["#f3ecdc", "#2b2722", "#e94f37"],
+  blueprint: ["#0e3a78", "#e8f1ff", "#7fb2ff"],
+};
+
 export function backgroundPalette(bg: Background, accent?: string | null): [string, string, string] {
   const c = bg.colors;
+  const sheet = SHEET_DEFAULTS[bg.kind];
+  if (sheet) {
+    // Лист: первый цвет — бумага, второй — чернила/линии, третий — акцент; акцент клипа — только третьим.
+    return [c[0] ?? sheet[0], c[1] ?? sheet[1], c[2] ?? (vivid(accent) && !c.length ? (accent as string) : sheet[2])];
+  }
   const acc = c.length >= 2 ? c[1] : c.length === 1 ? c[0] : vivid(accent) ? (accent as string) : DEFAULT_ACCENT;
   const second = c[2] ?? shiftHue(acc, -100);
   // Основа — почти чёрная с оттенком второго акцента: на ней акцент контрастнее
@@ -552,6 +565,118 @@ const paintWaves: Painter = (ctx, W, H, p, [base, a1, a2], I, opts) => {
   }
 };
 
+/**
+ * Бумага: светлый лист, волокна и крапинки; «дышит» покадрово — слой волокон сдвигается 12 раз за цикл
+ * (как перерисованный кадр стоп-моушна), по листу медленно идёт мягкий свет. Края чуть темнее.
+ */
+const paintPaper: Painter = (ctx, W, H, p, [paper, ink, accent], I) => {
+  const th = p * TAU;
+  const u = Math.min(W, H) / 1080;
+  fillBase(ctx, W, H, mix(paper, "#ffffff", 0.18), mix(paper, ink, 0.06));
+  // Мягкий свет: пятно по эллипсу, за цикл — один оборот.
+  blob(ctx, W * (0.5 + 0.3 * Math.sin(th)), H * (0.45 + 0.18 * Math.cos(th)), W * 0.9, "#ffffff", 0.22 * I);
+  // И мягкая тень от руки над листом — плывёт навстречу свету.
+  blob(ctx, W * (0.5 - 0.35 * Math.sin(th)), H * (0.6 - 0.22 * Math.cos(th)), W * 0.8, ink, 0.14 * I);
+  // Волокна и крапинки — покадровый «кипящий» сдвиг: 12 шагов за цикл (шаг 12 — снова шаг 0).
+  const step = Math.floor(p * 12) % 12;
+  const jit = rng(101 + step * 7);
+  const dx = (jit() - 0.5) * 3 * u;
+  const dy = (jit() - 0.5) * 3 * u;
+  const rand = rng(23);
+  ctx.save();
+  ctx.translate(dx, dy);
+  ctx.lineCap = "round";
+  for (let i = 0; i < 150; i++) {
+    const x = rand() * W;
+    const y = rand() * H;
+    const len = (10 + 40 * rand()) * u;
+    const ang = rand() * TAU;
+    const bend = (rand() - 0.5) * len * 0.6;
+    const dark = rand() < 0.6;
+    ctx.strokeStyle = rgba(dark ? ink : "#ffffff", (dark ? 0.07 : 0.35) * I);
+    ctx.lineWidth = (0.8 + rand() * 1.4) * u;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.quadraticCurveTo(
+      x + Math.cos(ang) * len * 0.5 - Math.sin(ang) * bend,
+      y + Math.sin(ang) * len * 0.5 + Math.cos(ang) * bend,
+      x + Math.cos(ang) * len,
+      y + Math.sin(ang) * len,
+    );
+    ctx.stroke();
+  }
+  for (let i = 0; i < 240; i++) {
+    const r = (0.6 + rand() * 1.8) * u;
+    ctx.fillStyle = rgba(rand() < 0.08 ? accent : ink, (0.05 + 0.1 * rand()) * I);
+    ctx.fillRect(rand() * W, rand() * H, r, r);
+  }
+  ctx.restore();
+  // Края листа темнее (без чёрной виньетки — тень бумаги).
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.45, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, rgba(ink, 0));
+  g.addColorStop(1, rgba(ink, 0.12 * I));
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+};
+
+/**
+ * Чертёж: синий лист, мелкая и крупная сетка едет по диагонали ровно на клетку за цикл, поверх
+ * по очереди строятся окружности разметки с засечками и тают (каждая — один раз за цикл).
+ */
+const paintBlueprint: Painter = (ctx, W, H, p, [sheet, line, accent], I) => {
+  const th = p * TAU;
+  const u = Math.min(W, H) / 1080;
+  fillBase(ctx, W, H, mix(sheet, "#ffffff", 0.05), mix(sheet, "#000000", 0.18));
+  blob(ctx, W * 0.5, H * 0.4, W * 1.1, mix(sheet, "#ffffff", 0.3), 0.18 * I);
+  const major = 180 * u;
+  const minor = major / 5;
+  const off = p * major; // клетка за цикл — бесшовно
+  const grid = (cell: number, alpha: number, width: number) => {
+    ctx.beginPath();
+    for (let x = -cell + (off % cell); x <= W + cell; x += cell) {
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, H);
+    }
+    for (let y = -cell + (off % cell); y <= H + cell; y += cell) {
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+    }
+    ctx.strokeStyle = rgba(line, alpha * I);
+    ctx.lineWidth = width * u;
+    ctx.stroke();
+  };
+  grid(minor, 0.1, 1);
+  grid(major, 0.26, 1.6);
+  // Окружности разметки: прорисовываются и тают по очереди, у каждой — засечки и линия-выноска.
+  const rand = rng(31);
+  ctx.lineCap = "round";
+  for (let i = 0; i < 4; i++) {
+    const cx = W * (0.18 + 0.64 * rand());
+    const cy = H * (0.12 + 0.76 * rand());
+    const r = (90 + 160 * rand()) * u;
+    const ph = (p + i / 4) % 1;
+    const draw = Math.min(1, ph / 0.45);
+    const a = I * 0.55 * Math.sin(Math.PI * ph);
+    if (a < 0.01) continue;
+    ctx.strokeStyle = rgba(i % 2 ? accent : line, a);
+    ctx.lineWidth = 2 * u;
+    ctx.setLineDash([10 * u, 7 * u]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + TAU * draw);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    for (let k = 0; k < 12; k++) {
+      const q = (k / 12) * TAU;
+      ctx.moveTo(cx + Math.cos(q) * r, cy + Math.sin(q) * r);
+      ctx.lineTo(cx + Math.cos(q) * (r + 12 * u), cy + Math.sin(q) * (r + 12 * u));
+    }
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(th + i) * r * draw, cy + Math.sin(th + i) * r * draw);
+    ctx.stroke();
+  }
+};
+
 // Заливку и градиент paintBackground рисует сам, без цикла.
 const still: Painter = () => undefined;
 
@@ -560,6 +685,8 @@ const PAINTERS: Record<BackgroundKind, { paint: Painter; scale: number }> = {
   bokeh: { paint: paintBokeh, scale: 0.5 },
   grid: { paint: paintGrid, scale: 1 },
   waves: { paint: paintWaves, scale: 1 },
+  paper: { paint: paintPaper, scale: 1 },
+  blueprint: { paint: paintBlueprint, scale: 1 },
   gradient: { paint: still, scale: 1 },
   solid: { paint: still, scale: 1 },
 };

@@ -13,6 +13,7 @@ import { focusWindowPos, focusXAt } from "@/pages/workspace/editor/editorHelpers
 import { LookPicker } from "@/pages/workspace/editor/LookPicker";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
 import { DIRECTION_LABELS, TransitionJoins } from "@/pages/workspace/editor/inspector/TransitionJoins";
+import { StylePicker } from "@/pages/workspace/editor/inspector/StylePicker";
 
 /** Переходы мувика, которые рендер рисует кадрами: у них своя длина 0.1–0.6 с. */
 const FX_KINDS: TransitionSettings["type"][] = ["slash", "panels", "sparks"];
@@ -139,6 +140,7 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
             </button>
           </div>
         ) : null}
+        <StylePicker session={session} />
       </div>
       <Group title="Картинка (лук)" badge={selectedPreset?.label ?? "по умолчанию"} defaultOpen>
         <label className="field">

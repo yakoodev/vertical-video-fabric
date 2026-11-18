@@ -122,6 +122,9 @@ from app.cut_tools import tools as cut_tools
 from app.framing_tools import tools as framing_tools
 from app.layer_tools import tools as layer_tools
 from app.motion_template_tools import tools as motion_template_tools
+# Тип фразы → графика (app/phrase_graphics.py) и карточки стилей ролика (app/style_cards.py).
+from app.phrase_graphics import tools as phrase_graphics_tools
+from app.style_cards import tools as style_tools
 from app.presets3d_tools import tools as presets3d_tools
 from app.sound_tools import tools as sound_tools
 from app.source_tools import tools as source_tools
@@ -576,7 +579,8 @@ TOOL_ORDER = (
     "source_contact_sheet", "source_loudness", "chat_activity", "get_chat", "set_source_audio",
     "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "add_pngtuber",
     "update_layer", "track_layer", "untrack_layer", "remove_layers", "clear_layers", "set_camera", "camera_preset",
-    "flow_transition", "add_annotation", "list_motion_templates", "add_motion_template", "list_3d_presets", "check_3d_plan", "list_animations",
+    "flow_transition", "add_annotation", "list_motion_templates", "add_motion_template", "suggest_graphics",
+    "list_styles", "apply_style", "list_3d_presets", "check_3d_plan", "list_animations",
     "list_fonts", "upload_font", "search_emoji", "list_packs", "search_pack", "list_assets", "search_web_images",
     "add_image_from_url", "upload_image", "upload_video", "add_video_from_source", "add_video_from_url",
     "generate_image", "list_subtitle_styles", "set_subtitles", "set_layout", "detect_avatar", "set_chroma_key",
@@ -664,7 +668,7 @@ def _clip_view_tools() -> list[Tool]:
 def _build_registry() -> list[Tool]:
     rank = {name: index for index, name in enumerate(TOOL_ORDER)}
     entries = [*_clip_view_tools(), *subtitle_tools(), *asset_tools(), *framing_tools(), *layer_tools(),
-               *motion_template_tools(), *presets3d_tools(), *sound_tools(),
+               *motion_template_tools(), *phrase_graphics_tools(), *style_tools(), *presets3d_tools(), *sound_tools(),
                *cut_tools(), *source_tools(), *brand_tools()]
     return sorted(entries, key=lambda tool: rank.get(tool.name, len(rank)))
 

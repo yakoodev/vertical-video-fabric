@@ -1,0 +1,293 @@
+{
+  "version": 1,
+  "styles": [
+    {
+      "id": "news",
+      "version": 1,
+      "name": "Новостные крупные титры поверх видео",
+      "short": "Новости",
+      "card": {
+        "essence": "Видео идёт целиком, поверх — крупные плотные титры, как на экстренном выпуске: одна мысль на экран, ключевое слово на красной плашке, внизу бегущая строка с главным. Смотрится как сводка, которую зритель дочитывает до конца.",
+        "not": [
+          "не мем с жёлтыми капсами и звёздами «БАМ»",
+          "не слайды: под титрами всегда живое видео",
+          "не пародия на телеканал: без логотипов каналов, часов в углу и «молний»"
+        ],
+        "materials": {
+          "palette": ["#0b1020", "#ffffff", "#e11d2e", "#ffd400"],
+          "fonts": ["Oswald", "Roboto Condensed"],
+          "texture": "чистая картинка, лёгкая прибавка контраста; плашки плоские, без градиентов и бликов"
+        },
+        "motion": "Плашки въезжают шторкой слева направо и уходят на 40% быстрее, чем пришли; слова титров — по одному, без подпрыгивания. Цифры — барабаном.",
+        "camera": "Почти неподвижна: медленный наезд на говорящего 2–4% за фразу, резкий наезд только на главном факте.",
+        "sound": {
+          "palette": ["sfx:freesound/whoosh-1.ogg", "sfx:freesound/hit-transition.ogg", "sfx:freesound/camera-2.ogg", "sfx:freesound/sting.ogg"],
+          "note": "вжух — под въезд плашки, удар — на главный факт один раз, щелчок затвора — на стоп-кадр; всё тише голоса"
+        },
+        "native": [
+          {"kind": "template", "id": "news-ticker", "fits": "бегущая строка с главным выводом ролика, внизу над субтитрами"},
+          {"kind": "template", "id": "lower-third-box", "fits": "кто говорит или откуда кадр — один раз в начале сюжета"},
+          {"kind": "template", "id": "counter", "fits": "цифра новости (сколько, на сколько выросло); theme red"},
+          {"kind": "template", "id": "keyword-big", "fits": "одно слово-итог перед сменой сюжета"},
+          {"kind": "transition", "id": "whippan", "fits": "смена сюжета или места"},
+          {"kind": "transition", "id": "dipblack", "fits": "пауза перед главным фактом"},
+          {"kind": "entrance", "id": "wipe", "fits": "плашки и заголовки"},
+          {"kind": "entrance", "id": "slot", "fits": "одно число или слово-итог в строке"}
+        ],
+        "pitfalls": [
+          "титры не закрывают лицо и не уходят под кнопки площадки (lint_clip ui_zones)",
+          "красный — только ключевому слову, иначе кадр кричит целиком",
+          "бегущая строка и субтитры не стоят на одной высоте",
+          "без чисел-обещаний в промо: сумм и бонусов на плашках нет"
+        ],
+        "vary": ["акцент плашки (красный, жёлтый, цвет бренда)", "шрифт: Oswald или Roboto Condensed", "есть ли бегущая строка", "наезды камеры: да/нет"]
+      },
+      "apply": {
+        "render_look": "Стиль: Новости",
+        "subtitle_profile": "Стиль: Новости",
+        "captions": {"style": "box", "font": "Oswald", "weight": 700, "size": 96, "color": "#ffffff", "activeColor": "#ffffff", "activeBg": "#e11d2e", "stroke": {"color": "#0b1020", "width": 6}, "uppercase": true, "maxWords": 3, "maxLines": 2, "animation": "pop", "wordScale": 1.04},
+        "transition": {"type": "whippan", "duration": 0.18, "sfx": "none"},
+        "entrances": {"title": "wipe", "text": "slideUp"},
+        "backdrop": {"kind": "waves", "colors": ["#0b1020", "#e11d2e", "#ffd400"]},
+        "fx": null,
+        "templates": ["news-ticker", "lower-third-box", "counter", "keyword-big"],
+        "theme": "red"
+      },
+      "sample": {
+        "background": {"kind": "waves", "colors": ["#0b1020", "#e11d2e", "#3b4b7a"]},
+        "words": ["СЕРВЕР", "УПАЛ", "В", "ТРИ", "НОЧИ"],
+        "template": {"id": "news-ticker", "params": {"label": "Главное", "text": "Сервис снова работает, данные целы", "color": "#e11d2e"}}
+      }
+    },
+    {
+      "id": "marker",
+      "version": 1,
+      "name": "Маркер на бумаге",
+      "short": "Маркер",
+      "card": {
+        "essence": "Всё будто нарисовано на листе прямо сейчас: рукописные слова, стрелки и обводки маркером появляются вслед за речью. Ощущение разговора за столом с ручкой в руке.",
+        "not": [
+          "не школьная доска с мелом и не тетрадь в клетку",
+          "не ровная векторная инфографика: линии с нажимом и неровностью",
+          "не бумага-картинка со стока: лист рисует движок, он «дышит»"
+        ],
+        "materials": {
+          "palette": ["#f3ecdc", "#1f1b16", "#ffd400", "#e94f37"],
+          "fonts": ["Caveat", "Pangolin"],
+          "texture": "тёплый лист с волокнами (фон paper), жёлтый текстовыделитель под ключевым словом, красный — только для пометок"
+        },
+        "motion": "Линии прорисовываются за 0.4–0.5 с с нажимом, текст — словами; покадровый «кипящий» лист (12 шагов за цикл) держит кадр живым в паузах.",
+        "camera": "Неподвижна или очень медленно съезжает к пометке; без резких наездов — бумага не прыгает.",
+        "sound": {
+          "palette": ["sfx:freesound/whoosh-soft.ogg", "sfx:freesound/pop-soft.ogg", "sfx:freesound/camera.ogg"],
+          "note": "мягкий вжух — на стрелку, мягкий поп — на обводку; звуков меньше, чем пометок"
+        },
+        "native": [
+          {"kind": "template", "id": "hand-underline", "fits": "ключевое слово фразы — подчеркнуть или выделить маркером"},
+          {"kind": "template", "id": "hand-circle", "fits": "обвести деталь, о которой речь"},
+          {"kind": "template", "id": "hand-arrow", "fits": "показать, куда смотреть, с подписью от руки"},
+          {"kind": "tool", "id": "add_annotation", "fits": "пометка от руки поверх кадра (перо, штриховка)"},
+          {"kind": "transition", "id": "colorfill", "fits": "новый лист: заливка цветом бумаги"},
+          {"kind": "entrance", "id": "words", "fits": "рукописный текст — по словам"},
+          {"kind": "entrance", "id": "draw", "fits": "стрелки, круги, подчёркивания"}
+        ],
+        "pitfalls": [
+          "белые буквы на бумаге не читаются — текст тёмными чернилами",
+          "маркер под словом не толще половины высоты букв, иначе слово тонет",
+          "не больше двух пометок в кадре одновременно",
+          "рукописный шрифт крупно: на телефоне тонкий Caveat меньше 80 px рассыпается"
+        ],
+        "vary": ["цвет маркера (жёлтый, розовый, зелёный)", "шрифт: Caveat или Pangolin", "оттенок бумаги", "красные пометки: да/нет"]
+      },
+      "apply": {
+        "render_look": "Стиль: Бумага",
+        "subtitle_profile": "Стиль: Маркер",
+        "captions": {"style": "box", "font": "Caveat", "weight": 700, "size": 104, "color": "#1f1b16", "activeColor": "#1f1b16", "activeBg": "#ffd400", "stroke": null, "uppercase": false, "maxWords": 4, "maxLines": 2, "animation": "pop", "wordScale": 1.06},
+        "transition": {"type": "colorfill", "duration": 0.36, "color": "#f3ecdc", "direction": "right", "sfx": "none"},
+        "entrances": {"title": "words", "text": "words", "shape": "draw"},
+        "backdrop": {"kind": "paper", "colors": ["#f3ecdc", "#1f1b16", "#e94f37"]},
+        "fx": null,
+        "templates": ["hand-underline", "hand-circle", "hand-arrow"],
+        "theme": "light"
+      },
+      "sample": {
+        "background": {"kind": "paper", "colors": ["#f3ecdc", "#1f1b16", "#e94f37"]},
+        "words": ["вот", "где", "теряются", "деньги"],
+        "template": {"id": "hand-circle", "params": {"x": 0.5, "y": 0.42, "w": 760, "h": 300, "color": "#e94f37", "text": ""}},
+        "title": {"text": "Смета", "font": "Caveat", "size": 190, "color": "#1f1b16", "y": 0.42}
+      }
+    },
+    {
+      "id": "riso",
+      "version": 1,
+      "name": "Рисограф",
+      "short": "Рисограф",
+      "card": {
+        "essence": "Как отпечаток на ризографе: одна синяя краска на тёплой бумаге, вторая — флуоресцентно-розовая — для слов; листы чуть не совпадают, видно зерно. Тепло, по-самиздатовски, но собрано.",
+        "not": [
+          "не фильтр «винтаж» с царапинами и сепией",
+          "не неон: розовый — краска на бумаге, без свечения",
+          "не больше двух красок в кадре (третья — только бумага)"
+        ],
+        "materials": {
+          "palette": ["#f6eedf", "#2546c2", "#ff4f8b"],
+          "fonts": ["Rubik Mono One", "Unbounded"],
+          "texture": "две краски (fx duotone) со сдвигом 3 px, зерно бумаги; фон — бумага"
+        },
+        "motion": "Слова «впечатываются» по одному коротким ударом; плашки выезжают снизу. Ритм ровный, как прогон листов через машину.",
+        "camera": "Мелкие рывки наезда на ударных словах (5–8%), между ними — стоит.",
+        "sound": {
+          "palette": ["sfx:freesound/pop.ogg", "sfx:freesound/punch.ogg", "sfx:freesound/whoosh-4.ogg"],
+          "note": "поп — на впечатанное слово, удар — один на главный тезис"
+        },
+        "native": [
+          {"kind": "template", "id": "flat-hook", "fits": "слово-крючок во всю ширину в начале (fill false)"},
+          {"kind": "template", "id": "punchline", "fits": "вывод фразой, ключевое слово подсвечено"},
+          {"kind": "template", "id": "bar-chart", "fits": "сравнение двух-четырёх чисел столбцами"},
+          {"kind": "template", "id": "flat-chip", "fits": "короткая метка из слов речи: «за вечер», «с телефона»"},
+          {"kind": "transition", "id": "colorfill", "fits": "смена темы: розовая заливка"},
+          {"kind": "entrance", "id": "stomp", "fits": "крупное слово"},
+          {"kind": "entrance", "id": "letters", "fits": "название или имя"}
+        ],
+        "pitfalls": [
+          "розовый поверх синего становится грязным — розовые слова на светлых местах кадра",
+          "тонкие линии теряются в зерне — обводки от 6 px",
+          "лица в двух красках темнеют — поднимать яркость кадра, а не силу эффекта",
+          "эффект на весь ролик: не включать и выключать посреди"
+        ],
+        "vary": ["пара красок (синий+розовый, зелёный+оранжевый, чёрный+жёлтый)", "сдвиг листов 0–6 px", "шрифт заголовков"]
+      },
+      "apply": {
+        "render_look": "Стиль: Рисограф",
+        "subtitle_profile": "Стиль: Рисограф",
+        "captions": {"style": "stomp", "font": "Rubik Mono One", "weight": 400, "size": 84, "color": "#ff4f8b", "activeColor": "#ff4f8b", "stroke": null, "uppercase": true, "maxWords": 2, "maxLines": 2, "animation": "stomp", "wordScale": 1.06},
+        "caption_track": 7,
+        "transition": {"type": "colorfill", "duration": 0.36, "color": "#ff4f8b", "direction": "up", "sfx": "none"},
+        "entrances": {"title": "stomp", "text": "slideUp"},
+        "backdrop": {"kind": "paper", "colors": ["#f6eedf", "#2546c2", "#ff4f8b"]},
+        "fx": {"kind": "duotone", "colors": ["#2546c2", "#f6eedf"], "size": 3, "track": 6},
+        "templates": ["flat-hook", "punchline", "bar-chart", "flat-chip"],
+        "theme": "light"
+      },
+      "sample": {
+        "background": {"kind": "paper", "colors": ["#f6eedf", "#2546c2", "#ff4f8b"]},
+        "words": ["ПЕЧАТАЕМ", "СВОЁ"],
+        "title": {"text": "ЗИН 3", "font": "Rubik Mono One", "size": 170, "color": "#141414", "y": 0.36}
+      }
+    },
+    {
+      "id": "onebit",
+      "version": 1,
+      "name": "1-бит",
+      "short": "1-бит",
+      "card": {
+        "essence": "Две краски и ни одного полутона: тени и переходы собраны из точек растра, как на экране старого карманного компьютера. Строго, контрастно, читается с любого расстояния.",
+        "not": [
+          "не «пиксель-арт» игровых спрайтов и не 8-бит с палитрой",
+          "не глитч на весь ролик: растр ровный, кадр не дёргается",
+          "не серое ч/б: только чернила и бумага"
+        ],
+        "materials": {
+          "palette": ["#101010", "#f4f1e8"],
+          "fonts": ["Press Start 2P", "Rubik Mono One"],
+          "texture": "растр Байера (fx dither) поверх всего, точка 3 px; фон — переливы, которые растр превращает в узоры"
+        },
+        "motion": "Текст печатается по буквам или «расшифровывается» перебором; смены — через чёрный в 3 кадра. Движение ступенчатое, без плавных растворений.",
+        "camera": "Стоит; редкий резкий наезд ступенькой на главном слове.",
+        "sound": {
+          "palette": ["sfx:freesound/camera-2.ogg", "sfx:freesound/pop.ogg", "sfx:freesound/sub-drop.ogg"],
+          "note": "щелчок — на появление строки, глухой провал — один на развязку"
+        },
+        "native": [
+          {"kind": "template", "id": "glitch-title", "fits": "заголовок темы"},
+          {"kind": "template", "id": "keyword-big", "fits": "одно слово-удар"},
+          {"kind": "template", "id": "proof-card", "fits": "факты строками, каждая на своём слове"},
+          {"kind": "template", "id": "countdown", "fits": "обратный отсчёт до раскрытия"},
+          {"kind": "transition", "id": "dipblack", "fits": "любая смена сцены"},
+          {"kind": "entrance", "id": "typewriter", "fits": "строки текста"},
+          {"kind": "entrance", "id": "scramble", "fits": "заголовок или ответ"}
+        ],
+        "pitfalls": [
+          "мелкий текст рассыпается в растр — от 48 px и без тонких засечек",
+          "лица в растре превращаются в шум — светлое ровное освещение или крупный план",
+          "серые надписи исчезают: текст чисто белый или чисто чёрный",
+          "точка растра крупнее 4 px — кадр читается как ошибка рендера"
+        ],
+        "vary": ["пара красок (чёрное/белое, зелёный экран, синий/кремовый)", "размер точки 2–4 px", "шрифт: пиксельный или моно"]
+      },
+      "apply": {
+        "render_look": "Стиль: 1-бит",
+        "subtitle_profile": "Стиль: 1-бит",
+        "captions": {"style": "minimal", "font": "Press Start 2P", "weight": 400, "size": 54, "color": "#ffffff", "activeColor": "#ffffff", "stroke": {"color": "#000000", "width": 8}, "bg": null, "uppercase": true, "maxWords": 3, "maxLines": 2, "animation": "typewriter", "wordScale": 1},
+        "transition": {"type": "dipblack", "duration": 0.15, "sfx": "none"},
+        "entrances": {"title": "scramble", "text": "typewriter"},
+        "backdrop": {"kind": "aurora", "colors": ["#101010", "#bdbdbd", "#6a6a6a"]},
+        "fx": {"kind": "dither", "colors": ["#101010", "#f4f1e8"], "size": 3, "track": 7},
+        "templates": ["glitch-title", "keyword-big", "proof-card", "countdown"],
+        "theme": "dark"
+      },
+      "sample": {
+        "background": {"kind": "aurora", "colors": ["#101010", "#d0d0d0", "#707070"]},
+        "words": ["ЗАГРУЗКА", "МИРА"],
+        "title": {"text": "ГЛАВА 1", "font": "Press Start 2P", "size": 96, "color": "#ffffff", "y": 0.36}
+      }
+    },
+    {
+      "id": "blueprint",
+      "version": 1,
+      "name": "Чертёж",
+      "short": "Чертёж",
+      "card": {
+        "essence": "Объяснение как инженерный разбор: синий лист с сеткой, тонкие белые линии, размеры и выноски строятся на глазах. Подходит, когда надо показать устройство, порядок действий или расчёт.",
+        "not": [
+          "не «хакерский» неон и не матрица",
+          "не красивые обои: на сетке всегда что-то строится",
+          "не схема из стока: линии рисует движок под речь"
+        ],
+        "materials": {
+          "palette": ["#0e3a78", "#e8f1ff", "#7fb2ff", "#ffd166"],
+          "fonts": ["Roboto Condensed", "PT Sans Narrow"],
+          "texture": "лист blueprint: мелкая и крупная сетка, окружности-разметка; тонкие линии 2–4 px, жёлтый — только для ответа"
+        },
+        "motion": "Линии прорисовываются, текст печатается, столбцы растут; всё по одной оси — сетка едет по диагонали, остальное стоит.",
+        "camera": "Медленный ровный съезд к детали, как карандаш по листу; без тряски.",
+        "sound": {
+          "palette": ["sfx:freesound/whoosh-soft.ogg", "sfx:freesound/riser-subtle.ogg", "sfx:freesound/pop-soft.ogg", "sfx:freesound/camera.ogg"],
+          "note": "мягкий подъём — перед ответом, поп — на построенную деталь"
+        },
+        "native": [
+          {"kind": "template", "id": "hand-arrow", "fits": "выноска к детали (белым, rough 0.2)"},
+          {"kind": "template", "id": "bar-chart", "fits": "сравнение величин"},
+          {"kind": "template", "id": "flat-checklist", "fits": "порядок шагов; theme dark"},
+          {"kind": "template", "id": "counter", "fits": "результат расчёта"},
+          {"kind": "transition", "id": "blurswap", "fits": "переход к следующему узлу"},
+          {"kind": "entrance", "id": "draw", "fits": "линии, стрелки, рамки"},
+          {"kind": "entrance", "id": "typewriter", "fits": "подписи размеров"}
+        ],
+        "pitfalls": [
+          "белые тонкие линии на сжатом видео мерцают — не тоньше 2 px",
+          "сетка не должна быть ярче текста",
+          "жёлтый — один ответ на экран",
+          "видео поверх листа — в рамке с подписью, а не на весь кадр"
+        ],
+        "vary": ["оттенок листа (синий, графит)", "шаг сетки", "акцент ответа (жёлтый, оранжевый)"]
+      },
+      "apply": {
+        "render_look": "Стиль: Чертёж",
+        "subtitle_profile": "Стиль: Чертёж",
+        "captions": {"style": "minimal", "font": "Roboto Condensed", "weight": 700, "size": 78, "color": "#e8f1ff", "activeColor": "#ffd166", "stroke": null, "bg": null, "uppercase": true, "punctuation": false, "maxWords": 4, "maxLines": 2, "animation": "fade", "wordScale": 1},
+        "transition": {"type": "blurswap", "duration": 0.3, "sfx": "none"},
+        "entrances": {"title": "typewriter", "text": "wipe", "shape": "draw"},
+        "backdrop": {"kind": "blueprint", "colors": ["#0e3a78", "#e8f1ff", "#ffd166"]},
+        "fx": null,
+        "templates": ["hand-arrow", "bar-chart", "flat-checklist", "counter"],
+        "theme": "dark"
+      },
+      "sample": {
+        "background": {"kind": "blueprint", "colors": ["#0e3a78", "#e8f1ff", "#ffd166"]},
+        "words": ["ШАГ", "ДВА:", "РАСЧЁТ"],
+        "template": {"id": "hand-arrow", "params": {"x": 0.62, "y": 0.26, "from": "снизу слева", "length": 380, "text": "узел", "color": "#e8f1ff", "width": 10, "rough": 0.2}}
+      }
+    }
+  ]
+}

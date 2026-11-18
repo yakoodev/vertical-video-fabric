@@ -43,6 +43,12 @@ from app.layer_tools_actions import (  # noqa: F401
 MAX_LAYERS_PER_CALL = 30
 
 
+def styled_entrance(render: dict, layer: dict) -> dict:
+    from app.style_cards import styled_entrance as by_style
+
+    return by_style(render, layer)
+
+
 def h_add_layers(ctx: ToolContext, args: dict) -> dict:
     raw = args.get("layers")
     if isinstance(raw, dict):
@@ -74,6 +80,8 @@ def h_add_layers(ctx: ToolContext, args: dict) -> dict:
         placed = item.pop("_on_word", None)
         if placed:
             on_words.append(_on_word_line(index, item, placed))
+        # Стиль ролика (apply_style): текст и фигура без своего входа — вход стиля.
+        item = styled_entrance(render, item)
         if not item.get("id") or str(item.get("id")) in taken:
             item["id"] = motion.new_layer_id(taken)
         taken.add(str(item["id"]))

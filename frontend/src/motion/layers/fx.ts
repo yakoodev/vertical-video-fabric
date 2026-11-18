@@ -32,6 +32,8 @@ export const FX_KINDS: FxKind[] = [
   "grayscale",
   "negate",
   "backdrop",
+  "duotone",
+  "dither",
 ];
 
 /** Сила и наложение по умолчанию у каждого вида. */
@@ -49,6 +51,14 @@ export const FX_DEFAULTS: Record<FxKind, { intensity: number; blend: BlendMode }
   grayscale: { intensity: 1, blend: "normal" },
   negate: { intensity: 1, blend: "normal" },
   backdrop: { intensity: 0.45, blend: "normal" },
+  duotone: { intensity: 1, blend: "normal" },
+  dither: { intensity: 1, blend: "normal" },
+};
+
+/** Краски по умолчанию: duotone — синие чернила рисографа на бумаге, dither — чёрное на белом. */
+export const TWO_INK_DEFAULTS: Partial<Record<FxKind, [string, string]>> = {
+  duotone: ["#1f3fbf", "#f6eedf"],
+  dither: ["#111111", "#f2f2ee"],
 };
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -85,10 +95,22 @@ export function resolveFx(layer: FxLayer): ResolvedFx {
     speed: clamp(num(p.speed, 1), 0.1, 4),
     blend,
     color: p.color || (kind === "backdrop" ? "#07060a" : "#ffffff"),
-    colors: Array.isArray(p.colors) && p.colors.length ? p.colors.slice(0, 4) : LEAK_COLORS,
-    size: kind === "backdrop" ? clamp(num(p.size, 22), 0, 64) : clamp(num(p.size, kind === "scanlines" ? 4 : 1.6), 0.5, 12),
+    colors: twoInk(kind, p.colors),
+    size:
+      kind === "backdrop"
+        ? clamp(num(p.size, 22), 0, 64)
+        : kind === "duotone"
+          ? clamp(num(p.size, 3), 0, 12)
+          : clamp(num(p.size, kind === "scanlines" ? 4 : kind === "dither" ? 3 : 1.6), 0.5, 12),
     seed: Number.isFinite(p.seed) && (p.seed as number) > 0 ? Math.floor(p.seed as number) : hashString(layer.id || "fx"),
   };
+}
+
+function twoInk(kind: FxKind, raw: unknown): string[] {
+  const list = Array.isArray(raw) ? raw.filter((c): c is string => typeof c === "string" && !!c) : [];
+  const def = TWO_INK_DEFAULTS[kind];
+  if (def) return [list[0] ?? def[0], list[1] ?? def[1]];
+  return list.length ? list.slice(0, 4) : LEAK_COLORS;
 }
 
 /* ---------- промежуточные холсты ---------- */
@@ -382,6 +404,115 @@ function negate({ ctx, env, fx, alpha }: FxCtx): void {
   ctx.drawImage(src(b.chan.canvas), 0, 0, env.width, env.height);
 }
 
+/* ---------- две краски и 1 бит (стили «рисограф», «чертёж», «1-бит») ---------- */
+
+function duotone({ ctx, env, fx, local, alpha, k }: FxCtx): void {
+  // Яркость кадра → две краски: тени colors[0], свет colors[1]. Без getImageData: серый (saturation) ×
+  // светлая краска + (1 − серый) × тёмная краска (difference с белым, multiply) — сложение «lighter».
+  // Тёмная краска сдвинута на size px (несовпадение листов печати); сверху — лёгкое зерно бумаги.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b)) return;
+  const [dark, light] = fx.colors;
+  const c = b.chan.ctx;
+  const o = b.out.ctx;
+  reset(c, b.w, b.h);
+  c.drawImage(src(b.frame.canvas), 0, 0);
+  c.globalCompositeOperation = "saturation";
+  c.fillStyle = "#808080";
+  c.fillRect(0, 0, b.w, b.h);
+  reset(o, b.w, b.h);
+  o.drawImage(src(b.chan.canvas), 0, 0);
+  o.globalCompositeOperation = "multiply";
+  o.fillStyle = light;
+  o.fillRect(0, 0, b.w, b.h);
+  c.globalCompositeOperation = "difference";
+  c.fillStyle = "#ffffff";
+  c.fillRect(0, 0, b.w, b.h);
+  c.globalCompositeOperation = "multiply";
+  c.fillStyle = dark;
+  c.fillRect(0, 0, b.w, b.h);
+  const shift = fx.size * k;
+  o.globalCompositeOperation = "lighter";
+  o.drawImage(src(b.chan.canvas), shift, shift * 0.6);
+  if (shift > 0) {
+    // Полоса, откуда уехала тёмная краска, — без неё (светлая краска), а не прозрачная дыра.
+    o.globalCompositeOperation = "destination-over";
+    o.fillStyle = light;
+    o.fillRect(0, 0, b.w, b.h);
+  }
+  // Зерно бумаги — слабое, «перекрытием»: 12 новых плиток в секунду.
+  o.globalCompositeOperation = "overlay";
+  o.globalAlpha = 0.28;
+  paintGrain(o, env, Math.floor(local * 12 * fx.speed), fx.seed, Math.max(1, 2.4 * k));
+  o.globalAlpha = 1;
+  o.globalCompositeOperation = "destination-in";
+  o.drawImage(src(b.frame.canvas), 0, 0);
+  ctx.globalAlpha = clamp01(alpha * fx.intensity);
+  ctx.drawImage(src(b.out.canvas), 0, 0, env.width, env.height);
+}
+
+/** Матрица Байера 8×8 (0..63): упорядоченный растр — одинаковый в каждом кадре, не «кипит». */
+const BAYER8 = (() => {
+  const m = [0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26, 12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20,
+    62, 30, 54, 22, 3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25, 15, 47, 7, 39, 13, 45, 5, 37, 63, 31,
+    55, 23, 61, 29, 53, 21];
+  return m.map((v) => (v + 0.5) / 64);
+})();
+
+const ditherByEnv = new WeakMap<RenderEnv, { w: number; h: number; buf: Buf }>();
+
+function hexRgb(c: string): [number, number, number] {
+  const h = /^#?([0-9a-f]{6})/i.exec(c.trim())?.[1] ?? "000000";
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function dither({ ctx, env, fx, alpha, k }: FxCtx): void {
+  // 1 бит: кадр уменьшается до точек size·k px, каждая точка — чернила или бумага по порогу Байера, обратно —
+  // без сглаживания (квадратные точки). Попиксельно только на уменьшенной копии. Холст с чужой картинкой
+  // (getImageData запрещён) — ч/б вместо растра.
+  const b = buffers(env);
+  if (!b || !snapshot(ctx, env, b) || !env.createCanvas) return;
+  const cell = Math.max(1, Math.round(fx.size * k));
+  const sw = Math.max(1, Math.ceil(b.w / cell));
+  const sh = Math.max(1, Math.ceil(b.h / cell));
+  let hit = ditherByEnv.get(env);
+  if (!hit || hit.w !== sw || hit.h !== sh) {
+    hit = { w: sw, h: sh, buf: makeBuf(env, sw, sh) };
+    ditherByEnv.set(env, hit);
+  }
+  const s = hit.buf.ctx;
+  reset(s, sw, sh);
+  s.imageSmoothingEnabled = true;
+  s.drawImage(src(b.frame.canvas), 0, 0, b.w, b.h, 0, 0, sw, sh);
+  let img: ImageData;
+  try {
+    img = s.getImageData(0, 0, sw, sh);
+  } catch {
+    grayscale({ ctx, env, fx, local: 0, dur: 0, alpha, k });
+    return;
+  }
+  const [ir, ig, ib] = hexRgb(fx.colors[0]);
+  const [pr, pg, pb] = hexRgb(fx.colors[1]);
+  const d = img.data;
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const i = (y * sw + x) * 4;
+      if (d[i + 3] === 0) continue;
+      const lum = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      const on = lum > BAYER8[(x & 7) + (y & 7) * 8];
+      d[i] = on ? pr : ir;
+      d[i + 1] = on ? pg : ig;
+      d[i + 2] = on ? pb : ib;
+      d[i + 3] = 255;
+    }
+  }
+  s.putImageData(img, 0, 0);
+  ctx.globalAlpha = clamp01(alpha * fx.intensity);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(src(hit.buf.canvas), 0, 0, sw, sh, 0, 0, sw * cell * (env.width / b.w), sh * cell * (env.height / b.h));
+  ctx.imageSmoothingEnabled = true;
+}
+
 /* ---------- фон под плашками (плоская тема) ---------- */
 
 const smallByEnv = new WeakMap<RenderEnv, { w: number; h: number; buf: Buf }>();
@@ -630,6 +761,8 @@ const PAINT: Record<FxKind, (c: FxCtx) => void> = {
   grayscale,
   negate,
   backdrop,
+  duotone,
+  dither,
 };
 
 /**
