@@ -40,6 +40,14 @@ export function collectImageRefs(layers: Layer[]): string[] {
         if (ref) out.add(String(ref));
         break;
       }
+      case "physics":
+        // Картинки тел (файл, emoji:, sticker:) и эмодзи-буквы текста (рисуются картинкой Twemoji).
+        for (const body of layer.props?.bodies ?? []) {
+          const ref = body.asset_id || body.src;
+          if (body.kind === "image" && ref) out.add(String(ref));
+          if (body.kind === "text") emojiIn(body.text ?? "", out);
+        }
+        break;
       case "pngtuber":
         // Статичная картинка состояния (или первый кадр анимации, пока кадры не пришли).
         for (const key of PNGTUBER_STATES) {

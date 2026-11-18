@@ -36,7 +36,7 @@ from app.motion_limits import (  # noqa: F401
     BEZIER_RE, PACK_REF_RE, LAYER_TYPES, VISUAL_TYPES, EASINGS, DEFAULT_EASING, ANIMATIONS, TEXT_ONLY_ANIMATIONS,
     ANIMATION_ALIASES, DRAW_SHAPE_KINDS, LOOPS, TEXT_ONLY_LOOPS, LOOP_ALIASES, BLENDS, FX_KINDS, FX_ALIASES,
     FX_MAX_AT_ONCE, REACT_SOURCES, REACT_PROPS, REACT_ALIASES, SHAPE_KINDS, PARTICLE_KINDS, PARTICLE_SHAPES,
-    MAX_PARTICLES, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, AD_ICONS, AD_THEMES, AD_ACCENT, AD_FONT, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES,
+    MAX_PARTICLES, PHYSICS_SPAWNS, PHYSICS_WALLS, PHYSICS_SHAPES, MAX_PHYSICS_BODIES, MAX_PHYSICS_SEC, DECOR_GLYPHS, CHART_KINDS, CALLOUT_STYLES, AD_ICONS, AD_THEMES, AD_ACCENT, AD_FONT, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES,
     SKETCH_SHAPE_KINDS, NAMEPLATE_PLATFORMS, NAMEPLATE_STYLES,
     NAMEPLATE_ANIMS, NAMEPLATE_OUTROS, NAMEPLATE_OUTRO_SEC, NAMEPLATE_SIZE, ALIGNS, HIGHLIGHT_STYLES,
     CAPTION_STYLES, DEFAULT_CAPTION_STYLE, CAPTION_ANIMATIONS, DEFAULT_CAPTIONS_Y, MAX_CAPTION_MARKS, CHAT_STYLES,
@@ -166,6 +166,13 @@ def layer_asset_refs(layer: dict) -> list[int | str]:
         ref = _as_ref(props.get("asset_id")) or _as_ref(props.get("src"))
         if ref is not None:
             refs.append(ref)
+    elif ltype == "physics":
+        # Картинки тел: файл для монтажа или emoji:/sticker: из паков (эмодзи в тексте — как у слоя text).
+        for body in props.get("bodies") or []:
+            if isinstance(body, dict) and body.get("kind") == "image":
+                ref = _as_ref(body.get("asset_id")) or _as_ref(body.get("src"))
+                if ref is not None and ref not in refs:
+                    refs.append(ref)
     elif ltype == "pngtuber":
         # Картинки/анимации состояний и (если голос из файла) звук.
         states = props.get("states") if isinstance(props.get("states"), dict) else {}
@@ -526,6 +533,15 @@ def schema_summary() -> dict:
             "statusBar": f"строка статуса над экраном: доля ширины экрана 0..{STATUS_BAR_MAX}, true — "
                          f"{STATUS_BAR_AUTO}; островок по умолчанию у видео только с ней",
             "screenGlare": "блик стекла поверх экрана",
+        },
+        "physics": {
+            "spawns": list(PHYSICS_SPAWNS),
+            "walls": list(PHYSICS_WALLS),
+            "shapes": list(PHYSICS_SHAPES),
+            "max_bodies": MAX_PHYSICS_BODIES,
+            "max_sec": MAX_PHYSICS_SEC,
+            "deterministic": "мир считается заранее фиксированным шагом (120 Гц) и кешируется: превью и рендер "
+                             "совпадают кадр в кадр; раскладка — от seed (нет — от id слоя)",
         },
         "particles": {
             "kinds": list(PARTICLE_KINDS),

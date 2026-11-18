@@ -46,7 +46,7 @@ def _in_type(layer: dict) -> str | None:
 def subject_findings(layers_all: list[dict], duration: float, canvas: bool, camera: Any = None) -> list[dict]:
     if not canvas or duration <= 0:
         return []
-    layers = [l for l in layers_all if l.get("type") not in ("fx", "particles", "nameplate")]
+    layers = [l for l in layers_all if l.get("type") not in ("fx", "particles", "physics", "nameplate")]
     H = frame_size()[1]
     runs: list[dict] = []
     cur: dict | None = None
@@ -154,7 +154,7 @@ def zero_scale_findings(layers_all: list[dict]) -> list[dict]:
         from_zero = bool(scale_keys) and _num(scale_keys[0].get("v"), 1.0) <= 0.05 and \
             max(_num(p.get("v")) for p in scale_keys) > 0.3
         why = f"вход {kind}" if kind in ZERO_SCALE_INS else "ключ scale с 0" if from_zero else None
-        if why is None or layer.get("type") in ("captions", "fx", "particles"):
+        if why is None or layer.get("type") in ("captions", "fx", "particles", "physics"):
             continue
         out.append(_finding("zero_scale", "warn", f"{layer_label(layer)} вырастает из нуля ({why}) — дёшево выглядит",
                             "въезд от края (slideUp / rise) или «оседание»: fade + ключи scale 0.94 → 1 (или 1.06 → 1)",

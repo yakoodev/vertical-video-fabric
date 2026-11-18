@@ -14,6 +14,7 @@ import { AudioSection } from "./inspector/AudioSection";
 import { CaptionsSection } from "./inspector/CaptionsSection";
 import { CalloutSection, ChartSection, NameplateSection, SocialSection } from "./inspector/DataSections";
 import { FxSection, ParticlesSection } from "./inspector/EffectSections";
+import { PhysicsSection } from "./inspector/PhysicsSection";
 import { Section } from "./inspector/fields";
 import { MediaSection, PageSection, ProgressSection, ShapeSection } from "./inspector/MediaSections";
 import { PositionSection } from "./inspector/PositionSection";
@@ -83,6 +84,8 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
       {layer.type === "fx" ? <FxSection layer={layer} patchProps={patchProps} /> : null}
 
       {layer.type === "particles" ? <ParticlesSection layer={layer} patchProps={patchProps} /> : null}
+
+      {layer.type === "physics" ? <PhysicsSection layer={layer} patchProps={patchProps} /> : null}
 
       {layer.type === "captions" ? <CaptionsSection layer={layer} words={words} onChange={onChange} onSeek={onSeek} patchProps={patchProps} /> : null}
 

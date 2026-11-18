@@ -200,7 +200,7 @@ def frame0_plan_findings(store: Any, plan: dict, rs: dict, clock: Any) -> list[d
     t0 = clock.final_to_clip(0.0) if clock is not None else 0.0
     layers = visual_layers(rs)
     canvas = is_canvas_plan(store, plan)
-    shown = [l for l in layers if shown_at(l, t0) and l.get("type") not in ("fx", "particles")]
+    shown = [l for l in layers if shown_at(l, t0) and l.get("type") not in ("fx", "particles", "physics")]
     content = [l for l in shown if not is_logo(l) and not (canvas and is_full_frame(l, t0) and l.get("type") == "image")]
     out: list[dict] = []
     late = sorted((l for l in layers if l.get("type") in TEXTY and _num(l.get("start")) < t0 + 1.0
@@ -427,7 +427,7 @@ def scene_bounds(rs: dict, clock: Any, duration: float) -> list[float]:
 def hold_findings(rs: dict, clock: Any, end_hold: float = 0.0) -> list[dict]:
     duration = clock.clip_duration
     bounds = scene_bounds(rs, clock, duration)
-    layers = [l for l in visual_layers(rs) if l.get("type") not in ("fx", "particles", "audio") and not is_full_frame(l)]
+    layers = [l for l in visual_layers(rs) if l.get("type") not in ("fx", "particles", "physics", "audio") and not is_full_frame(l)]
     out: list[dict] = []
     for k, (s, e) in enumerate(zip(bounds, bounds[1:])):
         if e - s < 0.5:

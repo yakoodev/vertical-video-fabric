@@ -1,4 +1,5 @@
 // Шаблоны: экран телефона, частицы, эффекты кадра и глитч.
+import { emojiRef } from "../fonts";
 import { GLITCH_SFX, GLITCH_STYLES, glitchKeys } from "../layers/fx";
 import type { Layer } from "../types";
 import { bool, dur, durationParam, FONT, layer, type MotionTemplate, num, SOFT, str, YELLOW } from "./kit";
@@ -103,6 +104,51 @@ export const particlesTpl: MotionTemplate = {
         ),
       ],
     };
+  },
+};
+
+/** Пол мира физики — над подписью и кнопками площадок (нижние ~20% кадра заняты интерфейсом). */
+const SAFE = { x: 0, y: 0, w: 1, h: 0.8 };
+
+/** Физика одним слоем: буквы падают и ложатся, эмодзи сыплются или разлетаются, тарелку сбивает толчок. */
+export const physicsTpl: MotionTemplate = {
+  id: "physics",
+  name: "Физика: падение и разлёт",
+  category: "Акценты",
+  description: "Слой физики (matter.js): буквы слова падают и ложатся кучей, эмодзи сыплются дождём или разлетаются из точки, тарелка падает со стола от толчка",
+  duration: 4,
+  params: [
+    { name: "mode", label: "Что", type: "select", default: "letters", options: ["letters", "rain", "burst", "plate"] },
+    { name: "text", label: "Текст (буквы)", type: "text", default: "БАМ!" },
+    { name: "emoji", label: "Эмодзи", type: "text", default: "🔥" },
+    { name: "color", label: "Цвет", type: "color", default: YELLOW },
+    { name: "count", label: "Сколько (дождь, разлёт)", type: "number", default: 24, min: 1, max: 150 },
+    durationParam(4),
+  ],
+  build(p, at) {
+    const mode = str(p, "mode", "letters");
+    const len = dur(p, 4);
+    const count = Math.max(1, Math.min(150, Math.round(num(p, "count", 24))));
+    const ref = emojiRef(str(p, "emoji", "🔥") || "🔥");
+    const base = { start: at, end: at + len, track: 2, x: 0.5, y: 0.5, name: "Физика", out: { type: "fade" as const, duration: 0.3 } };
+    if (mode === "rain") {
+      return { layers: [layer("physics", { ...base, name: "Физика: дождь" }, {
+        bodies: [{ kind: "image", src: ref, size: 110, count }], spawn: "rain", walls: "frame", bounds: SAFE, spread: Math.min(2, len * 0.5), restitution: 0.35 })] };
+    }
+    if (mode === "burst") {
+      return { layers: [layer("physics", { ...base, name: "Физика: разлёт" }, {
+        bodies: [{ kind: "image", src: ref, size: 100, count }], spawn: "burst", walls: "none", origin: { x: 0.5, y: 0.5 }, power: 1700, gravity: 1 })] };
+    }
+    if (mode === "plate") {
+      // Тарелка на невидимом столе (стол 17–67% ширины на 61% высоты), толчок слева через 0.6 с — падает и отскакивает от пола.
+      return { layers: [layer("physics", { ...base, name: "Физика: тарелка" }, {
+        bodies: [{ kind: "shape", shape: "plate", size: 300, colors: ["#f4f1ea"] }], spawn: "stack", walls: "frame",
+        origin: { x: 0.5, y: 0.6 }, platforms: [{ x: 0.42, y: 0.61, w: 0.5, h: 0.02 }],
+        impulse: { at: 0.6, x: 0.2, y: 0.598, force: 2600, radius: 0.5, lift: 0 }, restitution: 0.25, friction: 0.08, bounds: SAFE })] };
+    }
+    return { layers: [layer("physics", { ...base, name: "Физика: буквы" }, {
+      bodies: [{ kind: "text", text: str(p, "text", "БАМ!"), split: "letters", size: 220, colors: [str(p, "color", YELLOW)], stroke: "#000000", weight: 900 }],
+      spawn: "drop", walls: "frame", bounds: SAFE, origin: { x: 0.5, y: 0.3 }, restitution: 0.25, friction: 0.5 })] };
   },
 };
 

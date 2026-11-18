@@ -238,6 +238,12 @@ props по типу:
          (или asset_id картинки), size (px, ±45%), spread (радиус/полуширина области, px), duration (жизнь/цикл, с; burst 1.2,
          confetti 3, sparkle 1.6, rise 3), gravity (px/с², burst 500, confetti 900), repeat (burst/confetti каждые duration),
          glow (свечение), seed (раскладка; нет — от id). ОДИН слой рисует все частицы — кульминация, «вау», итог промо
+  physics: твёрдые тела с физикой (matter.js; мир считается заранее — превью = рендер; готовое — add_physics):
+         bodies [{{kind text|image|shape, text + split letters|words|whole, src emoji:…/sticker:… или asset_id, shape
+         {'|'.join(motion.PHYSICS_SHAPES)} (plate — тарелка), size px, aspect, count, colors, stroke}}] (≤{motion.MAX_PHYSICS_BODIES} тел),
+         spawn {'|'.join(motion.PHYSICS_SPAWNS)}, walls {'|'.join(motion.PHYSICS_WALLS)}, bounds {{x,y,w,h}} доли кадра (пол — низ рамки),
+         gravity (1), restitution (0.3), friction (0.3), at (с слоя), spread (rain, с), power (burst, px/с), origin {{x,y}},
+         impulse {{at, x, y, force, radius, lift}}, platforms [{{x,y,w,h,angle}}] — невидимые опоры, seed; слой x/y 0.5 (мир — весь кадр)
   counter: from, to, decimals, prefix, suffix, thousands + стили text; рост по progress (по умолч. первая половина);
          roll: true — одометр (каждая цифра крутится барабаном, stagger 0.06 с между разрядами, laps 2 лишних оборота)
   РЕКЛАМНЫЙ ПАКЕТ (промо продукта/сервиса; готовое — list_motion_templates(category: "Реклама") → add_motion_template).
