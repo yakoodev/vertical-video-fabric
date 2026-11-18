@@ -10,7 +10,7 @@
 
 Фон::
 
-    {"kind": "aurora" | "grid" | "bokeh" | "waves" | "gradient" | "solid",
+    {"kind": "aurora" | "grid" | "bokeh" | "waves" | "paper" | "blueprint" | "gradient" | "solid",
      "colors": [...],       # до трёх #rrggbb: основа, акцент, второй акцент; [] — в цветах клипа
      "speed": 1.0,          # 0.1..4, цикл — 10 / speed секунд, бесшовный
      "intensity": 0.7}      # яркость свечения 0..1
@@ -28,8 +28,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-BACKGROUND_KINDS = ("aurora", "grid", "bokeh", "waves", "gradient", "solid")
-ANIMATED_KINDS = ("aurora", "grid", "bokeh", "waves")
+BACKGROUND_KINDS = ("aurora", "grid", "bokeh", "waves", "paper", "blueprint", "gradient", "solid")
+ANIMATED_KINDS = ("aurora", "grid", "bokeh", "waves", "paper", "blueprint")
+# «Листы» (paper — бумага, blueprint — чертёж): свои цвета без заданных — [бумага, чернила, акцент].
+SHEET_DEFAULTS = {"paper": ("#f3ecdc", "#2b2722", "#e94f37"), "blueprint": ("#0e3a78", "#e8f1ff", "#7fb2ff")}
 BACKGROUND_PERIOD = 10.0
 LEGACY_DEFAULT_COLOR = "#0b0d14"
 DEFAULT_SPEED = 1.0
@@ -125,6 +127,8 @@ def fill_color(bg: Any) -> str:
         colors = bg.get("colors") or []
         if colors and _color(colors[0]):
             return _color(colors[0]) or LEGACY_DEFAULT_COLOR
+        if bg.get("kind") in SHEET_DEFAULTS:
+            return SHEET_DEFAULTS[bg["kind"]][0]
     return LEGACY_DEFAULT_COLOR
 
 

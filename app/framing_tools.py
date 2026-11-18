@@ -30,7 +30,8 @@ from app.framing_tools_layout import (  # noqa: F401
 
 # Стили фона для подсказок инструментов (app/backgrounds.py).
 BG_KINDS_HINT = ("aurora (переливы, по умолчанию) | grid (неоновая перспективная сетка) | bokeh (блики) | "
-                 "waves (светящиеся волны) | gradient | solid (статичные)")
+                 "waves (светящиеся волны) | paper (лист бумаги, «дышит» покадрово) | blueprint (синий лист чертежа с "
+                 "сеткой) | gradient | solid (статичные)")
 
 
 def _format_view(render: dict) -> dict:

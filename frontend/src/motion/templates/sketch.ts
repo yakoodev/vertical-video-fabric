@@ -28,8 +28,17 @@ function handLabel(text: string, at: number, end: number, x: number, y: number, 
       out: { type: "fade", duration: 0.25 },
       shadow: { color: "#000000", blur: 14, x: 0, y: 4, opacity: 0.55 },
     },
-    { text, font: HAND_FONT, weight: 700, size: 92, color, stroke: { color: "#ffffff", width: 7 }, maxWidth: 760, lineHeight: 0.95 },
+    // Обводка — контраст к цвету подписи: светлая подпись (белый мел на чертеже) с белой обводкой слипалась в пятно.
+    { text, font: HAND_FONT, weight: 700, size: 92, color, stroke: { color: isLight(color) ? "#0b1020" : "#ffffff", width: 7 }, maxWidth: 760, lineHeight: 0.95 },
   );
+}
+
+/** Светлый цвет (#rrggbb, яркость > 0.7): ему нужна тёмная обводка. */
+function isLight(color: string): boolean {
+  const m = /^#?([0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return false;
+  const n = parseInt(m[1], 16);
+  return (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255 > 0.7;
 }
 
 const ARROW_FROM: Record<string, [number, number]> = {

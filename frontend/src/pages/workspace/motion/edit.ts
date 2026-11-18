@@ -337,4 +337,6 @@ export const FX_TITLES: Record<string, string> = {
   grayscale: "Ч/б",
   negate: "Негатив",
   backdrop: "Фон под плашками",
+  duotone: "Две краски (рисограф)",
+  dither: "1 бит (растр)",
 };

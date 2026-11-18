@@ -91,7 +91,12 @@ FX_KINDS = ("vhs", "scanlines", "light_leak", "chromatic", "flash_frame", "grain
             "negate",
             # Фон под плашками (плоская тема): всё ниже размыто (size — радиус, опорн. px) и притушено
             # (intensity, color); субтитры и плашка канала остаются резкими поверх.
-            "backdrop")
+            "backdrop",
+            # Две краски на весь кадр (стили «рисограф», «чертёж»): яркость → colors [тени, свет], size — сдвиг
+            # тёмной краски (несовпадение печати), лёгкое зерно бумаги.
+            "duotone",
+            # 1 бит (стиль «1-бит»): растр Байера, точка size опорн. px, colors [чернила, бумага].
+            "dither")
 FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", "lines": "scanlines",
               "leak": "light_leak", "lightleak": "light_leak", "light-leak": "light_leak", "rgb": "chromatic",
               "aberration": "chromatic", "chromatic_aberration": "chromatic", "flash": "flash_frame",
@@ -100,7 +105,9 @@ FX_ALIASES = {"glitch": "vhs", "vcr": "vhs", "tape": "vhs", "crt": "scanlines", 
               "pixelsort": "pixel_sort_lite", "bw": "grayscale", "b/w": "grayscale", "mono": "grayscale",
               "monochrome": "grayscale", "black_white": "grayscale", "desaturate": "grayscale",
               "invert": "negate", "inverted": "negate", "negative": "negate", "inverse": "negate",
-              "blur": "backdrop", "backdrop_blur": "backdrop", "dim": "backdrop", "frosted": "backdrop"}
+              "blur": "backdrop", "backdrop_blur": "backdrop", "dim": "backdrop", "frosted": "backdrop",
+              "riso": "duotone", "risograph": "duotone", "two_tone": "duotone", "twotone": "duotone",
+              "1bit": "dither", "1-bit": "dither", "onebit": "dither", "bitmap": "dither", "bayer": "dither"}
 # Сколько эффектов кадра одновременно — уже каша (предупреждение агенту, не ошибка).
 FX_MAX_AT_ONCE = 2
 # Реакция слоя на звук (frontend/src/motion/levels.ts): огибающую считает app/audio_react.py.
