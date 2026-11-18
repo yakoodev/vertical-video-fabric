@@ -93,7 +93,8 @@ def bake_body(arm, clips, perf, frames, cam_pos_at):
         pb.rotation_mode = "QUATERNION"
     n = len(frames)
     times = [(f - 1) / FPS for f in frames]
-    root = [(perf["root"][i][0], perf["root"][i][1], 0.0) for i in range(n)]
+    rz = perf.get("root_z") or [0.0] * n          # стоит на рюкзаке — корень выше пола
+    root = [(perf["root"][i][0], perf["root"][i][1], float(rz[i])) for i in range(n)]
     heads = perf["heading"][:n]
     # glTF-импорт ставит объектам вращение кватернионом — ключи rotation_euler тогда молча не действуют (герой
     # всегда смотрел к дверям и ходил боком). Курс — эйлером.
@@ -383,6 +384,58 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
     kit.key_vec(phone, "scale", frames, scales, interp="CONSTANT")
 
 
+MSG_FONTS = ["C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+
+
+def _wrap(text: str, width: int) -> str:
+    """Строки не длиннее ``width`` знаков по словам (переписка на узком экране)."""
+    lines, cur = [], ""
+    for w in text.split():
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}".strip()
+    if cur:
+        lines.append(cur)
+    return "\n".join(lines[:3])
+
+
+def message_screen(j, val, phone, font):
+    """Экран переписки (``msg|кому|текст|статус|сеть|заряд|время``): строка состояния (нет сети, заряд), имя чата,
+    пузырь сообщения справа, статус под ним (не доставлено — красным). Всё крупно: читается в детали с телефоном."""
+    _m, to, body, state, net, batt, clock = (val.split("|") + [""] * 7)[:7]
+    ink = kit.emission_mat(f"msg_ink{j}", (1.0, 1.0, 1.0), 8.0)
+    dim = kit.emission_mat(f"msg_dim{j}", (0.75, 0.8, 0.9), 5.0)
+    red = kit.emission_mat(f"msg_red{j}", (1.0, 0.16, 0.12), 9.0)
+    bub = kit.emission_mat(f"msg_bubble{j}", (0.05, 0.26, 0.85), 1.0)
+    bar = kit.emission_mat(f"msg_bar{j}", (0.10, 0.12, 0.18), 1.0)
+    y, parts = -0.0063, []      # текст поверх подложек (y −0.0058) — без мерцания плоскостей
+
+    def tx(name, body_, size, x, z, mat, align="CENTER"):
+        ob = kit.text(f"msg_{name}{j}", body_, size, (x, y, z), mat, font=font, align=align)
+        ob.parent = phone
+        parts.append(ob)
+        return ob
+    head = kit.box(f"msg_head{j}", (0.036, 0.0004, 0.014), (0, -0.0058, 0.031), bar, bevel=0.0)
+    head.parent = phone
+    status = " · ".join(x for x in (net, batt) if x) or clock
+    if status:
+        tx("status", status, 0.0042, 0.0, 0.0345, red if net else dim)
+    tx("to", to, 0.0052, 0.0, 0.0265, ink)
+    text_ = body[:1].upper() + body[1:]
+    lines = _wrap(text_, 11)
+    n_lines = lines.count("\n") + 1
+    bh = 0.0062 * n_lines + 0.004
+    bubble = kit.box(f"msg_bubble{j}", (0.032, 0.0004, bh), (0.0, -0.0058, 0.006), bub, bevel=0.0)
+    bubble.parent = phone
+    tx("body", lines, 0.0050, 0.0, 0.006, ink)
+    if state:
+        warn = "! " + state if "не " in state else state
+        tx("state", _wrap(warn, 14), 0.0040, 0.0, 0.006 - bh / 2 - 0.0062, red if "не " in state else dim)
+    return [*parts, head, bubble]
+
+
 def phone_screen_text(phone, perf, frames, font):
     """Значение на экране телефона (``phone[f].screen``: «03:33», «14%», «−12 °C») — светлые цифры на тёмной
     подложке экрана; по объекту на значение, виден только в своих кадрах."""
@@ -395,6 +448,14 @@ def phone_screen_text(phone, perf, frames, font):
     for j, val in enumerate(values):
         back = kit.box(f"phone_scr_back{j}", (0.036, 0.0006, 0.077), (0, -0.0053, 0), back_mat, bevel=0.0)
         back.parent = phone
+        if val.startswith("msg|"):
+            # переписка — шрифтом с честной кириллицей: у Bahnschrift в Blender часть строчных букв (т, и, э) ломается
+            parts = message_screen(j, val, phone, kit.load_font(MSG_FONTS) or font)
+            vis = [((1, 1, 1) if perf["phone"][i].get("screen") == val else (0, 0, 0)) for i in range(len(frames))]
+            for ob in (back, *parts):
+                kit.key_vec(ob, "scale", frames, vis, interp="CONSTANT")
+            out[val] = parts[0]
+            continue
         size = 0.0135 if len(val) <= 5 else 0.0105
         txt = kit.text(f"phone_scr_txt{j}", val, size, (0.0, -0.0058, 0.012), ink, font=font)
         txt.parent = phone
@@ -403,6 +464,39 @@ def phone_screen_text(phone, perf, frames, font):
             kit.key_vec(ob, "scale", frames, vis, interp="CONSTANT")
         out[val] = txt
     return out
+
+
+def floor_bag(pack, mats, perf, frames):
+    """Рюкзак снят (ч.3, ``perf.bag``): на спине прячется, на полу под люком лежит такой же плашмя — герой на нём стоит
+    (верх ≈ ``B.BAG_H``, корень героя поднят ``perf.root_z``)."""
+    bags = perf.get("bag")
+    if not bags:
+        return None
+    n = len(frames)
+    for p in pack:
+        # прячем уносом далеко за кабину, а не масштабом 0: лямки-кривые с нулевым масштабом three.js рисовал на месте
+        l0 = tuple(p.location)
+        away = (l0[0], l0[1], l0[2] - 80.0)
+        kit.key_vec(p, "location", frames, [(away if bags[i] else l0) for i in range(n)], interp="CONSTANT")
+    bx, by, yaw, top = perf["bag_pose"]
+    olive = mats["olive"]
+    strap = kit.principled("floor_strap", kit.hexc("#4b5730"), rough=0.75)
+    buckle = kit.principled("floor_buckle", kit.hexc("#1a1b1d"), rough=0.4)
+    body_h = top - 0.03
+    parts = [kit.box("floorbag_body", (0.26, 0.27, body_h), (0, 0, body_h / 2), olive, bevel=0.035, segs=4),
+             kit.box("floorbag_flap", (0.26, 0.15, 0.03), (0, 0.06, body_h + 0.012), olive, bevel=0.012, segs=3),
+             kit.box("floorbag_pocket", (0.17, 0.045, 0.09), (0, -0.155, 0.055), olive, bevel=0.02, segs=3),
+             kit.box("floorbag_clip", (0.035, 0.012, 0.03), (0, -0.015, body_h + 0.02), buckle, bevel=0.004)]
+    for sx in (-1, 1):
+        parts.append(kit.box(f"floorbag_strap{sx}", (0.03, 0.30, 0.008), (0.075 * sx, 0.0, body_h + 0.002), strap, bevel=0.003))
+    root = bpy.data.objects.new("floor_bag", None)
+    kit.link(root)
+    root.location = (bx, by, 0.0)
+    root.rotation_euler = (0.0, 0.0, yaw)
+    for p in parts:
+        p.parent = root
+    kit.key_vec(root, "scale", frames, [((1, 1, 1) if bags[i] else (0, 0, 0)) for i in range(n)], interp="CONSTANT")
+    return root
 
 
 # ============================================================== свет
@@ -483,6 +577,23 @@ def build_lights(L, perf, frames, phone):
         kit.fcurve(L["hatch_latch"], "rotation_euler", 2, frames, [math.radians(90) * lt[i].get("latch", 0.0) for i in range(n)])
         # в открытый люк видно шахту: тусклый холодный отсвет сверху на тросах
         kit.fcurve(L["above_light"].data, "energy", 0, frames, [6.0 * lt[i].get("hatch", 0.0) for i in range(n)])
+    tr = perf.get("torch")
+    if tr and any(lt[i].get("torch") for i in range(n)):
+        # чужой фонарик в щели люка (ч.3): такой же телефон, вспышкой вниз, луч — на лицо героя через щель
+        pos, aim = V(tr["pos"]), V(tr["aim"])
+        rot = (aim - pos).normalized().to_track_quat("-Z", "Y").to_euler("XYZ")
+        torch = kit.make_light("hatch_torch", "SPOT", (0.86, 0.92, 1.0), 0.0, tuple(pos - V((0, 0, 0.004))), rot=tuple(rot), size=0.006,
+                               spot=(math.radians(44), 0.5), volume=2.0)
+        kit.fcurve(torch.data, "energy", 0, frames, [70.0 * lt[i].get("torch", 0.0) for i in range(n)])
+        case = kit.principled("torch_phone_case", kit.hexc("#1c1f26"), rough=0.35, coat=0.4)
+        ph = kit.box("torch_phone", (0.042 * 1.35, 0.086 * 1.35, 0.009 * 1.35), (pos.x, pos.y + 0.045, pos.z + 0.008),
+                     case, bevel=0.006, segs=3)
+        led_mat = kit.emission_mat("torch_led", (1.0, 1.0, 1.0), 0.0)
+        kit.cylinder("torch_led", 0.0042, 0.002, (pos.x, pos.y, pos.z + 0.001), led_mat, verts=12)
+        node = led_mat.node_tree.nodes["Emission"]
+        kit.fcurve(led_mat.node_tree, f'nodes["{node.name}"].inputs[1].default_value', 0, frames,
+                   [25.0 * lt[i].get("torch", 0.0) for i in range(n)])
+        _ = ph
     # телефон: экран (на лицо) + фонарик (луч в объёме)
     flash = kit.make_light("phone_flash", "SPOT", (0.86, 0.92, 1.0), 0.0, (0, 0, 0), size=0.004,
                            spot=(math.radians(30), 0.25), volume=8.0)
@@ -897,7 +1008,9 @@ def main():
     fonts = {"display": kit.load_font(CFG.get("font_display", [])), "ui": kit.load_font(CFG.get("font_ui", [])),
              "symbols": kit.load_font(CFG.get("font_symbols", []))}
     floors = sorted({lt["floor"] for lt in perf["lights"]})
-    L = series_lift.build_lift(fonts, floors)
+    # люк открывается (ч.3) — в потолке настоящий проём; у остальных серий потолок прежний
+    opens = any(lt.get("hatch", 0.0) > 0.01 for lt in perf["lights"]) or bool(perf.get("torch"))
+    L = series_lift.build_lift(fonts, floors, open_hatch=opens)
     used = {sh.get("location") or "cabin" for sh in perf["shots"]}
     decals: dict[str, str] = {}
     for sh in perf["shots"]:
@@ -916,7 +1029,7 @@ def main():
     if diff:
         log("ВНИМАНИЕ: длины клипов отличаются от app.series3d_blender.CLIP_LEN:", diff)
     rig = kit.build_face_rig(arm, face, mats)
-    kit.build_backpack(arm, mats)
+    pack = kit.build_backpack(arm, mats)
     arm.scale = (S, S, S)
     bpy.context.view_layer.update()
     frames = list(range(1, nf + 1))
@@ -930,6 +1043,7 @@ def main():
     attach_phone(arm, phone, perf, frames, cam_pos_estimate(perf))
     phone_screen_text(phone, perf, frames, fonts.get("display"))
     build_lights(L, perf, frames, phone)
+    floor_bag(pack, mats, perf, frames)
     places.key_place_doors(built_places, perf, frames)
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
     log("сцена собрана")

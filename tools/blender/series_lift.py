@@ -13,7 +13,7 @@ import hero_shot as kit
 from app import series3d_blender as B
 
 
-def build_lift(fonts, floors: list[str]):
+def build_lift(fonts, floors: list[str], open_hatch: bool = False):
     L = {}
     steel = kit.brushed_steel("steel", color=kit.hexc("#8d9096"), rough=0.30)
     steel_dark = kit.brushed_steel("steel_dark", color=kit.hexc("#4a4d53"), rough=0.36)
@@ -32,17 +32,44 @@ def build_lift(fonts, floors: list[str]):
     t = 0.04
     kit.box("floor", (W + 0.1, D + 0.1, t), (0, 0, -t / 2), floor, bevel=0)
     kit.box("sill", (0.95, 0.07, 0.012), (0, FRONT + 0.035, 0.006), steel, bevel=0.003)
-    kit.box("ceiling", (W + 0.1, D + 0.1, t), (0, 0, H + t / 2), ceil, bevel=0)
+    hx, hy = B.HATCH_LID[0], B.HATCH_LID[1]
+    if open_hatch:
+        # люк открывается (ч.3): в потолке настоящий проём 0.40 × 0.40 — потолок из четырёх плит вокруг него, над проёмом
+        # шахта (тросы, траверса), а не чёрная заглушка
+        x0, x1, y0, y1 = -(W + 0.1) / 2, (W + 0.1) / 2, -(D + 0.1) / 2, (D + 0.1) / 2
+        a0, a1, b0, b1 = hx - 0.20, hx + 0.20, hy - 0.20, hy + 0.20
+        for name, (xa, xb, ya, yb) in (("ceiling", (x0, x1, y0, b0)), ("ceiling_back", (x0, x1, b1, y1)),
+                                       ("ceiling_l", (x0, a0, b0, b1)), ("ceiling_r", (a1, x1, b0, b1))):
+            kit.box(name, (xb - xa, yb - ya, t), ((xa + xb) / 2, (ya + yb) / 2, H + t / 2), ceil, bevel=0)
+        # стенки проёма (толщина потолка) и тёмный короб шахты над кабиной: свет фонарика сверху ложится на его стенки
+        shaft_dark = kit.principled("shaft_above", kit.hexc("#2a2826"), rough=0.95, bump=(30.0, 0.5, 6.0))
+        for name, size, loc in (("hatch_wall_f", (0.40, 0.006, t), (hx, b0, H + t / 2)), ("hatch_wall_b", (0.40, 0.006, t), (hx, b1, H + t / 2)),
+                                ("hatch_wall_l", (0.006, 0.40, t), (a0, hy, H + t / 2)), ("hatch_wall_r", (0.006, 0.40, t), (a1, hy, H + t / 2))):
+            kit.box(name, size, loc, steel_dark, bevel=0)
+        for name, size, loc in (("shaft_above_f", (W + 0.6, 0.04, 3.0), (0, y0 - 0.12, H + 1.55)),
+                                ("shaft_above_b", (W + 0.6, 0.04, 3.0), (0, y1 + 0.12, H + 1.55)),
+                                ("shaft_above_l", (0.04, D + 0.3, 3.0), (x0 - 0.12, 0, H + 1.55)),
+                                ("shaft_above_r", (0.04, D + 0.3, 3.0), (x1 + 0.12, 0, H + 1.55))):
+            kit.box(name, size, loc, shaft_dark, bevel=0)
+    else:
+        kit.box("ceiling", (W + 0.1, D + 0.1, t), (0, 0, H + t / 2), ceil, bevel=0)
     L["ceil_mat"] = kit.emission_mat("ceil_light", (1.0, 0.93, 0.82), 9.0)
     cl = B.CEIL_LIGHT
     kit.box("ceil_diffuser", (0.86, 0.86, 0.012), (cl[0], cl[1], H - 0.006), L["ceil_mat"], bevel=0.002)
     kit.box("ceil_frame", (0.92, 0.92, 0.01), (cl[0], cl[1], H - 0.004), steel_dark, bevel=0.002)
     # люк в потолке (над правым задним углом): рамка, проём в потолке, крышка на петле по дальнему краю и защёлка-ручка
     # под ней. Крышку поднимает дорожка lights.hatch (0..1 → HATCH_OPEN_DEG), ручку поворачивает lights.latch (0..1 → 90°)
-    hx, hy = B.HATCH_LID[0], B.HATCH_LID[1]
-    kit.box("hatch_frame", (0.44, 0.44, 0.012), (hx, hy, H - 0.006), steel_dark, bevel=0.003)
-    hole = kit.principled("hatch_hole", kit.hexc("#030304"), rough=1.0)
-    kit.box("hatch_hole", (0.40, 0.40, 0.05), (hx, hy, H + 0.03), hole, bevel=0)   # тёмная шахта над проёмом
+    if open_hatch:
+        # рамка проёма — четыре планки (сплошная рамка закрыла бы проём)
+        for name, size, loc in (("hatch_frame_f", (0.44, 0.02, 0.012), (hx, hy - 0.21, H - 0.006)),
+                                ("hatch_frame_b", (0.44, 0.02, 0.012), (hx, hy + 0.21, H - 0.006)),
+                                ("hatch_frame_l", (0.02, 0.44, 0.012), (hx - 0.21, hy, H - 0.006)),
+                                ("hatch_frame_r", (0.02, 0.44, 0.012), (hx + 0.21, hy, H - 0.006))):
+            kit.box(name, size, loc, steel_dark, bevel=0.002)
+    else:
+        kit.box("hatch_frame", (0.44, 0.44, 0.012), (hx, hy, H - 0.006), steel_dark, bevel=0.003)
+        hole = kit.principled("hatch_hole", kit.hexc("#030304"), rough=1.0)
+        kit.box("hatch_hole", (0.40, 0.40, 0.05), (hx, hy, H + 0.03), hole, bevel=0)   # тёмная шахта над проёмом
     hinge = kit.link(bpy.data.objects.new("hatch_hinge", None))
     hinge.location = (hx, B.HATCH_HINGE_Y, H - 0.003)
     lid = kit.box("hatch_lid", (0.40, 0.40, 0.012), (0, -0.20, -0.006), steel, bevel=0.004)
@@ -65,6 +92,10 @@ def build_lift(fonts, floors: list[str]):
     kit.box("cab_crosshead", (W - 0.1, 0.16, 0.12), (0, 0.0, H + 0.16), steel_dark, bevel=0.01)
     for i, y in enumerate((hy - 0.35, hy + 0.3)):
         kit.cylinder(f"cab_far_rope{i}", 0.007, 5.0, (hx + 0.25, y, H + 2.6), steel_dark, verts=8)
+    if open_hatch:
+        # трос ограничителя скорости и подвесной кабель — прямо над проёмом: в щель люка видно, что над кабиной шахта
+        kit.cylinder("governor_rope", 0.006, 5.0, (hx - 0.13, hy + 0.12, H + 2.6), steel_dark, verts=8)
+        kit.cylinder("travel_cable", 0.014, 5.0, (hx + 0.12, hy + 0.15, H + 2.6), rubber, verts=10)
     L["above_light"] = kit.make_light("above_hatch", "POINT", (0.6, 0.7, 0.9), 0.0, (hx + 0.1, hy, H + 1.6), size=0.3,
                                       shadow=False, volume=0.0)
 

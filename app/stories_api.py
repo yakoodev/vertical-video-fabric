@@ -13,7 +13,8 @@
 * эпизоды: ``POST /api/stories/worlds/{wid}/episodes`` {premise, duration, tone, render?, title_card?, format?
   (story | disaster), part?, music?, engine? (images | 3d — свой 3D-движок, 0 ₽), location? (elevator | apartment),
   renderer? (three | blender — 3D-серия в Blender на компьютере владельца, очередь хост-воркера),
-  quality? (пресет Blender: fast — по умолчанию, fast720, final — кино, preview, draft — черновик)};
+  quality? (пресет Blender: fast — по умолчанию, fast720, final — кино, preview, draft — черновик),
+  render_backend? (blender — Eevee, по умолчанию; threejs — Blender только ставит позы, кадры рисует three.js)};
   ``draft: true`` и готовый сценарий — черновик: ни генерации, ни денег, работник его не берёт;
   ``POST …/start`` — «Запустить» черновик (агенту — только при настройке трат проекта);
   ``GET/DELETE /api/stories/episodes/{eid}``, ``POST …/continue`` {reassemble?}, ``POST …/cancel``,
@@ -203,7 +204,8 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
     @router.post("/api/stories/worlds/{world_id}/episodes", summary="Новый эпизод «завязка → клип»")
     def api_episode_create(world_id: int, request: Request, _auth: auth_dep, payload: dict = Body(...)) -> dict:
         options = {k: payload[k] for k in ("render", "cover", "music_track_id", "title_card", "cut_sfx", "format", "part",
-                                           "music", "engine", "location", "renderer", "quality", "dry_run") if payload.get(k) is not None}
+                                           "music", "engine", "location", "renderer", "quality", "render_backend", "dry_run")
+                   if payload.get(k) is not None}
         if payload.get("draft"):
             return call(X.create_draft, world_id, str(payload.get("premise") or ""), payload.get("duration"),
                         str(payload.get("tone") or ""), {k: payload.get(k) for k in SCRIPT_FIELDS}, options,

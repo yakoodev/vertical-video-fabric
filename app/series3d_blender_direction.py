@@ -25,6 +25,7 @@ ACTIONS = {
     "look_display": "посмотреть на табло этажа над дверью",
     "look_ceiling": "посмотреть на потолок/люк",
     "open_hatch": "открыть люк в потолке кабины изнутри: повернуть защёлку и толкнуть крышку вверх",
+    "stand_bag": "снять рюкзак, поставить под люк и встать на него (дальше стоит на рюкзаке)",
     "look_camera": "посмотреть в камеру — обращается к зрителю",
     "flinch": "вздрогнуть от испуга",
     "shout": "кричать/звать на помощь",
@@ -62,6 +63,7 @@ CAMERA_PREFS = {
     "look_display": ("detail", "ots", "face"),
     "look_ceiling": ("face", "overhead"),
     "open_hatch": ("detail", "overhead", "face"),
+    "stand_bag": ("overhead", "face"),
     "look_camera": ("face", "overhead"),
     "flinch": ("face", "overhead"),
     "shout": ("face", "ots"),
@@ -93,6 +95,7 @@ _RX = {
     "hatch": r"(откр|толкн|поверн|отодвин|сдвин|отщ[её]лкн|подн)\w*\s.{0,25}(люк|защ[её]лк|задвижк|крышк)|"
              r"(люк|защ[её]лк|задвижк)\w*\s.{0,25}(откр|подда|поверн|щ[её]лкн|скрипн)",
     "listen": r"слыш|слуша|голос|шаг|тишин|шорох|постуча|стук",
+    "bag": r"(встал|встает|залез|забрал)\w*\s+на\s+(него|рюкзак)|(поставил|положил|снял)\w*\s+рюкзак",
     "flinch": r"дерн|тряс|рывок|тряхн|качну|опусти|провали|\bупал|рухну|грохн",
     "wait": r"ждал|ждет|ждать|минут|\bчас\b|сберечь|\bсил",
     "viewer": r"\bвы\b|\bвас\b|\bвам\b|\bвами\b|\bне\s+\w+те\b|\bжмите\b|\bпытайтесь\b",
@@ -117,7 +120,9 @@ def rule_choice(shot: dict, events: list[dict], dark: bool) -> dict:
     role = shot.get("role") or ""
     kinds = {e["kind"] for e in events}
     action, target, button = "wait", "center", "1"
-    if re.search(_RX["hatch"], low):
+    if re.search(_RX["bag"], low):
+        action, target = "stand_bag", "hatch"
+    elif re.search(_RX["hatch"], low):
         action, target = "open_hatch", "hatch"
     elif re.search(_RX["pry"], low):
         action, target = "pry_doors", "doors"
@@ -348,11 +353,56 @@ def screen_value(text: str) -> str:
     return ""
 
 
+# Сообщение с телефона («Он написал маме, что застрял на 23 этаже») — экран переписки: кому, текст, статус, сеть, заряд.
+MESSAGE_RX = r"(написал|напечатал|отправил)\w*\s+(\w+)\s*,?\s*(?:что\s+)?(.+?)[.!?…]*$"
+MESSAGE_CUE = r"(написал|напечатал|отправил)\w*\s+\w+|сообщени|смс\b|на экран"
+MESSAGE_FAIL = r"не (ушл|ушел|доставл|отправил)|не уход"
+MESSAGE_SHOTS = 3          # экран переписки держится в планах этой фразы и следующих двух с «сообщение / на экране»
+
+
+def _addressee(word: str) -> str:
+    """«маме» → «Мама», «папе» → «Папа», «другу» → «Другу» (как подписан чат)."""
+    w = str(word or "").strip()
+    low = _low(w)
+    base = {"маме": "Мама", "папе": "Папа", "брату": "Брат", "сестре": "Сестра", "другу": "Друг", "жене": "Жена"}.get(low)
+    return base or (w[:1].upper() + w[1:])
+
+
+def message_screen(shots: list[dict]) -> dict[int, str]:
+    """Экран переписки: ``{индекс плана: "msg|кому|текст|статус|сеть|заряд|время"}``. Статус — «отправка…» на фразе
+    «написал», «не доставлено» дальше; «нет сети» и заряд — из фраз этих планов (заряд — первый найденный процент)."""
+    first = None
+    for k, s in enumerate(shots):
+        hit = re.search(MESSAGE_RX, str(s.get("text") or "").strip(), re.I)
+        if hit:
+            first, to, body = k, _addressee(hit.group(2)), hit.group(3).strip().strip("«»\"")
+            break
+    if first is None:
+        return {}
+    sent0 = min(shots[first].get("sentences") or [0])
+    group = [k for k, s in enumerate(shots) if k >= first and min(s.get("sentences") or [0]) <= sent0 + MESSAGE_SHOTS - 1
+             and (k == first or set(s.get("sentences") or []) & set(shots[first].get("sentences") or [])
+                  or re.search(MESSAGE_CUE, _low(s.get("text"))))]
+    texts = " ".join(_low(shots[k].get("text")) for k in group)
+    net = "нет сети" if re.search(r"нет сети|сети нет|без связи|нет связи|связи нет", texts) else ""
+    batt = next((screen_value(shots[k].get("text")) for k in group if screen_value(shots[k].get("text")).endswith("%")), "")
+    clock = next((v for v in (screen_value(shots[k].get("text")) for k in group) if ":" in v), "")
+    failed_from = next((k for k in group if re.search(MESSAGE_FAIL, _low(shots[k].get("text")))), None)
+    out: dict[int, str] = {}
+    for k in group:
+        state = "не доставлено" if failed_from is not None and k >= failed_from else "отправка…"
+        out[k] = "|".join(("msg", to, body[:40], state, net, batt, clock))
+    return out
+
+
 def screen_shots(shots: list[dict]) -> dict[int, str]:
     """Планы, где фраза называет часы/экран телефона: ``{индекс: значение на экране}``. Значения нет в самом плане —
-    берём из его фразы (соседние планы той же фразы: «Датчик на часах упал | до −12 °C»)."""
-    out: dict[int, str] = {}
+    берём из его фразы (соседние планы той же фразы: «Датчик на часах упал | до −12 °C»). Сообщение с телефона —
+    экран переписки (``message_screen``)."""
+    out: dict[int, str] = message_screen(shots)
     for k, s in enumerate(shots):
+        if k in out:
+            continue
         if not re.search(SCREEN_CUE, _low(s.get("text"))):
             continue
         value = screen_value(s.get("text"))
@@ -550,8 +600,8 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         author = s.get("author") or {}
         if author:
             loc = by_rules       # у бита с планом место — по тексту: режиссёр не уводит кадр из того, что автор снимает
-            if author.get("frame") in ("doorway", "display"):
-                loc = "cabin"    # проём и табло есть только в кабине
+            if author.get("frame") in ("doorway", "display", "hatch"):
+                loc = "cabin"    # проём, табло и люк изнутри есть только в кабине
             pick = {**pick, **{k: author[k] for k in ("camera", "action", "emotion") if author.get(k)},
                     "frame": author.get("frame") or "", "by": "author", "planned": bool(author.get("camera"))}
             if not author.get("emotion") and not choices.get(s["n"]) and author.get("action"):

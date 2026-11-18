@@ -44,7 +44,8 @@ from app import motion3d as m
 
 from app.series3d_blender_stage import (  # noqa: F401
     S, W, D, H, FRONT, LEFT, PANEL_Y, BTN_X, BTN_Z0, BTN_DZ, BTN_DY, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL,
-    DISPLAY, CEIL_LIGHT, HATCH, HATCH_LID, HATCH_HINGE_Y, LATCH, HATCH_OPEN_DEG, REACH, SHOULDER_R, MAX_PRESS_Z,
+    DISPLAY, CEIL_LIGHT, HATCH, HATCH_LID, HATCH_HINGE_Y, LATCH, HATCH_OPEN_DEG, BAG_SPOT, BAG_FROM, BAG_H, REACH,
+    SHOULDER_R, MAX_PRESS_Z,
     CLIP_LEN, WALK_CLIP, WALK_FEET, MAX_WALK_STEPS,
     _walk_stance, WALK_STANCE, WALK_CYCLE_UNITS, STEP_LEN, _STANCE_CUM, _v, stance_units, walk_plan, walk_seconds,
     CLIPS_NEEDED, button_pos, reachable, facing, to_world, PRESS_TURN, KNOCK_POINT, press_stand, spot_for, LOCS,
@@ -112,8 +113,15 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
     for e in job.get("events") or []:
         k, t = e["kind"], float(e["t"])
         if k == "blackout":
+            if t < 0:
+                continue          # свет погас ещё до начала серии («Если в блэкаут…»): щелчка нет
             add(S3.SFX["blackout"], t - 0.05, "блэкаут", "blackout")
             add(S3.SFX["power_down"], t, "гул глохнет", "power_down")
+        elif k == "steps":
+            # шаги по крыше кабины: четыре тяжёлых шага над головой
+            for i_, (dt_, vol_) in enumerate(((0.0, 0.75), (0.46, 0.85), (0.9, 0.8), (1.38, 0.9))):
+                add((S3.SFX["step"][0], vol_), t - 0.15 + dt_, "шаги сверху", "steps")
+                add((SFX["knock_hit"][0], 0.18), t - 0.15 + dt_ + 0.01, "крыша гудит", "steps_metal")
         elif k == "jolt":
             n = len([x for x in out if x["kind"] in ("jolt", "jolt2")])
             add(S3.SFX["jolt" if n % 2 == 0 else "jolt2"], t, "рывок", "jolt")
@@ -136,6 +144,14 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(SFX["press"], c["t"] - 0.6, "защёлка", "latch")
             add(SFX["doors_strain"], c["t"], "крышка люка", "hatch")
             add(SFX["doors_open"], c["t"] + 1.1, "люк открыт", "hatch_open")
+        elif c["kind"] == "latch":
+            add(SFX["press"], c["t"], "защёлка", "latch")
+            add((SFX["knock_hit"][0], 0.3), c["t"] + 0.3, "защёлка встала", "latch_stop")
+        elif c["kind"] == "lid":
+            add((SFX["doors_strain"][0], 0.5), c["t"], "крышка люка ползёт", "lid")
+        elif c["kind"] == "bag_step":
+            add((S3.SFX["step"][0], 0.45), c["t"] - 0.35, "рюкзак на пол", "bag")
+            add((S3.SFX["step"][0], 0.55), c["t"], "встал на рюкзак", "bag_step")
         elif c["kind"] == "doors":
             add(SFX["doors_strain"], c["t"], "створки", "doors")
             if c.get("full"):
@@ -229,7 +245,8 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
         hits = any(c["kind"] in ("knock", "doors") and s["t0"] <= c["t"] < s["t1"] for c in perf["contacts"])
         st = any(s["t0"] - 0.1 <= t < s["t1"] for t, _ in perf.get("startles") or [])
         kind = (cams.get(s["n"]) or {}).get("kind") or s.get("camera")
-        out[s["n"]] = {"volume": beam or flick or (s.get("location") or "cabin") != "cabin",
+        torch = any(x.get("torch", 0.0) > 0.05 for x in lt)     # чужой фонарик в щели люка — луч во взвеси
+        out[s["n"]] = {"volume": beam or flick or torch or (s.get("location") or "cabin") != "cabin",
                        "blur": move or shake or hits or st, "dof": kind in ("face", "detail")}
     return out
 
