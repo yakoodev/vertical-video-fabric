@@ -39,18 +39,25 @@ class InstagramProvider(Provider):
         except ImportError:
             return ProviderResult(status="failed", error="instagrapi is not installed")
 
+        uploading = False
         try:
             client = Client()
             if proxy_url:
                 client.set_proxy(proxy_url)
             client.login_by_sessionid(sessionid)
             caption = tiktok_caption(title, description)
+            uploading = True
             if plan["publish_as"] == "feed":
                 media = client.video_upload(Path(file_path), caption)
             else:
                 media = client.clip_upload(Path(file_path), caption)
         except Exception as exc:  # noqa: BLE001 - provider must report failures to the queue
             message = str(exc)
+            # Обрыв связи на самой загрузке: Instagram мог принять ролик — повтор только после проверки
+            # (повтор задания с maybe_posted просит подтверждения, app/store_jobs.retry_target).
+            if uploading and _is_connection_drop(exc, message):
+                return ProviderResult(status="failed", maybe_posted=True,
+                                      error=_safe_error(f"{MAYBE_POSTED}. {message}"))
             return ProviderResult(status=_classify_instagram_error(message), error=_safe_error(message))
 
         code = getattr(media, "code", "") or ""
@@ -133,3 +140,17 @@ def media_stats(client, remote_id: str, remote_url: str = "") -> dict:
         "likes": getattr(media, "like_count", None),
         "comments": getattr(media, "comment_count", None),
     }
+
+
+MAYBE_POSTED = "Связь оборвалась на загрузке, ролик мог выйти: проверьте Instagram, прежде чем публиковать снова"
+_DROP_MARKERS = ("timed out", "timeout", "connection aborted", "connection reset", "remote end closed",
+                 "remotedisconnected", "broken pipe", "eof occurred")
+
+
+def _is_connection_drop(exc: Exception, message: str) -> bool:
+    """Таймаут/обрыв на загрузке (а не отказ Instagram с ответом): сервер мог успеть принять ролик."""
+    names = {type(e).__name__.lower() for e in (exc, exc.__cause__, exc.__context__) if e is not None}
+    if any("timeout" in n or "connectionerror" in n for n in names):
+        return True
+    lowered = message.lower()
+    return any(marker in lowered for marker in _DROP_MARKERS)

@@ -72,7 +72,9 @@ class YouTubeProvider(Provider):
         except FileNotFoundError:
             return ProviderResult(status="failed", error="node executable not found")
         except subprocess.TimeoutExpired:
-            return ProviderResult(status="failed", error="youtube upload timed out")
+            # Час без ответа: файл мог уже уйти и ролик выйти — повтор только после проверки канала
+            # (повтор задания с maybe_posted просит подтверждения, app/store_jobs.retry_target).
+            return ProviderResult(status="failed", maybe_posted=True, error=f"{MAYBE_POSTED} (youtube upload timed out)")
 
         stdout = proc.stdout.strip()
         stderr = proc.stderr.strip()
@@ -99,7 +101,9 @@ class YouTubeProvider(Provider):
         try:
             result = json.loads(stdout)
         except json.JSONDecodeError:
-            return ProviderResult(status="failed", error="youtube helper returned invalid JSON")
+            # Помощник завершился успешно, но ответ не разобрать — ролик мог выйти.
+            return ProviderResult(status="failed", maybe_posted=True,
+                                  error=f"{MAYBE_POSTED} (youtube helper returned invalid JSON)")
         refreshed = result.pop("refreshedCookies", None)
         refreshed = refreshed if isinstance(refreshed, dict) else {}
         if not result.get("ok"):
@@ -125,6 +129,9 @@ class YouTubeProvider(Provider):
             response=response,
             refreshed_cookies=refreshed,
         )
+
+
+MAYBE_POSTED = "Ответа от YouTube не дождались, ролик мог выйти: проверьте канал, прежде чем публиковать снова"
 
 
 def _channel_text(channel) -> str:
