@@ -11,7 +11,7 @@ export function EditorTimeline({ session }: { session: DraftsEditorSession }) {
     setPlanFlag, activePlan, tlSelected, setTlSelected, subLines, setSubLines, setSelectedSeg, inserts, setInserts,
     layers, setLayers, camera, setCamera, backdrop, mute, setMute, audioEdit, setAudioEdit, aspect, snapMode,
     setSnapMode, source, isCanvas, seekClipTime, splitAtClip, deleteSelected, dropLayersAt, selectOnTimeline,
-    planDur, placeVideoMeme,
+    planDur, placeVideoMeme, montageClockRef,
   } = session;
   return (
     <div className="panel editor-timeline ed-bottom">
@@ -63,6 +63,7 @@ export function EditorTimeline({ session }: { session: DraftsEditorSession }) {
           subLines={subLines}
           assets={assetsQuery.data ?? []}
           videoRef={videoRef}
+          clockRef={montageClockRef}
           selected={tlSelected}
           onSelect={(sel) => {
             selectOnTimeline(sel);

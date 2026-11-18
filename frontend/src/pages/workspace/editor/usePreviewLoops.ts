@@ -21,7 +21,7 @@ import { type AudioTrack } from "@/api/assets";
  */
 export function usePreviewLoops({
   videoRef, heatHeadRef, tcRef, query, tracks, clipParam, view, motionViewRef, activePlan, searchParams, playbackRef,
-  cutsRef, muteRef, gainRef, audioEditRef, musicOn, trackId, musicStartSec,
+  cutsRef, muteRef, gainRef, audioEditRef, musicOn, trackId, musicStartSec, montageTcRef,
 }: {
   videoRef: React.RefObject<HTMLVideoElement>;
   heatHeadRef: React.RefObject<HTMLSpanElement>;
@@ -41,6 +41,8 @@ export function usePreviewLoops({
   musicOn: boolean;
   trackId: number;
   musicStartSec: number;
+  /** Секунда ролика «Смотреть монтаж», пока он открыт в телефоне (null — таймкод по времени клипа). */
+  montageTcRef?: React.MutableRefObject<() => number | null>;
 }) {
   // Превью цвета куска: поправка того куска, что сейчас играет (по секунде исходника).
   const [pieceCss, setPieceCss] = useState("");
@@ -252,7 +254,11 @@ export function usePreviewLoops({
     const tick = () => {
       const el = tcRef.current;
       const v = videoRef.current;
-      if (el && v) {
+      const own = montageTcRef?.current();
+      if (el && own != null) {
+        const text = formatTimecode(own);
+        if (el.textContent !== text) el.textContent = text;
+      } else if (el && v) {
         const t = clipTimeOf(tcSegsRef.current, v.currentTime);
         const text = t == null ? "—" : formatTimecode(t);
         if (el.textContent !== text) el.textContent = text;

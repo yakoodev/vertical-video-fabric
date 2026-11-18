@@ -21,6 +21,7 @@ import { useVideoSource } from "@/pages/workspace/editor/useVideoSource";
 import { useLayerPreviewData } from "@/pages/workspace/editor/useLayerPreviewData";
 import { useEditorPanels } from "@/pages/workspace/editor/useEditorPanels";
 import { useVideoMemePlace } from "@/pages/workspace/editor/useVideoMemePlace";
+import { useInlineMontage } from "@/pages/workspace/editor/useInlineMontage";
 
 /**
  * Всё состояние вкладки «Черновики»: и списка, и редактора. Оно живёт над обоими экранами, потому что переживает
@@ -252,9 +253,15 @@ export function useDraftsEditorState(sourceId: string) {
     });
   }, [presets.data]);
   const selectedPreset = presets.data?.find((p) => p.id === presetId);
+  // ▶ Весь монтаж прямо в телефоне редактора (плей/пауза, плейхед за роликом, полный экран — тот же плеер).
+  const inlineMontage = useInlineMontage({
+    videoRef, activePlan, view, sourceMissing, sourceReady: query.isSuccess, loop: previewPlayer.loop,
+    rate: previewPlayer.rate, flushSettings, stopPlayback,
+  });
   const previewLoops = usePreviewLoops({
     videoRef, heatHeadRef, tcRef, query, tracks, clipParam, view, motionViewRef, activePlan, searchParams,
     playbackRef, cutsRef, muteRef, gainRef, audioEditRef, musicOn, trackId, musicStartSec,
+    montageTcRef: inlineMontage.montageTcRef,
   });
   const { pieceCss } = previewLoops;
   const lookCss = [pieceCss, lookFilterCss(selectedPreset)].filter(Boolean).join(" ");
@@ -284,6 +291,7 @@ export function useDraftsEditorState(sourceId: string) {
     ...panelSettingsState,
     ...previewPlayer,
     ...previewLoops,
+    ...inlineMontage,
     ...clipActions,
     ...videoMemePlace,
     ...videoSource,

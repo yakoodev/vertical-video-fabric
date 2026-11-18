@@ -28,7 +28,7 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
     subLines, setSubLines, setActivePlanId, selectedSeg, setSelectedSeg, setChosen, subId, bannerOn, bannerId, 
     inserts, setInserts, layers, setLayers, camera, setCamera, setMute, aspect, layersFmt,
     setLayersFmt, motionBlur, inlineEdit, setInlineEdit, setWatchOpen, bannerHeightPct, bannerPosPct, subPosPct,
-    setPickingPoint,
+    setPickingPoint, montageClockRef, montageIsOn, montageToggle, montagePause, montageSeekClip,
   } = state;
   // Пустой холст (app/canvas.py): основа — зелёная заглушка, видно только фон клипа.
   const isCanvas = isCanvasSource(source);
@@ -41,6 +41,9 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
     });
   // Clip timeline ⇄ source time for the open clip (pieces play back to back).
   const clipTimeNow = (): number => {
+    // Идёт ролик «Смотреть монтаж» — время клипа его, а не стоящего плеера записи.
+    const own = montageClockRef.current();
+    if (own != null) return Number(own.toFixed(1));
     const segs = activePlan?.segments ?? [];
     const cur = videoRef.current?.currentTime ?? 0;
     let t = 0;
@@ -51,6 +54,11 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
     return 0;
   };
   const seekClipTime = (clipT: number, play = true) => {
+    // Клик по таймлайну, пока играет монтаж, перематывает сам ролик.
+    if (montageIsOn()) {
+      montageSeekClip(clipT);
+      return;
+    }
     const src = clipToSource(activePlan?.segments ?? [], clipT);
     if (src == null || !videoRef.current) return;
     playbackRef.current = null;
@@ -62,12 +70,14 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
   const stepClip = (deltaSec: number) => {
     const v = videoRef.current;
     if (!v || !activePlan) return;
+    // Играл монтаж: пауза ставит запись на ту же секунду, шаг — уже от неё.
+    if (montageIsOn()) montagePause();
     v.pause();
     const now = clipTimeOf(activePlan.segments, v.currentTime) ?? 0;
     const total = activePlan.segments.reduce((acc, s) => acc + segLen(s), 0);
     seekClipTime(Math.min(Math.max(0, now + deltaSec), Math.max(0, total - 0.001)), false);
   };
-  // ▶ Весь монтаж на весь экран: сначала сохранить панель, чтобы плеер видел ровно её.
+  // Записи нет: монтаж на весь экран (готовый рендер или сборка с лёгкой копии). Сначала сохранить панель.
   const openWatch = async () => {
     stopPlayback();
     // Плеер открывается сразу, в нажатии (телефон иначе не даст весь экран и звук); сохранение — следом,
@@ -75,26 +85,15 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
     setWatchOpen(true);
     await flushSettings();
   };
+  // ▶/⏸ и пробел: весь монтаж прямо в телефоне, с места курсора. Играет запись (▶ Сегмент) — её пауза.
   const togglePlay = () => {
     const v = videoRef.current;
-    if (!v || !activePlan?.segments.length) return;
-    if (!v.paused) {
+    if (v && !v.paused) {
       stopPlayback();
       return;
     }
-    // Плей с места курсора до конца клипа (если курсор вне клипа — с начала).
-    const now = clipTimeOf(activePlan.segments, v.currentTime);
-    let acc = 0;
-    const ranges: { start: number; end: number; speed?: number }[] = [];
-    for (const s of activePlan.segments) {
-      const len = segLen(s);
-      if (now == null || now < acc + len - 0.05) {
-        const from = now != null && now > acc ? s.start_sec + (now - acc) * segSpeed(s) : s.start_sec;
-        ranges.push({ start: from, end: s.end_sec, speed: segSpeed(s) });
-      }
-      acc += len;
-    }
-    playRanges(ranges.length ? ranges : activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec, speed: segSpeed(s) })));
+    if (!activePlan?.segments.length || sourceMissing) return;
+    montageToggle();
   };
   // Preview media for the open clip's inserts (created once per file, reused).
   const insertsPreview: InsertPreview[] = inserts.map((ins) => {
@@ -134,7 +133,7 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
   // каждый rAF, а состояние обновляем один раз на отпускании — иначе весь
   // редактор перерисовывался бы на каждое движение мыши.
   insertsPreviewRef.current = insertsPreview;
-  const clipTimeExact = () => clipTimeOf(activePlan?.segments ?? [], videoRef.current?.currentTime ?? 0) ?? 0;
+  const clipTimeExact = () => montageClockRef.current() ?? clipTimeOf(activePlan?.segments ?? [], videoRef.current?.currentTime ?? 0) ?? 0;
   clipNowRef.current = clipTimeExact;
   const selectedLayerId = tlSelected?.kind === "layer" ? tlSelected.id : null;
   // Черновик слоёв живёт в ref, пока тянем мышью; иначе — то, что в стейте.
@@ -450,7 +449,7 @@ export function buildDraftsEditorSession(state: DraftsEditorState, source: Sourc
 
   return {
     ...state,
-    source, isCanvas, selectedSegment, toggleChosen, clipTimeNow, seekClipTime, stepClip, openWatch, insertsPreview,
+    source, isCanvas, selectedSegment, toggleChosen, clipTimeNow, seekClipTime, stepClip, openWatch, togglePlay, insertsPreview,
     clipTimeExact, selectedLayerId, captionWords, onInsertPointerDown, onInsertPointerMove, onOverlayDoubleClick,
     commitInlineEdit, onInsertPointerUp, splitAtClip, deleteSelected, clipDuration, addLayers, addAtCursor,
     dropLayersAt, selectOnTimeline, inspTabs, inspActive, pickInspTab, selectedPieceIndex, visiblePlans, railPlans,

@@ -1,19 +1,24 @@
-import { segSpeed } from "@/api/types";
 import { MissingSourceNotice } from "@/components/MissingSourceNotice";
 import { frameSize } from "@/motion";
 import { FRAME_SEC, formatTimecode } from "@/pages/workspace/editor/editorHelpers";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
+import { MontagePlayer } from "@/pages/workspace/preview/MontagePlayer";
 
 /** Середина редактора: кадр как на телефоне и управление плеером. */
 export function EditorCenter({ session }: { session: DraftsEditorSession }) {
   const {
-    toast, phoneRef, phoneOverlayRef, tcRef, recordMissing, proxyReady, sourceMissing, playRanges, stopPlayback,
+    toast, phoneRef, phoneOverlayRef, tcRef, recordMissing, proxyReady, sourceMissing, playRanges, togglePlay,
     reframedView, inlineCancelRef, planSubs, autofocus, setFixedFrame, activePlan, selectedPreset, lookCss, loop,
     setLoop, rate, setRate, subsOn, bannerOn, bannerId, mirror, setLayers, setCamera, aspect, layersFmt,
     setLayersFmt, inlineEdit, setInlineEdit, showZones, bannerHeightPct, bannerPosPct, subPosPct, pickingPoint,
     moduleOn, source, isCanvas, selectedSegment, stepClip, openWatch, onInsertPointerDown, onInsertPointerMove,
-    onOverlayDoubleClick, commitInlineEdit, onInsertPointerUp, planDur, planRender,
+    onOverlayDoubleClick, commitInlineEdit, onInsertPointerUp, planDur, planRender, montageRootRef, montageMounted,
+    montageShown, montageWant, montageFull, montageStartAt, montageTotal, srcPlaying, setMontageMedia,
+    montageOnRevision, montageRelease, montageEnterFull, montageExitFull,
   } = session;
+  const full = montageFull !== "none";
+  const playing = montageWant || srcPlaying;
+  const canPlay = Boolean(activePlan?.segments.length);
   return (
     <div className="ed-center">
       <div className="ed-phone" title={`Так будет выглядеть клип ${aspect}`}>
@@ -94,6 +99,34 @@ export function EditorCenter({ session }: { session: DraftsEditorSession }) {
               )
             ) : null}
             <span className="ed-phone-tag mono">{aspect}</span>
+            {/* Весь монтаж прямо здесь: ролик поверх кадра правки, пока играет; на весь экран — он же. */}
+            {!sourceMissing && activePlan ? (
+              <div
+                ref={montageRootRef}
+                className={`ed-montage${montageShown || full ? " is-on" : ""}${montageFull === "fallback" ? " is-full" : ""}`}
+                onClick={(e) => {
+                  if (!full && e.target instanceof HTMLVideoElement) togglePlay();
+                }}
+              >
+                {montageMounted ? (
+                  <MontagePlayer
+                    key={activePlan.id}
+                    clipPlanId={activePlan.id}
+                    autoPlay={montageWant}
+                    startAt={montageStartAt}
+                    onMedia={setMontageMedia}
+                    onRevision={montageOnRevision}
+                    bare={!full}
+                    controls={full}
+                    keys={full}
+                    onClose={full ? montageExitFull : undefined}
+                    rootRef={montageRootRef}
+                    title={activePlan.title || `Клип #${activePlan.id}`}
+                    className={full ? "mplayer--watch" : "mplayer--inline"}
+                  />
+                ) : null}
+              </div>
+            ) : null}
           </div>
         </div>
       {recordMissing ? <MissingSourceNotice source={source} compact proxyReady={proxyReady} /> : null}
@@ -127,49 +160,45 @@ export function EditorCenter({ session }: { session: DraftsEditorSession }) {
       ) : null}
       {sourceMissing ? null : <div className="ed-transport">
         <button
-          className="btn primary sm ed-watch-btn"
-          disabled={!activePlan?.segments.length}
-          onClick={() => void openWatch()}
-          title="Весь клип со склейками, звуком и музыкой на весь экран, без рендера. Там: пробел — плей/пауза, ←/→ — кадр, Esc — закрыть"
-        >
-          ▶ Смотреть монтаж
-        </button>
-        <button
-          className="btn sm"
-          disabled={!activePlan?.segments.length}
-          onClick={() =>
-            activePlan && playRanges(activePlan.segments.map((s) => ({ start: s.start_sec, end: s.end_sec, speed: segSpeed(s) })))
+          className="btn primary sm ed-watch-btn ed-play-btn"
+          disabled={!canPlay}
+          onClick={togglePlay}
+          aria-label={playing ? "Пауза" : "Смотреть монтаж"}
+          title={
+            playing
+              ? "Пауза (пробел): кадр остаётся, можно править"
+              : "Весь монтаж прямо здесь: склейки, переходы, стоп-кадры, музыка — как выйдет. Пробел — плей/пауза, клик по таймлайну — перемотка"
           }
-          title="Играть в телефоне слева: поверхность правки (без переходов и стоп-кадров). Весь монтаж — «Смотреть монтаж»"
         >
-          ▶ Превью клипа
+          {playing ? "⏸ Пауза" : "▶ Смотреть"}
         </button>
-        <button
-          className="btn sm"
-          disabled={!selectedSegment}
-          title={selectedSegment ? "" : "Выберите сегмент на таймлайне"}
-          onClick={() => selectedSegment && playRanges([{ start: selectedSegment.start_sec, end: selectedSegment.end_sec }])}
-        >
-          ▶ Сегмент
-        </button>
-        <button className="btn sm" onClick={stopPlayback}>
-          ⏹ Стоп
-        </button>
-        <div className="ed-tc" title="Время клипа · ←/→ — кадр, Shift+←/→ — секунда, пробел — плей/пауза">
-          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-1e6)} aria-label="В начало клипа">
+        <div className="ed-tc" title="Время ролика · ←/→ — кадр, Shift+←/→ — секунда, Home — в начало, пробел — плей/пауза">
+          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-1e6)} aria-label="В начало клипа" title="В начало (Home)">
             ⏮
           </button>
-          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-FRAME_SEC)} aria-label="Кадр назад">
+          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(-FRAME_SEC)} aria-label="Кадр назад" title="Кадр назад (←)">
             ◂
           </button>
           <span className="ed-tc-now mono" ref={tcRef}>
             00:00.00
           </span>
-          <span className="ed-tc-total mono muted">/ {formatTimecode(activePlan ? planDur(activePlan) : 0)}</span>
-          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(FRAME_SEC)} aria-label="Кадр вперёд">
+          <span className="ed-tc-total mono muted">/ {formatTimecode(montageTotal ?? (activePlan ? planDur(activePlan) : 0))}</span>
+          <button className="btn sm ghost" disabled={!activePlan} onClick={() => stepClip(FRAME_SEC)} aria-label="Кадр вперёд" title="Кадр вперёд (→)">
             ▸
           </button>
         </div>
+        <button
+          className="btn sm"
+          disabled={!selectedSegment}
+          title={selectedSegment ? "Только выбранный кусок, как он лежит в записи: без переходов и стоп-кадров" : "Выберите кусок на таймлайне"}
+          onClick={() => {
+            if (!selectedSegment) return;
+            montageRelease();
+            playRanges([{ start: selectedSegment.start_sec, end: selectedSegment.end_sec }]);
+          }}
+        >
+          ▶ Сегмент
+        </button>
         <label className="switch">
           <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} />
           <span className="switch-track" />
@@ -190,6 +219,19 @@ export function EditorCenter({ session }: { session: DraftsEditorSession }) {
             </button>
           ))}
         </div>
+        <button
+          className="btn sm ghost ed-full-btn"
+          disabled={!canPlay}
+          onClick={(e) => {
+            // Иначе после выхода пробел снова «нажмёт» эту кнопку, а не плей/паузу.
+            e.currentTarget.blur();
+            montageEnterFull();
+          }}
+          aria-label="На весь экран"
+          title="Монтаж на весь экран с той же секунды · Esc — обратно сюда"
+        >
+          ⛶
+        </button>
         {/* Холст — кадр 9:16 целиком: рамку двигать некуда. */}
         {activePlan && !isCanvas
           ? (() => {
