@@ -47,7 +47,7 @@ BASE = ("list_projects", "list_clips", "get_clip", "get_transcript", "view_frame
 GROUPS: dict[str, tuple[str, tuple[str, ...]]] = {
     "montage": ("слои, камера, мемы-вставки, автомонтаж, переходы, бренд, обложка, привязка к долям", (
         "auto_edit", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera", "camera_preset",
-        "flow_transition", "add_annotation", "set_motion_blur", "add_glitch",
+        "flow_transition", "add_annotation", "add_physics", "set_motion_blur", "add_glitch",
         "add_insert", "remove_insert", "search_video_memes", "place_video_meme", "describe_video_meme",
         "get_motion_reference", "add_pngtuber", "freeze_frame", "set_backdrop",
         "set_transition", "list_brands", "apply_brand", "compose_cover", "generate_covers", "list_covers",

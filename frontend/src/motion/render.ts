@@ -36,6 +36,7 @@ import { counterRenderer, progressRenderer } from "./layers/counter";
 import { nameplateRenderer } from "./layers/nameplate";
 import { emojiRenderer, imageRenderer } from "./layers/image";
 import { particlesRenderer } from "./layers/particles";
+import { physicsRenderer } from "./layers/physics";
 import { pngtuberRenderer } from "./layers/pngtuber";
 import { sceneRenderer, sceneViewport } from "./layers/scene";
 import { shapeRenderer } from "./layers/shape";
@@ -78,6 +79,7 @@ const RENDERERS: Partial<Record<LayerType, LayerRenderer>> = {
   video: videoRenderer as LayerRenderer,
   emoji: emojiRenderer as LayerRenderer,
   particles: particlesRenderer as LayerRenderer,
+  physics: physicsRenderer as LayerRenderer,
   counter: counterRenderer as LayerRenderer,
   progress: progressRenderer as LayerRenderer,
   chart: chartRenderer as LayerRenderer,
@@ -643,7 +645,7 @@ export function layerBlurPlan(
   if (n <= 1) return null;
   const times = shutterTimes(t, n, shutter, fps, lo, hi);
   // Частицы и сцена без обрезки рисуют вне рамки — накопитель во весь кадр.
-  if (layer.type === "particles" || (layer.type === "scene" && (layer as SceneLayer).props?.clip === false)) return { times, region: null };
+  if (layer.type === "particles" || layer.type === "physics" || (layer.type === "scene" && (layer as SceneLayer).props?.clip === false)) return { times, region: null };
   // Прямоугольник всех подкадров с полями под тень, свечение, размытие и обводку.
   let x0 = Infinity;
   let y0 = Infinity;

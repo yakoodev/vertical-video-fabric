@@ -15,7 +15,12 @@ from app.tool_core import (
 def h_set_transition(ctx: ToolContext, args: dict) -> dict:
     from app.transitions import AUDIO_MODES, SFX_KINDS, TRANSITIONS
 
+    from app.transitions import resolve_kind
+
     render = _current_render(ctx)
+    if args.get("type") not in (None, "inherit"):
+        # Шейдерные переходы — и по-русски («шторка», «стекло», «волна»): в настройки — ключ gl_….
+        args = {**args, "type": resolve_kind(args["type"])}
     if args.get("join") is not None:
         return _set_join_transition(ctx, render, args)
     transition = dict(render.get("transition") or {})

@@ -12,7 +12,7 @@ import { playbackApi } from "@/api/playback";
 import { focusWindowPos, focusXAt } from "@/pages/workspace/editor/editorHelpers";
 import { LookPicker } from "@/pages/workspace/editor/LookPicker";
 import { type DraftsEditorSession } from "@/pages/workspace/editor/draftsEditorSession";
-import { DIRECTION_LABELS, TransitionJoins } from "@/pages/workspace/editor/inspector/TransitionJoins";
+import { DIRECTION_LABELS, TransitionJoins, TransitionTypeOptions } from "@/pages/workspace/editor/inspector/TransitionJoins";
 import { StylePicker } from "@/pages/workspace/editor/inspector/StylePicker";
 
 /** Переходы мувика, которые рендер рисует кадрами: у них своя длина 0.1–0.6 с. */
@@ -212,9 +212,7 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
               patchTransition(fxDuration ? { type, duration: fxDuration } : { type });
             }}
           >
-            {(transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]).map((t) => (
-              <option key={t.key} value={t.key}>{t.label}</option>
-            ))}
+            <TransitionTypeOptions types={transitionOpts.data?.types ?? [{ key: "cut", label: "Встык" }]} />
           </select>
         </label>
         {transition.type !== "cut" ? (
@@ -269,11 +267,22 @@ export function InspectorClipPane({ session }: { session: DraftsEditorSession })
                 direction: e.target.value === "auto" ? undefined : (e.target.value as TransitionSettings["direction"]),
               })}
             >
-              <option value="auto">по движению камеры</option>
+              <option value="auto">{transition.type === "gl_wipe" ? "по диагонали" : "по движению камеры"}</option>
               {Object.entries(DIRECTION_LABELS).map(([key, label]) => (
                 <option key={key} value={key}>{label}</option>
               ))}
             </select>
+          </label>
+        ) : null}
+        {transition.type === "gl_burn" ? (
+          <label className="field" title="Цвет кромки огня у прожига.">
+            <span>Цвет огня</span>
+            <input
+              type="color"
+              className="input"
+              value={transition.color ?? "#ff8000"}
+              onChange={(e) => patchTransition({ color: e.target.value })}
+            />
           </label>
         ) : null}
         {transition.type === "colorfill" ? (

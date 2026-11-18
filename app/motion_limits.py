@@ -43,6 +43,8 @@ LAYER_TYPES = (
     # «В мире игры» по треку (app/world_track.py, frontend/src/motion/layers/tracked.ts): слово на поверхности,
     # след броска.
     "tracked_text", "trail",
+    # Физика твёрдых тел (frontend/src/motion/physics.ts, matter.js; app/physics_tools.py).
+    "physics",
 )
 VISUAL_TYPES = tuple(t for t in LAYER_TYPES if t not in ("audio", "transition"))
 # logo_reveal: как открывается логотип и как уходит (LOGO_REVEALS / LOGO_EXITS в logoreveal.ts).
@@ -130,6 +132,15 @@ SKETCH_SHAPE_KINDS = ("ellipse", "rect", "line", "arrow", "scribble")
 PARTICLE_KINDS = ("burst", "sparkle", "confetti", "rise")
 PARTICLE_SHAPES = ("star4", "star", "dot", "circle", "square", "heart")
 MAX_PARTICLES = 200
+# Физика (frontend/src/motion/physics.ts): как появляются тела, стенки, контуры, пределы тел и длины мира.
+PHYSICS_SPAWNS = ("drop", "rain", "burst", "stack")
+PHYSICS_WALLS = ("frame", "floor", "none")
+PHYSICS_SHAPES = ("box", "circle", "triangle", "plate")
+PHYSICS_BODY_KINDS = ("text", "image", "shape")
+PHYSICS_SPLITS = ("letters", "words", "whole")
+MAX_PHYSICS_BODIES = 150
+MAX_PHYSICS_KINDS = 12
+MAX_PHYSICS_SEC = 20
 # Символы-декор, которых нет в шрифтах: движок рисует их путями внутри текста (frontend/src/motion/glyphs.ts).
 DECOR_GLYPHS = "✦✧★☆✶✷•●○◆◇♥♡→←↑↓✓✔✕✖▶►"
 CHART_KINDS = ("bar", "hbar", "line", "pie", "donut")

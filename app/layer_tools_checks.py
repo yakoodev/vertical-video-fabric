@@ -100,6 +100,7 @@ def _layer_summary(layer: dict) -> str:
         "ui": lambda: f"плоский {props.get('component') or 'ui'} «{_short(props.get('title') or props.get('label') or props.get('text'))}»",
         "shape": lambda: f"фигура {props.get('kind') or ''}",
         "particles": lambda: f"частицы {props.get('kind') or 'burst'} ×{props.get('count') or 40}",
+        "physics": lambda: f"физика {props.get('spawn') or 'drop'} ×{len(props.get('bodies') or [])} вид(а)",
         "pngtuber": lambda: "PNGtuber " + "/".join(f"#{v}" for v in (props.get("states") or {}).values() if v),
         "fx": lambda: f"эффект кадра {props.get('kind') or 'vhs'}",
         "scene": lambda: f"3D-сцена ({len((props.get('scene') or {}).get('nodes') or [])} узл.)",

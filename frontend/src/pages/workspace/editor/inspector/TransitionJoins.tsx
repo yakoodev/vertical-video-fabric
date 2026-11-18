@@ -8,7 +8,30 @@ export const DIRECTION_LABELS: Record<NonNullable<TransitionSettings["direction"
   down: "↓ вниз",
 };
 
-const DIRECTIONAL = ["whippan", "colorfill"];
+const DIRECTIONAL = ["whippan", "colorfill", "gl_wipe"];
+
+/**
+ * Варианты вида перехода: обычные списком, шейдерные (gl-transitions, `group: "gl"`) — отдельной группой,
+ * чтобы два десятка «Куб», «Стекло», «Волна» не терялись среди xfade.
+ */
+export function TransitionTypeOptions({ types }: { types: TransitionOptions["types"] }) {
+  const plain = types.filter((t) => t.group !== "gl");
+  const shaded = types.filter((t) => t.group === "gl");
+  return (
+    <>
+      {plain.map((t) => (
+        <option key={t.key} value={t.key}>{t.label}</option>
+      ))}
+      {shaded.length ? (
+        <optgroup label="Шейдерные (WebGL)">
+          {shaded.map((t) => (
+            <option key={t.key} value={t.key}>{t.label}</option>
+          ))}
+        </optgroup>
+      ) : null}
+    </>
+  );
+}
 
 /**
  * Переход отдельного стыка (`transition.joins`): у каждой склейки кусков — «как общий» или свой вид
@@ -57,9 +80,7 @@ export function TransitionJoins({
                 }}
               >
                 <option value="inherit">как общий</option>
-                {types.map((t) => (
-                  <option key={t.key} value={t.key}>{t.label}</option>
-                ))}
+                <TransitionTypeOptions types={types} />
               </select>
             </label>
             {own && directional.includes(own.type) ? (

@@ -312,6 +312,73 @@ export type ParticlesProps = {
   glow?: boolean;
 };
 
+/** Физика (physics.ts): как появляются тела, где стенки, чем тело выглядит. */
+export type PhysicsSpawn = "drop" | "rain" | "burst" | "stack";
+export type PhysicsWalls = "frame" | "floor" | "none";
+export type PhysicsShape = "box" | "circle" | "triangle" | "plate";
+
+/** Описание тел слоя `physics`: текст (по буквам/словам/целиком), картинка или фигура. Размеры — опорные px. */
+export type PhysicsBody = {
+  kind: "text" | "image" | "shape";
+  text?: string;
+  split?: "letters" | "words" | "whole";
+  /** Картинка: файл для монтажа… */
+  asset_id?: string;
+  /** …или ссылка пакета (`emoji:…`, `sticker:…`). */
+  src?: string;
+  /** Контур тела (у картинки и фигуры); plate — тарелка: широкий тонкий брусок. */
+  shape?: PhysicsShape;
+  /** Кегль текста / сторона картинки и фигуры. */
+  size?: number;
+  /** Ширина к высоте у box (и plate). */
+  aspect?: number;
+  /** Сколько таких тел (картинка, фигура). */
+  count?: number;
+  colors?: string[];
+  font?: string;
+  weight?: number;
+  /** Обводка букв (читаемость на видео). */
+  stroke?: string | null;
+};
+
+/** Точка, рамка и платформы — доли кадра. */
+export type PhysicsRect = { x: number; y: number; w: number; h: number };
+export type PhysicsPlatform = PhysicsRect & { angle?: number };
+
+/**
+ * Слой физики (physics.ts, layers/physics.ts): мир считается заранее фиксированным шагом и кешируется треком —
+ * превью и рендер совпадают кадр в кадр. Время — секунды от начала слоя.
+ */
+export type PhysicsProps = {
+  bodies: PhysicsBody[];
+  spawn?: PhysicsSpawn;
+  /** frame — пол и бока рамки `bounds`; floor — только пол; none — улетает за кадр. */
+  walls?: PhysicsWalls;
+  /** Рамка мира (доли кадра); нет — весь кадр. В раскладке «полоса» — полоса видео. */
+  bounds?: PhysicsRect | null;
+  /** Тяжесть: 1 — обычная, 0 — невесомость, минус — вверх. */
+  gravity?: number;
+  /** Упругость 0..1 и трение 0..1. */
+  restitution?: number;
+  friction?: number;
+  /** Когда тела появляются, с. */
+  at?: number;
+  /** rain: за сколько секунд выпадают все. */
+  spread?: number;
+  /** burst: скорость разлёта, опорн. px/с. */
+  power?: number;
+  /** Точка разлёта (burst), центр строки (drop), основание кучи (stack) — доли кадра. */
+  origin?: { x: number; y: number } | null;
+  /** Толчок из точки в момент `at` (с от начала слоя): сбить тарелку, разбросать кучу. */
+  impulse?: { at: number; x: number; y: number; force?: number; radius?: number; lift?: number } | null;
+  /** Невидимые опоры (стол, полка в кадре). */
+  platforms?: PhysicsPlatform[];
+  seed?: number;
+  /** Закрутка тел при появлении, множитель (1). */
+  spin?: number;
+};
+
+
 export type CounterProps = TextStyle & {
   from?: number;
   to?: number;
@@ -859,6 +926,8 @@ export type LayerPropsMap = {
   video: VideoProps;
   emoji: EmojiProps;
   particles: ParticlesProps;
+  /** Физика твёрдых тел (physics.ts): буквы падают и ложатся, картинки сыплются, разлёт из точки. */
+  physics: PhysicsProps;
   counter: CounterProps;
   progress: ProgressProps;
   chart: ChartProps;
@@ -972,6 +1041,7 @@ export type ImageLayer = LayerOf<"image">;
 export type VideoLayer = LayerOf<"video">;
 export type EmojiLayer = LayerOf<"emoji">;
 export type ParticlesLayer = LayerOf<"particles">;
+export type PhysicsLayer = LayerOf<"physics">;
 export type CounterLayer = LayerOf<"counter">;
 export type ProgressLayer = LayerOf<"progress">;
 export type ChartLayer = LayerOf<"chart">;
@@ -1003,6 +1073,7 @@ export type Layer =
   | VideoLayer
   | EmojiLayer
   | ParticlesLayer
+  | PhysicsLayer
   | CounterLayer
   | ProgressLayer
   | ChartLayer

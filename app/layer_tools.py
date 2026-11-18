@@ -35,6 +35,7 @@ from app.layer_tools_reference import (  # noqa: F401
 )
 from app.layer_tools_flow import flow_tools, h_flow_transition  # noqa: F401
 from app.annotation_tools import tools as annotation_tools
+from app.physics_tools import tools as physics_tools
 from app.layer_tools_actions import (  # noqa: F401
     _tracking_presets, h_track_layer, h_untrack_layer, h_clear_layers, _pngtuber_asset, _pngtuber_track,
     _pngtuber_target, _crop_aspect, h_auto_crop_layer, h_add_glitch, h_set_motion_blur,
@@ -590,4 +591,4 @@ def tools() -> list[Tool]:
                   "preset": {"type": "string"}}, ["layer_id"]),
             h_auto_crop_layer, mutating=True, label=lambda a: f"Веду окно слоя {a.get('layer_id') or ''}".strip(),
         ),
-    ] + flow_tools() + annotation_tools()
+    ] + flow_tools() + annotation_tools() + physics_tools()

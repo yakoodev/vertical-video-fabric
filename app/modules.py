@@ -529,7 +529,7 @@ CORE_TOOLS: frozenset[str] = frozenset({
     "add_voiceover", "check_voiceover",
     # слои, камера, библиотека
     "get_motion_reference", "get_scene_reference", "preview_scene_frame", "add_layers", "update_layer", "remove_layers", "clear_layers", "set_camera",
-    "camera_preset", "flow_transition", "add_annotation", "add_glitch", "list_motion_templates", "add_motion_template", "list_3d_presets",
+    "camera_preset", "flow_transition", "add_annotation", "add_physics", "add_glitch", "list_motion_templates", "add_motion_template", "list_3d_presets",
     # графика по типу фразы и карточки стилей ролика (app/phrase_graphics.py, app/style_cards.py)
     "suggest_graphics", "list_styles", "apply_style",
     "check_3d_plan", "list_animations",

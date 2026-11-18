@@ -169,7 +169,7 @@
 "name": "add_layers",
 "title": "Добавляю слои",
 "description": "174ff7b4a374fdf8",
-"parameters": "79217b34f62a2d0e",
+"parameters": "fc81e31ce3cce5da",
 "mutating": true,
 "scope": "clip",
 "module": null,
@@ -284,6 +284,17 @@
 "scope": "clip",
 "module": null,
 "handler": "h_add_annotation",
+"label": true
+},
+{
+"name": "add_physics",
+"title": "Бросаю тела с физикой",
+"description": "604f7050f08fdbdf",
+"parameters": "60744631e33d67af",
+"mutating": true,
+"scope": "clip",
+"module": null,
+"handler": "h_add_physics",
 "label": true
 },
 {
@@ -1004,8 +1015,8 @@
 {
 "name": "set_transition",
 "title": "Ставлю переход",
-"description": "d016e1bed093d449",
-"parameters": "65c2c158b5e8b2ae",
+"description": "8a7b9990c8e6c932",
+"parameters": "8116104777b09528",
 "mutating": true,
 "scope": "clip",
 "module": null,

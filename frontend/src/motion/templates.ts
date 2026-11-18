@@ -18,7 +18,7 @@ import { captions, keywordBig, memeCaption, punchline, quoteCard, streamChat, ti
 import { channelPlate, lowerThird, newsTicker } from "./templates/plates";
 import { barChart, countdown, counter, donutChart, pieChart, progressBar, top3 } from "./templates/charts";
 import { alertBanner, beforeAfter, boom, lookHere, subscribe } from "./templates/calls";
-import { fxTpl, glitchRange, glitchTitle, particlesTpl, phoneScreen } from "./templates/effects";
+import { fxTpl, glitchRange, glitchTitle, particlesTpl, phoneScreen, physicsTpl } from "./templates/effects";
 import { cardFan, depthTitle, phoneSpace } from "./templates/space3d";
 import { cursorClicks, fingerTaps, handArrow, handCircle, handUnderline } from "./templates/sketch";
 import { commentCard, postCard } from "./templates/social";
@@ -70,6 +70,7 @@ export const TEMPLATES: MotionTemplate[] = [
   cursorClicks,
   fingerTaps,
   particlesTpl,
+  physicsTpl,
   glitchTitle,
   fxTpl,
   glitchRange,

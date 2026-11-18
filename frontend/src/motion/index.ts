@@ -117,6 +117,27 @@ export {
   particleSeed,
   type Particle,
 } from "./layers/particles";
+export {
+  PHYSICS_SPAWNS,
+  PHYSICS_WALLS,
+  PHYSICS_SHAPES,
+  MAX_PHYSICS_BODIES,
+  MAX_SIM_SEC,
+  STEP_HZ as PHYSICS_STEP_HZ,
+  GRAVITY_PX as PHYSICS_GRAVITY_PX,
+  physicsUnits,
+  physicsSeed,
+  physicsTrack,
+  physicsKey,
+  simulatePhysics,
+  clearPhysicsCache,
+  bodyAt,
+  detSin,
+  detCos,
+  glyphWidth,
+  type PhysicsTrack,
+  type PhysicsUnit,
+} from "./physics";
 export { DECOR_GLYPHS, decorGlyph, sparklePath, sparklePoints, PLATFORM_ICONS, platformIcon, drawPlatformIcon, type DecorGlyph, type PlatformIcon } from "./glyphs";
 export { socialRenderer, formatSocialCount, socialLikes, SOCIAL_STYLES, SOCIAL_THEMES, SOCIAL_MAX_LINES, SOCIAL_IMAGE_RATIO } from "./layers/social";
 export { pageRenderer, pageRef, pageRegion, pageWindow, pageKeyValue, activeTaps, PAGE_DEFAULT_WIDTH } from "./layers/page";

@@ -192,6 +192,13 @@ def tools() -> list[Tool]:
             "~3 кадра в чёрный до склейки, следующий кусок сразу (0.1–0.3 с); zoomblur — радиальное зум-размытие "
             "(0.2–0.45 с). direction — куда едет картинка: left/right/up/down (нет — по движению камеры, камера "
             "стоит — влево); одно основное направление на ролик (lint_clip direction). "
+            "Шейдерные переходы (gl-transitions, WebGL кадрами; 0.25–1 с, нет WebGL — запасной xfade): type — ключ "
+            "или русское имя: gl_curtains «занавес», gl_wipe «шторка» (мягкая, по direction), gl_glass «стекло», "
+            "gl_shatter «осколки», gl_ripple «волна», gl_drop «капля», gl_tear «разрыв», gl_pixels «пиксели», "
+            "gl_circle «круг», gl_squeeze «сжатие», gl_cube «куб», gl_doors «двери», gl_swirl «вихрь», gl_glitch "
+            "«помехи», gl_page «страница», gl_honeycomb «соты», gl_grid «плитки», gl_tvoff «телевизор», gl_burn "
+            "«прожиг» (color — цвет огня), gl_melt «таяние». Как у остальных — scope полосы и join стыка; один-два "
+            "заметных вида на ролик, не каждый стык. "
             "join — номер стыка кусков (0 — между кусками 0 и 1; можно списком): переход только этого стыка "
             "(type, duration, direction, color, angle; ставится и в той же сцене), type inherit — снять, стык снова "
             "общий; type cut — этот стык встык; reason — почему тут направление меняется (флешбек, ответ "
@@ -208,7 +215,7 @@ def tools() -> list[Tool]:
                   "scope": {"type": "string", "enum": ["band", "frame"],
                             "description": "раскладка «полоса»: переход только в полосе видео (band) или во весь кадр"},
                   "direction": {"type": "string", "enum": ["left", "right", "up", "down", "auto"],
-                                "description": "whippan/colorfill: куда едет картинка; auto — по камере"},
+                                "description": "whippan/colorfill/gl_wipe: куда едет картинка; auto — по камере"},
                   "join": {"type": ["integer", "array"], "items": {"type": "integer"},
                            "description": "номер стыка кусков (0 — между 0 и 1) или список: переход только там"},
                   "reason": {"type": "string",

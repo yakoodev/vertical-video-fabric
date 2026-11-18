@@ -323,7 +323,7 @@ def is_decor_layer(layer: dict, canvas: bool = False, ref_w: float = 1080.0) -> 
     Фигуры (подложки), субтитры, частицы, слой за персонажем (behind), полупрозрачная картинка/видео
     во всю ширину кадра. На холсте (``canvas``) любая картинка во всю ширину — это фон промо."""
     kind = layer.get("type")
-    if kind in ("shape", "captions", "particles", "nameplate", "fx", "tile_wall") or layer.get("behind"):
+    if kind in ("shape", "captions", "particles", "physics", "nameplate", "fx", "tile_wall") or layer.get("behind"):
         # Плашка канала висит весь ролик маленькой подписью в углу — не «графика поверх».
         return True
     if kind in ("image", "video"):

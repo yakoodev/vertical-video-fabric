@@ -254,6 +254,8 @@ export function layerTitle(layer: Layer): string {
       return "Картинка";
     case "particles":
       return { burst: "Разлёт искр", sparkle: "Мерцание", confetti: "Конфетти", rise: "Искорки вверх" }[layer.props.kind ?? "burst"] ?? "Частицы";
+    case "physics":
+      return { drop: "Физика: падение", rain: "Физика: дождь", burst: "Физика: разлёт", stack: "Физика: куча" }[layer.props.spawn ?? "drop"] ?? "Физика";
     case "video":
       return layer.props.device === "phone" ? "Видео в телефоне" : "Видео";
     case "audio":
@@ -299,6 +301,7 @@ export const LAYER_ICON: Record<Layer["type"], string> = {
   video: "🎞",
   emoji: "😀",
   particles: "✦",
+  physics: "⚛",
   counter: "#",
   progress: "▭",
   chart: "📊",
