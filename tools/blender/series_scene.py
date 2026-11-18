@@ -815,6 +815,65 @@ def render_chunks(out_dir: Path, cache: Path):
     return round(time.time() - t_r, 1), total
 
 
+def _gl(v):
+    """Вектор Blender (z вверх) → glTF/three.js (y вверх)."""
+    return [round(float(v[0]), 5), round(float(v[2]), 5), round(float(-v[1]), 5)]
+
+
+def export_frames(out: Path, frames, cam):
+    """Кадры серии для рендера тем же кадром вне Blender (пробник three.js, node/scene3d/probe_compare.mjs):
+    ``f_XXXX.glb`` — сцена с применённой позой (меши, камера, материалы; свечение — KHR_materials_emissive_strength)
+    + ``f_XXXX.json`` — источники как есть в Blender (площадные glTF не умеет), камера с ГРИП, взвесь кабины.
+    Координаты в json — уже y вверх, как в glTF. Ничего в сцене не меняет."""
+    out.mkdir(parents=True, exist_ok=True)
+    sc = bpy.context.scene
+    done = []
+    for f in frames:
+        sc.frame_set(f)
+        bpy.context.view_layer.update()
+        lights = []
+        for ob in sc.objects:
+            if ob.type != "LIGHT" or ob.hide_render:
+                continue
+            li = ob.data
+            mw = ob.matrix_world
+            ax = mw.to_3x3().normalized()
+            d = {"name": ob.name, "type": li.type, "color": [round(c, 5) for c in li.color], "energy": round(li.energy, 5),
+                 "pos": _gl(mw.translation), "dir": _gl(ax @ Vector((0, 0, -1))), "x": _gl(ax @ Vector((1, 0, 0))),
+                 "y": _gl(ax @ Vector((0, 1, 0))), "shadow": bool(li.use_shadow),
+                 "volume": round(float(getattr(li, "volume_factor", 1.0)), 3)}
+            if li.type == "AREA":
+                d.update(shape=li.shape, size=li.size, size_y=li.size_y if li.shape in ("RECTANGLE", "ELLIPSE") else li.size)
+            else:
+                d["radius"] = li.shadow_soft_size
+            if li.type == "SPOT":
+                d.update(spot_size=li.spot_size, spot_blend=li.spot_blend)
+            lights.append(d)
+        cd = cam.data
+        fog = bpy.data.materials.get("fog")
+        fog_d = None
+        if fog is not None:
+            vol = next(n for n in fog.node_tree.nodes if n.bl_idname == "ShaderNodeVolumePrincipled")
+            fob = bpy.data.objects.get("fog_volume")
+            fog_d = {"density": round(vol.inputs[2].default_value, 4), "anisotropy": vol.inputs["Anisotropy"].default_value,
+                     "visible": bool(fob is not None and not fob.hide_render)}
+        meta = {"frame": f, "t": round((f - 1) / FPS, 4), "lights": lights,
+                "camera": {"pos": _gl(cam.matrix_world.translation), "lens": cd.lens, "sensor": cd.sensor_width,
+                           "dof": bool(cd.dof.use_dof), "focus": cd.dof.focus_distance, "fstop": cd.dof.aperture_fstop},
+                "fog": fog_d, "world": list(sc.world.node_tree.nodes["Background"].inputs["Color"].default_value)[:3],
+                "view": {"transform": sc.view_settings.view_transform, "look": sc.view_settings.look,
+                         "exposure": sc.view_settings.exposure}}
+        (out / f"f_{f:04d}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=1), "utf-8")
+        for ob in bpy.context.view_layer.objects:
+            ob.select_set(ob.type in ("MESH", "CURVE", "FONT", "CAMERA") and ob.name != "fog_volume" and not ob.hide_render)
+        bpy.ops.export_scene.gltf(filepath=str(out / f"f_{f:04d}.glb"), export_format="GLB", use_selection=True,
+                                  export_apply=True, export_skins=False, export_animations=False, export_morph=False,
+                                  export_cameras=True, export_lights=False, export_yup=True, export_current_frame=True)
+        done.append(f)
+        log(f"выгружен кадр {f}: источников {len(lights)}")
+    return done
+
+
 def main():
     out_dir = Path(CFG["out_dir"])
     cache = Path(CFG["cache"])
@@ -910,6 +969,9 @@ def main():
               "clip_len_diff": diff, "feet": measure_feet(arm, perf, frames)}
     if CFG.get("save_blend"):
         bpy.ops.wm.save_as_mainfile(filepath=str(out_dir / "series.blend"))
+    if CFG.get("export_frames"):
+        report["exported"] = export_frames(Path(CFG.get("export_dir") or out_dir / "export"),
+                                           [int(f) for f in CFG["export_frames"]], cam)
     stills = CFG.get("stills")
     if stills:
         t_r = time.time()
@@ -918,10 +980,24 @@ def main():
         except (AttributeError, TypeError):
             pass
         sc.render.image_settings.file_format = "PNG"   # проверочные кадры — PNG при любом пресете
+        blur = sc.render.use_motion_blur
+        report["still_sec"] = {}
         for f in stills:
-            sc.frame_set(int(f))
-            sc.render.filepath = str(out_dir / f"still_{int(f):04d}.png")
-            bpy.ops.render.render(write_still=True)
+            # эффекты плана — как у кусков рендера (объём, ГРИП, размытие только там, где нужны: shot_fx)
+            ch = next((c for c in CFG.get("chunks") or [] if c["f0"] <= int(f) <= c["f1"]), None)
+            if CFG.get("still_fx") and ch and ch.get("fx"):
+                fx = ch["fx"]
+                fog = bpy.data.objects.get("fog_volume")
+                if fog is not None:
+                    fog.hide_render = not fx["volume"]
+                sc.camera.data.dof.use_dof = bool(fx["dof"])
+                sc.render.use_motion_blur = blur and bool(fx["blur"]) and int(f) != ch["f0"]
+            for k in range(int(CFG.get("still_repeat", 1))):
+                t_f = time.time()
+                sc.frame_set(int(f))
+                sc.render.filepath = str(out_dir / f"still_{int(f):04d}.png")
+                bpy.ops.render.render(write_still=True)
+                report["still_sec"].setdefault(str(f), []).append(round(time.time() - t_f, 2))
         report["render_sec"] = round(time.time() - t_r, 1)
     else:
         report["render_sec"], report["rendered"] = render_chunks(out_dir, cache)
