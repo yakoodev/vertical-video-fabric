@@ -1,0 +1,38 @@
+{
+  "_doc": "Directions/axes in the character frame [left, forward, up]. 'aim' points a bone, 'rot' turns it about an axis (right-hand rule). See poses.py.",
+  "poses": [
+    {"name": "rest", "bones": []},
+    {"name": "arms_up", "bones": [
+      {"bone": "L_Shoulder", "rot": {"axis": "forward", "deg": 15}},
+      {"bone": "R_Shoulder", "rot": {"axis": "forward", "deg": -15}},
+      {"bone": "L_UpperArm", "aim": [0.30, 0.10, 0.95]},
+      {"bone": "R_UpperArm", "aim": [-0.30, 0.10, 0.95]},
+      {"bone": "L_LowerArm", "aim": [0.10, 0.25, 0.96]},
+      {"bone": "R_LowerArm", "aim": [-0.10, 0.25, 0.96]}
+    ]},
+    {"name": "deep_crouch", "bones": [
+      {"bone": "spine", "rot": {"axis": "left", "deg": 22}},
+      {"bone": "chest", "rot": {"axis": "left", "deg": 12}},
+      {"bone": "L_UpperLeg", "aim": [0.22, 0.92, 0.05]},
+      {"bone": "R_UpperLeg", "aim": [-0.22, 0.92, 0.05]},
+      {"bone": "L_LowerLeg", "aim": [0.05, -0.40, -0.92]},
+      {"bone": "R_LowerLeg", "aim": [-0.05, -0.40, -0.92]},
+      {"bone": "L_Foot", "aim": [0.05, 0.95, -0.30]},
+      {"bone": "R_Foot", "aim": [-0.05, 0.95, -0.30]},
+      {"bone": "L_UpperArm", "aim": [0.35, 0.55, -0.75]},
+      {"bone": "R_UpperArm", "aim": [-0.35, 0.55, -0.75]}
+    ]},
+    {"name": "twist", "bones": [
+      {"bone": "spine", "rot": {"axis": "up", "deg": 25}},
+      {"bone": "chest", "rot": {"axis": "up", "deg": 20}},
+      {"bone": "upper_chest", "rot": {"axis": "up", "deg": 10}},
+      {"bone": "neck", "rot": {"axis": "up", "deg": -20}},
+      {"bone": "head", "rot": {"axis": "left", "deg": -15}},
+      {"bone": "L_UpperArm", "aim": [0.55, 0.55, -0.60]},
+      {"bone": "R_UpperArm", "aim": [-0.55, -0.45, -0.70]},
+      {"bone": "L_LowerArm", "aim": [-0.20, 0.90, -0.30]},
+      {"bone": "L_UpperLeg", "aim": [0.10, 0.45, -0.89]},
+      {"bone": "R_LowerLeg", "aim": [-0.05, -0.35, -0.94]}
+    ]}
+  ]
+}
