@@ -1,5 +1,10 @@
+"""Flicker video for a run_check output dir: per view, the theta / theta+0.5deg beauty frames blink on the left;
+colour jumps a sub-pixel turn can't explain are red on the right. Frames with flicker are held longer.
+
+Usage: python tools/model_check/flicker_video.py <run dir> <title>   (then ffmpeg the frames, see README)
+"""
 import os, sys, numpy as np
-sys.path.insert(0, r'C:\Users\Yakoo\source\repos\vertical-video-fabric')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from tools.model_check import analysis as A
 from PIL import Image, ImageDraw, ImageFont
 root = sys.argv[1]; title = sys.argv[2]
