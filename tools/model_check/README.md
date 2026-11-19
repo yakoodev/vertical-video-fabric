@@ -124,3 +124,11 @@ Outputs: D:\vvf-offload\model_check\{synth,mio,heroine2}\report\.
 - **Splitting can shift borders.** Splitting a mixed-layer mesh by material can move subsurf borders slightly; only meshes whose materials belong to different compared layers are split.
 - **Pose rotations.** `aim` uses the shortest rotation, so a bone's twist is not controlled (use `rot` about the bone's axis for that). IK constraints in a rig can override the FK pose.
 - **Mixed causes.** Texture flicker also flags EEVEE z-fighting, and its attribution is the majority part under the blob.
+
+## Flicker video (for people)
+
+`python tools/model_check/flicker_video.py <run dir> <title>` writes `<run dir>/video_flicker/frames/*.jpg`:
+on the left, two beauty frames blink (θ and θ+0.5°); on the right, red marks where the colour changed more than a
+half-degree turn can explain. Then:
+`ffmpeg -framerate 4 -i <run dir>/video_flicker/frames/%05d.jpg -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p flicker.mp4`.
+Check: two half-overlapping cubes (coplanar faces) light up a whole strip (~12k px per view); our characters at rest show tens of px.
