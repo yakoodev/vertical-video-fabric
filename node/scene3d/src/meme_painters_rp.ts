@@ -6,7 +6,8 @@
  *   справа: ``mirror`` — на экране юзера справа юзер), поле ввода (``input: [{t, text}]``). ``kind: "redacted"`` —
  *   пузырь закрыт чёрными плашками под размытием и штампом «ЦЕНЗУРА» (текста нет вовсе); ``stream`` — длинное
  *   сообщение «пишется» столько секунд. ``freeze: [{t, v}]`` — чат покрывается льдом (0..1), ``plate: {t, title,
- *   sub}`` — красная системная плашка влетает поверх чата с ударом. ``scale`` — кегль.
+ *   sub}`` — красная системная плашка влетает поверх чата с ударом. ``scale`` — кегль, ``inScale`` — кегль
+ *   поля ввода (крупно, когда в кадре печатают).
  *
  * Эмодзи — картинками twemoji из паков (``preloadEmoji`` вызывается движком до сборки сцены), без системного шрифта.
  */
@@ -24,7 +25,7 @@ const outBack = (k: number) => {
 
 const EMOJI: Record<string, HTMLImageElement> = {};
 const CODES = ["1f97a", "1f63b", "26a0", "2744", "1f9f9", "1f914", "1f644", "1f6bd", "1f9fb", "1f60a", "2764", "1f44b", "1f496", "1f525",
-  "1f4a2", "1f62d", "1f64f", "1f6ab"];
+  "1f4a2", "1f62d", "1f64f", "1f6ab", "2705", "1f3ae", "1f4b3", "1f60f", "1f4c1", "2615"];
 const EMOJI_RE = /(\p{Extended_Pictographic}️?)/u;
 
 export function preloadEmoji(base = "http://scene3d.local/packs/twemoji/"): Promise<void> {
@@ -286,15 +287,16 @@ function drawPlate(g: G, W: number, H: number, t: number, pl: Record<string, any
   const dt = t - Number(pl.t);
   if (dt < 0) return;
   const k = clamp01(dt / 0.26);
+  const big = Number(pl.size ?? 1); // ``size`` — плашка крупнее (во весь экран), ``dim`` — насколько темнеет чат
   g.save();
-  g.fillStyle = `rgba(20,8,10,${0.45 * k})`;
+  g.fillStyle = `rgba(20,8,10,${Number(pl.dim ?? 0.45) * k})`;
   g.fillRect(0, 0, W, H);
   const sc = 2.4 - 1.4 * outBack(k);
   const wob = dt < 0.6 ? Math.sin(dt * 40) * (0.6 - dt) * 0.05 : 0;
   g.translate(W / 2, H * 0.5);
   g.rotate(-0.06 + wob);
   g.scale(sc, sc);
-  const pw = W * 0.88, ph = 290 * s;
+  const pw = W * 0.88, ph = 290 * s * big;
   g.fillStyle = "#8c1410";
   rr(g, -pw / 2 + 8 * s, -ph / 2 + 12 * s, pw, ph, 30 * s);
   g.fill();
@@ -306,7 +308,7 @@ function drawPlate(g: G, W: number, H: number, t: number, pl: Record<string, any
   rr(g, -pw / 2 + 14 * s, -ph / 2 + 14 * s, pw - 28 * s, ph - 28 * s, 22 * s);
   g.stroke();
   g.fillStyle = "#ffffff";
-  let px = 84 * s;
+  let px = 84 * s * big;
   const title = String(pl.title || "⚠ CYBER ABUSE");
   g.font = FONT(900, px);
   const tw = measureRich(g, title, px);
@@ -316,8 +318,13 @@ function drawPlate(g: G, W: number, H: number, t: number, pl: Record<string, any
   }
   drawRich(g, title, -measureRich(g, title, px) / 2, -ph * 0.04, px);
   const sub = String(pl.sub || "аккаунт ограничен");
-  const spx = 48 * s;
+  let spx = 48 * s * big;
   g.font = FONT(800, spx);
+  const sw = measureRich(g, sub, spx);
+  if (sw > pw * 0.86) {
+    spx *= (pw * 0.86) / sw;
+    g.font = FONT(800, spx);
+  }
   g.fillStyle = "#fff2ef";
   drawRich(g, sub, -measureRich(g, sub, spx) / 2, ph * 0.3, spx);
   g.restore();
@@ -357,7 +364,8 @@ const rpChat: Painter = (g, W, H, t, p) => {
     g.fillText(String(st.text), 34 * s + ar * 2 + 22 * s, headH * 0.8);
   }
   // Поле ввода.
-  const inH = 96 * s;
+  const ik = Number(p.inScale ?? 1);
+  const inH = 96 * s * ik;
   const inY = H - inH;
   g.fillStyle = "#ffffff";
   g.fillRect(0, inY, W, inH);
@@ -365,9 +373,9 @@ const rpChat: Painter = (g, W, H, t, p) => {
   rr(g, 24 * s, inY + 18 * s, W - 140 * s, inH - 36 * s, 30 * s);
   g.fill();
   const inp = stepOf(p.input, t);
-  g.font = FONT(700, 28 * s);
+  g.font = FONT(700, 28 * s * ik);
   g.fillStyle = inp?.color || "#9aa1b0";
-  drawRich(g, String(inp?.text ?? "Сообщение…"), 52 * s, inY + inH / 2 + 10 * s, 28 * s);
+  drawRich(g, String(inp?.text ?? "Сообщение…"), 52 * s, inY + inH / 2 + 10 * s * ik, 28 * s * ik);
   g.fillStyle = p.accent || "#d97757";
   g.beginPath();
   g.arc(W - 64 * s, inY + inH / 2, 30 * s, 0, Math.PI * 2);
