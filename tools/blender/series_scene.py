@@ -36,6 +36,7 @@ sys.path.insert(0, str(HERE))
 import hero_shot as kit  # noqa: E402  (набор сцены пробного кадра)
 import series_lift  # noqa: E402  (кабина лифта)
 import series_places as places  # noqa: E402  (шахта, площадка, технический этаж, коридор)
+import series_voxel  # noqa: E402  (кубический мир и герой из кубиков)
 from app import motion3d as m  # noqa: E402
 from app import series3d_blender as B  # noqa: E402
 
@@ -1181,7 +1182,9 @@ def main():
     built_places = places.build_places(used - {"cabin"}, fonts, decals)
     log("локации:", sorted(used))
     arm, mats, face = kit.build_hero({"character": CFG["character"]})
-    push_hood_back(arm, float(CFG.get("hood_back", 0.13)), float(CFG.get("hood_lift", 0.05)))
+    blocky = series_voxel.wants_blocky(JOB, used)
+    if not blocky:
+        push_hood_back(arm, float(CFG.get("hood_back", 0.13)), float(CFG.get("hood_lift", 0.05)))
     clips = kit.load_clips(CFG["animations"])
     miss = [c for c in B.CLIPS_NEEDED if c not in clips]
     if miss:
@@ -1192,6 +1195,10 @@ def main():
         log("ВНИМАНИЕ: длины клипов отличаются от app.series3d_blender.CLIP_LEN:", diff)
     rig = kit.build_face_rig(arm, face, mats)
     pack = kit.build_backpack(arm, mats)
+    if blocky:
+        # герой из кубиков на том же скелете: меши KayKit и рюкзак скрыты, лицо — своё (те же дорожки key_face)
+        rig = series_voxel.build_blocky_hero(arm, rig, JOB.get("hero_look") or {})
+        log("герой из кубиков")
     arm.scale = (S, S, S)
     bpy.context.view_layer.update()
     frames = list(range(1, nf + 1))
@@ -1209,6 +1216,7 @@ def main():
     body_drop(arm, perf, frames)
     floor_bag(pack, mats, perf, frames)
     places.key_place_doors(built_places, perf, frames)
+    series_voxel.key_world(built_places, perf, frames, JOB.get("events") or [])
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
     log("сцена собрана")
     setup_preset(out_dir, CFG.get("preset") or {"name": CFG.get("quality", "final"), **B.QUALITY["final"]})
@@ -1266,8 +1274,9 @@ def main():
         import series_export
 
         t_r = time.time()
+        probes = {c["n"]: c["probe"] for c in perf["cameras"] if c.get("probe")}
         report["pose"] = series_export.export_pose(Path(CFG["export_dir"]), [int(f) for f in CFG["pose_frames"]], cam, arm,
-                                                   face_pts, CFG.get("chunks") or [], log=log)
+                                                   face_pts, CFG.get("chunks") or [], log=log, probes=probes)
         report["render_sec"], report["rendered"] = round(time.time() - t_r, 1), 0
     elif stills:
         t_r = time.time()

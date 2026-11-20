@@ -6,7 +6,7 @@ import math
 import random
 
 from app.series3d_blender_stage import (
-    S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, DOORWAY, HATCH_LID, button_pos, facing, to_world, loc_of,
+    S, D, H, FRONT, LEFT, DOOR_FACE_Y, DISPLAY, DOORWAY, HATCH_LID, button_pos, facing, to_world, loc_of, loc_target,
 )
 from app.series3d_blender_direction import CAMERA_PREFS
 
@@ -227,6 +227,39 @@ def doorway_camera(kind: str, face: tuple, spec: dict | None = None) -> dict:
             "face_w": c["face_w"], "lens": c["lens"], "fstop": c["fstop"], "focus": c["focus"], "offset": (0.0, 0.0, 0.0)}
 
 
+def authored_camera(spec: dict, loc: str, face: tuple) -> dict:
+    """Камера плана, которую поставил автор (``cam`` в плане задания): координаты — в системе места (как ``spots`` и
+    ``targets``), сцена прибавляет начало координат места.
+
+    ``pos`` — откуда в начале плана, ``to`` — куда приезжает к концу (наезд/отъезд; нет — стоит), ``point`` — куда
+    смотрит: точка ``[x, y, z]``, имя точки интереса места (``"window"``) или ``"face"``; ``face_w`` — доля лица
+    героя в цели (0 — смотрит в точку, 1 — ведёт лицо), ``face_y`` — где лицо в кадре (доля сверху; при ``face_w``
+    > 0.3), ``lens`` мм, ``fstop``, ``focus`` (``face`` / ``point``), ``kind`` — тип плана для эффектов (по умолчанию
+    ``detail``: с глубиной резкости), ``probe`` — где снимать пробу GI (по умолчанию — у лица; снаружи — своё)."""
+    ox, oy = loc_of(loc)["origin"]
+
+    def w(p_) -> tuple:
+        return (round(float(p_[0]) + ox, 4), round(float(p_[1]) + oy, 4), round(float(p_[2]), 4))
+
+    pos = w(spec["pos"])
+    to = w(spec["to"]) if spec.get("to") else pos
+    pt = spec.get("point", "face")
+    if isinstance(pt, str):
+        point = tuple(face) if pt == "face" else tuple(loc_target(loc, pt))
+    else:
+        point = w(pt)
+    face_w = float(spec.get("face_w", 1.0 if pt == "face" else 0.0))
+    out = {"kind": str(spec.get("kind") or "detail"), "pos_a": pos, "pos_b": to,
+           "point": tuple(round(c, 4) for c in point), "face_w": face_w, "lens": float(spec.get("lens", 24.0)),
+           "fstop": float(spec.get("fstop", 4.0)), "focus": str(spec.get("focus") or ("face" if face_w >= 0.5 else "point")),
+           "offset": tuple(float(c) for c in spec.get("offset", (0.0, 0.0, 0.0)))}
+    if spec.get("probe"):
+        out["probe"] = w(spec["probe"])
+    if spec.get("face_y") is not None:
+        out["face_y"] = float(spec["face_y"])
+    return out
+
+
 def cam_sees(cam: dict, face: tuple, point: tuple, margin: float = 0.9) -> bool:
     """Попадает ли точка в вертикальный кадр 9:16 камеры плана (без Blender: как сцена целит — между вещью и лицом)."""
     pos = cam["pos_a"]
@@ -285,6 +318,13 @@ def camera_plan(perf: dict, seed: int = 7) -> list[dict]:
             s["camera"] = cam["kind"]
             cam["face_y"] = face_target(s["n"], len(perf["shots"]), cam["kind"])
             out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], "location": "cabin", **cam})
+            continue
+        if authored and isinstance(s.get("cam"), dict):
+            # камеру поставил автор (кино-план: наезд, через плечо, раскрытие) — как задано, без подбора ракурса
+            cam = authored_camera(s["cam"], s.get("location") or "cabin", face)
+            s["camera"] = cam["kind"]
+            cam.setdefault("face_y", face_target(s["n"], len(perf["shots"]), cam["kind"]))
+            out.append({"n": s["n"], "t0": s["t0"], "t1": s["t1"], "location": s.get("location") or "cabin", **cam})
             continue
         # что фраза называет (лампа, надпись, двери…) — план, где это в кадре; за плечом смотрим на эту вещь
         items = [] if authored else [tuple(x["point"]) for x in s.get("show") or [] if x.get("point")]

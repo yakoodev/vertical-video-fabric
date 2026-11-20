@@ -256,6 +256,11 @@ def build_techfloor(o, fonts, decal):
 
 BUILDERS = {"corridor": build_corridor, "landing": build_landing, "shaft": build_shaft, "techfloor": build_techfloor}
 
+# другие миры (свой набор мест, свои модули сцены)
+import series_voxel  # noqa: E402
+
+BUILDERS["blockhouse"] = series_voxel.build_blockhouse
+
 
 def build_places(used: set[str], fonts, decals: dict[str, str]) -> dict:
     """Строит нужные серии локации (кроме кабины). → ``{место: {doors: (левая, правая)}}``."""

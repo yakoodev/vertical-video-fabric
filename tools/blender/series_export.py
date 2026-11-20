@@ -91,6 +91,11 @@ def _num(sock, default=0.0):
     return (float(v) if not hasattr(v, "__len__") else default), None
 
 
+def _image_linked(sock) -> bool:
+    """Вход узла взят из картинки (пиксельные текстуры кубического мира): three.js берёт карту из GLB, цвет — белый."""
+    return bool(sock is not None and sock.is_linked and sock.links[0].from_node.bl_idname == "ShaderNodeTexImage")
+
+
 def _col(sock, default=(0.8, 0.8, 0.8)):
     if sock is None:
         return list(default)
@@ -109,6 +114,8 @@ def material_info(mat, idx: int) -> dict:
         return d
     if node.bl_idname == "ShaderNodeEmission":
         d.update(kind="emission", emissive=_col(node.inputs["Color"]), strength=float(node.inputs["Strength"].default_value))
+        if _image_linked(node.inputs["Color"]):
+            d.update(etex=True, emissive=[1.0, 1.0, 1.0])
         return d
     if node.bl_idname != "ShaderNodeBsdfPrincipled":
         d.update(kind="unknown", color=[0.5, 0.5, 0.5], rough=0.5, metal=0.0)
@@ -124,6 +131,10 @@ def material_info(mat, idx: int) -> dict:
              strength=round(em_s, 4))
     if isinstance(rsrc, dict):
         d["brushed"] = rsrc
+    if _image_linked(node.inputs["Base Color"]):
+        d.update(tex=True, color=[1.0, 1.0, 1.0])
+    if _image_linked(node.inputs.get("Emission Color")):
+        d.update(etex=True, emissive=[1.0, 1.0, 1.0])
     nrm = node.inputs.get("Normal")
     if nrm is not None and nrm.is_linked and nrm.links[0].from_node.bl_idname == "ShaderNodeBump":
         bmp = nrm.links[0].from_node
@@ -177,9 +188,11 @@ def fog_info(ob) -> dict:
 
 # ---------------------------------------------------------------- выгрузка
 
-def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[dict], log=print) -> dict:
+def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[dict], log=print,
+                probes: dict | None = None) -> dict:
     """Сцена + записи кадров ``frames`` (номера кадров серии, по порядку). ``face_pts[f-1]`` — точка лица (мир
-    Blender) кадра f, ``chunks`` — куски рендера (n, f0, f1, key, fx) для подсказок по планам."""
+    Blender) кадра f, ``chunks`` — куски рендера (n, f0, f1, key, fx) для подсказок по планам; ``probes`` — номер
+    плана → где снимать пробу GI (мир Blender; камера автора снаружи, герой — в доме)."""
     t0 = time.time()
     out.mkdir(parents=True, exist_ok=True)
     sc = bpy.context.scene
@@ -278,6 +291,8 @@ def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[d
         if not pc:
             continue
         plans[c["key"]] = chunk_plan(c, pc, lstat, fog_rows)
+        if probes and probes.get(c["n"]) is not None:
+            plans[c["key"]]["probe"] = [round(x, 3) for x in _gl_v(probes[c["n"]])]
     header = {"format": P.FORMAT, "fps": B.FPS, "frames": frames, "layout": lay,
               "objects": objects, "bones": bones, "materials": mat_rows,
               "lights": lstat, "fogs": [{k: v for k, v in r.items() if k != "_vol"} for r in fog_rows],
@@ -286,6 +301,9 @@ def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[d
               "motion_blur": {"shutter": float(getattr(sc.render, "motion_blur_shutter", 0.5)), "position": "END"},
               "resolution": [sc.render.resolution_x, sc.render.resolution_y], "chunks": plans,
               "seconds": round(time.time() - t0, 1)}
+    if sc.get("vvf_dist_fog"):
+        # туман дали (кубический мир: ночь в поле) — three.js FogExp2; цвет линейный, плотность 1/м
+        header["dist_fog"] = json.loads(sc["vvf_dist_fog"])
     (out / "scene.json").write_text(json.dumps(header, ensure_ascii=False), "utf-8")
     lut = out / "view_lut.bin"
     if not lut.is_file():
