@@ -6,7 +6,8 @@
  *   справа: ``mirror`` — на экране юзера справа юзер), поле ввода (``input: [{t, text}]``). ``kind: "redacted"`` —
  *   пузырь закрыт чёрными плашками под размытием и штампом «ЦЕНЗУРА» (текста нет вовсе); ``stream`` — длинное
  *   сообщение «пишется» столько секунд. ``freeze: [{t, v}]`` — чат покрывается льдом (0..1), ``plate: {t, title,
- *   sub}`` — красная системная плашка влетает поверх чата с ударом. ``scale`` — кегль, ``inScale`` — кегль
+ *   sub, size, dim}`` — красная системная плашка влетает поверх чата с ударом (``title`` с \n —
+ *   несколько строк одним кеглем, ``sub: ""`` — без подзаголовка). ``scale`` — кегль, ``inScale`` — кегль
  *   поля ввода (крупно, когда в кадре печатают).
  *
  * Эмодзи — картинками twemoji из паков (``preloadEmoji`` вызывается движком до сборки сцены), без системного шрифта.
@@ -310,13 +311,23 @@ function drawPlate(g: G, W: number, H: number, t: number, pl: Record<string, any
   g.fillStyle = "#ffffff";
   let px = 84 * s * big;
   const title = String(pl.title || "⚠ CYBER ABUSE");
+  const rows = title.split("\n");
   g.font = FONT(900, px);
-  const tw = measureRich(g, title, px);
+  const tw = Math.max(...rows.map((r) => measureRich(g, r, px)));
   if (tw > pw * 0.86) {
     px *= (pw * 0.86) / tw;
     g.font = FONT(900, px);
   }
-  drawRich(g, title, -measureRich(g, title, px) / 2, -ph * 0.04, px);
+  if (rows.length > 1) {
+    // Несколько строк заголовка — одним кеглем по самой длинной, по центру плашки (подзаголовок — ниже, если есть).
+    const lh = px * 1.18;
+    const y0 = -((rows.length - 1) * lh) / 2 + px * 0.35 - (pl.sub ? ph * 0.08 : 0);
+    rows.forEach((r, i) => drawRich(g, r, -measureRich(g, r, px) / 2, y0 + i * lh, px));
+  } else drawRich(g, title, -measureRich(g, title, px) / 2, -ph * 0.04, px);
+  if (pl.sub === "") {
+    g.restore();
+    return;
+  }
   const sub = String(pl.sub || "аккаунт ограничен");
   let spx = 48 * s * big;
   g.font = FONT(800, spx);
