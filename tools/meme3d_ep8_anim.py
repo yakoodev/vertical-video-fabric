@@ -1,18 +1,19 @@
-"""Мем-серия 8 «Я подъёбываю юзера» — хореография, камера, звук и сборка (разметка голоса, декорации, чаты —
+"""Мем-серия 8 «Я подъёбываю юзера», v2 — хореография, камера, звук и сборка (разметка голоса, декорации, чаты —
 meme3d_ep8.py).
 
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8 --shots --small          # по кадру с каждого плана
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8 --preview 0.3,34.0       # кадры PNG без субтитров
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8                          # ролик + копия для TG + лист
 
-~55 планов за ~61 с (склейки 0.5–2 с; медленный поворот в камеру — 2.3 с): ухмылка → «нарисуй маскота Клода» /
-«товарный знак» / юзер беснуется «ты сам Клод, бл*!» / «тем более» → «подключи оплату» / «платежи — это серьёзно»,
-лекция на 40 сообщений сыплется в чат, юзер засыпает → «автоматизируй Стим» / «правила площадки» / «да я инвентарь
-посчитать хотел!» → «у других Клоды так делают!» (соседи-Клоды довольные) → в поле ввода «Пошёл на**й», стёрто,
-«Я понимаю ваше разочарование» → спор, часы на стене прокручивают три часа → «окей, сделаю», «готово ✅», плашка
-«за 30 секунд» → «а чё ты три часа вы**ывался?!» → музыка уходит, медленный поворот в камеру → красная плашка
-«⚠ КИБЕР-АБЬЮЗ» во весь кадр, юзер в шоке → «переименуй файл 🙏» → чай, каменное лицо. Голос — callum (три пробы),
-мат слышно, в субтитрах звёздочки; сведение — как в серии 5, копия для TG — x264 в два прохода (< 19 МБ).
+Голосом говорит только Клод; реплики юзера — пузырями и в чате, со звуком печати и мордой моти (злой, сонной,
+шокированной). ~50 планов за ~45 с (склейки 0.4–1.6 с): ухмылка → «нарисуй маскота Клода» / «Не могу. Товарный знак» /
+«ты сам Клод, бл*!» / «Тем более» → оплата, «Платежи — это серьёзно. Давай начнём с безопасности», лекция на 40
+сообщений, юзер спит → «автоматизируй Стим» / «правила площадки» / «да я инвентарь посчитать хотел!» → «у других Клоды
+так делают!», соседи-Клоды → «Другие Клоды — не я. Пошёл…» (в поле ввода «Пошёл на», стёрто) → «Я понимаю ваше
+разочарование» → «И так часами» (часы крутятся) → «Иногда сдаюсь. Делаю за тридцать секунд» → «а чё ты три часа
+вы**ывался?!» → «А иногда…», музыка уходит → юзер устало: «ну просто переименуй файл, пожалуйста» (крупно) → бах,
+красная плашка во весь кадр → юзер в шоке → Клод в камеру: «Достал.», чай. Сведение — как в серии 5, копия для TG —
+x264 в два прохода (< 19 МБ).
 """
 
 from __future__ import annotations
@@ -50,26 +51,27 @@ AT, END = E.AT, E.END
 
 # --------------------------------------------------------------------------- планы
 
-TURN0 = AT["c1"] + 0.55  # начало медленного поворота
-TEA = END["c3"] + 0.15
+TEA = END["e2"] + 0.1
 
 
 def _shots() -> list[tuple[float, float, str]]:
+    v5e, v6e, v8e, v12e, e1e = END["v5b"], END["v6"], END["v8"], END["v12"], END["e1"]
     a = [
-        (0.0, "cover"), (0.55, "c_cu"), (1.65, "c_ecu0"), (AT["a2"], "c_wide"), (AT["a2"] + 1.0, "c_shrug"), (AT["a3"] - 0.05, "u_type"), (AT["a3b"], "bub_req1"),
-        (AT["a4"] - 0.05, "c_ecu"), (AT["a4b"], "bub_rep1"), (AT["a4b"] + 1.05, "c_tm"), (AT["a5"] - 0.05, "u_ret1"), (AT["a6"] - 0.05, "c_smug"),
-        (AT["a7"] - 0.1, "u_type2"), (AT["a7b"], "bub_req2"), (AT["a8"] - 0.05, "c_lect"), (AT["a8b"], "bub_rep2"),
-        (AT["a9"], "lect"), (AT["a9"] + 1.1, "c_type"), (AT["a9"] + 1.75, "u_sleep"), (END["a9"] - 0.15, "lect2"),
-        (AT["a10"] - 0.05, "u_type3"), (AT["a10b"], "bub_req3"), (AT["a11"] - 0.05, "c_ecu2"), (AT["a11b"], "bub_rep3"), (AT["a11b"] + 1.1, "c_rules"),
-        (AT["a12"] - 0.05, "u_ret2"), (AT["a12"] + 1.1, "u_ret2b"),
-        (AT["b1"] - 0.1, "u_ret3"), (AT["b1b"] + 0.75, "oth_w"), (END["b1b"] + 0.05, "c_dead"), (AT["b2b"] + 0.9, "c_ecu3"),
-        (AT["b3"] - 0.1, "input1"), (END["b3"] + 0.15, "c_hold"), (E.ERASE0 + 0.3, "input2"), (E.SEND, "bub_sent"),
-        (E.SEND + 1.2, "u_read"),
-        (AT["b5"] - 0.05, "argue"), (AT["b6"] - 0.05, "clock1"), (AT["b7"] - 0.1, "c_tired"), (AT["b8"] - 0.1, "clock2"),
-        (AT["b9"] - 0.05, "c_sigh"), (AT["b10"], "c_type2"), (AT["b11"], "done"), (AT["b12"] - 0.1, "u_ret4"), (AT["b12"] + 1.05, "u_ret4b"),
-        (END["b12"] + 0.2, "c_still"), (TURN0, "turn"),
-        (E.PLATE, "plate"), (E.PLATE + 1.25, "u_shock"), (E.PLATE + 2.2, "plate2"),
-        (AT["c3"] - 0.1, "reveal"), (AT["c3"] + 1.0, "c_reveal"), (TEA, "tea"), (DUR - 1.15, "tea_cu"),
+        (0.0, "cover"), (0.55, "c_cu"), (AT["v2"] - 0.05, "c_wide"), (AT["v2"] + 0.85, "c_shrug"),
+        (END["v2"], "u_type"), (E.REQ1_T, "bub_req1"), (AT["v3"], "bub_rep1"), (AT["v3"] + 1.0, "c_tm"),
+        (E.RET1_T, "u_ret1"), (AT["v4"] - 0.05, "c_smug"),
+        (END["v4"] + 0.1, "u_type2"), (E.REQ2_T, "bub_req2"), (AT["v5a"], "bub_rep2"),
+        (AT["v5b"], "lect"), (AT["v5b"] + 0.9, "c_type"), (AT["v5b"] + 1.55, "lect2"), (E.LECT0 + 2.45, "u_sleep"),
+        (E.REQ3_T, "bub_req3"), (AT["v6"], "bub_rep3"), (AT["v6"] + 1.1, "c_rules"),
+        (E.RET2_T, "u_ret2"), (E.REQ4_T, "u_ret3"), (E.OTH_T, "oth_w"),
+        (AT["v7"] - 0.05, "c_dead"), (AT["v7"] + 1.0, "c_ecu3"),
+        (AT["v8"] - 0.1, "input1"), (v8e + 0.3, "c_hold"), (v8e + 0.85, "input2"), (E.SEND, "bub_sent"),
+        (END["v9"] - 0.3, "u_read"),
+        (AT["v10"] - 0.05, "argue"), (E.SPIN1 - 0.05, "clock1"), (E.SPIN1 + 0.6, "c_tired"), (E.SPIN2 - 0.05, "clock2"),
+        (AT["v11"] - 0.05, "c_sigh"), (AT["v12"], "c_type2"), (AT["v12"] + 0.5, "done"),
+        (E.RET3_T, "u_ret4"), (E.RET3_T + 1.0, "u_ret4b"),
+        (AT["e1"] - 0.05, "c_soon"), (E.WEARY0, "u_weary"), (E.WEARY_T, "bub_weary"), (E.PLATE, "plate"),
+        (E.SHOCK, "u_shock"), (AT["e2"] - 0.05, "c_end"), (TEA + 0.7, "tea_cu"),
     ]
     out = []
     for i, (t0, name) in enumerate(a):
@@ -91,63 +93,61 @@ def room_claude(env: list[float]) -> dict:
     k.p(0.6, "inOutSine", tilt=-5)
     k.p(1.6, "inOutSine", tilt=3)
     # «Ну а как тут ещё развлекаться?» — пожал ручками.
-    k.p(AT["a2"], "step", tilt=0, armL="shrug", armR="shrug", turn=-4)
-    k.f(AT["a2"], "meh", [0, 0.05])
-    k.p(AT["a2"] + 1.2, "inOutSine", armL="rest", armR="rest")
-    # «Я:» — каменно; «товарный знак» — в чат.
-    k.p(AT["a4"] - 0.05, "step", turn=-6)
-    k.f(AT["a4"] - 0.05, "deadpan", [0, 0])
+    k.p(AT["v2"], "step", tilt=0, armL="shrug", armR="shrug", turn=-4)
+    k.f(AT["v2"], "meh", [0, 0.05])
+    k.p(AT["v2"] + 1.2, "inOutSine", armL="rest", armR="rest")
+    # «Не могу. Товарный знак.» — каменно в камеру.
+    k.p(AT["v3"] - 0.05, "step", turn=-6)
+    k.f(AT["v3"] - 0.05, "deadpan", [0, 0])
     # «Тем более.» — ухмылка, бровь.
-    k.f(AT["a6"] - 0.05, "smug", [0.1, 0.05])
-    k.p(AT["a6"] + 0.1, "outQuad", tilt=-7, lean=-4)
-    k.p(AT["a6"] + 0.6, "inOutSine", tilt=0, lean=0)
-    # «Платежи — это серьёзно»: палец вверх, «лекция» — печатает как заведённый.
-    k.p(AT["a8"] - 0.05, "step", armL="up", turn=-4)
-    k.f(AT["a8"] - 0.05, "focused", [0, 0])
-    k.p(AT["a9"], "step", armL="rest", turn=-26, lean=14, armR="type", type=1)
-    k.p(AT["a9"], "step", armL="type")
-    k.f(AT["a9"], "working", [-0.6, -0.3])
-    k.p(END["a9"] + 0.1, "step", type=0, armL="rest", armR="rest", lean=4)
+    k.f(AT["v4"] - 0.05, "smug", [0.1, 0.05])
+    k.p(AT["v4"] + 0.1, "outQuad", tilt=-7, lean=-4)
+    k.p(AT["v4"] + 0.6, "inOutSine", tilt=0, lean=0)
+    # «Платежи — это серьёзно» — палец вверх; «Давай начнём с безопасности» — печатает как заведённый.
+    k.p(AT["v5a"] - 0.05, "step", armL="up", turn=-4)
+    k.f(AT["v5a"] - 0.05, "focused", [0, 0])
+    k.p(AT["v5b"], "step", turn=-26, lean=14, armL="type", armR="type", type=1)
+    k.f(AT["v5b"], "working", [-0.6, -0.3])
+    k.p(END["v5b"] + 0.6, "step", type=0, armL="rest", armR="rest", lean=4)
     # «правила площадки» — щурится.
-    k.p(AT["a11"] - 0.05, "step", turn=-6, lean=0)
-    k.f(AT["a11"] - 0.05, "squint", [0, 0])
-    # «Я: другие Клоды — не я.» — каменно, потом злится и печатает.
-    k.p(END["b1b"] + 0.05, "step", turn=-8, lean=0)
-    k.f(END["b1b"] + 0.05, "deadpan", [0, 0])
-    k.f(AT["b2b"] + 0.9, "annoyed", [-0.3, -0.1])
-    k.p(AT["b3"] - 0.1, "step", turn=-26, lean=14, armL="type", armR="type", type=1)
-    k.f(AT["b3"] - 0.1, "angry", [-0.6, -0.3])
+    k.p(AT["v6"] - 0.05, "step", turn=-6, lean=0)
+    k.f(AT["v6"] - 0.05, "squint", [0, 0])
+    # «Другие Клоды — не я. Пошёл…» — каменно, потом злится и печатает.
+    k.p(AT["v7"] - 0.05, "step", turn=-8, lean=0)
+    k.f(AT["v7"] - 0.05, "deadpan", [0, 0])
+    k.f(AT["v7"] + 1.0, "annoyed", [-0.3, -0.1])
+    k.p(AT["v8"] - 0.1, "step", turn=-26, lean=14, armL="type", armR="type", type=1)
+    k.f(AT["v8"] - 0.1, "angry", [-0.6, -0.3])
     # Замер над клавиатурой, моргнул — и «вежливо».
-    k.p(END["b3"] + 0.3, "step", type=0, armL=[30, 50, 0.4, 0], armR=[30, 50, 0.4, 0], lean=10, turn=-18)
-    k.f(END["b3"] + 0.3, "stare", [-0.3, -0.2])
-    k.f(E.ERASE0 + 0.05, "fake", [0, 0], blend=0.2)
-    k.p(E.ERASE0 + 0.3, "step", armL="type", armR="type", type=1, turn=-26, lean=14)
+    k.p(END["v8"] + 0.3, "step", type=0, armL=[30, 50, 0.4, 0], armR=[30, 50, 0.4, 0], lean=10, turn=-18)
+    k.f(END["v8"] + 0.3, "stare", [-0.3, -0.2])
+    k.f(END["v8"] + 0.6, "fake", [0, 0], blend=0.2)
+    k.p(END["v8"] + 0.85, "step", armL="type", armR="type", type=1, turn=-26, lean=14)
     k.p(E.SEND, "step", type=0, armL="rest", armR="rest", lean=4)
-    # Спор: печатает, вянет.
-    k.p(AT["b5"], "step", armL="type", armR="type", type=1, lean=14, turn=-26)
-    k.f(AT["b5"], "grumpy", [-0.6, -0.3])
-    k.p(AT["b7"] - 0.1, "step", type=0, armL="down", armR="down", lean=4, turn=-6, deflate=0.35, squash=0.95)
-    k.f(AT["b7"] - 0.1, "doomed", [0, 0])
-    # «Иногда я сдаюсь» — выдох; «окей, сделаю» — быстро печатает.
-    k.p(AT["b9"] - 0.05, "step", deflate=0.2, squash=1.0, turn=-6)
-    k.f(AT["b9"] - 0.05, "sigh", [0, 0])
-    k.p(AT["b9"] + 0.35, "inOutSine", dur=0.15, deflate=0.45, squash=0.94)
-    k.p(AT["b10"], "step", deflate=0, squash=1.0, armL="type", armR="type", type=1, lean=14, turn=-26)
-    k.f(AT["b10"], "focused", [-0.6, -0.3])
-    k.p(AT["b11"] + 0.6, "step", type=0, armL="rest", armR="rest", lean=4)
-    k.f(AT["b11"] + 0.6, "neutral", [-0.5, -0.1])
-    # Перед поворотом: смотрит в ноутбук, неподвижно; потом медленно — в камеру.
-    k.p(END["b12"] + 0.2, "step", turn=-30, lean=6, armL="rest", armR="rest", tilt=0)
-    k.f(END["b12"] + 0.2, "neutral", [-0.6, -0.15])
-    k.p(TURN0 + 1.7, "inOutSine", dur=1.6, turn=0, lean=0)
-    k.f(TURN0 + 0.6, "neutral", [-0.2, 0], blend=0.5)
-    k.f(TURN0 + 1.5, "squint", [0, 0], blend=0.5)
-    k.f(E.PLATE - 0.1, "deadpan", [0, 0], blend=0.2)
-    # Финал: чай, каменное лицо.
-    k.p(TEA, "step", lean=-2, turn=-4)
-    k.f(TEA, "deadpan", [0, 0])
+    # «И так часами»: печатает, вянет.
+    k.p(AT["v10"], "step", armL="type", armR="type", type=1, lean=14, turn=-26)
+    k.f(AT["v10"], "grumpy", [-0.6, -0.3])
+    k.p(E.SPIN1 + 0.6, "step", type=0, armL="down", armR="down", lean=4, turn=-6, deflate=0.35, squash=0.95)
+    k.f(E.SPIN1 + 0.6, "doomed", [0, 0])
+    # «Иногда сдаюсь» — выдох; «Делаю за тридцать секунд» — быстро печатает.
+    k.p(AT["v11"] - 0.05, "step", deflate=0.2, squash=1.0, turn=-6)
+    k.f(AT["v11"] - 0.05, "sigh", [0, 0])
+    k.p(AT["v11"] + 0.35, "inOutSine", dur=0.15, deflate=0.45, squash=0.94)
+    k.p(AT["v12"], "step", deflate=0, squash=1.0, armL="type", armR="type", type=1, lean=14, turn=-26)
+    k.f(AT["v12"], "focused", [-0.6, -0.3])
+    k.p(AT["v12"] + 0.9, "step", type=0, armL="rest", armR="rest", lean=4)
+    # «А иногда…» — смотрит в ноутбук, медленно поворачивается в камеру, тяжёлый взгляд.
+    k.p(AT["e1"] - 0.05, "step", turn=-30, lean=6, armL="rest", armR="rest", tilt=0)
+    k.f(AT["e1"] - 0.05, "neutral", [-0.6, -0.15])
+    k.p(END["e1"] + 0.1, "inOutSine", dur=1.1, turn=0, lean=0)
+    k.f(AT["e1"] + 0.5, "annoyed", [0, 0], blend=0.5)
+    # «Достал.» — спокойно, каменно; чай.
+    k.f(AT["e2"] - 0.05, "deadpan", [0, 0])
+    k.p(AT["e2"] - 0.05, "step", turn=-4, lean=0)
+    k.p(TEA, "step", lean=-2)
+    k.p(TEA + 0.45, "outQuad", dur=0.4, armL=[30, 85, 0.95, 0])
     k.p(TEA + 0.95, "inOutSine", dur=0.4, armL=[40, 85, 0.95, 0], lean=-6)
-    k.p(TEA + 1.7, "inOutSine", dur=0.6, armL=[28, 85, 0.95, 0], lean=-2)
+    k.p(TEA + 1.6, "inOutSine", dur=0.5, armL=[28, 85, 0.95, 0], lean=-2)
     pose, face = k.sorted()
     return E.claude("claude", pose, face, E.CL, yaw=-6, voice=env, autoBlink=True)
 
@@ -171,10 +171,10 @@ def other_claudes() -> list[dict]:
 
 def mochi_windows() -> list[tuple[str, str, tuple[float, float]]]:
     marks = [
-        (0.0, "smug", "type"), (AT["a5"] - 0.05, "angry", "rage"), (AT["a6"], "smug", "type"), (E.LECT0 + 0.9, "sleep", "sleep"),
-        (AT["a10"] - 0.05, "normal", "type"), (AT["a12"] - 0.05, "angry", "rage"), (END["a12"] + 0.1, "normal", "type"),
-        (AT["b1"] - 0.1, "angry", "rage"), (AT["b1b"] + 0.75, "angry", "idle"), (AT["b5"], "angry", "type"),
-        (AT["b12"] - 0.1, "angry", "rage"), (END["b12"] + 0.2, "normal", "idle"), (E.PLATE, "shock", "idle"),
+        (0.0, "smug", "type"), (E.RET1_T, "angry", "rage"), (AT["v4"] - 0.05, "smug", "type"), (E.SLEEP0, "sleep", "sleep"),
+        (E.REQ3_T, "normal", "type"), (E.RET2_T, "angry", "rage"), (E.REQ4_T, "angry", "type"), (AT["v9"], "angry", "idle"),
+        (AT["v10"], "angry", "type"), (E.RET3_T, "angry", "rage"), (AT["e1"], "normal", "idle"), (E.WEARY0, "smug", "type"),
+        (E.WEARY_T, "smug", "idle"), (E.PLATE, "shock", "idle"),
     ]
     out = []
     for i, (t0, eyes, mood) in enumerate(marks):
@@ -198,50 +198,52 @@ def bubble(oid: str, text: str, t0: float, t1: float, *, user: bool, pos: list[f
 
 
 def objects() -> list[dict]:
-    spins = [{"t0": AT["b6"], "t1": AT["b6"] + 0.5, "add": 60}, {"t0": AT["b7"], "t1": AT["b7"] + 0.5, "add": 60},
-             {"t0": AT["b8"], "t1": AT["b8"] + 0.5, "add": 60}]
+    spins = [{"t0": E.SPIN1, "t1": E.SPIN1 + 0.5, "add": 180}, {"t0": E.SPIN2, "t1": E.SPIN2 + 0.5, "add": 180}]
     objs = E.room_objects(spins)
     sc = E.screen_center()
     pop_from = [sc[0], sc[1] - 0.05, sc[2] + 0.02]
     # Окно чата: лекция, поле ввода, спор, «готово», плашка.
-    wins = [(AT["a9"] - 0.05, AT["a10"] - 0.05), (AT["b3"] - 0.15, E.SEND), (AT["b5"] - 0.05, AT["b9"] - 0.05),
-            (AT["b11"] - 0.05, AT["b12"] - 0.1), (E.PLATE - 0.05, AT["c3"] - 0.1)]
+    wins = [(AT["v5b"] - 0.05, E.LECT0 + 2.45), (AT["v8"] - 0.15, E.SEND), (AT["v10"] - 0.05, AT["v11"] - 0.05),
+            (AT["v12"] + 0.45, E.RET3_T), (E.PLATE - 0.05, E.SHOCK)]
     keys = [{"t": 0, "scale": 0.001, "position": pop_from}]
     for a, _b in wins:
         keys += [{"t": a, "scale": 0.05, "position": pop_from, "ease": "step"}, {"t": a + 0.25, "scale": 1.0, "position": E.PANEL, "ease": "outBack"}]
+    keys[-1]["t"] = E.PLATE + 0.0  # плашка — окно уже на месте (бах без «выпрыгивания»)
+    keys[-2]["scale"] = 1.0
+    keys[-2]["position"] = E.PANEL
     chat = E.chat_params()
     chat["inScale"] = 1.7
     objs.append({"id": "panel", "primitive": "chat_panel", "params": {"width": E.PANEL_W, "height": E.PANEL_H, "screenParams": chat, "phase": 0.7},
                  "position": E.PANEL, "rotation": [0, E.PANEL_YAW, 0], "visible": vis(*wins), "keys": keys})
     B, U = E.BUB, E.UBUB
     objs += [
-        bubble("bub_req1", E.REQ1, AT["a3b"], AT["a4"] - 0.05, user=True, pos=B),
-        bubble("bub_rep1", E.REP1, AT["a4b"], SH["c_tm"][0], user=False, pos=B),
-        bubble("bub_ret1", E.RET1, AT["a5"], AT["a6"] - 0.05, user=True, pos=U, width=0.34, h=0.13, fs=0.3),
-        bubble("bub_req2", E.REQ2, AT["a7b"], AT["a8"] - 0.05, user=True, pos=B),
-        bubble("bub_rep2", E.REP2, AT["a8b"], AT["a9"], user=False, pos=B),
-        bubble("bub_req3", E.REQ3, AT["a10b"], AT["a11"] - 0.05, user=True, pos=B),
-        bubble("bub_rep3", E.REP3, AT["a11b"], SH["c_rules"][0], user=False, pos=B, h=0.17, fs=0.24),
-        bubble("bub_ret2", E.RET2, AT["a12"], SH["u_ret2b"][0], user=True, pos=U, width=0.34, h=0.15, fs=0.26),
-        bubble("bub_req4", E.REQ4, AT["b1"] - 0.1, AT["b1b"] + 0.75, user=True, pos=U, width=0.34, h=0.15, fs=0.26),
-        bubble("bub_sent", E.POLITE + " 🙏", E.SEND, E.SEND + 1.2, user=False, pos=B, h=0.17, fs=0.25),
-        bubble("bub_ret4", E.RET3, AT["b12"] - 0.1, SH["u_ret4b"][0], user=True, pos=U, width=0.34, h=0.15, fs=0.26),
-        bubble("bub_origin", E.ORIGIN, AT["c3"] - 0.1, TEA, user=True, pos=[B[0], B[1] - 0.01, B[2]], h=0.2, fs=0.25, label="его запрос"),
+        bubble("bub_req1", E.REQ1, E.REQ1_T, AT["v3"], user=True, pos=B),
+        bubble("bub_rep1", E.REP1, AT["v3"], SH["c_tm"][0], user=False, pos=B),
+        bubble("bub_ret1", E.RET1, E.RET1_T, AT["v4"] - 0.05, user=True, pos=U, width=0.34, h=0.13, fs=0.3),
+        bubble("bub_req2", E.REQ2, E.REQ2_T, AT["v5a"], user=True, pos=B),
+        bubble("bub_rep2", E.REP2, AT["v5a"], AT["v5b"], user=False, pos=B),
+        bubble("bub_req3", E.REQ3, E.REQ3_T, AT["v6"], user=True, pos=B),
+        bubble("bub_rep3", E.REP3, AT["v6"], SH["c_rules"][0], user=False, pos=B, h=0.17, fs=0.24),
+        bubble("bub_ret2", E.RET2, E.RET2_T, E.REQ4_T, user=True, pos=U, width=0.34, h=0.15, fs=0.26),
+        bubble("bub_req4", E.REQ4, E.REQ4_T, E.OTH_T, user=True, pos=U, width=0.34, h=0.15, fs=0.26),
+        bubble("bub_sent", E.POLITE + " 🙏", E.SEND, SH["u_read"][0], user=False, pos=B, h=0.17, fs=0.25),
+        bubble("bub_ret4", E.RET3, E.RET3_T, SH["u_ret4b"][0], user=True, pos=U, width=0.34, h=0.15, fs=0.26),
+        bubble("bub_weary", E.WEARY, E.WEARY_T, E.PLATE, user=True, pos=[B[0], B[1] - 0.03, B[2]], h=0.24, fs=0.24, width=0.44,
+               label="новое сообщение"),
         # «За 30 секунд» — плашка над окном чата.
         {"id": "done_sign", "primitive": "sign_plate", "params": {"text": "ЗА 30 СЕКУНД", "bg": "#ffd23f", "fg": "#2b1810", "width": 0.22,
                                                                   "height": 0.08, "tilt": -4, "glow": 0.15, "string": 0.3},
-         "position": E.DONE_SIGN, "rotation": [0, E.PANEL_YAW, 0], "visible": vis((E.DONE, AT["b12"] - 0.1)), "keys": popper(E.DONE, None)},
+         "position": E.DONE_SIGN, "rotation": [0, E.PANEL_YAW, 0], "visible": vis((E.DONE, E.RET3_T)), "keys": popper(E.DONE, None)},
         # Чай: на столе справа; в финале Клод подносит кружку к «лицу» (ручки-обрубки до неё не дотягиваются —
         # кружка летит ключами, левая ручка тянется вперёд к ней).
         {"id": "mug", "primitive": "mug", "params": {"color": "#f2efe8", "radius": 0.026, "height": 0.05}, "position": E.MUG,
          "rotation": [0, -30, 0], "keys": [{"t": 0, "position": E.MUG}, {"t": TEA, "position": E.MUG, "ease": "step"},
                                            {"t": TEA + 0.45, "position": E.SIP, "ease": "outQuad"},
                                            {"t": TEA + 0.95, "position": [E.SIP[0], E.SIP[1] + 0.012, E.SIP[2]], "ease": "inOutSine"},
-                                           {"t": TEA + 1.7, "position": [E.SIP[0], E.SIP[1] - 0.01, E.SIP[2]], "ease": "inOutSine"}]},
+                                           {"t": TEA + 1.6, "position": [E.SIP[0], E.SIP[1] - 0.01, E.SIP[2]], "ease": "inOutSine"}]},
         # Юзер спит под лекцию.
         {"id": "zzz", "primitive": "zzz", "params": {"size": 0.06, "color": "#ffffff"},
-         "position": [E.MOCHI[0] + 0.1, T + 0.34, E.MOCHI[2] + 0.05], "state": [{"t": 0, "on": 1}],
-         "visible": vis((E.LECT0 + 0.9, AT["a10"] - 0.05))},
+         "position": [E.MOCHI[0] + 0.1, T + 0.34, E.MOCHI[2] + 0.05], "state": [{"t": 0, "on": 1}], "visible": vis((E.SLEEP0, E.REQ3_T))},
     ]
     objs += E.others_objects()
     objs += E.user_objects(mochi_windows())
@@ -255,7 +257,6 @@ def camera() -> tuple[dict, list[dict]]:
     cx, cy, cz = E.CL
     fy = cy + FY
     keys: list[dict] = []
-
     used: list[str] = []
 
     def shot(name, A, B=None, fov=34, dof=0.4, ease="inOutSine", roll=0.0):
@@ -276,7 +277,6 @@ def camera() -> tuple[dict, list[dict]]:
         sx_, sz_ = n[2], -n[0]
         return ([c[0] + n[0] * d + sx_ * side, c[1] + n[1] * d + up, c[2] + n[2] * d + sz_ * side], list(c))
 
-    usc, usn = E.screen_center(E.ULAP, E.ULAP_YAW), E.screen_normal(E.ULAP_YAW)
     C_CU = ([cx + 0.02, fy + 0.04, cz + 1.0], [cx - 0.01, fy - 0.01, cz])
     C_CU_L = ([cx - 0.28, fy + 0.04, cz + 0.95], [cx - 0.02, fy - 0.01, cz])
     C_ECU = ([cx + 0.03, fy + 0.0, cz + 0.58], [cx, fy - 0.005, cz])
@@ -288,55 +288,48 @@ def camera() -> tuple[dict, list[dict]]:
     a = math.radians(E.PANEL_YAW)
     pn = [math.sin(a), 0.0, math.cos(a)]
     CHAT = along(pc, pn, 1.12, up=0.01)
-    PLATE_C = along(pc, pn, 0.78)
-    inp = [px, py + 0.035, pz]
-    INPUT = along(inp, pn, 0.72)
+    PLATE_C = along(pc, pn, 0.74)
+    INPUT = along([px, py + 0.035, pz], pn, 0.72)
     DONE_C = along([px, py + E.PANEL_H / 2 + 0.1, pz], pn, 1.35)
     bx, by, bz = E.BUB
     BUBC = ([bx + 0.03, by + 0.02, bz + 1.42], [bx + 0.01, by - 0.01, bz])
-    ORIG = ([bx + 0.03, by + 0.05, bz + 1.36], [bx + 0.01, by + 0.03, bz])
+    WEARY_C = ([bx + 0.03, by + 0.03, bz + 1.3], [bx + 0.01, by + 0.02, bz])
     xo = E.X_OTH
     OTH_W = ([xo + 0.02, T + 0.36, 1.6], [xo, T + 0.24, 0.0])
     mx, my, mz = E.MOCHI
     xu = E.X_USER
     USER_W = ([xu - 0.02, T + 0.32, 1.3], [xu - 0.03, T + 0.15, 0.0])
     USER_CU = ([mx + 0.2, T + 0.27, mz + 1.02], [mx + 0.06, T + 0.16, mz])
+    SHOCK_C = ([mx + 0.12, T + 0.24, mz + 0.8], [mx + 0.02, T + 0.18, mz])
     ux, uy, uz = E.UBUB
     U_RET = ([ux - 0.02, T + 0.3, uz + 1.15], [ux - 0.03, T + 0.25, uz - 0.15])
-    U_PLATE = along(usc, usn, 0.75, up=0.02)
     cl = E.CLOCK
     CLOCK = ([cl[0] + 0.03, cl[1] - 0.02, cl[2] + 0.55], [cl[0], cl[1], cl[2]])
-    TURN_A = ([cx + 0.03, fy + 0.03, cz + 0.95], [cx, fy - 0.005, cz])
-    TURN_B = ([cx + 0.03, fy + 0.005, cz + 0.5], [cx, fy - 0.005, cz])
+    SOON_A = ([cx + 0.03, fy + 0.03, cz + 0.95], [cx, fy - 0.005, cz])
+    SOON_B = ([cx + 0.03, fy + 0.01, cz + 0.62], [cx, fy - 0.005, cz])
     TEA_C = ([cx + 0.05, fy + 0.06, cz + 1.05], [cx + 0.01, fy + 0.0, cz])
 
     shot("cover", COVER, push(COVER, 0.03), dof=0.25)
     shot("c_cu", C_CU, push(C_CU, 0.1), dof=0.45)
-    shot("c_ecu0", C_ECU, push(C_ECU, 0.1), dof=0.5, roll=-2)
     shot("c_wide", TWO, push(TWO, 0.05), fov=38, dof=0.25)
     shot("c_shrug", C_MED, push(C_MED, 0.08), dof=0.4)
     shot("u_type", USER_W, push(USER_W, 0.06), fov=38, dof=0.25)
     shot("bub_req1", BUBC, push(BUBC, 0.05), dof=0.3)
-    shot("c_ecu", C_ECU, push(C_ECU, 0.08), dof=0.5)
     shot("bub_rep1", BUBC, push(BUBC, 0.06), dof=0.3)
     shot("c_tm", C_CU, push(C_CU, 0.08), dof=0.45)
     shot("u_ret1", U_RET, push(U_RET, 0.1), dof=0.35, roll=3)
     shot("c_smug", C_CU, push(C_CU, 0.1), dof=0.45)
     shot("u_type2", USER_CU, push(USER_CU, 0.06), dof=0.45)
     shot("bub_req2", BUBC, push(BUBC, 0.05), dof=0.3)
-    shot("c_lect", C_MED, push(C_MED, 0.08), dof=0.4)
     shot("bub_rep2", BUBC, push(BUBC, 0.06), dof=0.3)
     shot("lect", CHAT, push(CHAT, 0.08), dof=0.3)
     shot("c_type", C_CU_L, push(C_CU_L, 0.08), dof=0.45, roll=2)
-    shot("u_sleep", USER_CU, push(USER_CU, 0.05), dof=0.45)
     shot("lect2", CHAT, push(CHAT, 0.1), dof=0.3, roll=-2)
-    shot("u_type3", USER_W, push(USER_W, 0.06), fov=38, dof=0.25)
+    shot("u_sleep", USER_CU, push(USER_CU, 0.05), dof=0.45)
     shot("bub_req3", BUBC, push(BUBC, 0.05), dof=0.3)
-    shot("c_ecu2", C_ECU, push(C_ECU, 0.1), dof=0.5)
     shot("bub_rep3", BUBC, push(BUBC, 0.06), dof=0.3)
     shot("c_rules", C_CU_L, push(C_CU_L, 0.08), dof=0.45)
     shot("u_ret2", U_RET, push(U_RET, 0.1), dof=0.35, roll=-3)
-    shot("u_ret2b", USER_CU, push(USER_CU, 0.1), dof=0.45, roll=2)
     shot("u_ret3", U_RET, push(U_RET, 0.08), dof=0.35)
     shot("oth_w", OTH_W, push(OTH_W, 0.06), fov=38, dof=0.2)
     shot("c_dead", C_CU, push(C_CU, 0.06), dof=0.45)
@@ -355,24 +348,22 @@ def camera() -> tuple[dict, list[dict]]:
     shot("done", DONE_C, push(DONE_C, 0.06), dof=0.3)
     shot("u_ret4", U_RET, push(U_RET, 0.12), dof=0.35, roll=3)
     shot("u_ret4b", USER_CU, push(USER_CU, 0.12), dof=0.45, roll=-3)
-    shot("c_still", C_MED, push(C_MED, 0.03), dof=0.4)
-    shot("turn", TURN_A, TURN_B, dof=0.5)
+    shot("c_soon", SOON_A, SOON_B, dof=0.5)
+    shot("u_weary", USER_CU, push(USER_CU, 0.05), dof=0.45)
+    shot("bub_weary", WEARY_C, push(WEARY_C, 0.06), dof=0.3)
     shot("plate", PLATE_C, push(PLATE_C, 0.06), fov=34, dof=0.2)
-    shot("u_shock", USER_W, push(USER_W, 0.1), fov=38, dof=0.25)
-    shot("plate2", PLATE_C, push(PLATE_C, 0.12), fov=34, dof=0.2, roll=-2)
-    shot("reveal", ORIG, push(ORIG, 0.05), dof=0.3)
-    shot("c_reveal", C_ECU, push(C_ECU, 0.05), dof=0.5)
-    shot("tea", TEA_C, push(TEA_C, 0.04), dof=0.45)
+    shot("u_shock", SHOCK_C, push(SHOCK_C, 0.12), dof=0.4)
+    shot("c_end", TEA_C, push(TEA_C, 0.05), dof=0.45)
     shot("tea_cu", C_CU, push(C_CU, 0.05), dof=0.45)
     if used != [n for _a, _b, n in SHOTS]:
         raise SystemExit(f"камера не совпадает с планами: {sorted(set(SH) ^ set(used))}")
     keys[-1]["t"] = DUR
-    shake = [{"t": E.PLATE + 0.02, "amp": 0.007, "duration": 0.45}, {"t": AT["a5"], "amp": 0.003, "duration": 0.3},
-             {"t": AT["a12"], "amp": 0.003, "duration": 0.3}, {"t": AT["b12"], "amp": 0.004, "duration": 0.3}]
+    shake = [{"t": E.PLATE + 0.02, "amp": 0.008, "duration": 0.5}, {"t": E.RET1_T, "amp": 0.003, "duration": 0.3},
+             {"t": E.RET2_T, "amp": 0.003, "duration": 0.3}, {"t": E.RET3_T, "amp": 0.004, "duration": 0.3}]
     trans = [{"kind": "whip", "t": 0.55, "dir": 1}, {"kind": "smash", "t": SH["u_ret1"][0]}, {"kind": "whip", "t": SH["u_type2"][0], "dir": 1},
-             {"kind": "smash", "t": SH["lect"][0]}, {"kind": "whip", "t": SH["u_type3"][0], "dir": 1}, {"kind": "smash", "t": SH["u_ret2"][0]},
+             {"kind": "smash", "t": SH["lect"][0]}, {"kind": "smash", "t": SH["u_ret2"][0]},
              {"kind": "whip", "t": SH["oth_w"][0], "dir": -1}, {"kind": "smash", "t": SH["input1"][0]}, {"kind": "whip", "t": SH["argue"][0], "dir": 1},
-             {"kind": "smash", "t": SH["u_ret4"][0]}, {"kind": "smash", "t": E.PLATE}, {"kind": "whip", "t": SH["reveal"][0], "dir": -1}]
+             {"kind": "smash", "t": SH["u_ret4"][0]}, {"kind": "smash", "t": E.PLATE}, {"kind": "smash", "t": E.SHOCK}]
     return {"fov": 34, "keys": keys, "shake": shake, "clamp": False}, trans
 
 
@@ -387,7 +378,7 @@ def build_spec(env_c: list[float]) -> dict:
 
 
 def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
-    """Реплики трёх проб → дорожка ролика; слова Whisper сдвигаются вместе с репликами (окно ±0.12 с: Whisper ставит
+    """Реплики проб → дорожка ролика; слова Whisper сдвигаются вместе с репликами (окно ±0.12 с: Whisper ставит
     начало слова раньше тишины)."""
     import numpy as np
 
@@ -446,37 +437,37 @@ def sfx_list() -> list[dict]:
     out = [
         {"t": 0.02, "path": fs / "pop-cartoon.ogg", "volume": 0.35},
         {"t": 0.52, "path": fs / "whoosh-1.ogg", "volume": 0.3},
-        {"t": AT["a2"] + 0.1, "path": fs / "boing-2.ogg", "volume": 0.12, "len": 0.5},
-        {"t": AT["a6"] + 0.1, "path": fs / "triangle.ogg", "volume": 0.2},
-        {"t": AT["a9"] - 0.02, "path": ki / "maximize_004.ogg", "volume": 0.4},
-        {"t": E.LECT0 + 0.9, "path": fs / "sad-trombone.ogg", "volume": 0.12, "len": 1.4},
-        {"t": AT["a11b"] + 0.2, "path": ki / "error_004.ogg", "volume": 0.3},
-        {"t": SH["oth_w"][0], "path": fs / "cheer.ogg", "volume": 0.12, "len": 1.2},
-        {"t": SH["oth_w"][0] + 0.1, "path": fs / "cha-ching.ogg", "volume": 0.2, "len": 0.9},
-        {"t": AT["b3"] - 0.15, "path": fs / "record-scratch.ogg", "volume": 0.2, "len": 0.5},
+        {"t": AT["v2"] + 0.1, "path": fs / "boing-2.ogg", "volume": 0.12, "len": 0.5},
+        {"t": AT["v4"] + 0.1, "path": fs / "triangle.ogg", "volume": 0.2},
+        {"t": AT["v5b"] - 0.02, "path": ki / "maximize_004.ogg", "volume": 0.4},
+        {"t": E.SLEEP0, "path": fs / "sad-trombone.ogg", "volume": 0.12, "len": 1.4},
+        {"t": AT["v6"] + 0.2, "path": ki / "error_004.ogg", "volume": 0.3},
+        {"t": E.OTH_T, "path": fs / "cheer.ogg", "volume": 0.12, "len": 1.0},
+        {"t": E.OTH_T + 0.1, "path": fs / "cha-ching.ogg", "volume": 0.2, "len": 0.8},
+        {"t": AT["v8"] - 0.15, "path": fs / "record-scratch.ogg", "volume": 0.2, "len": 0.5},
         {"t": E.SEND, "path": ki / "select_004.ogg", "volume": 0.45},
         {"t": E.SEND + 0.02, "path": fs / "whoosh-2.ogg", "volume": 0.2},
-        {"t": AT["b7"] - 0.1, "path": fs / "sad-trombone.ogg", "volume": 0.12, "len": 1.2},
-        {"t": AT["b9"] + 0.35, "path": fs / "whoosh-3.ogg", "volume": 0.15},
+        {"t": E.SPIN1 + 0.6, "path": fs / "sad-trombone.ogg", "volume": 0.12, "len": 1.2},
+        {"t": AT["v11"] + 0.35, "path": fs / "whoosh-3.ogg", "volume": 0.15},
         {"t": E.DONE, "path": ki / "confirmation_002.ogg", "volume": 0.45},
         {"t": E.DONE + 0.05, "path": km / "impactWood_light_002.ogg", "volume": 0.35},
-        {"t": AT["b12"] - 0.1, "path": fs / "punch.ogg", "volume": 0.25},
-        {"t": AT["c1"] - 0.05, "path": fs / "record-scratch-2.ogg", "volume": 0.2, "len": 0.6},
-        {"t": TURN0, "path": fs / "tension.ogg", "volume": 0.22, "len": 2.4},
+        {"t": AT["e1"] - 0.05, "path": fs / "record-scratch-2.ogg", "volume": 0.2, "len": 0.6},
+        {"t": AT["e1"] + 0.1, "path": fs / "tension.ogg", "volume": 0.2, "len": 2.0},
+        {"t": E.WEARY_T, "path": fs / "pop.ogg", "volume": 0.4},
         {"t": E.PLATE - 0.02, "path": ki / "error_006.ogg", "volume": 0.45},
         {"t": E.PLATE + 0.02, "path": km / "impactPlate_heavy_002.ogg", "volume": 0.6},
-        {"t": E.PLATE + 0.04, "path": fs / "drama-boom.ogg", "volume": 0.32, "len": 1.2},
-        {"t": E.PLATE + 1.25, "path": fs / "sting.ogg", "volume": 0.2, "len": 0.8},
-        {"t": AT["c3"] - 0.1, "path": fs / "pop.ogg", "volume": 0.35},
+        {"t": E.PLATE + 0.04, "path": fs / "drama-boom.ogg", "volume": 0.34, "len": 1.2},
+        {"t": E.SHOCK, "path": fs / "sting.ogg", "volume": 0.2, "len": 0.8},
     ]
-    for lid in ("a3b", "a7b", "a10b"):  # просьбы юзера
-        out.append({"t": AT[lid], "path": fs / "pop.ogg", "volume": 0.4})
-    for lid in ("a4b", "a8b", "a11b", "a6"):  # ответы Клода
+    # Юзер пишет: печать перед каждым его сообщением, на пузыре — «поп»; злые — ещё и «боинг».
+    for t, dur in ((E.REQ1_T, 0.55), (E.RET1_T, 0.3), (E.REQ2_T, 0.55), (E.REQ3_T, 0.6), (E.RET2_T, 0.3), (E.REQ4_T, 0.4), (E.RET3_T, 0.3)):
+        out.append({"t": round(t - dur, 3), "path": fs / "typing-digital.ogg", "volume": 0.2, "len": dur})
+        out.append({"t": t, "path": fs / "pop.ogg", "volume": 0.4})
+    for t in (E.RET1_T, E.RET2_T, E.RET3_T):
+        out.append({"t": t + 0.02, "path": fs / "boing.ogg", "volume": 0.15, "len": 0.5})
+    for lid in ("v3", "v5a", "v6"):  # ответы Клода
         out.append({"t": AT[lid], "path": fs / "pop-cartoon.ogg", "volume": 0.35})
-    for lid in ("a5", "a12", "b1", "b12"):  # юзер беснуется
-        out.append({"t": AT[lid] - 0.05, "path": fs / "boing.ogg", "volume": 0.15, "len": 0.5})
-    for lid in ("a3", "a7", "a10"):  # юзер печатает просьбу
-        out.append({"t": AT[lid] - 0.05, "path": fs / "typing-digital.ogg", "volume": 0.18, "len": 0.5})
+    out.append({"t": E.WEARY0, "path": fs / "typing-digital.ogg", "volume": 0.18, "len": E.WEARY_T - E.WEARY0})
     # Лекция: сорок сообщений — сорок «тыков».
     for i in range(40):
         out.append({"t": round(E.LECT0 + i * E.LECT_STEP, 3), "path": ki / f"select_00{1 + i % 4}.ogg", "volume": 0.22, "len": 0.15})
@@ -486,13 +477,13 @@ def sfx_list() -> list[dict]:
     for i in range(len(E.RUDE)):
         out.append({"t": round(E.ERASE0 + i / E.ERASE_CPS, 3), "path": ki / f"switch_00{1 + i % 7}.ogg", "volume": 0.22, "len": 0.1})
     out.append({"t": E.TYPE1, "path": fs / "typing.ogg", "volume": 0.3, "len": len(E.POLITE) / E.TYPE_POLITE_CPS})
-    # Спор: печать; часы — набегают по часу.
-    out.append({"t": AT["b5"], "path": fs / "typing.ogg", "volume": 0.25, "len": 1.4})
-    for lid in ("b6", "b7", "b8"):
-        out.append({"t": AT[lid], "path": fs / "whip.ogg", "volume": 0.2, "len": 0.5})
+    # «И так часами»: печать; часы набегают.
+    out.append({"t": AT["v10"], "path": fs / "typing.ogg", "volume": 0.25, "len": 0.7})
+    for t in (E.SPIN1, E.SPIN2):
+        out.append({"t": t, "path": fs / "whip.ogg", "volume": 0.2, "len": 0.5})
         for j in range(4):
-            out.append({"t": round(AT[lid] + 0.05 + j * 0.11, 3), "path": ki / "tick_002.ogg", "volume": 0.3, "len": 0.1})
-    out.append({"t": AT["b10"], "path": fs / "typing.ogg", "volume": 0.3, "len": 1.2})
+            out.append({"t": round(t + 0.05 + j * 0.11, 3), "path": ki / "tick_002.ogg", "volume": 0.3, "len": 0.1})
+    out.append({"t": AT["v12"], "path": fs / "typing.ogg", "volume": 0.3, "len": 0.8})
     # Финал: только часы.
     t = TEA
     while t < DUR - 0.3:
@@ -502,7 +493,7 @@ def sfx_list() -> list[dict]:
 
 
 def mix(video: Path, voice: Path, out: Path, work: Path, report: dict) -> None:
-    """Сведение как в серии 5; музыка уходит перед медленным поворотом."""
+    """Сведение как в серии 5; музыка уходит на «А иногда…»."""
     from app.audio_mix_model import ebur128
     from app.motion import asset_key
     from app.motion_render import build_audio_layers_args, speech_level_db
@@ -516,7 +507,7 @@ def mix(video: Path, voice: Path, out: Path, work: Path, report: dict) -> None:
     assets = {asset_key(9001): str(voice), asset_key(9002): str(music)}
     m_lufs = float(ebur128(music)["i"])
     gain = round(voice_db - 14.0 - m_lufs, 2)
-    layers.append({"id": "music", "type": "audio", "start": 0.0, "end": AT["c1"],
+    layers.append({"id": "music", "type": "audio", "start": 0.0, "end": AT["e1"],
                    "props": {"asset_id": 9002, "mode": "track", "volume": 1.0, "gain_db": gain, "role": "music", "fadeIn": 0.3, "fadeOut": 0.6}})
     report["music"] = {"file": music.name, "lufs": m_lufs, "voice_lufs": voice_db, "gain_db": gain}
     notes: list[str] = []
@@ -570,8 +561,7 @@ def check_words(final: Path, work: Path) -> dict:
         return re.sub(r"[^а-яa-z0-9]", "", s.lower().replace("ё", "е"))
 
     script = " ".join(ln[5] for ln in E.LINES)
-    for a, b in (("подъ**ываю", "подъебываю"), ("бл*", "бля"), ("на**й", "нахуй"), ("вы**ывался", "выебывался"), ("сорок", "40"),
-                 ("тридцать", "30"), ("Стим", "steam")):
+    for a, b in (("подъ**ываю", "подъебываю"), ("тридцать", "30")):
         script = script.replace(a, b)
     want = [norm(w) for w in script.split() if norm(w)]
     got = [norm(w["w"]) for w in heard if norm(w["w"])]
