@@ -436,6 +436,56 @@ def message_screen(j, val, phone, font):
     return [*parts, head, bubble]
 
 
+def chat_screen(j, val, phone, font):
+    """Переписка с ответом (``msg|кому|его сообщение|статус|сеть|заряд|время|входящее``, ч.4): строка состояния,
+    имя чата; сверху справа — его (синее) сообщение со временем отправки, ниже слева — входящее (серое)."""
+    _m, to, body, state, net, batt, clock, inc = (val.split("|") + [""] * 8)[:8]
+    ink = kit.emission_mat(f"msg_ink{j}", (1.0, 1.0, 1.0), 8.0)
+    dim = kit.emission_mat(f"msg_dim{j}", (0.75, 0.8, 0.9), 5.0)
+    red = kit.emission_mat(f"msg_red{j}", (1.0, 0.16, 0.12), 9.0)
+    blue = kit.emission_mat(f"msg_bubble{j}", (0.05, 0.26, 0.85), 1.0)
+    grey = kit.emission_mat(f"msg_in{j}", (0.20, 0.22, 0.27), 1.0)
+    bar = kit.emission_mat(f"msg_bar{j}", (0.10, 0.12, 0.18), 1.0)
+    y, parts = -0.0063, []
+
+    def tx(name, body_, size, x, z, mat, align="CENTER"):
+        ob = kit.text(f"msg_{name}{j}", body_, size, (x, y, z), mat, font=font, align=align)
+        ob.parent = phone
+        parts.append(ob)
+        return ob
+
+    def plate(name, w, h, x, z, mat):
+        ob = kit.box(f"msg_{name}{j}", (w, 0.0004, h), (x, -0.0058, z), mat, bevel=0.0)
+        ob.parent = phone
+        parts.append(ob)
+        return ob
+    plate("head", 0.036, 0.014, 0.0, 0.031, bar)
+    status = " · ".join(x for x in (net, batt) if x) or clock
+    if status:
+        tx("status", status, 0.0042, 0.0, 0.0345, red if net.startswith("нет") else dim)
+    tx("to", to, 0.0052, 0.0, 0.0265, ink)
+    z = 0.0225                  # сразу под именем чата: кулак снизу не закрывает входящее
+    if body:
+        lines = _wrap(body[:1].upper() + body[1:], 12)
+        n_ = lines.count("\n") + 1
+        bh = 0.0056 * n_ + 0.0035
+        z -= bh / 2
+        plate("out", 0.027, bh, 0.0045, z, blue)
+        tx("outt", lines, 0.0044, 0.0045, z, ink)
+        z -= bh / 2 + 0.0032
+        if state:
+            tx("state", state, 0.0034, 0.0045, z, dim)
+            z -= 0.0042
+    if inc:
+        lines = _wrap(inc, 12)
+        n_ = lines.count("\n") + 1
+        bh = 0.0056 * n_ + 0.0035
+        z -= bh / 2
+        plate("inb", 0.027, bh, -0.0045, z, grey)
+        tx("int", lines, 0.0044, -0.0045, z, ink)
+    return parts
+
+
 def phone_screen_text(phone, perf, frames, font):
     """Значение на экране телефона (``phone[f].screen``: «03:33», «14%», «−12 °C») — светлые цифры на тёмной
     подложке экрана; по объекту на значение, виден только в своих кадрах."""
@@ -450,7 +500,8 @@ def phone_screen_text(phone, perf, frames, font):
         back.parent = phone
         if val.startswith("msg|"):
             # переписка — шрифтом с честной кириллицей: у Bahnschrift в Blender часть строчных букв (т, и, э) ломается
-            parts = message_screen(j, val, phone, kit.load_font(MSG_FONTS) or font)
+            chat = len(val.split("|")) >= 8 and val.split("|")[7]
+            parts = (chat_screen if chat else message_screen)(j, val, phone, kit.load_font(MSG_FONTS) or font)
             vis = [((1, 1, 1) if perf["phone"][i].get("screen") == val else (0, 0, 0)) for i in range(len(frames))]
             for ob in (back, *parts):
                 kit.key_vec(ob, "scale", frames, vis, interp="CONSTANT")
@@ -499,6 +550,114 @@ def floor_bag(pack, mats, perf, frames):
     return root
 
 
+# ============================================================== копии героя (ч.4)
+
+AWAY = (0.0, 0.0, -80.0)      # спрятать копию — унести под пол (масштаб 0 three.js для кривых рисовал на месте)
+ARM_TILT = 42.0               # рука в люке наискось, ° от вертикали
+ARM_LOW, ARM_REACH = 0.12, 0.13   # кулак ниже точки фонарика; «давай руку» — ещё ниже, м
+
+
+def hero_copy(arm, name, only=None):
+    """Копия меша героя в позе покоя (T-поза) — отдельные объекты без скелета под пустышкой ``name``; пустышка в начале
+    координат = объект скелета без масштаба (кости ``head_local`` — в её системе). Те же материалы (рукав, чехол — как
+    у него). ``only`` — части по имени (``ArmRight``); вещи на костях (глаза, рюкзак) не копируются."""
+    root = bpy.data.objects.new(name, None)
+    kit.link(root)
+    inv = arm.matrix_world.inverted()
+    for o in [o for o in bpy.data.objects if o.type == "MESH" and o.parent == arm and o.parent_type == "OBJECT"
+              and not o.hide_render]:
+        if only and not any(k in o.name for k in only):
+            continue
+        cp = bpy.data.objects.new(f"{name}_{o.name}", o.data.copy())
+        kit.link(cp)
+        cp.parent = root
+        cp.matrix_parent_inverse = Matrix.Identity(4)
+        cp.matrix_basis = inv @ o.matrix_world
+    return root
+
+
+def _parent_keep(ob, root):
+    ob.parent = root
+    ob.matrix_parent_inverse = root.matrix_world.inverted()
+
+
+def torch_arm(arm, perf, frames):
+    """Фонарик в люке держит рука — его же: правый рукав и кулак героя-копии свисают в щель, в кулаке такой же телефон
+    (``perf.torch.arm``). Рука чуть качается; после падения тела (``lt.body`` > 0) её нет."""
+    tr = perf.get("torch")
+    if not tr or not tr.get("arm"):
+        return None
+    lt = perf["lights"]
+    n = len(frames)
+    rest = hero_copy(arm, "torch_arm_rest", only=("ArmRight",))
+    hand = arm.data.bones["hand.r"].head_local.lerp(arm.data.bones["hand.r"].tail_local, 0.4)
+    pos = V(tr["pos"])
+    grip = pos + V((0.0, 0.085, 0.03))          # кулак на дальнем конце телефона, вспышка снизу на лицо
+    # T-поза: рука от плеча по −X; вниз (−X → −Z) и наискось к дальнему краю люка (там лежит тот, кто сверху):
+    # снизу видно рукав по длине, а не один кулак торцом
+    rot = Matrix.Rotation(math.radians(-ARM_TILT), 4, "X") @ Matrix.Rotation(math.radians(-90), 4, "Y")
+    root = bpy.data.objects.new("torch_arm", None)
+    kit.link(root)
+    root.location = grip
+    bpy.context.view_layer.update()
+    rest.matrix_world = Matrix.Translation(grip) @ rot @ Matrix.Scale(S, 4) @ Matrix.Translation(-hand)
+    bpy.context.view_layer.update()
+    _parent_keep(rest, root)
+    for name in ("torch_phone", "torch_led", "hatch_torch"):
+        ob = bpy.data.objects.get(name)
+        if ob is not None:
+            _parent_keep(ob, root)
+    locs, rots = [], []
+    reach = tr.get("reach")
+    for i in range(n):
+        t = i / FPS
+        gone = lt[i].get("body", 0.0) > 0.0
+        # рука в щели ниже края люка; «давай руку» — тянется ещё ниже, в кабину (вместе с телефоном и лучом)
+        down = ARM_LOW + (ARM_REACH * m.smootherstep((t - reach) / 0.9) if reach is not None and t >= reach else 0.0)
+        here = grip - V((0.0, 0.0, down))
+        locs.append(tuple(V(AWAY) + here) if gone else tuple(here))
+        rots.append((math.radians(1.2) * math.sin(t * 1.1), math.radians(0.9) * math.sin(t * 0.7 + 1.0), 0.0))
+    kit.key_vec(root, "location", frames, locs)
+    kit.key_vec(root, "rotation_euler", frames, rots)
+    return root
+
+
+def body_drop(arm, perf, frames):
+    """«Тот, кто был сверху, рухнул в кабину» (``perf.body_drop``): копия героя падает в люк и лежит на полу рядом с ним.
+    В полной темноте её не видно — слышно удар; до падения её нет."""
+    bd = perf.get("body_drop")
+    if not bd:
+        return None
+    n = len(frames)
+    rest = hero_copy(arm, "drop_body_rest")
+    hips = arm.data.bones["hips"].head_local
+    root = bpy.data.objects.new("drop_body", None)
+    kit.link(root)
+    bpy.context.view_layer.update()
+    rest.matrix_world = Matrix.Scale(S, 4) @ Matrix.Translation(-hips)
+    bpy.context.view_layer.update()
+    _parent_keep(rest, root)
+    t_hit, fall = float(bd["t"][0]), float(bd["fall"])
+    t_go = t_hit - fall
+    top = V((B.HATCH_LID[0], B.HATCH_LID[1], B.H + 0.35))
+    end = V((bd["spot"][0], bd["spot"][1], 0.09))
+    locs, rots = [], []
+    for i in range(n):
+        t = i / FPS
+        if t < t_go:
+            locs.append(tuple(V(AWAY)))
+            rots.append((0.0, 0.0, 0.0))
+            continue
+        x = min(1.0, (t - t_go) / fall)
+        p = top.lerp(end, x)
+        p.z = top.z + (end.z - top.z) * x * x       # падает с ускорением
+        locs.append(tuple(p))
+        rots.append((math.radians(90) * min(1.0, x * 1.2), 0.0, math.radians(35) * x))   # лицом вниз
+    kit.key_vec(root, "location", frames, locs)
+    kit.key_vec(root, "rotation_euler", frames, rots)
+    return root
+
+
 # ============================================================== свет
 
 REVEAL_W = 17.0     # Вт света в шахте при открытых дверях и включённом фонарике
@@ -530,7 +689,8 @@ def build_lights(L, perf, frames, phone):
     # красный «рим» сзади-сверху: в темноте читается силуэт и капюшон
     rim = kit.make_light("emergency_rim", "SPOT", (1.0, 0.12, 0.08), 0.0, (0.55, 0.75, 1.95),
                          rot=(math.radians(-50), 0, math.radians(150)), size=0.1, spot=(math.radians(90), 0.8), volume=0.0)
-    kit.fcurve(rim.data, "energy", 0, frames, [30.0 * v + (6.0 if lt[i]["dark"] else 0.0) for i, v in enumerate(red_v)])
+    kit.fcurve(rim.data, "energy", 0, frames, [(30.0 * v + (6.0 if lt[i]["dark"] else 0.0)) * (1.0 - lt[i].get("out", 0.0))
+                                               for i, v in enumerate(red_v)])
     en = L["emerg_mat"].node_tree.nodes["Emission"]
     kit.fcurve(L["emerg_mat"].node_tree, f'nodes["{en.name}"].inputs[1].default_value', 0, frames, [40.0 * v for v in red_v])
     # кнопки: подсветка нажатых (гаснет с блэкаутом до четверти)
@@ -576,7 +736,8 @@ def build_lights(L, perf, frames, phone):
                    [-math.radians(B.HATCH_OPEN_DEG) * lt[i].get("hatch", 0.0) for i in range(n)])
         kit.fcurve(L["hatch_latch"], "rotation_euler", 2, frames, [math.radians(90) * lt[i].get("latch", 0.0) for i in range(n)])
         # в открытый люк видно шахту: тусклый холодный отсвет сверху на тросах
-        kit.fcurve(L["above_light"].data, "energy", 0, frames, [6.0 * lt[i].get("hatch", 0.0) for i in range(n)])
+        kit.fcurve(L["above_light"].data, "energy", 0, frames,
+                   [6.0 * lt[i].get("hatch", 0.0) * (1.0 - lt[i].get("out", 0.0)) for i in range(n)])
     tr = perf.get("torch")
     if tr and any(lt[i].get("torch") for i in range(n)):
         # чужой фонарик в щели люка (ч.3): такой же телефон, вспышкой вниз, луч — на лицо героя через щель
@@ -608,7 +769,7 @@ def build_lights(L, perf, frames, phone):
     # пятно на близкой поверхности (створки, стена шахты) не должно выгорать в белый диск: мощность по расстоянию до цели
     near = [min(1.0, max(0.3, (math.dist(perf["root"][i], ph[i]["beam"][:2]) / 0.9) ** 2)) for i in range(n)]
     flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] for i in range(n)]
-    scr_e = [1.2 * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) for i in range(n)]
+    scr_e = [1.2 * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) * ph[i].get("dim", 1.0) for i in range(n)]
     kit.fcurve(flash.data, "energy", 0, frames, flash_e)
     kit.fcurve(screen.data, "energy", 0, frames, scr_e)
     sn = kit.SCREEN_MAT.node_tree.nodes["Emission"]
@@ -738,6 +899,7 @@ def build_camera(arm, perf, frames, rig):
             base = B.FILL_W.get(place, 14.0)
         else:
             base = 0.5 + 3.5 * (1.0 - lt["main"]) if lt["dark"] or lt["main"] < 0.5 else 0.35
+        base *= 1.0 - lt.get("out", 0.0)        # полная темнота: и «глазной» свет гаснет
         vals.append(base * min(3.0, max(0.5, (d / 0.8) ** 2)))
     kit.fcurve(eye.data, "energy", 0, frames, vals)
     # контровой сзади-сверху (от камеры через героя): силуэт и капюшон отделяются от тёмного фона
@@ -758,7 +920,7 @@ def build_camera(arm, perf, frames, rig):
         rim_loc.append(tuple(p))
         rim_rot.append(tuple((face - p).to_track_quat("-Z", "Y")))
         lt = perf["lights"][k]
-        rim_e.append(B.RIM_W.get(place, 0.0) if place != "cabin" else (12.0 if lt["dark"] else 0.0))
+        rim_e.append((B.RIM_W.get(place, 0.0) if place != "cabin" else (12.0 if lt["dark"] else 0.0)) * (1.0 - lt.get("out", 0.0)))
     rim.rotation_mode = "QUATERNION"
     kit.key_vec(rim, "location", frames, rim_loc)
     kit.key_vec(rim, "rotation_quaternion", frames, rim_rot)
@@ -1043,6 +1205,8 @@ def main():
     attach_phone(arm, phone, perf, frames, cam_pos_estimate(perf))
     phone_screen_text(phone, perf, frames, fonts.get("display"))
     build_lights(L, perf, frames, phone)
+    torch_arm(arm, perf, frames)
+    body_drop(arm, perf, frames)
     floor_bag(pack, mats, perf, frames)
     places.key_place_doors(built_places, perf, frames)
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)

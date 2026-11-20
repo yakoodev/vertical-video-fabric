@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any
 
-from app.series3d_blender_plan import ACTION_EMOTION, shots_from_beats
+from app.series3d_blender_plan import ACTION_EMOTION, series_start, shots_from_beats
 from app.series3d_blender_stage import LOCS, show_items, rule_location, decal_from_text, _low
 
 # --------------------------------------------------------------------------- #
@@ -167,6 +167,10 @@ def rule_choice(shot: dict, events: list[dict], dark: bool) -> dict:
 
 
 SPEAKERS = ("narrator", "hero", "other")
+# «Сверху позвал будто он сам: «…»», «его же голосом: «…»» — реплика голосом героя, но говорит не он (копия сверху/из-за
+# двери): озвучка — голосом героя, рот героя не двигается (метка ``mimic``).
+MIMIC_VOICE = r"\bего\s+(же\s+)?голос|\bсвоим\s+(же\s+)?голос"
+MIMIC_PLACE = r"сверху|из люка|над голов|с крыши|наверху"
 SPEECH_VERB = (r"сказал|сказала|крикнул|крикнула|закричал|закричала|позвал|позвала|прошептал|прошептала|ответил|"
                r"ответила|спросил|спросила|произн[её]с|заорал|завопил|шепнул|пробормотал|выдохнул|взмолился|повторил")
 OTHER_SPEAKER = (r"голос|кто-то|кто то|спасател|диспетчер|сосед|мужчин|женщин|охранник|динамик|громкоговор|"
@@ -217,6 +221,8 @@ def speech_labels(text: str, hero_names: tuple[str, ...] = ()) -> list[str]:
     hero_said = re.search(HERO_SUBJECT + (f"|{names}" if names else ""), outside)
     # герой — только если сказал он сам (он/парень/имя героя) и это не голос/шёпот/телефон/силуэт
     who = "hero" if hero_said and not re.search(OTHER_SPEAKER, outside) else "other"
+    if re.search(MIMIC_VOICE, outside) or (who == "hero" and re.search(MIMIC_PLACE, outside)):
+        who = "mimic"          # герой в кабине, а его голос сверху: копия, губы не двигаются
     for i in inside:
         labels[i] = who
     return labels
@@ -233,12 +239,13 @@ def hero_names(script: dict | None) -> tuple[str, ...]:
 
 
 def dialog_lines(sentences: list[dict], names: tuple[str, ...] = ()) -> list[dict]:
-    """Озвучка по ролям: ``[{speaker: narrator|hero, text}]`` подряд (реплики «других» читает рассказчик)."""
+    """Озвучка по ролям: ``[{speaker: narrator|hero, text}]`` подряд (реплики «других» читает рассказчик, копия героя
+    ``mimic`` — голосом героя)."""
     out: list[dict] = []
     for sent in sentences:
         tokens = str(sent.get("text") or "").split()
         for tok, lab in zip(tokens, speech_labels(sent.get("text") or "", names)):
-            who = "hero" if lab == "hero" else "narrator"
+            who = "hero" if lab in ("hero", "mimic") else "narrator"
             if out and out[-1]["speaker"] == who:
                 out[-1]["text"] += " " + tok
             else:
@@ -247,7 +254,7 @@ def dialog_lines(sentences: list[dict], names: tuple[str, ...] = ()) -> list[dic
 
 
 def has_hero_lines(sentences: list[dict], names: tuple[str, ...] = ()) -> bool:
-    return any(lab == "hero" for s_ in sentences for lab in speech_labels(s_.get("text") or "", names))
+    return any(lab in ("hero", "mimic") for s_ in sentences for lab in speech_labels(s_.get("text") or "", names))
 
 
 GEMINI_SCHEMA = {
@@ -395,11 +402,61 @@ def message_screen(shots: list[dict]) -> dict[int, str]:
     return out
 
 
+# Переписка с ответом (ч.4): «Пришло сообщение от мамы: «…»», «Он открыл переписку, а там его сообщение «…», отправлено в
+# 23:41». Тот же экран ``msg|…`` с восьмым полем — входящее: ``msg|кому|его сообщение|статус|сеть|заряд|время|входящее``.
+CHAT_IN_RX = r"сообщени\w*\s+от\s+(\w+)\s*:?\s*[«\"“](.+?)[»\"”]"
+CHAT_OUT_RX = r"(?:его|сво[её]|мо[её])\s+(?:же\s+)?сообщени\w*\s*:?\s*[«\"“](.+?)[»\"”]"
+CHAT_CUE = r"переписк|сообщени"
+NET_ON = r"(поймал|появил|ловит|поймала)\w*\s+(\w+\s+)?сеть|сеть\s+(появил|вернул)"
+_FROM = {"мамы": "Мама", "папы": "Папа", "брата": "Брат", "сестры": "Сестра", "друга": "Друг", "жены": "Жена"}
+
+
+def chat_screen(shots: list[dict]) -> dict[int, str]:
+    """Экран переписки с ответом: ``{план: "msg|кому|исходящее|статус|сеть|заряд|время|входящее"}``. Начинается с плана,
+    где пришло сообщение («сообщение от мамы: «…»») или названо своё сообщение в чате; держится в планах дальше, пока
+    фраза говорит о переписке/сообщении. Исходящее — со временем отправки («в 23:41»), сеть — «4G», пока телефон
+    «поймал сеть», дальше «нет сети»."""
+    first = None
+    for k, s_ in enumerate(shots):
+        raw = str(s_.get("text") or "")
+        if re.search(CHAT_IN_RX, raw, re.I) or re.search(CHAT_OUT_RX, raw, re.I):
+            first = k
+            break
+    if first is None:
+        return {}
+    to, inc, out_msg, clock = "", "", "", ""
+    out: dict[int, str] = {}
+    seen_net = False
+    for k in range(first, len(shots)):
+        raw = str(shots[k].get("text") or "")
+        low = _low(raw)
+        if k > first and not re.search(CHAT_CUE, low) and not set(shots[k].get("sentences") or []) & \
+                set(shots[k - 1].get("sentences") or []):
+            break
+        hit = re.search(CHAT_IN_RX, raw, re.I)
+        if hit:
+            to = _FROM.get(_low(hit.group(1)), hit.group(1)[:1].upper() + hit.group(1)[1:])
+            inc = hit.group(2).strip()
+        hit = re.search(CHAT_OUT_RX, raw, re.I)
+        if hit:
+            out_msg = hit.group(1).strip()
+            clock = next((v for v in [screen_value(raw)] if ":" in v), clock)
+        # сеть: в плане с «поймал сеть» (или сразу перед ним) — есть, дальше — снова нет
+        prev = str(shots[k - 1].get("text") or "") if k > 0 else ""
+        net_on = bool(re.search(NET_ON, low) or (k == first and re.search(NET_ON, _low(prev))))
+        seen_net = seen_net or net_on
+        net = "4G" if net_on else ("нет сети" if seen_net or not inc else "")
+        batt = screen_value(raw) if screen_value(raw).endswith("%") else ""
+        state = f"отправлено {clock}" if out_msg and clock else ("отправлено" if out_msg else "")
+        out[k] = "|".join(("msg", to or "Чат", out_msg[:40], state, net, batt, clock if not out_msg else "", inc[:60]))
+    return out
+
+
 def screen_shots(shots: list[dict]) -> dict[int, str]:
     """Планы, где фраза называет часы/экран телефона: ``{индекс: значение на экране}``. Значения нет в самом плане —
     берём из его фразы (соседние планы той же фразы: «Датчик на часах упал | до −12 °C»). Сообщение с телефона —
     экран переписки (``message_screen``)."""
-    out: dict[int, str] = message_screen(shots)
+    out: dict[int, str] = message_screen(shots) or chat_screen(shots)
     for k, s in enumerate(shots):
         if k in out:
             continue
@@ -619,7 +676,7 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         said = {labels[k] for k in idx} - {"narrator"}
         if said and pick.get("speaker") in ("hero", "other") and pick.get("by") == "gemini":
             for k in idx:   # Gemini уточняет, чья найденная реплика (кавычки/«сказал:» нашли правила)
-                if labels[k] != "narrator":
+                if labels[k] not in ("narrator", "mimic"):
                     labels[k] = pick["speaker"]
             said = {pick["speaker"]}
         speaker = "hero" if "hero" in said else ("other" if said else "narrator")
@@ -636,6 +693,8 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
             windows[-1][1] = b_
         else:
             windows.append([a_, b_])
+    start = series_start(beats)
     return {"shots": fix_sequence(planned), "events": events, "words": words, "director": director,
+            **({"start": start} if start else {}),
             "director_error": error, "speech": {"labels": labels, "hero_windows": [[round(a_, 3), round(b_, 3)]
                                                                                    for a_, b_ in windows]}}

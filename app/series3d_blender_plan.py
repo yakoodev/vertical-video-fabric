@@ -8,7 +8,9 @@
 
 * план: ``лицо``, ``сверху``, ``за плечом``, ``деталь``. Два плана через «затем»/«потом» режут бит на два кадра;
 * что в кадре: ``проём`` (открытые двери и шахта за ними), ``двери``, ``табло``, ``люк`` (потолок снизу: люк, защёлка);
-* до «План:» — действие и лицо: ``светит``, ``кричит``, ``слушает``, ``страх``, ``тревога``… (см. ``ACTION_WORDS``).
+* до «План:» — действие и лицо: ``светит``, ``кричит``, ``слушает``, ``страх``, ``тревога``… (см. ``ACTION_WORDS``);
+* в первом бите — с чего начинается серия, если это продолжение: ``на рюкзаке``, ``люк приоткрыт``, ``сверху фонарик``
+  (``START_WORDS``, задание ``start``): герой уже стоит на рюкзаке под люком, крышка приподнята, в щели фонарик.
 
 Модуль без ``bpy`` и без настроек: его импортирует и Blender.
 """
@@ -38,6 +40,20 @@ ACTION_EMOTION = {"shout": "worried", "flinch": "startled", "listen": "worried",
                   "look_ceiling": "scared", "look_camera": "worried", "phone_light": "worried", "approach": "worried",
                   "stand_bag": "determined", "open_hatch": "scared"}
 PART_MIN_SEC = 0.7             # кусок бита короче не выйдет: кадр не успеет прочитаться
+# С чего начинается серия (первый бит, продолжение прошлой части): «на рюкзаке, люк приоткрыт, сверху фонарик; …».
+# Эти слова — не действие: перед разбором действия вырезаются («рюкзак» иначе — «ставит рюкзак»).
+START_WORDS = (("bag", r"(стоит |уже )?на рюкзаке"), ("lid", r"(люк|крышка)\s+(уже\s+)?(приоткрыт|приподнят)\w*"),
+               ("torch", r"сверху\s+(светит\s+)?фонарик|фонарик\s+сверху|светят\s+сверху"))
+
+
+def start_state(text: str) -> tuple[list[str], str]:
+    """Состояние на начало серии из строки бита: ``(["bag", "lid", "torch"], строка без этих слов)``."""
+    low, out = _low(text), []
+    for name, rx in START_WORDS:
+        if re.search(rx, low):
+            out.append(name)
+            low = re.sub(rx, " ", low)
+    return out, low
 
 
 def beat_plan(beat: dict) -> dict | None:
@@ -46,7 +62,8 @@ def beat_plan(beat: dict) -> dict | None:
     mark = PLAN_MARK.search(text)
     if not mark:
         return None
-    does, plan = _low(text[:mark.start()]), _low(text[mark.end():])
+    start, does = start_state(text[:mark.start()])
+    plan = _low(text[mark.end():])
     hits = sorted((m.start(), cam) for cam, rx in CAMERA_WORDS for m in re.finditer(rx, plan))
     cameras: list[str] = []
     for _pos, cam in hits:
@@ -55,9 +72,20 @@ def beat_plan(beat: dict) -> dict | None:
     frame = next((name for name, rx in FRAME_WORDS if re.search(rx, plan)), "")
     if frame == "display" and "ots" in cameras:
         cameras = ["detail" if c == "ots" else c for c in cameras]    # табло из-за плеча: план «главная вещь места»
-    return {"cameras": cameras[:3], "frame": frame,
-            "action": next((a for a, rx in ACTION_WORDS if re.search(rx, does)), ""),
-            "emotion": next((e for e, rx in EMOTION_WORDS if re.search(rx, does)), "")}
+    out = {"cameras": cameras[:3], "frame": frame,
+           "action": next((a for a, rx in ACTION_WORDS if re.search(rx, does)), ""),
+           "emotion": next((e for e, rx in EMOTION_WORDS if re.search(rx, does)), "")}
+    if start:
+        out["start"] = start
+    return out
+
+
+def series_start(beats: list[dict] | None) -> list[str]:
+    """Состояние на начало серии — из первого бита с планом (``beat_plan(...)["start"]``), иначе пусто."""
+    ordered = sorted((b for b in beats or [] if b.get("variant") != "alt" and b.get("sentence") is not None),
+                     key=lambda b: int(b["sentence"]))
+    plan = beat_plan(ordered[0]) if ordered and int(ordered[0]["sentence"]) == 0 else None
+    return list((plan or {}).get("start") or [])
 
 
 def has_plans(beats: list[dict] | None) -> bool:

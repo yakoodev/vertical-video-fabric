@@ -95,6 +95,11 @@ SFX = {
     "knock_hit": ("sfx:kenney-impact/impactMetal_medium_002.ogg", 0.55),
     "doors_strain": ("sfx:tension/metal-scrape.ogg", 0.55),
     "doors_open": ("sfx:tension/clank.ogg", 0.8),
+    # ч.4: уведомление о сообщении, тело падает на пол кабины (глухой удар + металл пола + низ), всё гаснет
+    "msg_in": ("sfx:kenney-interface/confirmation_002.ogg", 0.28),
+    "body_thud": ("sfx:kenney-impact/impactPunch_heavy_002.ogg", 0.8),
+    "body_floor": ("sfx:kenney-impact/impactMetal_heavy_001.ogg", 0.55),
+    "body_low": ("sfx:freesound/impact-low.ogg", 0.7),
 }
 
 
@@ -135,6 +140,15 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(S3.SFX["sting"], t, "акцент", "sting")
         elif k == "doors_close":
             add(SFX["doors_open"], t, "двери схлопнулись", "doors_close")
+        elif k == "msg_in":
+            add(SFX["msg_in"], t, "пришло сообщение", "msg_in")
+        elif k == "lights_out":
+            add((S3.SFX["power_down"][0], 0.7), t - 0.1, "аварийный свет гаснет", "lights_out")
+        elif k == "body_drop":
+            hit = t + float((perf.get("body_drop") or {}).get("fall") or 0.42)
+            add(SFX["body_thud"], hit, "тело упало", "body_drop")
+            add(SFX["body_floor"], hit + 0.01, "пол кабины", "body_floor")
+            add(SFX["body_low"], hit, "удар", "body_low")
     for c in perf["contacts"]:
         if c["kind"] == "press":
             add(SFX["bell" if c.get("button") == "bell" else "press"], c["t"] - 0.01, "кнопка", "press")
@@ -167,11 +181,15 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             out.append({"t": round(max(0.0, t0), 3), "ref": ref, "volume": 1.0, "label": label, "kind": kind,
                         "end": round(min(total, t1), 3), "role": "ambience", "under_db": under, "fade_in": fi, "fade_out": fo})
 
+    out_t = next((float(e["t"]) for e in job.get("events") or [] if e["kind"] == "lights_out"), None)
     if b is None:
         bed("hum", 0.0, total, "гул кабины", 0.4, 1.5)
     else:
         bed("hum", 0.0, b + 0.12, "гул кабины", 0.4, 0.18)
-        bed("dark", b + 0.6, back or total, "гул шахты", 2.5, 1.0 if back else 2.0)
+        end = back or total
+        if out_t is not None and out_t > b:
+            end = min(end, out_t + 0.6)       # полная темнота — и гул шахты глохнет: дальше тишина
+        bed("dark", b + 0.6, end, "гул шахты", 2.5, 0.6 if out_t is not None else (1.0 if back else 2.0))
         if back:
             bed("hum", back, total, "гул кабины", 0.3, 1.5)
     return sorted(out, key=lambda x: x["t"])
@@ -264,7 +282,9 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
             "director_error": plan["director_error"], "envelope": [round(x, 4) for x in (envelope or [])],
             "lipsync": lipsync_mode if lipsync_mode in LIPSYNC_MODES else "speaking",
             "quality": quality if quality in QUALITY else DEFAULT_QUALITY, "look": look or {}, "seed": int(seed),
-            "render_backend": backend({"render_backend": render_backend})}
+            "render_backend": backend({"render_backend": render_backend}),
+            # продолжение прошлой части (первый бит: «на рюкзаке, люк приоткрыт, сверху фонарик») — только у таких серий
+            **({"start": plan["start"]} if plan.get("start") else {})}
 
 
 def chunks(perf: dict) -> list[dict]:

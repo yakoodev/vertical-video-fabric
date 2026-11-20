@@ -217,6 +217,18 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
                 k = find_word(words, sp["w0"], sp["w1"], word)
                 events.append({"kind": kind, "t": float(words[k]["start"]) if k is not None else sp["t0"],
                                "sentence": sp["i"], "role": sp["role"]})
+        # Ч.4: телефон поймал сеть и пришло сообщение (звук уведомления); «полная темнота» — гаснет и аварийный свет
+        # (только если блэкаут уже был — см. ниже); «тот, кто был сверху, рухнул в кабину» — тело падает (удар об пол).
+        for kind, rx, word in (("msg_in", r"(пришл|пришел|пришло)\w*\s+(\w+\s+)?(сообщени|смс)|сообщени\w*\s+от\s+\w+",
+                                r"^(пришл|пришел|сообщени)"),
+                               ("lights_out", r"полн\w*\s+темнот|свет\w*\s+(пропал|исчез)|(пропал|исчез)\w*\s+(и\s+)?(весь\s+)?свет",
+                                r"^(пропал|исчез|полн)"),
+                               ("body_drop", r"(рухнул|упал|свалил|спрыгнул|сорвал)\w*\s+(\w+\s+)?(в кабину|через люк|из люка|в люк|с крыши)",
+                                r"^(рухнул|упал|свалил|спрыгнул|сорвал)")):
+            if re.search(rx, low) and not any(e["kind"] == kind for e in events):
+                k = find_word(words, sp["w0"], sp["w1"], word)
+                events.append({"kind": kind, "t": float(words[k]["start"]) if k is not None else sp["t0"],
+                               "sentence": sp["i"], "role": sp["role"]})
         if re.search(r"одна проблем|лишь одн", low):
             k = find_word(words, sp["w0"], sp["w1"], r"^(был|одн|лишь)")
             events.append({"kind": "sting", "t": float(words[k]["start"]) if k is not None else sp["t0"],
@@ -225,6 +237,14 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
     story = [e for e in blackouts if e["role"] != "hook"]
     keep = (story or blackouts)[:1]
     events = [e for e in events if e["kind"] != "blackout" or e in keep]
+    # «Полная темнота» до блэкаута — это и есть блэкаут (свет гаснет один раз): отдельного события нет
+    # и «Свет погас. Полная темнота» в одной-двух фразах — тот же блэкаут, а не второй
+    lit_off = {e["sentence"] for e in blackouts if not re.search(r"^темнот", _wnorm(e.get("word")))}
+    events = [e for e in events if e["kind"] != "lights_out" or
+              (keep and e["t"] > max(keep[0]["t"], 0.0) + 1.0 and not {e["sentence"], e["sentence"] - 1} & lit_off)]
+    # тело рухнуло — это не рывок кабины: слово «рухнул»/«удар» той же фразы не даёт лязг рывка
+    drop_s = {e["sentence"] for e in events if e["kind"] == "body_drop"}
+    events = [e for e in events if not (e["kind"] == "jolt" and e["sentence"] in drop_s | {x + 1 for x in drop_s})]
     first_low = spans[0]["text"].lower().replace("ё", "е") if spans else ""
     if keep and keep[0]["sentence"] == (spans[0]["i"] if spans else -1) and \
             re.search(r"\bв (блэкаут|блекаут|темноте)|во время (блэкаута|блекаута)", first_low):
