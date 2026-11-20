@@ -11,7 +11,8 @@
  * - ``paper_sheet`` — лист бумаги на столе, рисунок — painter из PANEL_PAINTERS (``panel``, по умолчанию ``sketch``;
  *   ``panelParams``, время — от ``panelStart``), ``width``/``height`` (м);
  * - ``mochi_user`` — «юзер»: круглый моти в худи с капюшоном (лицо в овале капюшона, шнурки, карман-кенгуру), ручки
- *   в рукавах; ``mood``: rub — довольно потирает ручки, type — печатает, idle; ``eyes``: smug | happy | normal;
+ *   в рукавах; ``mood``: rub — довольно потирает ручки, type — печатает, rage — ручки вверх трясутся, sleep — спит,
+ *   idle; ``eyes``: smug | happy | normal | angry (брови клином) | shock (глаза крупнее) | sleep (дуги вниз);
  *   ``laptop`` — ноутбук перед ним (экран — ``screen`` из PANEL_PAINTERS или сетка оранжевых «аккаунтов»).
  */
 import * as THREE from "three";
@@ -304,8 +305,26 @@ export function mochiUser(p: Record<string, any>): Prop {
       body.add(arc);
       continue;
     }
+    if (eyes === "sleep") {
+      // Спит: дуги вниз (закрытые глаза).
+      const arc = new THREE.Mesh(new THREE.TorusGeometry(R * 0.07, R * 0.02, 6, 14, Math.PI), ink);
+      arc.position.set(ex, ey + R * 0.02, ez);
+      arc.rotation.z = Math.PI;
+      arc.userData.outline = false;
+      body.add(arc);
+      continue;
+    }
+    if (eyes === "angry") {
+      // Злой: брови-клинья к переносице над бусинками.
+      const brow = new THREE.Mesh(new THREE.BoxGeometry(R * 0.2, R * 0.045, R * 0.02), ink);
+      brow.position.set(ex - s * R * 0.01, ey + R * 0.14, ez + R * 0.01);
+      brow.rotation.z = s * 0.45;
+      brow.userData.outline = false;
+      body.add(brow);
+    }
+    const big = eyes === "shock" ? 1.45 : 1;
     const eye = new THREE.Mesh(sphere, ink);
-    eye.scale.set(R * 0.07, R * 0.095, R * 0.04);
+    eye.scale.set(R * 0.07 * big, R * 0.095 * big, R * 0.04);
     eye.position.set(ex, ey, ez);
     eye.userData.outline = false;
     body.add(eye);
@@ -473,6 +492,21 @@ export function mochiUser(p: Record<string, any>): Prop {
           hands[i].position.set(s * R * 0.42, R * 0.62 + hp[i] * R * 0.06, R * 1.05);
         }
         sq = 1 + 0.02 * Math.sin(t * 9);
+      } else if (mood === "rage") {
+        // Возмущён: ручки вверх трясутся, подпрыгивает, корпус дрожит.
+        for (const [i, s] of [-1, 1].entries()) {
+          const w = Math.sin(t * 2 * Math.PI * 4.5 + i * Math.PI);
+          hands[i].position.set(s * R * (0.95 + 0.06 * w), R * (1.45 + 0.1 * w), R * 0.35);
+        }
+        y = Math.abs(Math.sin(t * 2 * Math.PI * 2.6)) * R * 0.08;
+        sq = 1 + 0.04 * Math.sin(t * 2 * Math.PI * 2.6);
+        tilt = 0.06 * Math.sin(t * 2 * Math.PI * 5.2);
+      } else if (mood === "sleep") {
+        // Спит над ноутбуком: ручки висят, медленно дышит, клонится.
+        hands[0].position.set(-R * 0.75, R * 0.45, R * 0.6);
+        hands[1].position.set(R * 0.75, R * 0.45, R * 0.6);
+        sq = 1 + 0.03 * Math.sin(t * 2 * Math.PI * 0.4);
+        tilt = 0.12 + 0.02 * Math.sin(t * 2 * Math.PI * 0.4);
       } else {
         hands[0].position.set(-R * 0.85, R * 0.75, R * 0.45);
         hands[1].position.set(R * 0.85, R * 0.75, R * 0.45);
