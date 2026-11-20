@@ -47,7 +47,7 @@ _NEW_CAST = {"type": "array", "items": _obj({"key": {"type": "string"}, "name": 
 _NEW_LOCS = {"type": "array", "items": _obj({"key": {"type": "string"}, "name": {"type": "string"},
                                              "description": {"type": "string"}}, ["name", "description"])}
 _SCRIPT_KEYS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
-                "viewer_question", "hashtags", "mistake", "cliffhanger")
+                "viewer_question", "hashtags", "mistake", "cliffhanger", "outro")
 _DRAFT_BEATS = {"type": "array", "description": "свои биты черновика: текст подряд = текст сценария; нет — разбивка по фразам",
                 "items": _obj({"text": {"type": "string", "description": "кусок слов рассказчика"},
                                "location": {"type": "string"}, "characters": {"type": "array", "items": {"type": "string"}},
@@ -61,7 +61,12 @@ _SERIES = {"part_title": {"type": "string", "description": "катастрофа
            "viewer_question": {"type": "string", "description": "катастрофа: вопрос зрителю в описание «А ты бы …?»"},
            "hashtags": {"type": "array", "items": {"type": "string"}, "description": "катастрофа: 3–5 тегов"},
            "mistake": {"type": "string", "description": "катастрофа: та самая одна ошибка"},
-           "cliffhanger": {"type": "string", "description": "катастрофа: жуткая деталь финала"}}
+           "cliffhanger": {"type": "string", "description": "катастрофа: жуткая деталь финала"},
+           "outro": {"type": "array", "description": "катастрофа, 3D: немая концовка после последнего слова — без голоса и "
+                                                     "субтитров, режиссура читает как фразы (события на словах, «План:»)",
+                     "items": _obj({"text": {"type": "string", "description": "что происходит (не озвучивается)"},
+                                    "sec": {"type": "number", "description": "сколько секунд, 1–8"},
+                                    "plan": {"type": "string", "description": "бит: «действие, лицо. План: …»"}}, ["text"])}}
 _FORMAT = {"type": "string", "enum": list(S.FORMATS),
            "description": "story — смешная история (30–75 с); disaster — сериал-катастрофа (60–90 с, части, HUD-цифры, "
                           "без музыки, титр «ЧАСТЬ N+1»)"}
@@ -93,7 +98,7 @@ def episode_brief(store: Any, episode_id: int) -> dict:
     if script:
         out["script"] = {k: script.get(k) for k in ("title", "logline", "text", "chars", "est_sec", "shots",
                                                     "warnings", "source", "format", "part", "part_title", "hook_words",
-                                                    "viewer_question", "mistake", "cliffhanger") if k in script}
+                                                    "viewer_question", "mistake", "cliffhanger", "outro") if k in script}
         out["script"]["sentences"] = script.get("sentences")
     timeline = ep.get("timeline") or {}
     beats = timeline.get("beats") or ep.get("beats") or []

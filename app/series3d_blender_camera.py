@@ -103,7 +103,11 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         if p:
             # кадр ≈ 0.62 м по высоте (телефон и лицо целиком) при любом отступе камеры от стен
             lens = max(20.0, min(85.0 if msg else 40.0, (125.0 if msg else 58.0) * math.dist(p, center)))
-            return out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
+            cam = out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
+            if msg and str(shot.get("screen")).count("|") >= 7:
+                # переписка с ответом (две реплики) — вставкой: экран во весь кадр, камера идёт за телефоном (series_scene)
+                cam["insert"] = "phone"
+            return cam
     if kind == "detail" and subject == "phone":
         hand_l = to_world(root, heading, (-0.04, 0.22, 0.52 - (SIT_DROP if posture == "sit" else 0.0)
                                           + float(shot.get("rz") or 0.0)))

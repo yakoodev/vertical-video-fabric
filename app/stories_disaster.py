@@ -277,6 +277,63 @@ def _est(text: str) -> float:
     return len(text) / CPS
 
 
+OUTRO_MAX = 4
+
+
+def clean_outro(raw: Any) -> list[dict]:
+    """Немая концовка 3D-серии: ``[{text, sec, plan}]`` (до ``OUTRO_MAX``) — действие без голоса после последнего слова
+    (``app.series3d_blender.with_outro``); серия длиннее на сумму ``sec``, титр части — после неё."""
+    out: list[dict] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict) or not P._text(item.get("text")):
+            continue
+        try:
+            sec = float(item.get("sec") or 2.5)
+        except (TypeError, ValueError):
+            sec = 2.5
+        row = {"text": P._text(item["text"], 200), "sec": round(min(8.0, max(1.0, sec)), 2),
+               "plan": P._text(item.get("plan"), 200)}
+        cam = _outro_cam(item.get("cam"))
+        if cam:
+            row["cam"] = cam
+        out.append(row)
+    return out[:OUTRO_MAX]
+
+
+def _outro_cam(raw: Any) -> dict | None:
+    """Камера немого плана от автора (``app.series3d_blender_camera.authored_camera``): pos/to/point — [x, y, z] в
+    системе места (point ещё ``"face"`` или имя точки места), lens, fstop, face_w, focus, kind. Испорчено — ``None``."""
+    if not isinstance(raw, dict):
+        return None
+
+    def vec(v: Any) -> list[float] | None:
+        try:
+            return [round(float(c), 4) for c in v][:3] if isinstance(v, (list, tuple)) and len(v) >= 3 else None
+        except (TypeError, ValueError):
+            return None
+    pos = vec(raw.get("pos"))
+    if pos is None:
+        return None
+    out: dict[str, Any] = {"pos": pos}
+    if vec(raw.get("to")):
+        out["to"] = vec(raw.get("to"))
+    pt = raw.get("point")
+    if isinstance(pt, str) and pt.strip():
+        out["point"] = pt.strip()[:24]
+    elif vec(pt):
+        out["point"] = vec(pt)
+    for key, lo, hi in (("lens", 10.0, 120.0), ("fstop", 1.4, 22.0), ("face_w", 0.0, 1.0)):
+        try:
+            if raw.get(key) is not None:
+                out[key] = round(min(hi, max(lo, float(raw[key]))), 3)
+        except (TypeError, ValueError):
+            pass
+    for key in ("focus", "kind"):
+        if raw.get(key) in ("face", "point", "detail", "face", "overhead", "ots"):
+            out[key] = raw[key]
+    return out
+
+
 def finish_script(script: dict, data: dict, ep: dict) -> dict:
     """Поля серии (часть, крючок следующей, обложка, вопрос, теги) и проверки формулы формата."""
     warnings = script["warnings"]
@@ -295,6 +352,9 @@ def finish_script(script: dict, data: dict, ep: dict) -> dict:
     script["hashtags"] = [t for t in (data.get("hashtags") or []) if isinstance(t, str)][:8]
     script["mistake"] = P._text(data.get("mistake"), 300)
     script["cliffhanger"] = P._text(data.get("cliffhanger"), 300)
+    outro = clean_outro(data.get("outro"))
+    if outro:
+        script["outro"] = outro
     # Хук на «вы» с обещанием «одной ошибки» — в первые 12 с.
     t, promise = 0.0, None
     for s in sentences:

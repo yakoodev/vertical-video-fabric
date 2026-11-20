@@ -374,7 +374,8 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
             d = (-face_dir).lerp(away, 0.85).normalized()
         q = d.to_track_quat("Y", "Z")
         # показывает экран — телефон над кулаком и чуть к камере (кулак не закрывает цифры)
-        off = V((0.0, -0.03, 0.075)) if ph.get("screen") else V((0.0, 0.0, 0.058))
+        chat = str(ph.get("screen") or "").count("|") >= 7
+        off = V((0.0, -0.03, 0.075 + (0.016 if chat else 0.0))) if ph.get("screen") else V((0.0, 0.0, 0.058))
         locs.append(tuple(grip + q.to_matrix() @ off))
         rots.append(tuple(q.to_euler("XYZ")))
         scales.append((PHONE_SCALE,) * 3)
@@ -388,7 +389,7 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
 MSG_FONTS = ["C:/Windows/Fonts/segoeuib.ttf", "C:/Windows/Fonts/arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
 
 
-def _wrap(text: str, width: int) -> str:
+def _wrap(text: str, width: int, max_lines: int = 3) -> str:
     """Строки не длиннее ``width`` знаков по словам (переписка на узком экране)."""
     lines, cur = [], ""
     for w in text.split():
@@ -399,7 +400,7 @@ def _wrap(text: str, width: int) -> str:
             cur = f"{cur} {w}".strip()
     if cur:
         lines.append(cur)
-    return "\n".join(lines[:3])
+    return "\n".join(lines[:max_lines])
 
 
 def message_screen(j, val, phone, font):
@@ -437,20 +438,26 @@ def message_screen(j, val, phone, font):
     return [*parts, head, bubble]
 
 
+# Переписка с ответом снимается вставкой во весь кадр (камера плана ``insert``): буквы крупные и без свечения-ореола
+# (сильное свечение под bloom расплывается). Размеры — в системе телефона (×PHONE_SCALE в мире).
+CHAT_LINE, CHAT_TEXT, CHAT_WRAP = 0.0058, 0.0047, 11
+
+
 def chat_screen(j, val, phone, font):
     """Переписка с ответом (``msg|кому|его сообщение|статус|сеть|заряд|время|входящее``, ч.4): строка состояния,
     имя чата; сверху справа — его (синее) сообщение со временем отправки, ниже слева — входящее (серое)."""
     _m, to, body, state, net, batt, clock, inc = (val.split("|") + [""] * 8)[:8]
-    ink = kit.emission_mat(f"msg_ink{j}", (1.0, 1.0, 1.0), 8.0)
-    dim = kit.emission_mat(f"msg_dim{j}", (0.75, 0.8, 0.9), 5.0)
-    red = kit.emission_mat(f"msg_red{j}", (1.0, 0.16, 0.12), 9.0)
-    blue = kit.emission_mat(f"msg_bubble{j}", (0.05, 0.26, 0.85), 1.0)
-    grey = kit.emission_mat(f"msg_in{j}", (0.20, 0.22, 0.27), 1.0)
-    bar = kit.emission_mat(f"msg_bar{j}", (0.10, 0.12, 0.18), 1.0)
+    ink = kit.emission_mat(f"msg_ink{j}", (1.0, 1.0, 1.0), 1.4)
+    dim = kit.emission_mat(f"msg_dim{j}", (0.80, 0.85, 0.95), 1.0)
+    red = kit.emission_mat(f"msg_red{j}", (1.0, 0.22, 0.16), 1.8)
+    blue = kit.emission_mat(f"msg_bubble{j}", (0.06, 0.30, 0.95), 0.55)
+    grey = kit.emission_mat(f"msg_in{j}", (0.24, 0.26, 0.32), 0.55)
+    bar = kit.emission_mat(f"msg_bar{j}", (0.10, 0.12, 0.18), 0.5)
     y, parts = -0.0063, []
 
     def tx(name, body_, size, x, z, mat, align="CENTER"):
         ob = kit.text(f"msg_{name}{j}", body_, size, (x, y, z), mat, font=font, align=align)
+        ob.data.resolution_u = 24       # гладкие буквы крупным планом
         ob.parent = phone
         parts.append(ob)
         return ob
@@ -460,30 +467,30 @@ def chat_screen(j, val, phone, font):
         ob.parent = phone
         parts.append(ob)
         return ob
-    plate("head", 0.036, 0.014, 0.0, 0.031, bar)
+    plate("head", 0.036, 0.013, 0.0, 0.0315, bar)
     status = " · ".join(x for x in (net, batt) if x) or clock
     if status:
-        tx("status", status, 0.0042, 0.0, 0.0345, red if net.startswith("нет") else dim)
-    tx("to", to, 0.0052, 0.0, 0.0265, ink)
-    z = 0.0225                  # сразу под именем чата: кулак снизу не закрывает входящее
+        tx("status", status, 0.0044, 0.0, 0.0350, red if net.startswith("нет") else dim)
+    tx("to", to, 0.0056, 0.0, 0.0277, ink)
+    z = 0.0228
     if body:
-        lines = _wrap(body[:1].upper() + body[1:], 12)
+        lines = _wrap(body[:1].upper() + body[1:], CHAT_WRAP)
         n_ = lines.count("\n") + 1
-        bh = 0.0056 * n_ + 0.0035
+        bh = CHAT_LINE * n_ + 0.0036
         z -= bh / 2
-        plate("out", 0.027, bh, 0.0045, z, blue)
-        tx("outt", lines, 0.0044, 0.0045, z, ink)
-        z -= bh / 2 + 0.0032
+        plate("out", 0.031, bh, 0.0025, z, blue)
+        tx("outt", lines, CHAT_TEXT, 0.0025, z, ink)
+        z -= bh / 2 + 0.0030
         if state:
-            tx("state", state, 0.0034, 0.0045, z, dim)
-            z -= 0.0042
+            tx("state", state, 0.0038, 0.0035, z, dim)
+            z -= 0.0040
     if inc:
-        lines = _wrap(inc, 12)
+        lines = _wrap(inc, CHAT_WRAP, 4)
         n_ = lines.count("\n") + 1
-        bh = 0.0056 * n_ + 0.0035
+        bh = CHAT_LINE * n_ + 0.0036
         z -= bh / 2
-        plate("inb", 0.027, bh, -0.0045, z, grey)
-        tx("int", lines, 0.0044, -0.0045, z, ink)
+        plate("inb", 0.031, bh, -0.0025, z, grey)
+        tx("int", lines, CHAT_TEXT, -0.0025, z, ink)
     return parts
 
 
@@ -558,18 +565,35 @@ ARM_TILT = 42.0               # рука в люке наискось, ° от �
 ARM_LOW, ARM_REACH = 0.12, 0.13   # кулак ниже точки фонарика; «давай руку» — ещё ниже, м
 
 
-def hero_copy(arm, name, only=None):
+def hero_copy(arm, name, only=None, pose_frame=None):
     """Копия меша героя в позе покоя (T-поза) — отдельные объекты без скелета под пустышкой ``name``; пустышка в начале
     координат = объект скелета без масштаба (кости ``head_local`` — в её системе). Те же материалы (рукав, чехол — как
     у него). ``only`` — части по имени (``ArmRight``); вещи на костях (глаза, рюкзак) не копируются."""
     root = bpy.data.objects.new(name, None)
     kit.link(root)
+    dg = None
+    if pose_frame is not None:
+        # поза героя в этом кадре (руки вдоль тела, а не T-поза): меш с наложенным скелетом
+        bpy.context.scene.frame_set(int(pose_frame))
+        dg = bpy.context.evaluated_depsgraph_get()
     inv = arm.matrix_world.inverted()
-    for o in [o for o in bpy.data.objects if o.type == "MESH" and o.parent == arm and o.parent_type == "OBJECT"
-              and not o.hide_render]:
+
+    def under(o) -> bool:
+        p_ = o.parent
+        while p_ is not None:
+            if p_ == arm:
+                return True
+            p_ = p_.parent
+        return False
+    # в позе кадра — и лицо (глаза, брови на кости головы); в позе покоя вещи на костях не копируются
+    picked = [o for o in bpy.data.objects if o.type == "MESH" and not o.hide_render and
+              ((o.parent == arm and o.parent_type == "OBJECT") or (dg is not None and under(o)))]
+    for o in picked:
         if only and not any(k in o.name for k in only):
             continue
-        cp = bpy.data.objects.new(f"{name}_{o.name}", o.data.copy())
+        data = bpy.data.meshes.new_from_object(o.evaluated_get(dg), preserve_all_data_layers=True, depsgraph=dg) \
+            if dg is not None else o.data.copy()
+        cp = bpy.data.objects.new(f"{name}_{o.name}", data)
         kit.link(cp)
         cp.parent = root
         cp.matrix_parent_inverse = Matrix.Identity(4)
@@ -604,10 +628,14 @@ def torch_arm(arm, perf, frames):
     rest.matrix_world = Matrix.Translation(grip) @ rot @ Matrix.Scale(S, 4) @ Matrix.Translation(-hand)
     bpy.context.view_layer.update()
     _parent_keep(rest, root)
-    for name in ("torch_phone", "torch_led", "hatch_torch"):
-        ob = bpy.data.objects.get(name)
-        if ob is not None:
-            _parent_keep(ob, root)
+    # телефон-фонарик: пока рука в люке — вместе с ней (кулак), после падения — по дорожке ``lt.tp`` (в руке падающего,
+    # потом на полу крутится и замирает); ключи мира на каждый кадр
+    torch_obs = [ob for ob in (bpy.data.objects.get(nm) for nm in ("hatch_torch", "torch_phone", "torch_led")) if ob]
+    light0 = bpy.data.objects.get("hatch_torch")
+    in_root = {ob: Matrix.Translation(-grip) @ ob.matrix_world for ob in torch_obs}
+    to_light = {ob: light0.matrix_world.inverted() @ ob.matrix_world for ob in torch_obs} if light0 else {}
+    t_locs = {ob: [] for ob in torch_obs}
+    t_rots = {ob: [] for ob in torch_obs}
     locs, rots = [], []
     reach = tr.get("reach")
     for i in range(n):
@@ -618,42 +646,54 @@ def torch_arm(arm, perf, frames):
         here = grip - V((0.0, 0.0, down))
         locs.append(tuple(V(AWAY) + here) if gone else tuple(here))
         rots.append((math.radians(1.2) * math.sin(t * 1.1), math.radians(0.9) * math.sin(t * 0.7 + 1.0), 0.0))
+        tp = lt[i].get("tp")
+        for ob in torch_obs:
+            if tp and light0 is not None:
+                pos_, aim_ = V(tp[:3]), V(tp[3:6])
+                M = Matrix.Translation(pos_) @ (aim_ - pos_).normalized().to_track_quat("-Z", "Y").to_matrix().to_4x4() \
+                    @ to_light[ob]
+            else:
+                M = Matrix.Translation(here) @ Euler(rots[-1], "XYZ").to_matrix().to_4x4() @ in_root[ob]
+            loc_, rot_, _sc = M.decompose()
+            prev = t_rots[ob][-1] if t_rots[ob] else None
+            e_ = rot_.to_euler("XYZ", Euler(prev, "XYZ")) if prev else rot_.to_euler("XYZ")
+            t_locs[ob].append(tuple(loc_))
+            t_rots[ob].append(tuple(e_))
     kit.key_vec(root, "location", frames, locs)
     kit.key_vec(root, "rotation_euler", frames, rots)
+    for ob in torch_obs:
+        ob.rotation_mode = "XYZ"
+        kit.key_vec(ob, "location", frames, t_locs[ob])
+        kit.key_vec(ob, "rotation_euler", frames, t_rots[ob])
     return root
 
 
 def body_drop(arm, perf, frames):
-    """«Тот, кто был сверху, рухнул в кабину» (``perf.body_drop``): копия героя падает в люк и лежит на полу рядом с ним.
-    В полной темноте её не видно — слышно удар; до падения её нет."""
+    """«Тот, кто был сверху, рухнул сквозь люк» (``perf.body_drop``, дорожка ``lt.bp`` — стопы, наклон, курс): копия
+    героя в его позе первого кадра (руки вдоль тела) — ноги сползают в проём, тело падает и валится набок рядом с ним.
+    До падения её нет; в темноте её видно в лучах фонариков."""
     bd = perf.get("body_drop")
     if not bd:
         return None
+    lt = perf["lights"]
     n = len(frames)
-    rest = hero_copy(arm, "drop_body_rest")
-    hips = arm.data.bones["hips"].head_local
+    rest = hero_copy(arm, "drop_body_rest", pose_frame=frames[0])
     root = bpy.data.objects.new("drop_body", None)
     kit.link(root)
     bpy.context.view_layer.update()
-    rest.matrix_world = Matrix.Scale(S, 4) @ Matrix.Translation(-hips)
+    rest.matrix_world = Matrix.Scale(S, 4)       # стопы копии — в начале координат пустышки
     bpy.context.view_layer.update()
     _parent_keep(rest, root)
-    t_hit, fall = float(bd["t"][0]), float(bd["fall"])
-    t_go = t_hit - fall
-    top = V((B.HATCH_LID[0], B.HATCH_LID[1], B.H + 0.35))
-    end = V((bd["spot"][0], bd["spot"][1], 0.09))
     locs, rots = [], []
     for i in range(n):
-        t = i / FPS
-        if t < t_go:
+        bp = lt[i].get("bp")
+        if not bp:
             locs.append(tuple(V(AWAY)))
             rots.append((0.0, 0.0, 0.0))
             continue
-        x = min(1.0, (t - t_go) / fall)
-        p = top.lerp(end, x)
-        p.z = top.z + (end.z - top.z) * x * x       # падает с ускорением
-        locs.append(tuple(p))
-        rots.append((math.radians(90) * min(1.0, x * 1.2), 0.0, math.radians(35) * x))   # лицом вниз
+        locs.append((bp[0], bp[1], bp[2]))
+        rots.append((0.0, bp[3], bp[4]))
+    root.rotation_mode = "XYZ"
     kit.key_vec(root, "location", frames, locs)
     kit.key_vec(root, "rotation_euler", frames, rots)
     return root
@@ -769,6 +809,8 @@ def build_lights(L, perf, frames, phone):
     ph = perf["phone"]
     # пятно на близкой поверхности (створки, стена шахты) не должно выгорать в белый диск: мощность по расстоянию до цели
     near = [min(1.0, max(0.3, (math.dist(perf["root"][i], ph[i]["beam"][:2]) / 0.9) ** 2)) for i in range(n)]
+    # полная темнота (lt.out): светить больше нечему — фонарик на полную, луч и то, на что он попал, читаются
+    near = [near[i] + (1.6 - near[i]) * lt[i].get("out", 0.0) for i in range(n)]
     flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] for i in range(n)]
     scr_e = [1.2 * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) * ph[i].get("dim", 1.0) for i in range(n)]
     kit.fcurve(flash.data, "energy", 0, frames, flash_e)
@@ -799,6 +841,12 @@ def build_lights(L, perf, frames, phone):
 
 
 # ============================================================== камера
+
+INSERT_LENS = 50.0                      # вставка экрана: объектив, мм (кадр по высоте = d·36/lens)
+INSERT_D = 0.222                        # м от экрана: кадр ≈ 0.16 м по высоте — экран ≈ 2/3 кадра
+# куда целится вставка (система телефона): ниже середины экрана — экран в верхних 2/3 кадра, над субтитрами (0.74)
+INSERT_AT = (0.0, -0.0063, -0.020)
+
 
 def build_camera(arm, perf, frames, rig):
     """Камера по планам: положение — из плана (наезд), цель — смесь точки плана и настоящего лица (пружина);
@@ -862,6 +910,15 @@ def build_camera(arm, perf, frames, rig):
                 dist = (V(look) - V(pos)).length
                 dz += (y_top - want) * dist * 0.9 * (36.0 / c["lens"]) * 0.5
         fix[c["n"]] = dz
+    # вставка «экран телефона во весь кадр» (план ``insert``): камера перед экраном по его нормали, идёт за телефоном
+    inserts = {c["n"] for c in perf["cameras"] if c.get("insert") == "phone"}
+    phone_ob = bpy.data.objects.get("phone")
+    phone_mw = {}
+    if inserts and phone_ob is not None:
+        for k in range(n):
+            if shot_of[k] in inserts:
+                sc.frame_set(frames[k])
+                phone_mw[k] = phone_ob.matrix_world.copy()
     locs, rots, lens, fd, fst = [], [], [], [], []
     prev_q = None
     for k in range(n):
@@ -876,15 +933,23 @@ def build_camera(arm, perf, frames, rig):
         pos = V(pos) + jitter + V((0, 0, lt["drop"]))
         look = V(look) + V((0, 0, lt["drop"] * 0.6))
         q = (look - pos).to_track_quat("-Z", "Y")
+        if k in phone_mw:
+            M = phone_mw[k]
+            center = M @ V(INSERT_AT)
+            normal = (M.to_3x3() @ V((0.0, -1.0, 0.0))).normalized()     # экран — по −Y телефона
+            up = (M.to_3x3() @ V((0.0, 0.0, 1.0))).normalized()
+            up = (up - normal * up.dot(normal)).normalized()
+            pos = center + normal * INSERT_D
+            q = Matrix((up.cross(normal), up, normal)).transposed().to_quaternion()
         if prev_q is not None and q.dot(prev_q) < 0:
             q = -q
         prev_q = q
         locs.append(tuple(pos))
         rots.append(tuple(q))
-        lens.append(c["lens"])
+        lens.append(INSERT_LENS if k in phone_mw else c["lens"])
         focus = V(face_pts[k]) if c["focus"] == "face" else V(c["point"])
-        fd.append((focus - pos).length)
-        fst.append(c["fstop"])
+        fd.append(INSERT_D if k in phone_mw else (focus - pos).length)
+        fst.append(8.0 if k in phone_mw else c["fstop"])
     # «глазной» свет у камеры: в темноте лицо читается (мягкий, тёплый, без дымки)
     eye = kit.make_light("eye_light", "AREA", (1.0, 0.62, 0.5), 0.0, (0, 0, 0), size=0.35, shadow=False, volume=0.0)
     eye.parent = cam

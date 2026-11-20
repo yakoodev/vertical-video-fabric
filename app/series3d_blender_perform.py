@@ -22,7 +22,16 @@ TORCH_POS = (HATCH_LID[0], HATCH_LID[1] - 0.17, H + 0.30)   # фонарик н�
 LID_OPEN = 1.0           # «крышка поднялась», когда она уже приоткрыта (продолжение ч.3): поднята целиком
 HAND_RX = r"\bрук[аиу]?\b|рукав"          # «сверху была только рука», «тот же рукав» — фонарик держит рука героя-копии
 REACH_RX = r"(давай|дай|протяни)\s+руку"   # «Даня, давай руку» — рука сверху тянется ниже, в кабину
-DROP_FALL = 0.42         # падение тела с крыши кабины до пола, с (≈ 2.3 м)
+# «Тот, кто был сверху, рухнул сквозь люк»: ноги сползают в проём (DROP_HANG), падение до пола (DROP_FALL),
+# тело валится набок (DROP_TIP). Падает в дальней половине люка и ложится вдоль −X — рядом с ним, не на него.
+DROP_HANG, DROP_FALL, DROP_TIP = 0.9, 0.55, 0.45
+DROP_XY = (HATCH_LID[0], HATCH_LID[1] + 0.08)
+DROP_TOP, DROP_HUNG = H + 0.55, H - 0.30     # стопы: над крышей кабины → ноги уже в кабине (висит на руках)
+# «Лучи двух фонариков заметались по стенам»: его луч шарит по кабине — точки по стенам, по 0.42 с
+BEAM_SWEEP = ((-0.78, 0.25, 1.25), (-0.55, -0.80, 0.95), (0.55, -0.82, 1.45), (0.82, 0.45, 0.85), (0.05, 0.86, 1.65),
+              (-0.80, -0.20, 0.55), (0.40, -0.85, 0.70))
+BEAM_STEP = 0.42
+BEAM_SEC = 3.0           # шарит столько, потом луч замирает на том, кто упал (лежит рядом): тишина, титр
 
 FPS = 30
 
@@ -217,6 +226,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         first_spot, first_head = loc_spot(shots[0]["location"], "entry")
     pos, heading, posture = first_spot, first_head, "stand"
     start = set(job.get("start") or [])
+    drop_at = next((float(e["t"]) for e in events if e["kind"] == "body_drop"), None)
     torch_used = False
     if "bag" in start and (shots[0].get("location") or "cabin") == "cabin":
         # стоит на рюкзаке под люком с первого кадра (как в конце прошлой части): шага на рюкзак нет
@@ -708,6 +718,18 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 gkey(a0 + (0.16 if a == "flinch" else 0.01), (HATCH_LID[0], HATCH_LID[1] - 0.12, H))
             if s.get("camera") == "detail":
                 cam_subject = "hatch"
+        ev_b = next((e for e in events if e["kind"] == "beams" and t0 - 0.1 <= e["t"] < t1), None)
+        if ev_b is not None and loc == "cabin":
+            # «лучи заметались»: взгляд (и луч телефона за ним, с пружиной) шарит по стенам до конца плана
+            tb = float(ev_b["t"])
+            gaze.keys = [k_ for k_ in gaze.keys if k_[0] < tb]
+            k_, tt_ = 0, tb
+            while tt_ < min(t1, tb + BEAM_SEC):
+                gaze.key(tt_, BEAM_SWEEP[k_ % len(BEAM_SWEEP)])
+                tt_ += BEAM_STEP
+                k_ += 1
+            if drop_at is not None and tt_ < t1:
+                gaze.key(tt_, (DROP_XY[0] - 0.45, DROP_XY[1] + 0.02, 0.12))   # луч замер на лежащем рядом
         if s.get("look") and s.get("by") == "author":
             # автор назвал, куда смотреть (точка интереса места: окно, поле, угол…): сильнее взгляда действия;
             # ``look_at`` — с какой секунды плана (по умолчанию — сразу после разворота/шага)
@@ -765,7 +787,16 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             torch_track.key(t_ + 0.1, 1.0)
             startles.append((t_ + 0.05, 0.6))
         elif e["kind"] == "body_drop":
-            startles.append((t_ + DROP_FALL + 0.03, 1.0))
+            startles.append((t_ + 0.1, 0.6))                                # ноги в проёме
+            # ведёт лучом за падающим: ноги в проёме → тело → пол (иначе в темноте его не видно)
+            w0, w1 = t_ + 0.05, t_ + DROP_HANG + DROP_FALL + 0.5
+            gaze.keys = [k_ for k_ in gaze.keys if not (w0 <= k_[0] < w1)]
+            tt_ = w0
+            while tt_ < w1:
+                bp_ = drop_pose(tt_ + 0.12, t_)
+                gaze.key(tt_, (round(bp_[0], 4), round(bp_[1], 4), round(bp_[2] + 0.45, 4)))
+                tt_ += 0.1
+            startles.append((t_ + DROP_HANG + DROP_FALL + 0.03, 1.0))        # удар об пол
 
     # события → испуг, взгляд на источник
     for e in events:
@@ -928,7 +959,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         if j_ is not None:
             e["t"] = round(float(j_["t"]) + 0.3, 3)
     lights_out = next((e["t"] for e in events if e["kind"] == "lights_out"), None)
-    drops = [e["t"] + DROP_FALL for e in events if e["kind"] == "body_drop"]
+    drop_t = next((float(e["t"]) for e in events if e["kind"] == "body_drop"), None)
+    drops = [drop_t + DROP_HANG + DROP_FALL] if drop_t is not None else []     # удар об пол
     shows = sorted({str(e.get("what")) for e in events if e["kind"] in ("appear", "vanish") and e.get("what")})
     for t in times:
         main = 1.0
@@ -995,20 +1027,27 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 tv *= 0.93 + 0.07 * math.sin(2 * math.pi * t * 0.7) * math.sin(2 * math.pi * t * 1.9)
             lights[-1]["torch"] = round(tv, 4)
         if lights_out is not None:
-            # «Свет пропал. Полная темнота»: гаснет всё — аварийный, табло, чужой фонарик, свой телефон, отсветы (out = 1)
+            # «Свет пропал. Полная темнота»: гаснет свет кабины — аварийный, табло, отсветы, экран телефона (out = 1);
+            # фонарики (его и чужой) — батарейные, горят: в темноте видно только то, куда они светят
             out = m.smoothstep((t - lights_out) / 0.18) if t >= lights_out else 0.0
             if out > 0:
                 k_ = 1.0 - out
                 lt_ = lights[-1]
                 lt_.update(main=round(lt_["main"] * k_, 4), red=round(lt_["red"] * k_, 4), display=round(lt_["display"] * k_, 4),
                            reveal=round(lt_["reveal"] * k_, 4))
-                if "torch" in lt_:
-                    lt_["torch"] = round(lt_["torch"] * k_, 4)
             lights[-1]["out"] = round(out, 4)
-        if drops:
-            # тело падает сверху (кадр серии: 0 — на крыше, 1 — на полу); до падения его нет
-            lights[-1]["body"] = round(max([m.clamp((t - (td - DROP_FALL)) / DROP_FALL, 0.0, 1.0) for td in drops]
-                                           + [0.0]), 4)
+            if out > 0 and "torch" in lights[-1]:
+                lights[-1]["torch"] = round(lights[-1]["torch"] * (1.0 + 0.4 * out), 4)   # чужой фонарик — ярче в темноте
+        if drop_t is not None:
+            # тело-копия (series_scene.body_drop): 0 — его нет; дальше — стопы bp (x, y, z), наклон набок, курс
+            bp = drop_pose(t, drop_t)
+            lights[-1]["body"] = round(m.clamp((t - drop_t) / (DROP_HANG + DROP_FALL + DROP_TIP), 1e-4, 1.0), 4) \
+                if bp else 0.0
+            if bp:
+                lights[-1]["bp"] = [round(c, 4) for c in bp]
+                if torch_used:
+                    # чужой фонарик: в руке падающего, потом на полу — крутится и замирает, светит на него
+                    lights[-1]["tp"] = [round(c, 4) for c in torch_drop(t, drop_t, bp, root[min(nf - 1, int(round(t * fps)))], rzs[min(nf - 1, int(round(t * fps)))])]
 
     phone = []
     pm = phone_mode.curve()
@@ -1048,8 +1087,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if reach:
                 perf["torch"]["reach"] = round(reach[0], 3)
     if drops:
-        perf["body_drop"] = {"t": [round(td, 3) for td in drops], "fall": DROP_FALL,
-                             "spot": [round(BAG_SPOT[0] + 0.42, 4), round(BAG_SPOT[1] - 0.05, 4)]}
+        perf["body_drop"] = {"t": [round(td, 3) for td in drops], "start": round(drop_t, 3), "hang": DROP_HANG,
+                             "fall": DROP_FALL, "tip": DROP_TIP}
     perf["cameras"] = camera_plan(perf, int(job.get("seed") or 7))
     # луч фонарика не в объектив: камера в конусе — увести луч вбок-вниз (иначе кадр — белая вспышка)
     beam_raw = _beam_off_camera(perf, beam_raw)
@@ -1062,14 +1101,51 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с)
         sh_ = next((x_ for x_ in shot_out if x_["t0"] <= t < x_["t1"]), None)
         scr = str(sh_.get("screen") or "") if sh_ and vis[f] and t >= float(sh_.get("a0", sh_["t0"])) + 0.5 else ""
-        dim = 1.0 - float(lights[f].get("out", 0.0))      # полная темнота: и экран, и фонарик телефона гаснут
+        dim = 1.0 - float(lights[f].get("out", 0.0))      # полная темнота: экран телефона гаснет, фонарик горит
         phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
-                      "light": round(fl.at(t) * dim if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
+                      "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
                       **({"dim": round(dim, 4)} if dim < 1.0 else {}),
                       # на экране: «−» в шрифте сцены нет — дефис; «-12°C» короче — крупнее
                       **({"screen": scr.replace("−", "-").replace(" °", "°")} if scr else {})})
     perf["phone"] = phone
     return perf
+
+
+def drop_pose(t: float, t0: float) -> tuple | None:
+    """Стопы тела-копии в момент ``t`` (падение с ``t0``): ``(x, y, z, наклон, курс)`` или ``None`` (ещё сверху, не видно).
+    Ноги сползают в люк, тело срывается и падает с ускорением, на полу валится набок вдоль −X."""
+    if t < t0:
+        return None
+    x, y = DROP_XY
+    yaw = math.radians(20)
+    th = t - t0
+    if th < DROP_HANG:
+        u = m.smoothstep(th / DROP_HANG)
+        return (x, y, DROP_TOP + (DROP_HUNG - DROP_TOP) * u, 0.0, yaw)
+    th -= DROP_HANG
+    if th < DROP_FALL:
+        u = th / DROP_FALL
+        return (x + 0.02 * u, y + 0.02 * u, DROP_HUNG * (1.0 - u * u), math.radians(-6) * u, yaw)
+    th -= DROP_FALL
+    u = m.smootherstep(min(1.0, th / DROP_TIP))
+    return (x + 0.02, y + 0.02, 0.08 * u, math.radians(-6) + math.radians(-80) * u, yaw)
+
+
+def torch_drop(t: float, t0: float, bp: tuple, hero_root: tuple, rz: float) -> tuple:
+    """Чужой фонарик после начала падения: ``(x, y, z, цель x, y, z)``. В руке падающего (лучом вниз, болтается), после
+    удара — на полу рядом: крутится, светит по стенам и замирает лучом на героя."""
+    x, y, z = bp[0], bp[1], bp[2]
+    hit = t0 + DROP_HANG + DROP_FALL
+    if t < hit:
+        px, py, pz = x - 0.16, y - 0.04, z + 0.52
+        wob = t * 9.0
+        return (px, py, pz, px + 0.35 * math.sin(wob), py + 0.30 * math.cos(wob * 0.8), pz - 1.0)
+    px, py, pz = x - 0.34, y - 0.16, 0.05
+    face = (hero_root[0], hero_root[1], 0.85 + rz)
+    yaw_end = math.atan2(face[1] - py, face[0] - px)
+    turns = 3.2 * math.pi
+    yaw = yaw_end - turns * math.exp(-(t - hit) / 1.3)     # катится по полу и долго крутится
+    return (px, py, pz, px + math.cos(yaw), py + math.sin(yaw), pz + 0.14)
 
 
 def _shown(events: list[dict], what: str, t: float) -> int:

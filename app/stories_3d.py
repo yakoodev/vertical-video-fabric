@@ -405,7 +405,9 @@ def assemble(store: Any, episode_id: int) -> dict:
         words = proportional_words(S.narration_text(ep), audio_sec)
     speech_end = round(float(words[-1]["end"]), 3)
     tail = D.PART_SEC if disaster else SG.TAIL_SEC
-    total = round(max(speech_end + tail, audio_sec + (0.0 if disaster else 0.4), MIN_DURATION_SEC), 2)
+    # немая концовка 3D (script.outro): действие без голоса после последнего слова — серия длиннее, титр части после неё
+    outro = outro_seconds(ep) if blender else 0.0
+    total = round(max(speech_end + tail + outro, audio_sec + (0.0 if disaster else 0.4), MIN_DURATION_SEC), 2)
     if total > base_seconds():
         raise S.StoryError(f"серия {total:.1f} с длиннее холста {base_seconds():.0f} с")
     placed = [{**p, "scene_id": 0} for p in SG.place(ep["beats"], words, total)]
@@ -462,6 +464,14 @@ def assemble(store: Any, episode_id: int) -> dict:
                            "start": 0.0, "end": round(total, 3),
                            "props": {"asset_id": str(asset_bed["id"]), "mode": "track", "volume": 1.0, "role": "music"}}]
             bed = {**(bed or {}), "ref": picked["ref"], "asset_id": int(asset_bed["id"]), **meas, "copies": 1}
+        out_t = next((float(e["t"]) for e in result.get("events") or [] if e.get("kind") == "lights_out"), None)
+        if out_t is not None:
+            # «полная темнота» — и музыка глохнет: дальше тишина (как гул шахты, series3d_blender.sfx_for)
+            for lay in bed_layers:
+                if lay.get("end") and float(lay["end"]) > out_t + 0.6:
+                    lay["end"] = round(max(float(lay.get("start") or 0.0) + 0.3, out_t + 0.6), 3)
+                    lay.setdefault("props", {})["fadeOut"] = 0.6
+            bed_layers = [lay for lay in bed_layers if float(lay["end"]) - float(lay.get("start") or 0.0) >= 0.3]
         layers += bed_layers
         if bed is None:
             notes.append(f"3D: тревожного фона нет — пак {BED_PACK} не скачан (tools/fetch_packs.py --only {BED_PACK})")
@@ -470,8 +480,8 @@ def assemble(store: Any, episode_id: int) -> dict:
         if options.get("title_card", True):
             layers += D.title_layers(ep, placed, stroke, prefix)
         layers += D.hud_layers(ep, placed, speech_end, float(world["captions"]["y"]), {}, prefix)
-        if total - speech_end >= 0.5:
-            layers.append(D.part_layer(ep, speech_end, total, stroke, prefix))
+        if total - speech_end - outro >= 0.5:
+            layers.append(D.part_layer(ep, speech_end + outro, total, stroke, prefix))
         if result.get("faces"):
             notes += place_titles(layers, result["faces"], float(world["captions"]["y"]), prefix)
     layers.append({"id": f"{prefix}narr", "type": "audio", "name": "Рассказчик", "start": 0.0, "end": round(total, 3),
@@ -652,6 +662,13 @@ def make_fit(store: Any, ep: dict, ref: dict, path: Path, words: list[dict], not
     ep["timeline"] = {**(ep.get("timeline") or {}), "voice_fit": fit}
     S.update_episode(store, int(ep["id"]), timeline=ep["timeline"])
     return fit
+
+
+def outro_seconds(ep: dict) -> float:
+    """Немая концовка 3D-серии (script.outro), с."""
+    from app import series3d_blender as SB
+
+    return SB.outro_sec(ep.get("script"))
 
 
 def blender_quality(ep: dict) -> str:

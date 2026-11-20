@@ -1,8 +1,9 @@
 """3D-серия, ч.4 «Кто светит сверху»: продолжение с рюкзака под приоткрытым люком, рука-копия с фонариком, голос героя
-сверху без губ, переписка с ответом мамы, полная темнота, тело падает в кабину. Поля новых дорожек — только у серий,
-где они есть."""
+сверху без губ, переписка с ответом мамы (вставкой во весь кадр), полная темнота, немая концовка — тело падает сквозь
+люк, лучи двух фонариков мечутся по кабине. Поля новых дорожек — только у серий, где они есть."""
 from __future__ import annotations
 
+import math
 import re
 
 from app import series3d_blender as B
@@ -33,13 +34,11 @@ LINES = [
     ("Пришло сообщение от мамы: «Ты где? Ты же написал, что уже дома».", None),
     ("Он открыл переписку, а там его сообщение «Мам, всё ок, я дома», отправлено в 23:41.", "телефон, страх. План: деталь"),
     ("Он его не писал.", "смотрит вверх, страх. План: лицо"),
-    ("Заряд 9%.", "вздрагивает. План: сверху"),
-    ("Кабина дёрнулась.", None),
-    ("И свет пропал. Полная темнота.", "смотрит вверх, страх. План: лицо"),
-    ("В темноте тот, кто был сверху, рухнул в кабину.", "вздрагивает, страх. План: сверху"),
-    ("Тяжёлый удар об пол, прямо рядом с Даней.", None),
-    ("Тишина.", None),
+    ("Заряд 9%.", "вздрагивает, страх. План: лицо"),
+    ("Кабина дёрнулась вниз, и свет пропал.", None),
 ]
+OUTRO = [{"text": "Тот, кто был сверху, рухнул сквозь люк в кабину.", "sec": 2.8, "plan": "светит вверх, страх. План: деталь, люк"},
+         {"text": "Заметались лучи двух фонариков по стенам.", "sec": 3.6, "plan": "светит, страх. План: сверху"}]
 
 
 def _beats() -> list[dict]:
@@ -47,7 +46,7 @@ def _beats() -> list[dict]:
 
 
 def _job() -> tuple[dict, dict]:
-    script = {"title": "Кто светит сверху", "sentences": [{"text": t} for t, _ in LINES]}
+    script = {"title": "Кто светит сверху", "sentences": [{"text": t} for t, _ in LINES], "outro": OUTRO}
     words, total = _words([t for t, _ in LINES])
     job = B.build_job(script, words, total, gemini=False, beats=_beats(), render_backend="threejs")
     return job, B.perform(job)
@@ -96,28 +95,90 @@ def test_chat_with_reply_screens():
     assert chat_screen([{"text": "Он написал маме, что застрял.", "sentences": [0]}]) == {}
 
 
-def test_lights_out_and_body_drop():
+def test_wordless_ending_fall_and_beams():
     job, perf = _job()
+    words, total = _words([t for t, _ in LINES])
+    speech_end = words[-1]["end"]
+    assert abs(job["duration"] - (speech_end + B.outro_sec({"outro": OUTRO}) + 2.0)) < 0.01, "концовка + 2 с на титр"
+    n_out = sum(len(o["text"].split()) for o in OUTRO)
+    assert job["speech"]["hero_windows"] == [] and len(job["words"]) == len(words) + n_out
+    assert job["words"][len(words)]["start"] > speech_end, "немые слова — после речи (их нет в озвучке и субтитрах)"
     kinds = [e["kind"] for e in job["events"]]
-    assert kinds.count("blackout") == 1 and "lights_out" in kinds and "body_drop" in kinds and "msg_in" in kinds
-    drop_s = next(e["sentence"] for e in job["events"] if e["kind"] == "body_drop")
-    assert not any(e["kind"] == "jolt" and e["sentence"] in (drop_s, drop_s + 1) for e in job["events"]), \
-        "«рухнул», «удар об пол» — не рывок кабины"
+    assert kinds.count("blackout") == 1 and {"lights_out", "body_drop", "beams", "msg_in", "jolt"} <= set(kinds)
     t_out = next(e["t"] for e in job["events"] if e["kind"] == "lights_out")
+    t_drop = next(e["t"] for e in job["events"] if e["kind"] == "body_drop")
+    t_beam = next(e["t"] for e in job["events"] if e["kind"] == "beams")
+    assert speech_end < t_drop < t_beam < job["duration"] - 2.0, "падение и лучи — после последнего слова, до титра"
     lt = perf["lights"][int((t_out + 0.5) * 30)]
-    assert lt["out"] == 1.0 and lt["red"] == 0.0 and lt["torch"] == 0.0 and lt["main"] == 0.0
+    assert lt["out"] == 1.0 and lt["red"] == 0.0 and lt["main"] == 0.0
+    assert lt["torch"] > 0.8, "свет кабины погас, фонарики горят"
     assert perf["lights"][int((t_out - 0.5) * 30)]["red"] > 0.3, "до темноты — аварийный красный"
-    f = int((t_out + 0.5) * 30)
-    assert perf["phone"][f]["light"] == 0.0
+    fall = next(s for s in perf["shots"] if s["t0"] <= t_drop < s["t1"])
+    assert fall["action"] == "phone_light" and fall["subject"] == "hatch", "падение снято снизу на люк, его луч туда"
+    f = int((t_drop + 0.9) * 30)
+    assert perf["phone"][f]["light"] > 0.9, "его фонарик светит, когда тело падает"
+    # тело: сначала ноги сползают в проём, потом падает и ложится на пол — не на него
+    z_top = perf["lights"][int((t_drop + 0.05) * 30)]["bp"][2]
+    z_hung = perf["lights"][int((t_drop + 0.58) * 30)]["bp"][2]
+    end = perf["lights"][-1]["bp"]
+    assert z_top > B.H and z_hung < B.H and end[2] < 0.12 and abs(end[3]) > 1.2, "ноги в люке → на полу, лежит"
+    assert math.dist(end[:2], perf["root"][-1]) > 0.25, "упал рядом, не в него"
+    assert perf["lights"][int((t_drop - 0.1) * 30)]["body"] == 0.0 and "bp" not in perf["lights"][0]
+    # чужой фонарик: в руке падающего, на полу крутится, потом луч замер; его луч шарит по стенам
+    tps = [perf["lights"][f_].get("tp") for f_ in range(int((t_beam + 0.2) * 30), int((t_beam + 1.6) * 30))]
+    assert all(tps) and len({round(math.atan2(tp[4] - tp[1], tp[3] - tp[0]), 1) for tp in tps}) > 8
+    beams = [perf["phone"][f_]["beam"] for f_ in range(int((t_beam + 0.2) * 30), int((t_beam + 2.0) * 30))]
+    assert max(math.dist(a, b) for a in beams for b in beams) > 1.0, "его луч мечется по кабине"
     t_hit = perf["body_drop"]["t"][0]
-    assert perf["lights"][int((t_hit + 0.1) * 30)]["shake"] > 0.01 and perf["lights"][-1]["body"] == 1.0
-    assert perf["lights"][0]["body"] == 0.0
+    assert abs(t_hit - (t_drop + perf["body_drop"]["hang"] + perf["body_drop"]["fall"])) < 1e-3
+    assert perf["lights"][int((t_hit + 0.1) * 30)]["shake"] > 0.01
     sfx = B.sfx_for(job, perf)
     hit = [x for x in sfx if x["kind"] == "body_drop"]
     assert hit and abs(hit[0]["t"] - t_hit) < 0.01
-    assert {"msg_in", "lights_out", "body_low", "body_floor"} <= {x["kind"] for x in sfx}
+    assert {"msg_in", "lights_out", "hatch_frame", "body_low", "body_floor", "lid", "lid_stop"} <= {x["kind"] for x in sfx}
+    lid = next(x for x in sfx if x["kind"] == "lid")
+    assert "metal-scrape" not in lid["ref"], "звук люка заменён (владелец 20.11)"
     bed = next(x for x in sfx if x["kind"] == "dark")
-    assert bed["end"] <= t_out + 0.61, "после полной темноты — тишина, гул шахты стих"
+    assert bed["end"] <= t_out + 0.61, "после темноты — тишина, гул шахты стих"
+    assert not [x for x in sfx if x["t"] > t_hit + 0.2], "после удара — ни звука"
+
+
+def test_chat_with_reply_is_full_frame_insert():
+    job, perf = _job()
+    cams = {c["n"]: c for c in perf["cameras"]}
+    chat = [s for s in perf["shots"] if str(s.get("screen") or "").count("|") >= 7]
+    assert len(chat) == 2 and all(cams[s["n"]].get("insert") == "phone" for s in chat)
+    fx = B.shot_fx(perf)
+    assert not any(fx[s["n"]]["blur"] for s in chat), "вставка экрана — без размытия движения"
+    assert not any(c.get("insert") for n, c in cams.items() if n not in {s["n"] for s in chat})
+
+
+def test_outro_cleaned_and_kept_in_script():
+    from app.stories_disaster import clean_outro
+
+    got = clean_outro([{"text": "  Тело упало.  ", "sec": 30, "plan": "вздрагивает. План: сверху"}, {"text": ""}, "x",
+                       {"text": "Лучи.", "sec": "abc"}])
+    assert got == [{"text": "Тело упало.", "sec": 8.0, "plan": "вздрагивает. План: сверху"},
+                   {"text": "Лучи.", "sec": 2.5, "plan": ""}]
+    assert B.outro_sec({"outro": got}) == 10.5 and B.outro_sec({}) == 0.0
+
+
+def test_outro_authored_camera():
+    from app.stories_disaster import clean_outro
+
+    cam = {"pos": [-0.72, -0.62, 0.85], "point": [0.3, 0.66, 1.2], "lens": 16, "fstop": 8, "face_w": 0, "kind": "detail",
+           "junk": 1}
+    got = clean_outro([{"text": "Тот, кто был сверху, рухнул сквозь люк в кабину.", "sec": 2.8,
+                        "plan": "светит вверх, страх. План: деталь, люк", "cam": cam},
+                       {"text": "Тишина.", "cam": {"pos": "x"}}])
+    assert got[0]["cam"] == {"pos": [-0.72, -0.62, 0.85], "point": [0.3, 0.66, 1.2], "lens": 16.0, "fstop": 8.0,
+                             "face_w": 0.0, "kind": "detail"} and "cam" not in got[1]
+    script = {"title": "t", "sentences": [{"text": t} for t, _ in LINES], "outro": got[:1]}
+    words, total = _words([t for t, _ in LINES])
+    job = B.build_job(script, words, total, gemini=False, beats=_beats(), render_backend="threejs")
+    perf = B.perform(job)
+    last = perf["cameras"][-1]
+    assert job["shots"][-1].get("cam") and last["lens"] == 16.0 and last["pos_a"] == (-0.72, -0.62, 0.85)
 
 
 def test_old_series_untouched():

@@ -38,7 +38,7 @@ from app import stories_gen as X
 from app.auth import is_agent_request
 
 SCRIPT_FIELDS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
-                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats")
+                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats", "outro")
 
 
 def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:

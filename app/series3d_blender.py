@@ -101,6 +101,11 @@ SFX = {
     "body_thud": ("sfx:kenney-impact/impactPunch_heavy_002.ogg", 0.8),
     "body_floor": ("sfx:kenney-impact/impactMetal_heavy_001.ogg", 0.55),
     "body_low": ("sfx:freesound/impact-low.ogg", 0.7),
+    # крышка люка (владелец 20.11: «звук люка поменять» — вместо скрежета): тяжёлая стальная плита — отщёлкнулась и пошла,
+    # встала на упор; ноги сверху задели раму люка
+    "lid_clunk": ("sfx:kenney-impact/impactPlate_heavy_002.ogg", 0.55),
+    "lid_stop": ("sfx:kenney-impact/impactPlate_heavy_004.ogg", 0.35),
+    "hatch_frame": ("sfx:kenney-impact/impactMetal_light_002.ogg", 0.45),
 }
 
 
@@ -150,7 +155,9 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
         elif k == "lights_out":
             add((S3.SFX["power_down"][0], 0.7), t - 0.1, "аварийный свет гаснет", "lights_out")
         elif k == "body_drop":
-            hit = t + float((perf.get("body_drop") or {}).get("fall") or 0.42)
+            bd = perf.get("body_drop") or {}
+            hit = float((bd.get("t") or [t + 0.42])[0])       # удар об пол (perf.body_drop.t — момент удара)
+            add(SFX["hatch_frame"], t + 0.15, "ноги в люке", "hatch_frame")
             add(SFX["body_thud"], hit, "тело упало", "body_drop")
             add(SFX["body_floor"], hit + 0.01, "пол кабины", "body_floor")
             add(SFX["body_low"], hit, "удар", "body_low")
@@ -167,7 +174,8 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(SFX["press"], c["t"], "защёлка", "latch")
             add((SFX["knock_hit"][0], 0.3), c["t"] + 0.3, "защёлка встала", "latch_stop")
         elif c["kind"] == "lid":
-            add((SFX["doors_strain"][0], 0.5), c["t"], "крышка люка ползёт", "lid")
+            add(SFX["lid_clunk"], c["t"], "крышка люка", "lid")
+            add(SFX["lid_stop"], c["t"] + 1.75, "крышка на упоре", "lid_stop")
         elif c["kind"] == "bag_step":
             add((S3.SFX["step"][0], 0.45), c["t"] - 0.35, "рюкзак на пол", "bag")
             add((S3.SFX["step"][0], 0.55), c["t"], "встал на рюкзак", "bag_step")
@@ -281,9 +289,52 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
         st = any(s["t0"] - 0.1 <= t < s["t1"] for t, _ in perf.get("startles") or [])
         kind = (cams.get(s["n"]) or {}).get("kind") or s.get("camera")
         torch = any(x.get("torch", 0.0) > 0.05 for x in lt)     # чужой фонарик в щели люка — луч во взвеси
+        insert = bool((cams.get(s["n"]) or {}).get("insert"))     # экран во весь кадр: без размытия движения
         out[s["n"]] = {"volume": beam or flick or torch or (s.get("location") or "cabin") != "cabin",
-                       "blur": move or shake or hits or st, "dof": kind in ("face", "detail")}
+                       "blur": (move or shake or hits or st) and not insert, "dof": kind in ("face", "detail")}
     return out
+
+
+OUTRO_SEC = (1.0, 8.0)     # немая фраза концовки: сколько секунд она длится (границы)
+
+
+def outro_sec(script: dict | None) -> float:
+    """Сколько длится немая концовка сценария (``script.outro``), с — столько сервис добавляет к серии до титра части."""
+    return round(sum(min(OUTRO_SEC[1], max(OUTRO_SEC[0], float(o.get("sec") or 2.5)))
+                     for o in (script or {}).get("outro") or [] if isinstance(o, dict) and str(o.get("text") or "").strip()), 3)
+
+
+def with_outro(script: dict, words: list[dict], total: float, beats: list[dict] | None):
+    """Немая концовка (``script.outro = [{text, sec, plan}]``): действие без голоса после последнего слова — фразы
+    не озвучиваются и не идут в субтитры, но режиссура читает их как обычные (события на словах, бит «План:»). Здесь
+    они становятся фразами с неслышными словами (``silent``) по ``sec`` секунд каждая сразу после речи; серия — до конца
+    концовки и ещё ~2 с на титр части (``stories_3d`` прибавляет ``outro_sec`` сам). Без ``outro`` — всё как было."""
+    outro = [o for o in (script.get("outro") or []) if isinstance(o, dict) and str(o.get("text") or "").strip()]
+    if not outro or not words:
+        return script, words, total, beats
+    spoken = [s for s in script.get("sentences") or [] if str(s.get("text") or "").strip()]
+    t = float(words[-1]["end"]) + 0.25
+    out_words = [dict(w) for w in words]
+    sentences = list(spoken)
+    extra_beats: list[dict] = []
+    for o in outro:
+        text = " ".join(str(o["text"]).split())
+        sec = min(OUTRO_SEC[1], max(OUTRO_SEC[0], float(o.get("sec") or 2.5)))
+        toks = text.split()
+        span = sec * 0.6
+        for i, tok in enumerate(toks):
+            a = t + 0.1 + span * i / len(toks)
+            out_words.append({"word": tok, "start": round(a, 3), "end": round(a + span / len(toks) * 0.9, 3), "silent": True})
+        extra_beats.append({"i": len(spoken) + len(extra_beats), "text": text, "sentence": len(sentences),
+                            "spec": {"action": str(o.get("plan") or "")}})
+        sent = {"text": text, "role": "", "silent": True}
+        if isinstance(o.get("cam"), dict) and o["cam"].get("pos"):
+            sent["cam"] = o["cam"]      # камера плана от автора (series3d_blender_camera.authored_camera)
+        sentences.append(sent)
+        t += sec
+    plan_beats = list(beats or []) + extra_beats if beats else beats
+    # серия — до конца концовки и ещё ~2 с на титр части (сервис уже прибавил концовку — тогда total не меняется)
+    return {**script, "sentences": sentences}, out_words, round(max(float(total), t + 1.75), 3), plan_beats
 
 
 def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
@@ -292,7 +343,13 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
               render_backend: str = DEFAULT_BACKEND) -> dict:
     """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество. ``beats`` —
     биты эпизода: строка «План:» в бите сильнее режиссёра (``app/series3d_blender_plan.py``)."""
+    script, words, total, beats = with_outro(script, words, total, beats)
     plan = plan_shots(script, words, total, gemini=gemini, client=client, beats=beats)
+    cams = {k: s_["cam"] for k, s_ in enumerate(script.get("sentences") or []) if isinstance(s_.get("cam"), dict)}
+    for shot in plan["shots"]:
+        k = next((i for i in shot.get("sentences") or [] if i in cams), None)
+        if k is not None and shot.get("by") == "author" and shot.get("planned"):
+            shot["cam"] = cams[k]
     return {"version": SCENE_VERSION, "fps": FPS, "duration": round(float(total), 3), "title": script.get("title") or "",
             "shots": plan["shots"], "events": plan["events"], "words": plan["words"], "director": plan["director"],
             "speech": plan["speech"],
