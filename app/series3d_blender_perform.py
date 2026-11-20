@@ -11,7 +11,7 @@ from app import motion3d as m
 from app.series3d_blender_stage import (
     S, H, FRONT, BELL, BTN_NORMAL, DOOR_FACE_Y, DOOR_NORMAL, DISPLAY, DOORWAY, CEIL_LIGHT, HATCH, CLIP_LEN, WALK_CLIP,
     WALK_FEET, MAX_WALK_STEPS, WALK_CYCLE_UNITS, STEP_LEN, stance_units, walk_plan, walk_seconds, button_pos,
-    reachable, facing, to_world, KNOCK_POINT, press_stand, spot_for, LOCS, loc_of, loc_spot, loc_target, inside_loc,
+    reachable, facing, to_world, KNOCK_POINT, press_stand, spot_for, LOCS, loc_of, loc_spot, loc_target, inside_loc, loc_max_steps,
     show_items, _low, HATCH_LID, LATCH, SHOULDER_R, REACH, BAG_SPOT, BAG_FROM, BAG_H
 )
 from app.series3d_blender_direction import EMOTIONS, HAND_ACTIONS
@@ -292,7 +292,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 spot = (spot[0], DOORWAY["pry_y"])    # двери расходятся шире: иначе руки не дотянутся до створок
             spot = W(spot)
         elif a == "sit_corner":
-            spot, hd = spot_for("corner")
+            # в кабине — свой угол; в другом месте — его место «corner» (у кубического домика — у факела)
+            spot, hd = spot_for("corner") if loc == "cabin" else loc_spot(loc, "corner")
         elif a == "open_hatch" and loc == "cabin":
             spot, hd = spot_for("hatch")
         elif a == "approach":
@@ -341,7 +342,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         tt = t0
         # встать с пола (на камеру) или переставить на склейке
         if posture == "sit" and (s.get("stand_first") or a == "stand_up" or moved):
-            if a == "stand_up" or (s.get("stand_first") and not moved):
+            # ``stand_walk`` (автор): встаёт на камеру и потом идёт; иначе на переход — склейкой уже стоя
+            if a == "stand_up" or (s.get("stand_first") and (not moved or s.get("stand_walk"))):
                 add_clip("Sit_Floor_StandUp", tt + 0.05, blend=0.2, loop=False)
                 tt += clip_len["Sit_Floor_StandUp"] + 0.05
                 add_clip("Idle_A", tt - 0.15, blend=0.25)
@@ -349,12 +351,13 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 add_clip("Idle_A", t0, blend=0.01)
             posture = "stand"
         walk_dist = math.dist(spot, pos)
-        steps, clip_sec = walk_plan(walk_dist)
+        max_steps = loc_max_steps(loc)
+        steps, clip_sec = walk_plan(walk_dist, max_steps)
         wsec = walk_seconds(clip_sec)
         dirv = (spot[0] - pos[0], spot[1] - pos[1]) if moved else (0.0, 0.0)
         walk_head = m.heading_of(dirv) if moved else heading
         t_turn0 = 0.25 + 0.45 * abs(_ang(walk_head - heading)) / math.pi if moved else 0.0
-        far = walk_dist > MAX_WALK_STEPS * STEP_LEN * 1.25
+        far = walk_dist > max_steps * STEP_LEN * 1.25
         if moved:   # шаги разворота в начале/конце (см. ниже) — тоже время шага
             _h = clip_len[WALK_CLIP] / 2
             _d0, _d1 = abs(_ang(walk_head - heading)), abs(_ang(hd - walk_head))
@@ -673,6 +676,11 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 gkey(a0 + (0.16 if a == "flinch" else 0.01), (HATCH_LID[0], HATCH_LID[1] - 0.12, H))
             if s.get("camera") == "detail":
                 cam_subject = "hatch"
+        if s.get("look") and s.get("by") == "author":
+            # автор назвал, куда смотреть (точка интереса места: окно, поле, угол…): сильнее взгляда действия;
+            # ``look_at`` — с какой секунды плана (по умолчанию — сразу после разворота/шага)
+            gaze.keys = [k_ for k_ in gaze.keys if not (a0 - 1e-6 <= k_[0] < shot_end)]
+            gkey(t0 + float(s["look_at"]) if s.get("look_at") is not None else a0, loc_target(loc, str(s["look"])))
         if re.search(r"(выключил|погасил)\w*\s+(\w+\s+)?фонар", _low(s.get("text"))):
             # выключил фонарик: луч гаснет на этом кадре и сам больше не загорается
             flash_track.key(a0 + 0.1, flash_track.keys[-1][1])
@@ -883,6 +891,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                    and e.get("sentence") is not None and int(e["sentence"]) - int(x["sentence"]) == 1), None)
         if j_ is not None:
             e["t"] = round(float(j_["t"]) + 0.3, 3)
+    shows = sorted({str(e.get("what")) for e in events if e["kind"] in ("appear", "vanish") and e.get("what")})
     for t in times:
         main = 1.0
         if blackout is not None:
@@ -935,6 +944,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                        "floor": value, "doors": round(door_c.at(t), 4), "shake": round(shake, 5), "drop": round(drop, 5),
                        "ldoors": {k: round(c_.at(t), 4) for k, c_ in door_cs.items() if k != "cabin"},
                        "lit": lit, "dark": dark(t), "reveal": round(reveal, 4)})
+        if shows:        # поля только у серий с появлениями (ключи кэша старых серий не меняются)
+            lights[-1]["appear"] = {w_: _shown(events, w_, t) for w_ in shows}
         if hatch_used:   # поля только у серий с люком: дорожки (и ключи кэша) старых серий не меняются
             lights[-1].update(hatch=round(hatch_c.at(t), 4), latch=round(latch_c.at(t), 4))
         if torch_used:   # чужой фонарик в щели люка: вспыхивает и чуть дрожит в руке
@@ -993,6 +1004,15 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                       **({"screen": scr.replace("−", "-").replace(" °", "°")} if scr else {})})
     perf["phone"] = phone
     return perf
+
+
+def _shown(events: list[dict], what: str, t: float) -> int:
+    """Видна ли вещь ``what`` в момент ``t``: последнее событие appear/vanish до t (до первого appear — не видна)."""
+    on = 0
+    for e in sorted(events, key=lambda x: float(x["t"])):
+        if str(e.get("what")) == what and e["kind"] in ("appear", "vanish") and float(e["t"]) <= t:
+            on = 1 if e["kind"] == "appear" else 0
+    return on
 
 
 def _beam_off_camera(perf: dict, beam: list[tuple]) -> list[tuple]:

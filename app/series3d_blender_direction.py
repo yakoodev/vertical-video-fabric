@@ -7,7 +7,7 @@ import re
 from typing import Any
 
 from app.series3d_blender_plan import ACTION_EMOTION, shots_from_beats
-from app.series3d_blender_stage import LOCS, show_items, rule_location, decal_from_text, _low
+from app.series3d_blender_stage import LOCS, LIFT_LOCS, show_items, rule_location, decal_from_text, _low
 
 # --------------------------------------------------------------------------- #
 # Словари режиссуры (строгие enum'ы схемы Gemini)
@@ -262,7 +262,7 @@ GEMINI_SCHEMA = {
             "emotion": {"type": "string", "enum": list(EMOTIONS)},
             "camera": {"type": "string", "enum": list(CAMERAS)},
             "speaker": {"type": "string", "enum": list(SPEAKERS)},
-            "location": {"type": "string", "enum": list(LOCS)},
+            "location": {"type": "string", "enum": list(LIFT_LOCS)},
             "props": {"type": "array", "items": {"type": "string"}},
             "decal": {"type": "string"},
         },
@@ -277,7 +277,7 @@ def gemini_prompt(title: str, shots: list[dict], events_by_shot: dict[int, list[
         "читает текст; на каждый кадр выбери МЕСТО (location — где герой по тексту, только из списка), вещи, которые текст "
         "называет и которые надо показать (props — из списка вещей этого места), надпись на стене, если текст её называет "
         "(decal: «1998», «23», до 14 знаков, иначе пусто), поставленное действие героя, эмоцию лица и план камеры.",
-        "Места (location) и вещи в них:\n" + "\n".join(f"{k} — {v['label']}: {', '.join(v['props'])}" for k, v in LOCS.items()),
+        "Места (location) и вещи в них:\n" + "\n".join(f"{k} — {v['label']}: {', '.join(v['props'])}" for k, v in LIFT_LOCS.items()),
         "Место меняется только когда текст говорит, что герой туда перешёл (раздвинул двери и вышел в коридор, вылез через "
         "люк в шахту); иначе — там же, где был в прошлом кадре. Кнопки, табло, поручни — только в кабине.",
         f"Серия: «{title}».",
@@ -326,7 +326,7 @@ def gemini_choices(title: str, shots: list[dict], events_by_shot: dict[int, list
                   "button": item.get("button") if item.get("button") in BUTTONS else "1",
                   "emotion": item["emotion"], "camera": item["camera"],
                   "speaker": item.get("speaker") if item.get("speaker") in SPEAKERS else "narrator", "by": "gemini",
-                  "location": item.get("location") if item.get("location") in LOCS else "",
+                  "location": item.get("location") if item.get("location") in LIFT_LOCS else "",
                   "props": [str(x)[:40] for x in (item.get("props") or [])][:4],
                   "decal": str(item.get("decal") or "").strip().upper()[:14]}
     return out
@@ -594,7 +594,7 @@ def plan_shots(script: dict, words: list[dict], total: float, *, gemini: bool = 
         pick = choices.get(s["n"]) or rule_choice(s, by_shot.get(s["n"], []), dark)
         text_ = s.get("spoken") or s["text"]
         by_rules = rule_location(text_, where)
-        loc = pick.get("location") if pick.get("location") in LOCS else by_rules
+        loc = pick.get("location") if pick.get("location") in LIFT_LOCS else by_rules
         if by_rules != where and loc == where:
             loc = by_rules       # текст явно назвал другое место — правило сильнее
         author = s.get("author") or {}

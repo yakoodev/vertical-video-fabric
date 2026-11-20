@@ -92,9 +92,10 @@ def stance_units(lt: float) -> float:
     return cycles * WALK_CYCLE_UNITS + _STANCE_CUM[i] + WALK_STANCE[min(i, n - 1)] * frac
 
 
-def walk_plan(dist: float) -> tuple[int, float]:
-    """(шагов, сколько секунд клипа сыграть): шагов 1–3 по длине пути, начало и конец — ноги рядом."""
-    steps = max(1, min(MAX_WALK_STEPS, int(round(dist / STEP_LEN))))
+def walk_plan(dist: float, max_steps: int = MAX_WALK_STEPS) -> tuple[int, float]:
+    """(шагов, сколько секунд клипа сыграть): шагов 1–3 (у места с ``max_steps`` — до него) по длине пути, начало и
+    конец — ноги рядом."""
+    steps = max(1, min(int(max_steps), int(round(dist / STEP_LEN))))
     return steps, steps * CLIP_LEN[WALK_CLIP] / 2
 
 
@@ -218,8 +219,37 @@ LOCS: dict[str, dict] = {
                              "sound": (0.0, 7.0, 0.9), "lamp": (0.0, 2.6, 2.05), "doors": (0.0, DOOR_FACE_Y, 0.8),
                              "deep": (0.0, 6.5, 0.8)}},
 }
-LOC_NAMES = tuple(LOCS)
+# Другие миры (свой набор мест, не лифт): у места ``world`` — режиссёр лифта (Gemini, сценарист, правила по словам) их
+# не видит, ставит только автор плана (``location`` в задании). Кубический мир (``world: voxel``): домик в поле ночью —
+# сцена Blender ``tools/blender/series_voxel.py``; блок мира — ``VOXEL_BLOCK`` м (герой ≈ 1.8 блока).
+VOXEL_BLOCK = 0.46
+LOCS["blockhouse"] = {
+    "label": "кубический домик в поле ночью", "world": "voxel", "origin": (120.0, 0.0),
+    # границы камеры автоматических планов — внутри домика (у автора камера своя, ``cam`` плана, и снаружи)
+    "bounds": (-1.12, 1.12, -1.12, 0.66, 0.08, 1.30),
+    "max_steps": 6,
+    "props": ("дверь", "окно", "факел", "кровать", "сундук", "угол комнаты", "поле за окном"),
+    "keywords": r"домик|\bдом[аеу]?\b|окн|факел",
+    # корень героя (x, y, курс): курс 0 — лицом к −Y (к стене с дверью и окном)
+    # corner — сидит на полу спиной к правой стене, факел слева впереди; room — у окна, развернулся в комнату
+    # (−3.10, а не π: разворот через −X — шаг от камеры у правой стены, она видит угол через плечо)
+    "spots": {"entry": (0.0, 0.0, 0.0), "center": (0.0, 0.0, 0.0), "seat": (0.82, -0.12, -1.5708),
+              "window": (0.46, -0.80, 0.0), "door": (-0.46, -0.80, 0.0), "corner": (0.82, -0.12, -1.5708),
+              "room": (0.46, -0.80, -3.10)},
+    # точки интереса (м, z — от пола домика)
+    "targets": {"key": (0.46, -1.20, 0.70), "door": (-0.46, -1.18, 0.55), "sound": (-0.46, -1.18, 0.62),
+                "window": (0.46, -1.20, 0.70), "field": (0.9, -9.0, 0.55), "torch": (0.0, -1.03, 0.89),
+                "corner": (-0.92, 0.46, 0.85), "ceiling": (0.0, 0.0, 1.38), "bed": (-0.70, 0.40, 0.25),
+                "house": (0.0, -0.2, 0.9)},
+}
+LIFT_LOCS = {k: v for k, v in LOCS.items() if v.get("world", "lift") == "lift"}
+LOC_NAMES = tuple(LIFT_LOCS)
 LOC_TARGETS = ("doors", "lamp", "decal", "deep", "apartment", "motor", "cabinet", "edge", "center")
+
+
+def loc_max_steps(loc: str | None) -> int:
+    """Сколько шагов герой идёт в этом месте, прежде чем режиссёр переставит его склейкой."""
+    return int(loc_of(loc).get("max_steps") or MAX_WALK_STEPS)
 
 
 def loc_of(name: str | None) -> dict:
@@ -254,9 +284,9 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
 
 # Свет вне кабины (сцена Blender): заполняющий у камеры («от фонарика/лампы», Вт при 0.8 м до героя), контровой
 # сзади-сверху (Вт) и экспозиция места — герой и место читаются в каждом кадре (проверка — лист «фраза → что в кадре»).
-FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5}
-RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0}
-EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2}
+FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5, "blockhouse": 0.9}
+RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0, "blockhouse": 1.2}
+EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2, "blockhouse": 0.0}
 
 
 def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
@@ -328,7 +358,7 @@ SCRIPT_WORDS = (120, 140)
 
 def writer_places() -> str:
     """Что сценарист может упоминать: места и вещи, которые сцена покажет."""
-    return "\n".join(f"- {v['label']}: {', '.join(v['props'])}" for v in LOCS.values())
+    return "\n".join(f"- {v['label']}: {', '.join(v['props'])}" for v in LIFT_LOCS.values())
 
 
 # Места/вещи, которых сцена не покажет: сценарист их не упоминает (иначе фраза переписывается).

@@ -36,6 +36,8 @@ interface MatRow {
   id: number; name: string; kind: "principled" | "emission" | "unknown"; anim: boolean; color?: number[]; rough?: number;
   metal?: number; spec?: number; coat?: number; coat_rough?: number; emissive?: number[]; strength?: number;
   brushed?: { min: number; max: number }; bump?: { strength: number; scale: number };
+  /** Цвет / свечение — из картинки GLB (пиксельные текстуры кубического мира): множитель белый. */
+  tex?: boolean; etex?: boolean;
 }
 interface Fog { name: string; min: number[]; max: number[]; density: number; anisotropy: number }
 interface ChunkPlan { n: number; lights: number[]; shadows: number[]; fog: number | null; probe: number[]; cam: number[] }
@@ -46,6 +48,8 @@ interface Header {
   objects: { name: string; dyn: boolean; skin: boolean; hero: boolean }[];
   bones: string[]; materials: MatRow[]; lights: LightStatic[]; fogs: Fog[]; world: number[];
   motion_blur: { shutter: number }; chunks: Record<string, ChunkPlan>;
+  /** Туман дали (FogExp2): цвет линейный, плотность 1/м; материалы «sky_*» (небо, луна, звёзды) — без тумана. */
+  dist_fog?: { color: number[]; density: number };
 }
 interface Spec {
   base: string; width?: number; height?: number; post?: PostSpec;
@@ -54,6 +58,8 @@ interface Spec {
   areaShadow?: number; eyeEnv?: number; metalEnv?: number; dofMax?: number; lut?: boolean; gi?: boolean; brushed?: boolean;
   /** «Глазной» свет у камеры прожектором на лицо (радиус пятна у лица, м); dof: false — без ГРИП; lightMul — множители по имени. */
   camFillSpot?: boolean; camFillRadius?: number; dof?: boolean; lightMul?: Record<string, number>; areaScale?: number;
+  /** Материалы подвижных объектов тоже из таблицы Blender (свечение по дорожке у объектов на костях/с ключами). */
+  fixDynamic?: boolean;
 }
 interface Fx { volume: boolean; blur: boolean; dof: boolean }
 
@@ -159,6 +165,16 @@ function fixMaterials(root: THREE.Object3D) {
       const id = mat.userData?.vvf_mat;
       const row = typeof id === "number" ? H.materials[id] : undefined;
       if (!row || !(mat as any).isMeshStandardMaterial) return mat;
+      if (row.tex || row.etex) {
+        // пиксель-арт: без сглаживания при увеличении (экспортёр Blender так и пишет для Closest — подстраховка)
+        for (const t of [mat.map, mat.emissiveMap]) {
+          if (!t) continue;
+          t.magFilter = THREE.NearestFilter;
+          t.anisotropy = 4;
+          t.needsUpdate = true;
+        }
+      }
+      if (H.dist_fog && /^sky_/.test(row.name)) mat.fog = false;
       if (row.kind === "emission") {
         mat.color.setRGB(0, 0, 0);
         mat.roughness = 1;
@@ -175,7 +191,7 @@ function fixMaterials(root: THREE.Object3D) {
           (mat as THREE.MeshPhysicalMaterial).clearcoat = row.coat;
           (mat as THREE.MeshPhysicalMaterial).clearcoatRoughness = row.coat_rough ?? 0.03;
         }
-        if ((row.strength ?? 0) > 0) {
+        if ((row.strength ?? 0) > 0 || row.anim) {   // свечение по дорожке — цвет нужен и при силе 0 в GLB
           mat.emissive.setRGB(row.emissive![0], row.emissive![1], row.emissive![2]);
           mat.emissiveIntensity = row.strength!;
         }
@@ -223,6 +239,11 @@ async function load(s: Spec) {
   scene = new THREE.Scene();
   const wc = H.world || [0.004, 0.004, 0.005];
   scene.background = new THREE.Color(wc[0], wc[1], wc[2]);
+  if (H.dist_fog) {
+    const fc = H.dist_fog.color;
+    scene.fog = new THREE.FogExp2(0x000000, H.dist_fog.density);
+    (scene.fog as THREE.FogExp2).color.setRGB(fc[0], fc[1], fc[2], THREE.LinearSRGBColorSpace);
+  }
   scene.add(gltf.scene);
   scene.updateMatrixWorld(true);
   const byObj = new Map<number, THREE.Object3D>();
@@ -294,7 +315,9 @@ async function load(s: Spec) {
   });
   stats.skinned = skinned.length;
   stats.dynamic = dynNodes.length;
-  fixMaterials(gltf.scene);
+  // подвижные объекты к этому моменту уже перенесены в корень сцены: без fixDynamic их материалы остаются из GLB
+  // (так рисуется лифт); fixDynamic — и у них свечение по дорожке, цвет/шероховатость из Blender (глаза «гостя»)
+  fixMaterials(spec.fixDynamic ? scene : gltf.scene);
   camera = new THREE.PerspectiveCamera(40, W / HH, 0.02, 60);
   camera.matrixAutoUpdate = false;
   scene.add(camera);
@@ -389,6 +412,23 @@ function setChunk(c: { key: string; f0: number; fx: Fx }) {
         shadowCfg(proxy, st, smap);
         scene.add(proxy, proxy.target);
       }
+    } else if (st.type === "SUN") {
+      // солнце/луна: направленный свет на всё место; тень — ортокамерой вокруг пробы плана (лица героя)
+      const dl = new THREE.DirectionalLight(col, 0);
+      if (shadowSet.has(k)) {
+        dl.castShadow = true;
+        dl.shadow.mapSize.set(smap, smap);
+        dl.shadow.bias = -0.0004;
+        dl.shadow.normalBias = 0.01;
+        dl.shadow.radius = 3;
+        const sc_ = dl.shadow.camera as THREE.OrthographicCamera;
+        sc_.left = sc_.bottom = -7;
+        sc_.right = sc_.top = 7;
+        sc_.near = 0.5;
+        sc_.far = 60;
+      }
+      scene.add(dl.target);
+      li = dl;
     } else if (st.type === "SPOT") {
       const sp = new THREE.SpotLight(col, 0, 0, Math.min(1.45, (st.spot_size || 1) / 2), st.spot_blend ?? 0.2, 2);
       if (shadowSet.has(k)) shadowCfg(sp, st);
@@ -479,6 +519,15 @@ function apply(ra: number, rb: number, u: number) {
         cl.proxy.target.updateMatrixWorld();
       }
       if (cl.st.volume > 0 && P > 0) hz.push({ pos, dir, color: col, power: (P / Math.PI) * (spec.areaScale ?? 1) * cl.st.volume, angle: 1.45, penumbra: 1 });
+    } else if (cl.st.type === "SUN") {
+      // солнце Blender: сила — освещённость (Вт/м² ≈ лк в COMPAT), направление — ось −Z источника; ставим
+      // источник в 25 м «до» пробы плана по лучу: тень ортокамерой покрывает место героя
+      const dl = cl.li as THREE.DirectionalLight;
+      dl.intensity = P;
+      const c0 = v3(chunk!.plan.probe);
+      dl.position.copy(c0).addScaledVector(dir, -25);
+      dl.target.position.copy(c0);
+      dl.target.updateMatrixWorld();
     } else {
       // точка/прожектор Blender P Вт → I = P/(4π) кд (как экспортёр glTF, режим COMPAT)
       const I = P / (4 * Math.PI);
@@ -606,4 +655,17 @@ function debugSkin() {
     j0: si.getComponent(0, 0), bone0: sm.skeleton.bones[si.getComponent(0, 0)].name, D: boneD[e.map[si.getComponent(0, 0)]].elements };
 }
 
-(window as any).__scene3d = { load, setChunk, render, debugSkin, inspect: () => stats, warnings: () => warnings };
+/** Отладка: объект по имени — мировая позиция, видимость, материал (цвет, свечение, сила). */
+function probe(name: string) {
+  const out: any[] = [];
+  scene.traverse((o) => {
+    if (o.name !== name) return;
+    const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    const p = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
+    out.push({ type: o.type, visible: o.visible, pos: p.toArray(), mat: m ? { type: m.type, name: m.name, color: m.color?.toArray(),
+      emissive: m.emissive?.toArray(), ei: m.emissiveIntensity, vvf: m.userData?.vvf_mat } : null, children: o.children.map((c) => c.name) });
+  });
+  return out;
+}
+
+(window as any).__scene3d = { load, setChunk, render, debugSkin, probe, inspect: () => stats, warnings: () => warnings };

@@ -50,6 +50,7 @@ from app.series3d_blender_stage import (  # noqa: F401
     _walk_stance, WALK_STANCE, WALK_CYCLE_UNITS, STEP_LEN, _STANCE_CUM, _v, stance_units, walk_plan, walk_seconds,
     CLIPS_NEEDED, button_pos, reachable, facing, to_world, PRESS_TURN, KNOCK_POINT, press_stand, spot_for, LOCS,
     LOC_NAMES, LOC_TARGETS, loc_of, loc_world, loc_spot, loc_target, FILL_W, RIM_W, EXPOSURE, inside_loc, DOORWAY,
+    LIFT_LOCS, VOXEL_BLOCK, loc_max_steps,
     SHOW_WORDS, show_items, SCRIPT_SEC, SCRIPT_WORDS, writer_places, OFFLIST, offlist_mentions, rule_location,
     DECAL_RX, decal_from_text, _low,
 )
@@ -61,7 +62,7 @@ from app.series3d_blender_direction import (  # noqa: F401
 )
 from app.series3d_blender_camera import (  # noqa: F401
     FACE_Z, SIT_DROP, PHONE_SHOW, CAM_BOUNDS, _CAM, cam_bounds, cam_inside, _rot, face_point, shot_camera, cam_sees,
-    ots_ok, camera_plan, TITLE_Y, PART_Y, face_target, face_bands, DOORWAY_CAMS, doorway_camera,
+    ots_ok, camera_plan, TITLE_Y, PART_Y, face_target, face_bands, DOORWAY_CAMS, doorway_camera, authored_camera,
 )
 from app.series3d_blender_plan import beat_plan, has_plans, plan_key, shots_from_beats  # noqa: F401
 from app.series3d_blender_perform import (  # noqa: F401
@@ -112,6 +113,10 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
 
     for e in job.get("events") or []:
         k, t = e["kind"], float(e["t"])
+        if e.get("sfx"):
+            # автор назвал запись события сам (``sfx: "sfx:пак/файл.ogg"``, ``volume``)
+            add((str(e["sfx"]), float(e.get("volume", 0.8))), t, str(e.get("label") or k), k)
+            continue
         if k == "blackout":
             if t < 0:
                 continue          # свет погас ещё до начала серии («Если в блэкаут…»): щелчка нет
@@ -156,6 +161,18 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(SFX["doors_strain"], c["t"], "створки", "doors")
             if c.get("full"):
                 add(SFX["doors_open"], c["t"] + 1.0, "двери разъехались", "doors_open")
+    if job.get("ambience") is not None:
+        # свой фон места (кубический мир: ночь в поле, а не гул кабины): [{ref, t, end, under_db, fade_in, fade_out,
+        # label}] — как фон-петли кабины, без «напряжения» лифта
+        for a_ in job["ambience"]:
+            t0_, t1_ = float(a_.get("t", 0.0)), float(a_.get("end", total))
+            if t1_ - t0_ >= 0.5:
+                out.append({"t": round(max(0.0, t0_), 3), "ref": a_["ref"], "volume": float(a_.get("volume", 1.0)),
+                            "label": a_.get("label") or "фон", "kind": a_.get("kind") or "ambience",
+                            "end": round(min(total, t1_), 3), "role": a_.get("role") or "ambience",
+                            "under_db": float(a_.get("under_db", 18.0)), "fade_in": float(a_.get("fade_in", 0.5)),
+                            "fade_out": float(a_.get("fade_out", 1.0))})
+        return sorted(out, key=lambda x: x["t"])
     story = next((s for s in job["shots"] if s.get("role") not in ("hook", "")), None)
     if story:
         add(S3.SFX["tension"], story["t0"], "напряжение", "tension")
@@ -284,6 +301,7 @@ def _code_hash() -> str:
     h = hashlib.sha1()
     for p in (root / "tools" / "blender" / "series_scene.py", root / "tools" / "blender" / "hero_shot.py",
               root / "tools" / "blender" / "series_places.py", root / "tools" / "blender" / "series_lift.py",
+              root / "tools" / "blender" / "series_voxel.py",
               root / "app" / "motion3d.py"):
         if p.is_file():
             h.update(p.read_bytes())
@@ -303,6 +321,21 @@ THREE_SPEC = {"envIntensity": 1.2, "metalEnv": 1.4, "lightScale": 0.85, "areaSca
               "eyeEnv": 0.06, "dofMax": 28, "lut": True, "gi": True, "brushed": True,
               "post": {"ao": 0.9, "aoRadius": 0.25, "aoScale": 0.5, "bloom": {"strength": 0.32, "radius": 0.55, "threshold": 1.1},
                        "grade": {"contrast": 1.0, "saturation": 1.0}, "vignette": 0.42, "grain": 0.015, "ca": 0.6}}
+
+
+def three_spec(job: dict) -> dict:
+    """Спека рисования задания: ``THREE_SPEC`` + правка задания ``three_spec`` (мир со своим светом — например
+    кубический: сильнее свечение, туман дали); ``post`` и вложенные словари сливаются, а не заменяются."""
+    over = job.get("three_spec") or {}
+    if not over:
+        return THREE_SPEC
+
+    def merge(a: dict, b: dict) -> dict:
+        out = dict(a)
+        for k, v in b.items():
+            out[k] = merge(a[k], v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
+        return out
+    return merge(THREE_SPEC, over)
 
 
 def _three_hash() -> str:
@@ -343,6 +376,8 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
                 "look": job.get("look") or {}}
         if three:
             blob["backend"] = {"name": be, "code": three}
+            if job.get("three_spec"):     # своя спека задания (у старых серий её нет — ключи прежние)
+                blob["backend"]["spec"] = job["three_spec"]
         key = hashlib.sha1(json.dumps(blob, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()[:16]
         ext = "jpg" if pr["frames"] == "JPEG" or three else "png"
         out.append({**c, "key": key, "fx": fx.get(c["n"]), "ext": ext})
@@ -541,7 +576,7 @@ def three_plan(job: dict, keys: list[dict], todo: dict[str, list[int]], pose: Pa
     scale = float(pr.get("scale", 100))
     return {"dir": str(pose), "cache": str(cache), "bundle": str(bundle), "gl": os.environ.get("SERIES3D_THREE_GL", "gpu"),
             "width": int(round(1080 * scale / 100 / 2)) * 2, "height": int(round(1920 * scale / 100 / 2)) * 2, "quality": 95,
-            "spec": THREE_SPEC, "timing": str(work / "three_timing.json"),
+            "spec": three_spec(job), "timing": str(work / "three_timing.json"),
             "chunks": [{**{k: c[k] for k in ("key", "n", "f0", "f1", "fx", "ext")}, "todo": todo[c["key"]]}
                        for c in keys if c["key"] in todo]}
 

@@ -160,7 +160,11 @@ def shadow_pick(lights: list[dict], energy: list[list[float]], dist: list[list[f
     for i, li in enumerate(lights):
         if not li.get("shadow"):
             continue
-        s = sum(e[i] / max(0.09, d[i] ** 2) for e, d in zip(energy, dist))
+        if li.get("type") == "SUN":
+            # солнце/луна светит всё место одинаково (расстояние ни при чём): тень от неё — первой
+            s = 1e6 + sum(e[i] for e in energy) if any(e[i] > 1e-4 for e in energy) else 0.0
+        else:
+            s = sum(e[i] / max(0.09, d[i] ** 2) for e, d in zip(energy, dist))
         if s > 1e-6:
             score.append((s, i))
     score.sort(reverse=True)
