@@ -92,7 +92,9 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         return out("detail", pos, pt, 0.35, 19.0, fstop=3.2, focus="point", push=0.95)
     if kind == "detail" and subject == "phone" and shot.get("screen"):
         # экран со значением (часы, заряд): телефон в руке экраном к камере и лицо над ним — близко, длинный фокус
-        phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0)))
+        rz_ = float(shot.get("rz") or 0.0)    # на рюкзаке телефон выше на высоту рюкзака
+        phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1],
+                                           PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0) + rz_))
         # телефон — в середине кадра (выше субтитров), лицо — сверху
         msg = str(shot.get("screen")).startswith("msg|")
         # переписка — строки мельче цифр: телефон крупнее, лицо краем (кадр ≈ 0.40 м против 0.62)
@@ -103,7 +105,8 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
             lens = max(20.0, min(85.0 if msg else 40.0, (125.0 if msg else 58.0) * math.dist(p, center)))
             return out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
     if kind == "detail" and subject == "phone":
-        hand_l = to_world(root, heading, (-0.04, 0.22, 0.52 - (SIT_DROP if posture == "sit" else 0.0)))
+        hand_l = to_world(root, heading, (-0.04, 0.22, 0.52 - (SIT_DROP if posture == "sit" else 0.0)
+                                          + float(shot.get("rz") or 0.0)))
         center = tuple((hand_l[i] + face[i]) / 2 for i in range(3))
         p = around(0.72, (-38, 38, -55, 55, 0), -0.08, center)
         if p:

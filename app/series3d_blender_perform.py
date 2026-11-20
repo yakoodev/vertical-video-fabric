@@ -19,6 +19,10 @@ from app.series3d_blender_camera import SIT_DROP, PHONE_SHOW, _rot, camera_plan
 
 LID_AJAR = 0.40          # «крышка приподнялась»: доля HATCH_OPEN_DEG (≈ 44°) — щель, в неё светит фонарик
 TORCH_POS = (HATCH_LID[0], HATCH_LID[1] - 0.17, H + 0.30)   # фонарик над щелью люка (крышка поднимается с ближнего края)
+LID_OPEN = 1.0           # «крышка поднялась», когда она уже приоткрыта (продолжение ч.3): поднята целиком
+HAND_RX = r"\bрук[аиу]?\b|рукав"          # «сверху была только рука», «тот же рукав» — фонарик держит рука героя-копии
+REACH_RX = r"(давай|дай|протяни)\s+руку"   # «Даня, давай руку» — рука сверху тянется ниже, в кабину
+DROP_FALL = 0.42         # падение тела с крыши кабины до пола, с (≈ 2.3 м)
 
 FPS = 30
 
@@ -212,6 +216,20 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     if shots and shots[0].get("location") in LOCS and shots[0]["location"] != "cabin":
         first_spot, first_head = loc_spot(shots[0]["location"], "entry")
     pos, heading, posture = first_spot, first_head, "stand"
+    start = set(job.get("start") or [])
+    torch_used = False
+    if "bag" in start and (shots[0].get("location") or "cabin") == "cabin":
+        # стоит на рюкзаке под люком с первого кадра (как в конце прошлой части): шага на рюкзак нет
+        pos, heading, on_bag = BAG_SPOT, math.pi, True
+        rz_track = _Track(BAG_H)
+        bag_track = _Track(1.0)
+    if "lid" in start:
+        hatch_used = True
+        latch_track = _Track(1.0)
+        hatch_track = _Track(LID_AJAR)
+    if "torch" in start:
+        torch_used = True
+        torch_track = _Track(1.0)
     phone_out = False
     phone_hold: dict | None = None
     cur_loc = shots[0].get("location") if shots and shots[0].get("location") in LOCS else "cabin"
@@ -260,8 +278,22 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         at_door = door_from is not None and door_from <= t0 < door_until and loc == "cabin" and posture == "stand" \
             and a not in HAND_ACTIONS
         if on_bag:
-            spot, hd = pos, heading       # стоит на рюкзаке под люком: никуда не ходит и не разворачивается
-        elif a == "stand_bag" and loc == "cabin" and posture == "stand":
+            spot, hd = pos, heading       # стоит на рюкзаке под люком: никуда не ходит
+            want_h = heading
+            if s.get("screen"):
+                # экран телефона снимают спереди: лицом к стене места нет — склейкой разворачивается на рюкзаке
+                for dh_ in (0.0, math.pi, math.pi / 2, -math.pi / 2):
+                    fx_, fy_ = facing(heading + dh_)
+                    if inside_loc(loc, (pos[0] + fx_ * 1.0, pos[1] + fy_ * 1.0, 1.0), 0.05):
+                        want_h = heading + dh_
+                        break
+            elif abs(_ang(heading - math.pi)) > 0.1 and loc == "cabin":
+                want_h = math.pi          # экран посмотрел — снова лицом к люку
+            if abs(_ang(want_h - heading)) > 1e-3:
+                head_keys.key(t_cut - 1e-3, heading)
+                head_keys.key(t_cut, want_h)
+                heading = hd = want_h
+        elif a == "stand_bag" and loc == "cabin" and posture == "stand" and not on_bag:
             # склейкой рюкзак уже снят и лежит под люком, герой за ним; дальше — шаг на рюкзак (подъём корня)
             pos_keys.append((t_cut, BAG_FROM))
             head_keys.key(t_cut - 1e-3, heading)
@@ -702,7 +734,6 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                          "show": show_items(loc, s)})
 
     # над кабиной: защёлка сама (если её не повернул план «тянется»), крышка приоткрылась, фонарик в щели
-    torch_used = False
     for e in sorted(events, key=lambda x: x["t"]):
         t_ = float(e["t"])
         if e["kind"] == "latch" and not any(c["kind"] == "latch" and abs(c["t"] - t_) < 0.6 for c in contacts):
@@ -715,14 +746,18 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if latch_track.curve().at(t_) < 0.99:
                 latch_track.key(t_ - 0.45, latch_track.keys[-1][1])
                 latch_track.key(t_ - 0.1, 1.0)
-            hatch_track.key(t_, hatch_track.keys[-1][1])
-            hatch_track.key(t_ + 1.8, max(LID_AJAR, hatch_track.keys[-1][1]))
+            was = hatch_track.curve().at(t_)
+            hatch_track.key(t_, was)
+            # закрыта — приподнимается (щель); уже приоткрыта — поднимается целиком
+            hatch_track.key(t_ + 1.8, LID_OPEN if was >= LID_AJAR - 1e-3 else max(LID_AJAR, was))
             contacts.append({"kind": "lid", "t": t_, "point": HATCH_LID})
         elif e["kind"] == "torch":
             torch_used = True
             torch_track.key(t_, 0.0)
             torch_track.key(t_ + 0.1, 1.0)
             startles.append((t_ + 0.05, 0.6))
+        elif e["kind"] == "body_drop":
+            startles.append((t_ + DROP_FALL + 0.03, 1.0))
 
     # события → испуг, взгляд на источник
     for e in events:
@@ -783,6 +818,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                 show = (PHONE_SHOW[0], PHONE_SHOW[1], PHONE_SHOW[2] - SIT_DROP * sit)
                 held = m.lerp(held, show, show_c.at(t))
                 loc = m.lerp(pocket, held, x)
+                loc = (loc[0], loc[1], loc[2] + rzs[f])          # на рюкзаке — всё выше на высоту рюкзака
                 w = m.smoothstep((t - h["t0"]) / 0.25)
                 hand["l"][f] = (to_world(rp, hd, loc), round(w, 4), "phone")
             elif h["mode"] == "doors":
@@ -883,6 +919,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
                    and e.get("sentence") is not None and int(e["sentence"]) - int(x["sentence"]) == 1), None)
         if j_ is not None:
             e["t"] = round(float(j_["t"]) + 0.3, 3)
+    lights_out = next((e["t"] for e in events if e["kind"] == "lights_out"), None)
+    drops = [e["t"] + DROP_FALL for e in events if e["kind"] == "body_drop"]
     for t in times:
         main = 1.0
         if blackout is not None:
@@ -924,6 +962,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             ln = {"blackout": 0.6, "jolt": 0.9, "scrape": 1.2, "knock": 0.4}.get(e["kind"], 0.5)
             if amp and e["t"] <= t < e["t"] + ln:
                 shake = max(shake, amp * (1.0 - (t - e["t"]) / ln))
+        for td in drops:     # тело ударилось об пол — кабина вздрагивает
+            if td <= t < td + 0.7:
+                shake = max(shake, 0.022 * (1.0 - (t - td) / 0.7))
         drop = 0.0
         for tj in [e["t"] for e in events if e["kind"] == "jolt"]:
             if t >= tj:
@@ -942,6 +983,21 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             if tv > 0:
                 tv *= 0.93 + 0.07 * math.sin(2 * math.pi * t * 0.7) * math.sin(2 * math.pi * t * 1.9)
             lights[-1]["torch"] = round(tv, 4)
+        if lights_out is not None:
+            # «Свет пропал. Полная темнота»: гаснет всё — аварийный, табло, чужой фонарик, свой телефон, отсветы (out = 1)
+            out = m.smoothstep((t - lights_out) / 0.18) if t >= lights_out else 0.0
+            if out > 0:
+                k_ = 1.0 - out
+                lt_ = lights[-1]
+                lt_.update(main=round(lt_["main"] * k_, 4), red=round(lt_["red"] * k_, 4), display=round(lt_["display"] * k_, 4),
+                           reveal=round(lt_["reveal"] * k_, 4))
+                if "torch" in lt_:
+                    lt_["torch"] = round(lt_["torch"] * k_, 4)
+            lights[-1]["out"] = round(out, 4)
+        if drops:
+            # тело падает сверху (кадр серии: 0 — на крыше, 1 — на полу); до падения его нет
+            lights[-1]["body"] = round(max([m.clamp((t - (td - DROP_FALL)) / DROP_FALL, 0.0, 1.0) for td in drops]
+                                           + [0.0]), 4)
 
     phone = []
     pm = phone_mode.curve()
@@ -975,6 +1031,14 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         fi = next((f for f, t in enumerate(times) if torch_c.at(t) > 0), nf - 1)
         face = to_world(root[fi], heads[fi], (0.0, 0.07, 0.81 + rzs[fi]))
         perf["torch"] = {"pos": [round(c, 4) for c in TORCH_POS], "aim": [round(c, 4) for c in face]}
+        if any(re.search(HAND_RX, _low(s_.get("text"))) for s_ in shots):
+            perf["torch"]["arm"] = True     # фонарик держит рука — того же героя (рукав, чехол): series_scene.torch_arm
+            reach = [float(s_["t0"]) + 0.5 for s_ in shots if re.search(REACH_RX, _low(s_.get("text")))]
+            if reach:
+                perf["torch"]["reach"] = round(reach[0], 3)
+    if drops:
+        perf["body_drop"] = {"t": [round(td, 3) for td in drops], "fall": DROP_FALL,
+                             "spot": [round(BAG_SPOT[0] + 0.42, 4), round(BAG_SPOT[1] - 0.05, 4)]}
     perf["cameras"] = camera_plan(perf, int(job.get("seed") or 7))
     # луч фонарика не в объектив: камера в конусе — увести луч вбок-вниз (иначе кадр — белая вспышка)
     beam_raw = _beam_off_camera(perf, beam_raw)
@@ -987,8 +1051,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с)
         sh_ = next((x_ for x_ in shot_out if x_["t0"] <= t < x_["t1"]), None)
         scr = str(sh_.get("screen") or "") if sh_ and vis[f] and t >= float(sh_.get("a0", sh_["t0"])) + 0.5 else ""
+        dim = 1.0 - float(lights[f].get("out", 0.0))      # полная темнота: и экран, и фонарик телефона гаснут
         phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
-                      "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
+                      "light": round(fl.at(t) * dim if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
+                      **({"dim": round(dim, 4)} if dim < 1.0 else {}),
                       # на экране: «−» в шрифте сцены нет — дефис; «-12°C» короче — крупнее
                       **({"screen": scr.replace("−", "-").replace(" °", "°")} if scr else {})})
     perf["phone"] = phone
