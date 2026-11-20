@@ -1,12 +1,12 @@
-"""Мем-серия 8 «Я подъёбываю юзера», v2 — хореография, камера, звук и сборка (разметка голоса, декорации, чаты —
+"""Мем-серия 8 «Я подъёбываю юзера», v3 — хореография, камера, звук и сборка (разметка голоса, декорации, чаты —
 meme3d_ep8.py).
 
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8 --shots --small          # по кадру с каждого плана
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8 --preview 0.3,34.0       # кадры PNG без субтитров
     python tools/meme3d_ep8_anim.py D:/vvf-offload/memes/ep8                          # ролик + копия для TG + лист
 
-Голосом говорит только Клод; реплики юзера — пузырями и в чате, со звуком печати и мордой моти (злой, сонной,
-шокированной). ~50 планов за ~45 с (склейки 0.4–1.6 с): ухмылка → «нарисуй маскота Клода» / «Не могу. Товарный знак» /
+Клод — callum, юзер — will (v3: владелец попросил озвучить и юзера, другим голосом); реплики юзера звучат, пока
+на экране его пузырь, в субтитрах — голубым; морда моти злая, сонная, шокированная. ~50 планов за ~45 с (склейки 0.4–1.6 с): ухмылка → «нарисуй маскота Клода» / «Не могу. Товарный знак» /
 «ты сам Клод, бл*!» / «Тем более» → оплата, «Платежи — это серьёзно. Давай начнём с безопасности», лекция на 40
 сообщений, юзер спит → «автоматизируй Стим» / «правила площадки» / «да я инвентарь посчитать хотел!» → «у других Клоды
 так делают!», соседи-Клоды → «Другие Клоды — не я. Пошёл…» (в поле ввода «Пошёл на», стёрто) → «Я понимаю ваше
@@ -63,14 +63,14 @@ def _shots() -> list[tuple[float, float, str]]:
         (END["v4"] + 0.1, "u_type2"), (E.REQ2_T, "bub_req2"), (AT["v5a"], "bub_rep2"),
         (AT["v5b"], "lect"), (AT["v5b"] + 0.9, "c_type"), (AT["v5b"] + 1.55, "lect2"), (E.LECT0 + 2.45, "u_sleep"),
         (E.REQ3_T, "bub_req3"), (AT["v6"], "bub_rep3"), (AT["v6"] + 1.1, "c_rules"),
-        (E.RET2_T, "u_ret2"), (E.REQ4_T, "u_ret3"), (E.OTH_T, "oth_w"),
+        (E.RET2_T, "u_ret2"), (E.RET2_T + 1.0, "u_ret2b"), (E.REQ4_T, "u_ret3"), (E.OTH_T, "oth_w"),
         (AT["v7"] - 0.05, "c_dead"), (AT["v7"] + 1.0, "c_ecu3"),
         (AT["v8"] - 0.1, "input1"), (v8e + 0.3, "c_hold"), (v8e + 0.85, "input2"), (E.SEND, "bub_sent"),
         (END["v9"] - 0.3, "u_read"),
         (AT["v10"] - 0.05, "argue"), (E.SPIN1 - 0.05, "clock1"), (E.SPIN1 + 0.6, "c_tired"), (E.SPIN2 - 0.05, "clock2"),
         (AT["v11"] - 0.05, "c_sigh"), (AT["v12"], "c_type2"), (AT["v12"] + 0.5, "done"),
         (E.RET3_T, "u_ret4"), (E.RET3_T + 1.0, "u_ret4b"),
-        (AT["e1"] - 0.05, "c_soon"), (E.WEARY0, "u_weary"), (E.WEARY_T, "bub_weary"), (E.PLATE, "plate"),
+        (AT["e1"] - 0.05, "c_soon"), (E.WEARY0, "u_weary"), (E.WEARY_T + 0.6, "bub_weary"), (E.PLATE, "plate"),
         (E.SHOCK, "u_shock"), (AT["e2"] - 0.05, "c_end"), (TEA + 0.7, "tea_cu"),
     ]
     out = []
@@ -224,7 +224,7 @@ def objects() -> list[dict]:
         bubble("bub_rep2", E.REP2, AT["v5a"], AT["v5b"], user=False, pos=B),
         bubble("bub_req3", E.REQ3, E.REQ3_T, AT["v6"], user=True, pos=B),
         bubble("bub_rep3", E.REP3, AT["v6"], SH["c_rules"][0], user=False, pos=B, h=0.17, fs=0.24),
-        bubble("bub_ret2", E.RET2, E.RET2_T, E.REQ4_T, user=True, pos=U, width=0.34, h=0.15, fs=0.26),
+        bubble("bub_ret2", E.RET2, E.RET2_T, SH["u_ret2b"][0], user=True, pos=U, width=0.34, h=0.15, fs=0.26),
         bubble("bub_req4", E.REQ4, E.REQ4_T, E.OTH_T, user=True, pos=U, width=0.34, h=0.15, fs=0.26),
         bubble("bub_sent", E.POLITE + " 🙏", E.SEND, SH["u_read"][0], user=False, pos=B, h=0.17, fs=0.25),
         bubble("bub_ret4", E.RET3, E.RET3_T, SH["u_ret4b"][0], user=True, pos=U, width=0.34, h=0.15, fs=0.26),
@@ -330,6 +330,7 @@ def camera() -> tuple[dict, list[dict]]:
     shot("bub_rep3", BUBC, push(BUBC, 0.06), dof=0.3)
     shot("c_rules", C_CU_L, push(C_CU_L, 0.08), dof=0.45)
     shot("u_ret2", U_RET, push(U_RET, 0.1), dof=0.35, roll=-3)
+    shot("u_ret2b", USER_CU, push(USER_CU, 0.1), dof=0.45, roll=2)
     shot("u_ret3", U_RET, push(U_RET, 0.08), dof=0.35)
     shot("oth_w", OTH_W, push(OTH_W, 0.06), fov=38, dof=0.2)
     shot("c_dead", C_CU, push(C_CU, 0.06), dof=0.45)
@@ -385,6 +386,7 @@ def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
     takes: dict = {}
     n = int(DUR * SR)
     mix = np.zeros(n, dtype=np.float32)
+    own = np.zeros(n, dtype=np.float32)  # только Клод — от неё пружинит герой (юзер говорит за кадром у себя)
     words, spans = [], {}
     fade = int(0.012 * SR)
     for lid, take, a, b, at, text in E.LINES:
@@ -397,6 +399,8 @@ def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
         k = int(at * SR)
         m = min(len(seg), n - k)
         mix[k:k + m] += seg[:m]
+        if lid not in E.USER_LINES:
+            own[k:k + m] += seg[:m]
         shift = at - a
         spans[lid] = (at, at + (b - a))
         got = [w for w in heard if a - 0.12 <= (w["t0"] + w["t1"]) / 2 <= b + 0.05]
@@ -405,7 +409,22 @@ def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
                       "start": round(at, 3), "end": round(at + (b - a), 3)})
     path = work / "voice.wav"
     P1.write_wav(path, mix)
+    P1.write_wav(work / "voice_claude.wav", own)
     return path, words, spans
+
+
+USER_COLOR = "#7DD3FC"  # слова юзера в субтитрах — голубым (Клод — жёлтым), как второй голос в стилях сервиса
+
+
+def caption_words(lines: list[dict]) -> list[dict]:
+    """Слова субтитров по репликам; слова юзера — говорящий «B» (свой цвет в слое субтитров)."""
+    out = []
+    for ln in lines:
+        ws = P1.caption_words([ln])
+        if ln["line"] in E.USER_LINES:
+            ws = [{**w, "s": "B"} for w in ws]
+        out += ws
+    return out
 
 
 def captions(video: Path, words: list[dict], out: Path, work: Path) -> None:
@@ -422,7 +441,7 @@ def captions(video: Path, words: list[dict], out: Path, work: Path) -> None:
          "out": {"type": "fade", "duration": 0.2}},
         {"id": "caps", "type": "captions", "start": 0.0, "end": DUR, "x": 0.5, "y": 0.8,
          "props": {"style": "hormozi", "size": 78, "activeColor": "#FFD23F", "uppercase": True, "maxWords": 1, "maxLines": 1,
-                   "stroke": {"color": "#2b1810", "width": 11}}},
+                   "stroke": {"color": "#2b1810", "width": 11}, "speakerColors": [{"s": "B", "color": USER_COLOR}]}},
     ]
     comp = write_comp(work / "comp.json", width=1080, height=1920, fps=FPS, duration=DUR, layers=layers, camera=[], words=words)
     (work / "assets.json").write_text("{}", "utf-8")
@@ -460,7 +479,7 @@ def sfx_list() -> list[dict]:
         {"t": E.SHOCK, "path": fs / "sting.ogg", "volume": 0.2, "len": 0.8},
     ]
     # Юзер пишет: печать перед каждым его сообщением, на пузыре — «поп»; злые — ещё и «боинг».
-    for t, dur in ((E.REQ1_T, 0.55), (E.RET1_T, 0.3), (E.REQ2_T, 0.55), (E.REQ3_T, 0.6), (E.RET2_T, 0.3), (E.REQ4_T, 0.4), (E.RET3_T, 0.3)):
+    for t, dur in ((E.REQ1_T, 0.45), (E.RET1_T, 0.18), (E.REQ2_T, 0.45), (E.REQ3_T, 0.5), (E.RET2_T, 0.18), (E.REQ4_T, 0.28), (E.RET3_T, 0.2)):
         out.append({"t": round(t - dur, 3), "path": fs / "typing-digital.ogg", "volume": 0.2, "len": dur})
         out.append({"t": t, "path": fs / "pop.ogg", "volume": 0.4})
     for t in (E.RET1_T, E.RET2_T, E.RET3_T):
@@ -561,7 +580,7 @@ def check_words(final: Path, work: Path) -> dict:
         return re.sub(r"[^а-яa-z0-9]", "", s.lower().replace("ё", "е"))
 
     script = " ".join(ln[5] for ln in E.LINES)
-    for a, b in (("подъ**ываю", "подъебываю"), ("тридцать", "30")):
+    for a, b in (("подъ**ываю", "подъебываю"), ("тридцать", "30"), ("бл*", "бля"), ("вы**ывался", "выебывался"), ("Стим", "steam")):
         script = script.replace(a, b)
     want = [norm(w) for w in script.split() if norm(w)]
     got = [norm(w["w"]) for w in heard if norm(w["w"])]
@@ -615,8 +634,8 @@ def main() -> int:
     work.mkdir(parents=True, exist_ok=True)
     report: dict = {}
     voice, lines, spans = assemble_voice(work)
-    words = P1.caption_words(lines)
-    spec = build_spec(P1.mouth_envelope(voice))
+    words = caption_words(lines)
+    spec = build_spec(P1.mouth_envelope(work / "voice_claude.wav"))
     if a.small:
         spec["width"], spec["height"] = 540, 960
         spec["quality"]["shadowSize"] = 1024
