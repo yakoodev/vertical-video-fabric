@@ -1334,6 +1334,33 @@ def main():
         report["exported"] = export_frames(Path(CFG.get("export_dir") or out_dir / "export"),
                                            [int(f) for f in CFG["export_frames"]], cam)
     stills = CFG.get("stills")
+    # frame-log >> (журнал кадров; этот блок не входит в хэш кода кусков — app.series3d_blender._code_hash)
+    if CFG.get("frame_log", True) or CFG.get("log_frames"):
+        # журнал каждого кадра рядом с рендером (план, камера, кто в кадре и сколько, кто говорит, кости, правила)
+        import series_framelog
+
+        try:
+            if CFG.get("log_frames"):           # только журнал этих кадров, без рендера («кадр плана N на t»)
+                want = {int(f) for f in CFG["log_frames"]}
+                todo_log = {c["key"]: [f for f in range(c["f0"], c["f1"] + 1) if f in want]
+                            for c in CFG.get("chunks") or []}
+            else:
+                todo_log = CFG.get("todo") or {}
+            if stills and not CFG.get("log_frames"):
+                report["frame_log"] = series_framelog.write_frame_logs({"__stills__": [int(f) for f in stills]}, [],
+                                                                       cache, cam, perf, hero=arm, face_pts=face_pts,
+                                                                       still_dir=out_dir, log=log)
+            else:
+                report["frame_log"] = series_framelog.write_frame_logs(todo_log, CFG.get("chunks") or [], cache, cam,
+                                                                       perf, hero=arm, face_pts=face_pts, log=log)
+        except Exception as exc:  # noqa: BLE001 - журнал не валит рендер
+            report["frame_log"] = {"error": f"{type(exc).__name__}: {exc}"[:300]}
+            log("журнал кадров не записан:", report["frame_log"]["error"])
+        if CFG.get("log_frames"):
+            (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
+            log("готово (только журнал)")
+            return
+    # << frame-log
     if CFG.get("backend") == "threejs":
         # «Blender ставит позу, three.js рисует»: сцена и позы кадров — в поток (series_export.py), без рендера
         import series_export

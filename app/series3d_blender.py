@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import math
 import os
 import shutil
@@ -381,8 +382,17 @@ def _code_hash() -> str:
               root / "tools" / "blender" / "series_voxel.py",
               root / "app" / "motion3d.py"):
         if p.is_file():
-            h.update(p.read_bytes())
+            h.update(_without_log_block(p.read_bytes()))
     return h.hexdigest()[:12]
+
+
+_LOG_BLOCK = re.compile(rb"[ \t]*# frame-log >>.*?# << frame-log[^\n]*\n", re.S)
+
+
+def _without_log_block(data: bytes) -> bytes:
+    """Блок журнала кадров (``# frame-log >> … # << frame-log`` в series_scene.py) картинку не меняет — в хэш
+    кусков не входит, иначе добавление журнала перерисовало бы кэш всех серий."""
+    return _LOG_BLOCK.sub(b"", data)
 
 
 THREE_SOURCES = ("tools/blender/series_export.py", "tools/blender/bake_view_lut.py", "app/series3d_pose.py",
