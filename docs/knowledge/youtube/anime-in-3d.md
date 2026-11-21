@@ -43,6 +43,8 @@
 
 Кадры: 19:30 — лицо с правлеными нормалями и без; 27:20 — UV вдоль осей; 34:10 — полная анимация против ограниченной.
 
+![19:30](img/related/yhGjCzxJV3E/19m30s.jpg) ![27:20](img/related/yhGjCzxJV3E/27m20s.jpg) ![34:10](img/related/yhGjCzxJV3E/34m10s.jpg)
+
 ## 22. [3D Toon Rendering in 'Hi-Fi RUSH'](https://youtu.be/gdBACyIOCtc) (GDC 2024)
 
 - **Тень лица — карта порога (SDF):** 36 масок шагом 5° → чистка → слияние полем расстояний. Шейдер сравнивает с картой угол света в пространстве головы / π, другую сторону зеркалит. Карта на UV, мимика тень не ломает.
@@ -57,6 +59,8 @@
 
 Кадры: 23:00; 47:20; 50:15.
 
+![23:00](img/related/gdBACyIOCtc/23m00s.jpg) ![47:20](img/related/gdBACyIOCtc/47m20s.jpg) ![50:15](img/related/gdBACyIOCtc/50m15s.jpg)
+
 ## 23. [Why Guilty Gear's 'Bad' 3D Models Look Perfectly 2D](https://youtu.be/234m7y8D3cE) (Noggi)
 
 - **Корпусный контур на лице отодвигают от камеры** по маске цвета вершин.
@@ -70,6 +74,8 @@
 
 Кадры: 02:20; 21:05; 24:45.
 
+![02:20](img/related/234m7y8D3cE/02m20s.jpg) ![21:05](img/related/234m7y8D3cE/21m05s.jpg) ![24:45](img/related/234m7y8D3cE/24m45s.jpg)
+
 ## 24. [How Japanese Studios Use CG to Cheat 2D Animation](https://youtu.be/BuKi3QAsiYA) (Class Creatives)
 
 Обзор с рекламой, почти нечего взять.
@@ -77,6 +83,8 @@
 - **2D-слои фона на плоскостях на 3–5 глубинах.** Мерить: сдвиг слоя при панораме ∝ 1/z.
 
 Кадры: 01:20; 02:05; 05:40.
+
+![01:20](img/related/BuKi3QAsiYA/01m20s.jpg) ![02:05](img/related/BuKi3QAsiYA/02m05s.jpg) ![05:40](img/related/BuKi3QAsiYA/05m40s.jpg)
 
 ## 25. [How Studio Orange "Cheats" 3D to Look Like 2D Anime](https://youtu.be/W117QR-9OHc) (Class Creatives)
 
@@ -87,6 +95,8 @@
 - **Лицо ретаймят отдельно от тела:** рот и веки на 1–2, тело на 2–3.
 
 Кадры: 02:00; 02:20; 09:50.
+
+![02:00](img/related/W117QR-9OHc/02m00s.jpg) ![02:20](img/related/W117QR-9OHc/02m20s.jpg) ![09:50](img/related/W117QR-9OHc/09m50s.jpg)
 
 ## 26. [Anime and NPR at DillonGoo Studios](https://youtu.be/4Zto6lTAJo0) (Blender)
 
@@ -99,6 +109,8 @@
 
 Кадры: 08:16; 09:22; 12:00.
 
+![08:16](img/related/4Zto6lTAJo0/08m16s.jpg) ![09:22](img/related/4Zto6lTAJo0/09m22s.jpg) ![12:00](img/related/4Zto6lTAJo0/12m00s.jpg)
+
 ## 27. [2D Comic Style in 3D: Shapes! Lines! Shading! (BCON26)](https://youtu.be/AFmyCt3MR4M) (Blender)
 
 - **Толщина линии: «дистанция отсечки»** (ближе — тоньше, дальше — толще) и группа вершин `line_w`. Мерить: std/mean толщины контура ≤ 0.1 на наезде камеры.
@@ -108,6 +120,8 @@
 - **Нормали поворачивать по близости к морщинам и по группе вершин уха** — гарантированный обод.
 
 Кадры: 21:40; 37:15; 45:40.
+
+![21:40](img/related/AFmyCt3MR4M/21m40s.jpg) ![37:15](img/related/AFmyCt3MR4M/37m15s.jpg) ![45:40](img/related/AFmyCt3MR4M/45m40s.jpg)
 
 ## 28. [Making Stylized Visuals | Lessons from Anime and Short Films (BCON 2024)](https://youtu.be/M4v_hfGF4EM) (Blender)
 
@@ -121,6 +135,8 @@
 
 Кадры: 29:10; 31:50; 35:30.
 
+![29:10](img/related/M4v_hfGF4EM/29m10s.jpg) ![31:50](img/related/M4v_hfGF4EM/31m50s.jpg) ![35:30](img/related/M4v_hfGF4EM/35m30s.jpg)
+
 ## 29. [The Animation of Guilty Gear Xrd & Dragon Ball FighterZ](https://youtu.be/kZsboyfs-L4) (New Frame Plus)
 
 - **Шаг по группам костей:** тело 2–3, рот и веки 1–2, волосы 2. Мерить: значения каждой группы меняются только на её сетке.
@@ -128,6 +144,8 @@
 - **Тип смаза:** тянутая форма (GG) или линии скорости (DBZ).
 
 Кадры: 09:20; 10:00; 15:00.
+
+![09:20](img/related/kZsboyfs-L4/09m20s.jpg) ![10:00](img/related/kZsboyfs-L4/10m00s.jpg) ![15:00](img/related/kZsboyfs-L4/15m00s.jpg)
 
 ## 30. [The Genius Animation Behind Spider-man: Into the Spider-Verse](https://youtu.be/N21oG99eF3A) (Howard Wimshurst)
 
@@ -137,6 +155,8 @@
 - **Тёмные материалы без тени.** Мерить: один уровень в маске `npr_lit`.
 
 Кадры: 01:45; 02:10; 02:50.
+
+![01:45](img/related/N21oG99eF3A/01m45s.jpg) ![02:10](img/related/N21oG99eF3A/02m10s.jpg) ![02:50](img/related/N21oG99eF3A/02m50s.jpg)
 
 ## 31. [How to Animate SPEED - Smears + Duplicate Limbs](https://youtu.be/xNiUO6BwtTc) (Sir Wade Neistadt)
 
@@ -149,6 +169,8 @@
 
 Кадры: 02:40; 12:00; 13:35.
 
+![02:40](img/related/xNiUO6BwtTc/02m40s.jpg) ![12:00](img/related/xNiUO6BwtTc/12m00s.jpg) ![13:35](img/related/xNiUO6BwtTc/13m35s.jpg)
+
 ## 32. [Smear Frames in blender have never been this Easy! (4.5+)](https://youtu.be/TgOllr05aCs) (3Dan)
 
 - **Смаз по вершинам:** смещается только задняя сторона (dot(нормаль, движение) > 0); рваный край — шум в 5-й степени; вершины со сдвигом < 0.02 м удаляются; отступ по нормали 0.1 мм против z-fight.
@@ -159,6 +181,8 @@
 
 Кадры: 04:15; 06:50; 16:30.
 
+![04:15](img/related/TgOllr05aCs/04m15s.jpg) ![06:50](img/related/TgOllr05aCs/06m50s.jpg) ![16:30](img/related/TgOllr05aCs/16m30s.jpg)
+
 ## 33. [7 Ways to Make Lineart in Blender 4.0!](https://youtu.be/-urA3hqzF30) (Vertex Arcade)
 
 - **Корпусный контур Solidify плюс скриптовая группа `hull_width`.** Мерить: покрытие силуэта ≥ 0.98, внутри лица ≈ 0.
@@ -167,3 +191,5 @@
 - **Цвет линии по материалу** для painterly.
 
 Кадры: 02:15; 06:20; 15:20.
+
+![02:15](img/related/-urA3hqzF30/02m15s.jpg) ![06:20](img/related/-urA3hqzF30/06m20s.jpg) ![15:20](img/related/-urA3hqzF30/15m20s.jpg)

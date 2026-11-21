@@ -31,6 +31,8 @@
 
 Кадры: 00:19 — модель пропорций без теневых текстур; 01:30 — правка размера руки рядом с Вэшем; 05:39 — крестики на неудачных формах теней.
 
+![00:19](img/related/tw-Atp-kdF0/00m19s.jpg) ![01:30](img/related/tw-Atp-kdF0/01m30s.jpg) ![05:39](img/related/tw-Atp-kdF0/05m39s.jpg)
+
 ## 2. [Prop Making for Trigun Stampede: Punisher](https://youtu.be/E_CMEx08rjU) (Orange)
 
 - **Грубую модель вставляют в настоящий тестовый шот до детализации** и смотрят, каких деталей не хватает. У нас: лист пропса в NPR-образе для крупного, среднего и общего плана до чистовой модели (расширение `scene_props.py`).
@@ -38,11 +40,15 @@
 
 Кадры: 01:05 — грубая модель с механикой раскрытия; 01:52 — грубая модель в тестовом шоте; 02:41 — детали, дорисованные поверх кадра.
 
+![01:05](img/related/E_CMEx08rjU/01m05s.jpg) ![01:52](img/related/E_CMEx08rjU/01m52s.jpg) ![02:41](img/related/E_CMEx08rjU/02m41s.jpg)
+
 ## 3. [New Anime Style 3D Modeling - BLENDER Guide](https://youtu.be/HHCGrbeTWww) (Shonzo)
 
 Нечего взять: запись стрима, голову моделируют вручную «на глаз».
 
 Кадры: 31:14 — крючок у пряди меньше скручивается при сгибе; 40:06 — плоский перед лица, как у фигурок.
+
+![31:14](img/related/HHCGrbeTWww/31m14s.jpg) ![40:06](img/related/HHCGrbeTWww/40m06s.jpg)
 
 ## 4. [Как сделать аниме персонажа в блендере?](https://youtu.be/aFK-2fdvZZc) (R_visual)
 
@@ -50,12 +56,16 @@
 
 Кадры: 42:03 — складки на рёбрах против скругления.
 
+![42:03](img/related/aFK-2fdvZZc/42m03s.jpg)
+
 ## 5. [The ULTIMATE Guide to Creating 3D Characters in 2025](https://youtu.be/zXm-mYeApQQ) (Stylized Station)
 
 В основном обзор. Проверяемое одно:
 - **UV проверяют шахматкой на растяжение.** У нас: то же числом в `process_prop.py` и для фонов из 13 — для каждого треугольника отношение площади в UV к площади в 3D, нормированное на медиану. Флаг, если p95/p5 > 4 или плотность текселей у соседних объектов в кадре различается больше чем вдвое.
 
 Кадры: 13:29 — шахматка на UV; 11:10 — сетка вдоль сгибов.
+
+![13:29](img/related/zXm-mYeApQQ/13m29s.jpg) ![11:10](img/related/zXm-mYeApQQ/11m10s.jpg)
 
 ## 6. [Blender Hard-Surface Modeling Fundamentals](https://youtu.be/nsTjnQ067sw) (CG Boost)
 
@@ -65,6 +75,8 @@
 
 Кадры: 03:38 — Bevel с Harden Normals; 09:48 — Shrinkwrap Project с вершинной группой; 20:36 — разрез через Bool Tool.
 
+![03:38](img/related/nsTjnQ067sw/03m38s.jpg) ![09:48](img/related/nsTjnQ067sw/09m48s.jpg) ![20:36](img/related/nsTjnQ067sw/20m36s.jpg)
+
 ## 7. [Game-Ready Topology with AI? I Compared Best AI Tools](https://youtu.be/3hagi51IxeY) (Stefan 3D AI)
 
 - **После ИИ-ретопологии каждый раз проверяют:** non-manifold рёбра, висящие вершины, несшитые дубли (Merge by Distance сшивает до 11 000 вершин), пересекающиеся грани, отлетевшие куски. Лучший результат — 5 non-manifold рёбер и 0 дублей.
@@ -73,6 +85,8 @@
 - **Meshy после ремеша запекает нормали с высокой модели на низкую.** У нас: опция `--bake-normal`, только для образов без жёсткого cel — в манге карта нормалей дробит тень.
 
 Кадры: 08:18 — ремень, ремеш против настоящей топологии; 10:19 — non-manifold и Merge by Distance; 11:08 — Hunyuan, 5 non-manifold и 0 дублей.
+
+![08:18](img/related/3hagi51IxeY/08m18s.jpg) ![10:19](img/related/3hagi51IxeY/10m19s.jpg) ![11:08](img/related/3hagi51IxeY/11m08s.jpg)
 
 ## 8. [VRoid to Blender: a Tutorial Series (part 1)](https://youtu.be/OYm0mqP8NQs) (MelonyPepon)
 
@@ -84,6 +98,8 @@
 - **Tris-to-quads рвёт UV на швах VRoid.** У нас: в конвейер не добавлять.
 
 Кадры: 02:21 — настройки экспорта; 26:17 — волосы после Merge by Distance; 31:26 — разрыв UV после tris-to-quads.
+
+![02:21](img/related/OYm0mqP8NQs/02m21s.jpg) ![26:17](img/related/OYm0mqP8NQs/26m17s.jpg) ![31:26](img/related/OYm0mqP8NQs/31m26s.jpg)
 
 ## 9. [Can Blender 5.3's New Light Nodes Replace Shader to RGB?](https://youtu.be/S-BrlZbK_pU) (Mix 3D)
 
@@ -103,6 +119,8 @@
 
 Кадры: 03:39 — четыре новые ноды; 16:58 — починка тени через Mix с Shadow Raycast; 22:36 — тень шагами через snap Scene Time; 27:20 — custom property цвета на источнике.
 
+![03:39](img/related/S-BrlZbK_pU/03m39s.jpg) ![16:58](img/related/S-BrlZbK_pU/16m58s.jpg) ![22:36](img/related/S-BrlZbK_pU/22m36s.jpg) ![27:20](img/related/S-BrlZbK_pU/27m20s.jpg)
+
 ## 10. [2d style materials in 3d animation](https://youtu.be/AtetvOEcZt8) (Joey Carlino)
 
 - **Разделение источников по каналам работает уже в 4.5:** ключевой свет чисто красный, контровой зелёный, заполняющий синий; Shader to RGB и Separate RGB дают маску на каждый источник.
@@ -112,12 +130,16 @@
 
 Кадры: 05:01 — каналы RGB для контровых; 08:06 — контур через вывернутую оболочку (inverted hull); 15:02 — Voronoi в нормалях для мазков.
 
+![05:01](img/related/AtetvOEcZt8/05m01s.jpg) ![08:06](img/related/AtetvOEcZt8/08m06s.jpg) ![15:02](img/related/AtetvOEcZt8/15m02s.jpg)
+
 ## 11. [How I create Anime-Style Textures in 3D](https://youtu.be/h8llGEKIQT0) (Stylized Station)
 
 - **Рецепт из Substance Painter переносится:** пятна, затем размытие по уклону (blur slope), направленное размытие, sharpen; несколько сдвинутых копий слоя в overlay; AO умножением в щели; светлые рёбра по кривизне.
   У нас: шаг `--paint-pass` в `process_prop.py` — запечь AO и pointiness, затем в numpy сдвиг текселей шумом (аналог blur slope), щели темнее, рёбра светлее на 5–8%. Вариант без прохода сохранять. Проверка: гистограмма и лист до и после.
 
 Кадры: 05:39 — эффект blur slope; 07:05 — AO в щелях; 08:16 — светлые рёбра.
+
+![05:39](img/related/h8llGEKIQT0/05m39s.jpg) ![07:05](img/related/h8llGEKIQT0/07m05s.jpg) ![08:16](img/related/h8llGEKIQT0/08m16s.jpg)
 
 ## 12. [Hand painted character workflow in Blender](https://youtu.be/_w1Ya70diWU) (Celso Teixeira)
 
@@ -126,6 +148,8 @@
 - **Два SubD подряд (первый с crease, второй без)** смягчают пересушенные складки — для пропсов из 6.
 
 Кадры: 07:03 — мягкий свет под запекание; 13:13 — AO через ColorRamp; 18:20 — линии на швах.
+
+![07:03](img/related/_w1Ya70diWU/07m03s.jpg) ![13:13](img/related/_w1Ya70diWU/13m13s.jpg) ![18:20](img/related/_w1Ya70diWU/18m20s.jpg)
 
 ## 13. [The ABSOLUTE BEST Way to Create 3D Anime Backgrounds in Blender](https://youtu.be/hM_uhazFOl0) (PolyPaint)
 
@@ -136,6 +160,8 @@
 
 Кадры: 01:35 — масштаб плоскостей от точки камеры; 04:00 — Project from View; 05:13 — проекция на свою UV.
 
+![01:35](img/related/hM_uhazFOl0/01m35s.jpg) ![04:00](img/related/hM_uhazFOl0/04m00s.jpg) ![05:13](img/related/hM_uhazFOl0/05m13s.jpg)
+
 ## 14. [The Complete Guide to Texture Baking in Blender 2025](https://youtu.be/MSHZIYNFrXI) (EidosEdge)
 
 - **Подготовка к запеканию:** применить все модификаторы (`convert(target='MESH')`), убрать резаки, соединить неподвижные части, применить трансформации, проверить перекрытия UV.
@@ -143,3 +169,5 @@
 - **Любую скалярную маску можно запечь через Emission (bake EMIT).** У нас: так запекать в текстуру объектную часть NPR-материалов окружения (пятна, вариации в Rest-координатах), граф шейдера короче. Замер в `npr_bench.py`: время компиляции и кадра, разница < 2%.
 
 Кадры: 04:22 — Select Overlap; 05:56 — DIFFUSE без direct/indirect; 09:07 — metallic через Emission.
+
+![04:22](img/related/MSHZIYNFrXI/04m22s.jpg) ![05:56](img/related/MSHZIYNFrXI/05m56s.jpg) ![09:07](img/related/MSHZIYNFrXI/09m07s.jpg)

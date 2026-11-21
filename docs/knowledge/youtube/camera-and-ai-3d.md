@@ -41,6 +41,8 @@
 
 Кадры: 01:56 — кадр до и после затемнения героя; 09:29 — кривая камеры в Graph Editor; 10:41 — перескок оси.
 
+![01:56](img/related/C-sAcPM0B6Q/01m56s.jpg) ![09:29](img/related/C-sAcPM0B6Q/09m29s.jpg) ![10:41](img/related/C-sAcPM0B6Q/10m41s.jpg)
+
 ## 16. [Ultimate Guide to Film Composition & Framing](https://youtu.be/hUmZldt0DTg) (StudioBinder)
 
 - **Глаза на линии третей или золотого сечения (0.382 от высоты).** У нас: в `check_frame` для medium/close высота глаз в NDC, цель 33% или 38.2% от верха, допуск ±8% (`head_room` уже считается).
@@ -51,6 +53,8 @@
 - Ведущие линии, узоры, симметрия — вкусовые, правило не сделать.
 
 Кадры: 02:49 — трети и золотой треугольник; 07:16 — запас над головой и перед взглядом; 11:11 — линия золотого сечения для глаз.
+
+![02:49](img/related/hUmZldt0DTg/02m49s.jpg) ![07:16](img/related/hUmZldt0DTg/07m16s.jpg) ![11:11](img/related/hUmZldt0DTg/11m11s.jpg)
 
 ## 17. [How to Force Blender To Create 2D-Style Lighting](https://youtu.be/Pwcua88ymbE) (Noggi)
 
@@ -64,6 +68,8 @@
 
 Кадры: 04:25 — dot-product шейдер; 08:49 — карта порога; 13:49 — геонод-проектор тени.
 
+![04:25](img/related/Pwcua88ymbE/04m25s.jpg) ![08:49](img/related/Pwcua88ymbE/08m49s.jpg) ![13:49](img/related/Pwcua88ymbE/13m49s.jpg)
+
 ## 18. [Blender Grease Pencil - 2D 3D Hybrid Storyboard Animatic](https://youtu.be/H10rQoSg41c) (Spitfire Storyboards)
 
 В основном ручное рисование.
@@ -73,6 +79,8 @@
 - **24 мм — широко и с искажением вблизи; длинный объектив сжимает пространство.** У нас: предупреждение «объектив < 35 мм + крупный план + камера ближе ~1 м к лицу».
 
 Кадры: 26:50 — объектив и FOV; 32:25 — переключение на Constant; 45:53 — Bind Camera to Markers.
+
+![26:50](img/related/H10rQoSg41c/26m50s.jpg) ![32:25](img/related/H10rQoSg41c/32m25s.jpg) ![45:53](img/related/H10rQoSg41c/45m53s.jpg)
 
 ## 19. [THE BASICS - Blender Compositing for NPR Part 1](https://youtu.be/bmemiGugZFQ) (Pau the Hueman)
 
@@ -84,6 +92,8 @@
 
 Кадры: 10:09 — Z-pass; 11:57 — обесцвечивание по глубине; 13:42 — Kuwahara.
 
+![10:09](img/related/bmemiGugZFQ/10m09s.jpg) ![11:57](img/related/bmemiGugZFQ/11m57s.jpg) ![13:42](img/related/bmemiGugZFQ/13m42s.jpg)
+
 ## 20. [The insanity of anime production.](https://youtu.be/ViluMLQ8TDg) (Ori)
 
 - **Единица — «кат» со своим таймшитом:** лейаут → таймшит → правки → генга → доуга по таймшиту → проверка → заливка → проверка заливки → композ → монтажёр подрезает кадры.
@@ -92,6 +102,8 @@
 - **Цветовые линии заливки:** синий — край тени, красный — край блика. У нас: проверка палитры — внутри маски персонажа каждый пиксель близок к цвету «свет/тень/блик», доля чужих > ~0.5% — ошибка.
 
 Кадры: 03:29 — правки на цветной бумаге; 04:35 — легенда цветов заливки; 06:13 — монтажёр подрезает каты.
+
+![03:29](img/related/ViluMLQ8TDg/03m29s.jpg) ![04:35](img/related/ViluMLQ8TDg/04m35s.jpg) ![06:13](img/related/ViluMLQ8TDg/06m13s.jpg)
 
 ---
 
@@ -107,6 +119,8 @@
 
 Кадры: 06:34 — переименование по анатомии; 08:16 — JSON в свойствах объекта; 10:31 — плагин, не переключивший коллекцию.
 
+![06:34](img/related/r7H60u0kHRA/06m34s.jpg) ![08:16](img/related/r7H60u0kHRA/08m16s.jpg) ![10:31](img/related/r7H60u0kHRA/10m31s.jpg)
+
 ## 35. [Ep.5 Rig & Animation - From AI to Game-ready](https://youtu.be/68pOKXxJiq8) (Stefan 3D AI)
 
 - **Перед ригом:** модификаторы применены, scale = 1; экспорт для Mixamo ×100. У нас: предполётная проверка меша TripoSG (модификаторы, масштаб, ожидаемая высота).
@@ -115,6 +129,8 @@
 - **frame_end = конец action; у лупа первая поза = последняя.** У нас: скриптовая проверка обоих условий.
 
 Кадры: 03:56 — утечка веса на живот; 05:40 — настройка отступа рук; 14:42 — сброс в позу покоя.
+
+![03:56](img/related/68pOKXxJiq8/03m56s.jpg) ![05:40](img/related/68pOKXxJiq8/05m40s.jpg) ![14:42](img/related/68pOKXxJiq8/14m42s.jpg)
 
 ## 36. [From AI Image to Game-Ready 3D Models! (Full Workflow)](https://youtu.be/mXlD8jKSa7s) (PixelArtistry)
 
@@ -125,6 +141,8 @@
 
 Кадры: 04:00 — нарезка концепта на части; 08:55 — трансформации и origin; 17:19 — Shrinkwrap и Multires.
 
+![04:00](img/related/mXlD8jKSa7s/04m00s.jpg) ![08:55](img/related/mXlD8jKSa7s/08m55s.jpg) ![17:19](img/related/mXlD8jKSa7s/17m19s.jpg)
+
 ## 37. [We Built a FREE AI Render Engine for CG & Facial Animation (ComfyUI + Blender)](https://youtu.be/7J7hi-Hxpac) (Mickmumpitz)
 
 Видеомоделям нужно 32 ГБ видеопамяти, у нас не потянуть.
@@ -132,6 +150,8 @@
 - **Грабли:** аудио короче плана — модель досочиняет тарабарщину; липсинк разваливается на мелком лице; разрешение должно делиться на 64. У нас: правило «доля лица ≥ X» для планов с детальной артикуляцией.
 
 Кадры: 03:18 — проходы глубины и контуров; 03:49 — маска рта; 21:32 — липсинк ломается на дальнем плане.
+
+![03:18](img/related/7J7hi-Hxpac/03m18s.jpg) ![03:49](img/related/7J7hi-Hxpac/03m49s.jpg) ![21:32](img/related/7J7hi-Hxpac/21m32s.jpg)
 
 ## 38. [I Tested the LATEST Auto-Rigger… (Rig Creator)](https://youtu.be/rPYuqSVi2Rk) (CGDive)
 
@@ -160,6 +180,8 @@
 
 Кадры: 10:41 — колено на 180°; 15:10 — страница анимаций; 24:10 — перекрученный после импорта рыцарь.
 
+![10:41](img/related/QC88NcAejcQ/10m41s.jpg) ![15:10](img/related/QC88NcAejcQ/15m10s.jpg) ![24:10](img/related/QC88NcAejcQ/24m10s.jpg)
+
 ## 41. [Сделал 27 версий игр, чтобы понять, как тратить в 4 раза меньше лимитов ИИ!](https://youtu.be/nPSwiARbeRQ) (Студия Игор)
 
 - **Боты с ожидаемыми исходами, включая отрицательные:** бездействующий обязан проиграть, однобокий — не пройти, умный — выиграть. У нас: у каждой проверки заведомо сломанный вход (вывернутое колено, перескок 180°, плащ в теле); проверка, которая его не ловит, считается сломанной.
@@ -171,6 +193,8 @@
 
 Кадры: 08:01 — три бота; 37:15 — качели критика; 14:43 — тикет про нагрузку.
 
+![08:01](img/related/nPSwiARbeRQ/08m01s.jpg) ![37:15](img/related/nPSwiARbeRQ/37m15s.jpg) ![14:43](img/related/nPSwiARbeRQ/14m43s.jpg)
+
 ## 42. [Как создать 3D-игру с помощью ИИ. Гость: Студия Игор!](https://youtu.be/C3XLKksF4oc) (Евгений Гришаков, интервью)
 
 - **Этап — цикл «ресёрч → документ (строка = решение с числами) → работа → замер → приёмка → коммит».** Приёмка тройная: инструменты → критики → человек; принцип отличают от пожелания по проверяемости. У нас: план серии и таймшит построчно с числами, каждую строку проверяет скрипт.
@@ -181,3 +205,5 @@
 - **Тесты только на то, что уже не меняется; документация по этапу, а не по итерации;** решения агента без владельца — отдельным файлом.
 
 Кадры: 29:32 — скрипт пересечения коллайдеров; 38:31 — лаборатория анимаций; 42:31 — тестовая сцена фонарика с лентой событий.
+
+![29:32](img/related/C3XLKksF4oc/29m32s.jpg) ![38:31](img/related/C3XLKksF4oc/38m31s.jpg) ![42:31](img/related/C3XLKksF4oc/42m31s.jpg)
