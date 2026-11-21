@@ -269,6 +269,32 @@ def reset_pose(arm):
     bpy.context.view_layer.update()
 
 
+_NEXT_JOINT = {'UpperArm': 'LowerArm', 'LowerArm': 'Hand', 'UpperLeg': 'LowerLeg', 'LowerLeg': 'Foot',
+               'Shoulder': 'UpperArm', 'spine': 'chest', 'chest': 'upper_chest', 'upper_chest': 'neck', 'neck': 'head'}
+
+
+def limb_dir(arm, pb, role, names):
+    """Direction the limb points (pose space): toward the next joint of the chain (UpperArm -> LowerArm head, ...)
+    when it is a descendant, else the bone's own head -> tail.  glTF imports (VRoid .vrm) leave bone tails along
+    the node's +Y, not along the limb, so head -> tail would turn a leg upside down."""
+    side, base = (role[0], role[2:]) if role[:2] in ('L_', 'R_') else ('', role)
+    nxt = _NEXT_JOINT.get(base)
+    if base == 'Foot':
+        cand = [c for c in pb.children if 'toe' in c.name.lower()]
+        if cand:
+            return cand[0].head - pb.head
+    if nxt:
+        nb = POS.resolve_bone(('%s_%s' % (side, nxt)) if side else nxt, names)
+        if nb and nb in arm.pose.bones:
+            q = arm.pose.bones[nb]
+            p = q.parent
+            while p is not None and p != pb:
+                p = p.parent
+            if p == pb and (q.head - pb.head).length > 1e-5:
+                return q.head - pb.head
+    return pb.tail - pb.head
+
+
 def apply_pose(arm, pose, frame):
     """Returns list of warnings (unresolved bones)."""
     warn = []
@@ -288,7 +314,7 @@ def apply_pose(arm, pose, frame):
         head = M.to_translation()
         if 'aim' in e:
             tgt = frame @ Vector(POS.axis_vec(e['aim']))
-            cur = pb.tail - pb.head
+            cur = limb_dir(arm, pb, e['bone'], names)
             if cur.length < 1e-8 or tgt.length < 1e-8:
                 continue
             R = cur.normalized().rotation_difference(tgt.normalized()).to_matrix().to_4x4()

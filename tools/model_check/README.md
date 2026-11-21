@@ -122,6 +122,9 @@ Outputs: D:\vvf-offload\model_check\{synth,mio,heroine2}\report\.
 - **Cycles ray tracing.** Exactly coplanar faces in Cycles give z-fight speckle, and EEVEE's depth-buffer z-fighting (with production `clip_start/clip_end`) is only seen in the beauty frames. The analysis camera uses tight clip planes, so production z-fighting caused by an extreme clip range is *not* reproduced. The depth test (gap < eps) is what flags such surfaces.
 - **Penetration is capped.** It is measured along the camera ray and capped at 5% of the height. Anything farther in front counts as simply being in front.
 - **Splitting can shift borders.** Splitting a mixed-layer mesh by material can move subsurf borders slightly; only meshes whose materials belong to different compared layers are split.
+- **Aim direction.** `aim` turns the limb's direction toward the next joint of the chain (UpperArm → LowerArm head,
+  LowerLeg → Foot, Foot → toe), falling back to head → tail. Before 21.11 it used head → tail, and on glTF-imported
+  VRoid models (tails along the node's +Y) legs were turned upside down; .vrm scores from before then are wrong.
 - **Pose rotations.** `aim` uses the shortest rotation, so a bone's twist is not controlled (use `rot` about the bone's axis for that). IK constraints in a rig can override the FK pose.
 - **Mixed causes.** Texture flicker also flags EEVEE z-fighting, and its attribution is the majority part under the blob.
 
