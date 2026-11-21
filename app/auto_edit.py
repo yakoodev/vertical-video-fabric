@@ -121,6 +121,12 @@ def caption_y_for(settings: dict | None) -> float:
     if layout.get("mode") == "split" and layout.get("cam_pos", "top") == "bottom":
         ratio = float(layout.get("ratio") or 0.38)
         return round(max(0.3, 1.0 - ratio - 0.05), 3)
+    if layout.get("mode") == "split":
+        # Вебка сверху: подписи на шве вебка/игра — не закрывают ни лицо, ни игру (findings п. 56,
+        # app/split_rules.py); проверка пересечения с лицом — split_rules.check_caption_box.
+        from app.split_rules import seam_caption_y
+
+        return round(seam_caption_y(layout), 3)
     return 0.72
 
 

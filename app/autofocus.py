@@ -449,7 +449,11 @@ def compute_segment_focus(
         answers = (vlm_resolver(vlm_images, hints=hints) if any(hints) else vlm_resolver(vlm_images)) or []
         points = apply_answers(points, shot_ranges, vlm_units, answers)
 
-    return points
+    # Цель кадра (говорящий, объект) меняется не чаще раза в 1,5–2 с — иначе камера мечется между двумя
+    # быстрыми собеседниками (findings п. 54, app/split_rules.py). Склейка плана — смена всегда.
+    from app.split_rules import hold_targets
+
+    return hold_targets(points)
 
 
 def _resolve_strategy(strategy: str, points: list[dict]) -> str:
