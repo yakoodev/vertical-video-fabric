@@ -273,10 +273,12 @@ def head_room(camera: dict, actor_box: dict) -> float:
 
 
 def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium",
-                grid: tuple[int, int] = GRID) -> dict:
+                grid: tuple[int, int] = GRID, intent: str = "", tags: Any = ()) -> dict:
     """Самоконтроль кадра блокинга лучами по сетке кадра: камера не внутри вещи/стены; каждый
     персонаж в кадре и не закрыт; персонажи занимают разумную долю; ничто перед ними не закрывает
-    больше ``OCCLUDE_MAX`` кадра."""
+    больше ``OCCLUDE_MAX`` кадра. ``composition`` — правила кадра (``app/shot_rules.py``: место перед взглядом,
+    линия глаз, запас над головой крупного плана, баланс, ракурс по намерению ``intent``, широкий объектив);
+    они подсказка и на ``ok`` не влияют."""
     import numpy as np
 
     problems: list[str] = []
@@ -373,8 +375,36 @@ def check_frame(camera: dict, boxes: list[dict], room: dict, size: str = "medium
         front = int(((first == i) & (first_t < 25.0)).sum()) / n
         if front > OCCLUDE_MAX:
             problems.append(f"«{b['label']}» вплотную к камере — {round(100 * front)}% кадра")
+    # Пятна веса для баланса: каждый видимый персонаж и вещь действия — средний X своих лучей и их доля кадра.
+    gx = grid[0]
+    col_x = (2 * (np.arange(n) % gx + 0.5) / gx - 1)
+    weights = []
+    for i, b in enumerate(boxes):
+        if b["role"] != "actor" and not b.get("focus"):
+            continue
+        own = (first == i) & np.isfinite(first_t)
+        if own.any():
+            weights.append((float(col_x[own].mean()), float(own.sum()) / n))
+    comp = composition(camera, [boxes[i] for i in actor_idx], size, weights, intent, tags)
     return {"ok": not problems, "problems": problems, "shares": shares, "occluders": occluders,
-            "characters_share": round(total, 4)}
+            "characters_share": round(total, 4), "composition": comp}
+
+
+def composition(camera: dict, actors: list[dict], size: str, weights: Any = None, intent: str = "",
+                tags: Any = ()) -> dict:
+    """Правила кадра (``app/shot_rules.frame_rules``) по коробкам блокинга: глаза — центр головы, взгляд — facing."""
+    from app import shot_rules as SR
+
+    items = []
+    for b in actors:
+        if not b.get("head"):
+            continue
+        hx, hy, hz = b["head"]
+        rad = float(b.get("head_r") or 11.0)
+        yaw = math.radians(float(b.get("rot") or 0.0))
+        items.append({"id": b.get("label") or b.get("id"), "eyes": [hx, hy, hz], "head_top": [hx, hy + rad, hz],
+                      "gaze": [math.sin(yaw), 0.0, math.cos(yaw)], "main": bool(b.get("main"))})
+    return SR.frame_rules(camera, items, size, intent=intent, tags=tags, weights=weights)
 
 
 def _camera_notes(steps: int, sz: str, size: str, yaw: float, lift: float) -> list[str]:
@@ -423,7 +453,8 @@ def choose_camera(shot: dict, actor_boxes: list[dict], all_boxes: list[dict], ro
                         if n < 40:
                             break
                         cam["pos"] = [_r(cam["pos"][i] + vec[i] / n * 10.0) for i in range(3)]
-                    check = check_frame(cam, all_boxes, room, sz)
+                    check = check_frame(cam, all_boxes, room, sz, intent=cam_cfg.get("intent") or "",
+                                        tags=cam_cfg.get("tags") or ())
                     if check["ok"]:
                         notes = _camera_notes(steps, sz, size, yaw, lift)
                         if dolly < 1.0:

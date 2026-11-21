@@ -235,6 +235,48 @@ def frame_check(store: Any, shot: dict, which: str) -> dict:
     return built["check"]
 
 
+def sequence_check(store: Any, script_id: int) -> list[dict]:
+    """Монтаж соседних планов одной сцены по блокингу: ось 180° и порядок персонажей по X (``app/shot_rules``).
+    Конец прошлого плана (его кадр end, если есть) против старта следующего; планы со своей сценой движка
+    (override) не сравниваются."""
+    from app import shot_rules as SR
+
+    rows = []
+    for shot in V.list_shots(store, int(script_id)):
+        try:
+            built = built_of(store, shot)
+        except Exception:  # noqa: BLE001 - не собрался — сравнивать нечего
+            rows.append({"idx": shot["idx"], "scene": None, "continues": False, "camera": None, "actors": {}})
+            continue
+        def frame(which: str) -> dict | None:
+            b = built.get(which)
+            if not b or b.get("override") or not b.get("camera"):
+                return None
+            return {"camera": b["camera"], "actors": {x["id"]: (x.get("head") or x["center"])
+                                                        for x in b.get("boxes") or [] if x["role"] == "actor"}}
+        start, end = frame("start"), frame("end")
+        if start is None:
+            rows.append({"idx": shot["idx"], "scene": None, "continues": False, "camera": None, "actors": {}})
+            continue
+        rows.append({"idx": shot["idx"], "scene": shot.get("location") or None,
+                     "continues": bool(shot.get("continues_from_prev")), "camera": start["camera"],
+                     "actors": start["actors"], "camera_end": (end or {}).get("camera"),
+                     "end": end, "tags": (shot.get("camera") or {}).get("tags") or []})
+    pairs = []
+    for prev, cur in zip(rows, rows[1:]):
+        if prev["camera"] is None or cur["camera"] is None:
+            pairs.append(None)
+            continue
+        last = prev.get("end") or prev
+        pairs.append(({"idx": prev["idx"], "scene": prev["scene"], "camera": last["camera"], "actors": last["actors"],
+                       "tags": prev["tags"]}, cur))
+    out = []
+    for pair in pairs:
+        if pair is not None:
+            out += SR.sequence_rules(list(pair))
+    return out
+
+
 def set_blocking(store: Any, shot_id: int, spec: Any = None, scenes: Any = None, source: str = "agent") -> dict:
     """Своя раскладка плана (агент/владелец): spec и/или готовые сцены движка {start?, end?}."""
     from app import motion

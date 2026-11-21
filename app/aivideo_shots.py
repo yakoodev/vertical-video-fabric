@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app import projects as P
+from app import shot_rules as SR
 from app.aivideo_cast import (
     QUALITIES, AivError, _json, slugify, require_project, _style_row, character_by_slug, list_characters,
     location_by_slug, list_locations, _shot_from_row
@@ -276,6 +277,16 @@ def normalize_shot(store: Any, project_id: int, raw: dict, idx: int, warnings: l
             camera["lens"] = int(min(135, max(14, float(cam["lens"]))))
     except (TypeError, ValueError):
         pass
+    # Правила кадра (app/shot_rules.py): намерение ракурса и теги исключений (дисбаланс, преграда, пересечение оси).
+    if cam.get("intent"):
+        intent = SR.normalize_intent(cam.get("intent"))
+        if intent:
+            camera["intent"] = intent
+        else:
+            warnings.append(f"план {idx}: camera.intent {cam.get('intent')!r} — одно из {', '.join(SR.INTENTS)}; убрано")
+    tags = SR.normalize_tags(cam.get("tags"))
+    if tags:
+        camera["tags"] = tags
     speakers = {c["id"] for c in cast}
     dialogue = []
     for line in (raw.get("dialogue") or [])[:MAX_LINES_PER_SHOT]:

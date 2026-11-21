@@ -36,7 +36,13 @@ _SHOT_SCHEMA = _obj({
                                                    "action": {"type": "string"}}, ["id"])},
     "camera": _obj({"shot": {"type": "string", "enum": list(V.SHOT_SIZES)},
                     "move": {"type": "string", "enum": list(V.CAMERA_MOVES)},
-                    "angle": {"type": "string"}, "lens": {"type": "number"}}),
+                    "angle": {"type": "string"}, "lens": {"type": "number"},
+                    "intent": {"type": "string", "enum": ["power", "weak", "neutral", "uneasy"],
+                               "description": "ракурс по смыслу: power — снизу, weak — сверху, uneasy — крен"},
+                    "tags": {"type": "array", "items": {"type": "string",
+                                                        "enum": ["imbalance", "obstacle", "reaction", "cross_line"]},
+                             "description": "исключения правил кадра: дисбаланс намеренно, преграда, реакция, "
+                                            "камера пересекает ось"}}),
     "action": {"type": "string"}, "image_prompt": {"type": "string"},
     "dialogue": {"type": "array", "items": _obj({"who": {"type": "string"}, "text": {"type": "string"},
                                                  "emotion": {"type": "string"}}, ["who", "text"])},
@@ -259,7 +265,9 @@ def h_block_shot(ctx: ToolContext, args: dict) -> dict:
         res = _call(G.request_stage, ctx.store, int(script["project_id"]), "blocking", int(args["script_id"]),
                     None, bool(args.get("rewrite")), "agent")
         return {"ok": True, "written": out, "run": res.get("run"), "status": res.get("status"),
-                "shots": [B.view(ctx.store, s) for s in V.list_shots(ctx.store, int(args["script_id"]))]}
+                "shots": [B.view(ctx.store, s) for s in V.list_shots(ctx.store, int(args["script_id"]))],
+                # монтаж соседних планов: ось 180° и порядок персонажей по X
+                "sequence": B.sequence_check(ctx.store, int(args["script_id"]))}
     if not args.get("shot_id"):
         raise ToolError("нужен shot_id (или script_id — вся серия)")
     shot_id = int(args["shot_id"])

@@ -206,7 +206,9 @@ def build(spec: dict, which: str, shot: dict, infos: list[dict], layout: dict | 
             focus.append(b)
     if spec.get("camera"):
         cam = spec["camera"]
-        check = check_frame(cam, boxes, room, str((shot.get("camera") or {}).get("shot") or "medium"))
+        cam_cfg = shot.get("camera") or {}
+        check = check_frame(cam, boxes, room, str(cam_cfg.get("shot") or "medium"), intent=cam_cfg.get("intent") or "",
+                            tags=cam_cfg.get("tags") or ())
         check = {**check, "size": (shot.get("camera") or {}).get("shot") or "medium", "notes": ["своя камера spec"]}
     else:
         cam, check = choose_camera(shot, actor_boxes, boxes, room, focus)
