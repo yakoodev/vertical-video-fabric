@@ -20,7 +20,9 @@ Sun lamps are turned to the light direction, and so are empties named KeyDir_* (
 --beauty     the neutral face as the look renders it (hair, lines, compositor) at every angle, for people
 --lamp-test  every 30 deg: lamp power x2 and an orange lamp; a mask that only depends on the light DIRECTION is equal
 --noise-normals A / --noise-map A   negative controls: random face normals / noise in the NPR_FaceMap_* images
---setup      a python file that builds the scene (exec'd; it may set ORBIT = dict(face_mats=..., hide=..., exprs=...))
+--setup      a python file that builds the scene (exec'd; it may set ORBIT = dict(face_mat=..., hide=..., exprs=...,
+             variants=[(name, prepare_function, {pass options: beauty/full/lamp_test/noise_normals/noise_map/exprs}), ...]);
+             with variants every scene state is prepared in the same Blender and measured into DIR/<name>/
 """
 import argparse
 import fnmatch
@@ -73,6 +75,7 @@ def parse_args():
     ap.add_argument('--noise-normals', type=float, default=0.0)
     ap.add_argument('--noise-map', type=float, default=0.0)
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--only', default='', help='variants of the setup script to run (comma list)')
     return ap.parse_args(argv)
 
 
@@ -222,7 +225,7 @@ def setup_materials(sc, args, cfg):
 
 
 # ----------------------------------------------------------------------------- compositor routing
-STATE = dict(mode='mask', saved=None)
+STATE = dict(mode='mask', saved=None, saved_render=None)
 
 
 def _route(scene=None, *_):
@@ -305,6 +308,7 @@ def set_light(sc, d):
     for o in sc.objects:
         if (o.type == 'LIGHT' and o.data.type == 'SUN') or o.name.startswith('KeyDir_'):
             o.rotation_mode = 'QUATERNION'; o.rotation_quaternion = q
+    bpy.context.view_layer.update()              # constraints / drivers that follow the sun see the new direction
 
 
 def make_camera(sc, c, size, fwd, scale_k=1.25, name='MC_Cam'):
@@ -390,9 +394,124 @@ def mask_settings(sc, res):
         pass
 
 
+def run_pass(sc, args, cfg, out, opts):
+    """one orbit of one scene state into `out` (masks, lamp test, full, beauty as opts / args say) -> meta"""
+    t0 = time.time()
+    os.makedirs(out, exist_ok=True)
+    A = dict(vars(args))
+    A.update(opts or {})
+    face_p = pats(cfg.get('face_mat', args.face_mat))
+    hide_p = pats(cfg.get('hide', args.hide))
+    saved = STATE['saved_render']
+    STATE['mode'] = 'mask'
+    STATE['saved'] = None
+    # the routing must run after every other render_pre handler (a look may rebuild the compositor there)
+    while _route in bpy.app.handlers.render_pre:
+        bpy.app.handlers.render_pre.remove(_route)
+    bpy.app.handlers.render_pre.append(_route)
+    regions, lit_src = setup_materials(sc, args, cfg)
+    log('[%s] lit mask from %s | regions %s' % (os.path.basename(out), lit_src, regions))
+    names, keys = expressions(sc, face_p, opts.get('exprs') or cfg.get('exprs', args.exprs))
+    set_expr(keys, 'neutral')
+    bpy.context.view_layer.update()
+    c, size, fwd = face_frame(sc, face_p)
+    log('face centre %s size %s forward %s, expressions %s' % (tuple(round(x, 3) for x in c), tuple(round(x, 3) for x in size),
+                                                                tuple(round(x, 3) for x in fwd), names))
+    if A.get('noise_normals', 0) > 0:
+        noise_normals(face_objects(sc, face_p), A['noise_normals'], args.seed)
+    if A.get('noise_map', 0) > 0:
+        noise_maps(A['noise_map'], args.seed)
+    cam_face = make_camera(sc, c, size, fwd)
+    angles = [i * 360.0 / args.angles for i in range(args.angles)]
+    hidden = [o for o in sc.objects if match(o.name, hide_p) and not o.hide_render]
+    suns = [o for o in sc.objects if o.type == 'LIGHT' and o.data.type == 'SUN']
+    meta = dict(angles=angles, elev=args.elev, exprs=names, res=args.res, regions=regions, lit_source=lit_src,
+                face_center=list(c), face_size=list(size), forward=list(fwd), hidden=[o.name for o in hidden],
+                suns=[o.name for o in suns], keydirs=[o.name for o in sc.objects if o.name.startswith('KeyDir_')],
+                model=args.model or args.setup or 'synth', setup_args=(args.setup_args + ' ' + A.get('label', '')).strip(),
+                noise_normals=A.get('noise_normals', 0), noise_map=A.get('noise_map', 0), passes=['masks'])
+    # ---- face masks: every expression x every angle, hair hidden
+    sc.camera = cam_face
+    mask_settings(sc, args.res)
+    for o in hidden:
+        o.hide_render = True
+    tm = time.time()
+    for e in names:
+        set_expr(keys, e)
+        d = os.path.join(out, 'masks', e)
+        os.makedirs(d, exist_ok=True)
+        for az in angles:
+            set_light(sc, light_dir(fwd, az, args.elev))
+            render_to(sc, os.path.join(d, '%05.1f.png' % az))
+        log('masks %s done (%.0f s)' % (e, time.time() - tm))
+    set_expr(keys, 'neutral')
+    meta['mask_s_per_frame'] = (time.time() - tm) / max(1, len(names) * len(angles))
+    # ---- lamp invariance: power x2, orange lamp
+    if A.get('lamp_test') and suns:
+        meta['passes'].append('lamp')
+        base = [(o, o.data.energy, tuple(o.data.color)) for o in suns]
+        for var in ('power2', 'orange'):
+            d = os.path.join(out, 'lamp', var)
+            os.makedirs(d, exist_ok=True)
+            for o, en, col in base:
+                o.data.energy = en * (2.0 if var == 'power2' else 1.0)
+                o.data.color = (1.0, 0.55, 0.25) if var == 'orange' else col
+            for az in angles[::max(1, int(round(30.0 / (360.0 / args.angles))))]:
+                set_light(sc, light_dir(fwd, az, args.elev))
+                render_to(sc, os.path.join(d, '%05.1f.png' % az))
+        for o, en, col in base:
+            o.data.energy = en
+            o.data.color = col
+    for o in hidden:
+        o.hide_render = False
+    # ---- full: neutral, everything visible, upper body
+    if A.get('full'):
+        meta['passes'].append('full')
+        dg = bpy.context.evaluated_depsgraph_get()
+        zs = [(o.matrix_world @ Vector(b)).z for o in mesh_objects(sc) for b in o.evaluated_get(dg).bound_box]
+        hcen = Vector((c.x, c.y, max(zs) - 0.42))
+        sc.camera = make_camera(sc, hcen, Vector((0.84, 0.0, 0.84)), fwd, scale_k=1.0, name='MC_CamFull')
+        mask_settings(sc, args.full_res)
+        d = os.path.join(out, 'full')
+        os.makedirs(d, exist_ok=True)
+        for az in angles:
+            set_light(sc, light_dir(fwd, az, args.elev))
+            render_to(sc, os.path.join(d, '%05.1f.png' % az))
+    # ---- beauty: as the look renders it
+    if A.get('beauty'):
+        meta['passes'].append('beauty')
+        route_beauty(sc)
+        sc.camera = cam_face
+        r = sc.render
+        r.resolution_x = r.resolution_y = args.beauty_res
+        r.film_transparent = saved['transparent']
+        r.use_freestyle = saved['freestyle']
+        r.dither_intensity = saved['dither']
+        r.filter_size = saved['filt']
+        r.image_settings.color_mode = 'RGBA' if r.film_transparent else 'RGB'
+        sc.view_settings.view_transform = saved['view'] if saved['view'] != 'Raw' else 'Standard'
+        sc.view_settings.look = saved['look']
+        try:
+            sc.eevee.taa_render_samples = max(4, saved['samples'])
+        except AttributeError:
+            pass
+        d = os.path.join(out, 'beauty')
+        os.makedirs(d, exist_ok=True)
+        tb = time.time()
+        sel = angles[::max(1, args.beauty_every)]
+        for az in sel:
+            set_light(sc, light_dir(fwd, az, args.elev))
+            render_to(sc, os.path.join(d, '%05.1f.png' % az))
+        meta['beauty_s_per_frame'] = (time.time() - tb) / max(1, len(sel))
+        STATE['mode'] = 'mask'
+    meta['seconds'] = time.time() - t0
+    json.dump(meta, open(os.path.join(out, 'meta.json'), 'w', encoding='utf-8'), indent=1)
+    log('pass done in %.0f s -> %s' % (meta['seconds'], out))
+    return meta
+
+
 def main():
     args = parse_args()
-    t0 = time.time()
     os.makedirs(args.out, exist_ok=True)
     if args.synth:
         cfg = synth_scene()
@@ -406,107 +525,32 @@ def main():
     if sc.render.engine not in ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'):
         for e in ('BLENDER_EEVEE_NEXT', 'BLENDER_EEVEE'):
             try:
-                sc.render.engine = e; break
+                sc.render.engine = e
+                break
             except TypeError:
                 pass
-    face_p = pats(cfg.get('face_mat', args.face_mat))
-    hide_p = pats(cfg.get('hide', args.hide))
     STATE['had_nodes'] = bool(sc.use_nodes and sc.node_tree is not None)
-    saved = dict(view=sc.view_settings.view_transform, look=sc.view_settings.look, freestyle=sc.render.use_freestyle,
-                 dither=sc.render.dither_intensity, filt=sc.render.filter_size,
-                 samples=getattr(sc.eevee, 'taa_render_samples', 16), transparent=sc.render.film_transparent)
-    regions, lit_src = setup_materials(sc, args, cfg)
-    log('lit mask from', lit_src, '| regions', regions)
-    names, keys = expressions(sc, face_p, cfg.get('exprs', args.exprs))
-    set_expr(keys, 'neutral')
-    bpy.context.view_layer.update()
-    c, size, fwd = face_frame(sc, face_p)
-    log('face centre %s size %s forward %s, expressions %s' % (tuple(round(x, 3) for x in c), tuple(round(x, 3) for x in size),
-                                                                tuple(round(x, 3) for x in fwd), names))
-    if args.noise_normals > 0:
-        noise_normals(face_objects(sc, face_p), args.noise_normals, args.seed)
-    if args.noise_map > 0:
-        noise_maps(args.noise_map, args.seed)
-    cam_face = make_camera(sc, c, size, fwd)
-    angles = [i * 360.0 / args.angles for i in range(args.angles)]
-    hidden = [o for o in sc.objects if match(o.name, hide_p) and not o.hide_render]
-    suns = [o for o in sc.objects if o.type == 'LIGHT' and o.data.type == 'SUN']
-    keydirs = [o.name for o in sc.objects if o.name.startswith('KeyDir_')]
-    meta = dict(angles=angles, elev=args.elev, exprs=names, res=args.res, regions=regions, lit_source=lit_src,
-                face_center=list(c), face_size=list(size), forward=list(fwd), hidden=[o.name for o in hidden],
-                suns=[o.name for o in suns], keydirs=keydirs, model=args.model or args.setup or 'synth',
-                setup_args=args.setup_args, noise_normals=args.noise_normals, noise_map=args.noise_map, passes=['masks'])
-    bpy.app.handlers.render_pre.append(_route)
-    # ---- face masks: every expression x every angle, hair hidden
-    sc.camera = cam_face
-    mask_settings(sc, args.res)
-    for o in hidden:
-        o.hide_render = True
-    tm = time.time()
-    for e in names:
-        set_expr(keys, e)
-        d = os.path.join(args.out, 'masks', e); os.makedirs(d, exist_ok=True)
-        for az in angles:
-            set_light(sc, light_dir(fwd, az, args.elev))
-            render_to(sc, os.path.join(d, '%05.1f.png' % az))
-        log('masks %s done (%.0f s)' % (e, time.time() - tm))
-    set_expr(keys, 'neutral')
-    meta['mask_s_per_frame'] = (time.time() - tm) / max(1, len(names) * len(angles))
-    # ---- lamp invariance: power x2, orange lamp
-    if args.lamp_test and suns:
-        meta['passes'].append('lamp')
-        base = [(o, o.data.energy, tuple(o.data.color)) for o in suns]
-        for var in ('power2', 'orange'):
-            d = os.path.join(args.out, 'lamp', var); os.makedirs(d, exist_ok=True)
-            for o, en, col in base:
-                o.data.energy = en * (2.0 if var == 'power2' else 1.0)
-                o.data.color = (1.0, 0.55, 0.25) if var == 'orange' else col
-            for az in angles[::max(1, int(round(30.0 / (360.0 / args.angles))))]:
-                set_light(sc, light_dir(fwd, az, args.elev))
-                render_to(sc, os.path.join(d, '%05.1f.png' % az))
-        for o, en, col in base:
-            o.data.energy = en; o.data.color = col
-    for o in hidden:
-        o.hide_render = False
-    # ---- full: neutral, everything visible, upper body
-    if args.full:
-        meta['passes'].append('full')
-        body = [o for o in mesh_objects(sc)]
-        dg = bpy.context.evaluated_depsgraph_get()
-        zs = [(o.matrix_world @ Vector(b)).z for o in body for b in o.evaluated_get(dg).bound_box]
-        top = max(zs); hcen = Vector((c.x, c.y, top - 0.42))
-        cam_full = make_camera(sc, hcen, Vector((0.84, 0.0, 0.84)), fwd, scale_k=1.0, name='MC_CamFull')
-        sc.camera = cam_full
-        mask_settings(sc, args.full_res)
-        d = os.path.join(args.out, 'full'); os.makedirs(d, exist_ok=True)
-        for az in angles:
-            set_light(sc, light_dir(fwd, az, args.elev))
-            render_to(sc, os.path.join(d, '%05.1f.png' % az))
-    # ---- beauty: as the look renders it
-    if args.beauty:
-        meta['passes'].append('beauty')
-        route_beauty(sc)
-        sc.camera = cam_face
-        r = sc.render
-        r.resolution_x = r.resolution_y = args.beauty_res
-        r.film_transparent = saved['transparent']; r.use_freestyle = saved['freestyle']
-        r.dither_intensity = saved['dither']; r.filter_size = saved['filt']
-        r.image_settings.color_mode = 'RGBA' if r.film_transparent else 'RGB'
-        sc.view_settings.view_transform = saved['view'] if saved['view'] != 'Raw' else 'Standard'
-        sc.view_settings.look = saved['look']
-        try:
-            sc.eevee.taa_render_samples = max(4, saved['samples'])
-        except AttributeError:
-            pass
-        d = os.path.join(args.out, 'beauty'); os.makedirs(d, exist_ok=True)
-        tb = time.time()
-        for az in angles[::max(1, args.beauty_every)]:
-            set_light(sc, light_dir(fwd, az, args.elev))
-            render_to(sc, os.path.join(d, '%05.1f.png' % az))
-        meta['beauty_s_per_frame'] = (time.time() - tb) / max(1, len(angles[::max(1, args.beauty_every)]))
-    meta['seconds'] = time.time() - t0
-    json.dump(meta, open(os.path.join(args.out, 'meta.json'), 'w', encoding='utf-8'), indent=1)
-    log('done in %.0f s -> %s' % (meta['seconds'], args.out))
+    STATE['saved_render'] = dict(view=sc.view_settings.view_transform, look=sc.view_settings.look, freestyle=sc.render.use_freestyle,
+                                 dither=sc.render.dither_intensity, filt=sc.render.filter_size,
+                                 samples=getattr(sc.eevee, 'taa_render_samples', 16), transparent=sc.render.film_transparent)
+    variants = cfg.get('variants')
+    if not variants:
+        run_pass(sc, args, cfg, args.out, {})
+        return
+    # the setup script may describe several scene states: [(name, prepare(), {pass options}), ...] -> out/<name>/
+    only = pats(args.only)
+    for name, prep, opts in variants:
+        if only and name not in only:
+            continue
+        t0 = time.time()
+        sr = STATE['saved_render']
+        sc.render.use_freestyle = sr['freestyle']
+        sc.view_settings.view_transform = sr['view']
+        prep()
+        sr['freestyle'] = sc.render.use_freestyle
+        sr['view'] = sc.view_settings.view_transform
+        log('variant %s prepared in %.0f s' % (name, time.time() - t0))
+        run_pass(sc, args, cfg, os.path.join(args.out, name), dict(opts or {}, label=name))
 
 
 if __name__ == '__main__':

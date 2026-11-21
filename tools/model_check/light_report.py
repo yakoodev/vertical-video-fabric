@@ -34,18 +34,26 @@ def az_key(a):
 def run(directory, tiny=0.001, edge=2, images=True):
     meta = json.load(open(os.path.join(directory, 'meta.json'), encoding='utf-8'))
     angles, exprs = meta['angles'], meta['exprs']
-    frames = {}
+    frames, form = {}, {}
     for e in exprs:
         for a in angles:
             p = os.path.join(directory, 'masks', e, az_key(a) + '.png')
             if os.path.exists(p):
                 lit, code, zone = load(p)
-                frames[(e, a)] = LA.face_shadow(lit, code)
+                frames[(e, a)] = sh, reg, dec = LA.face_shadow(lit, code)
+                z = zone > 0.5
+                if z.any():                       # the form shadow: the "always shadow" zones are filled from around
+                    c2 = code.copy()              # them, like the decals (they are not the light's doing)
+                    c2[z & (code == LA.FACE_ID)] = LA.DECAL_ID
+                    form[(e, a)] = LA.face_shadow(lit, c2)
     per, agg = LA.orbit_metrics(frames, angles, exprs, tiny=tiny, edge=edge)
     out = dict(meta=dict((k, meta[k]) for k in ('model', 'setup_args', 'lit_source', 'res', 'elev', 'noise_normals', 'noise_map',
                                                 'mask_s_per_frame', 'beauty_s_per_frame') if k in meta),
                face=agg, verdict=LA.verdict(agg), noisy_score=LA.noisy_score(agg),
                per_frame={'%s@%s' % (e, az_key(a)): m for (e, a), m in per.items()})
+    if form:
+        _, aggf = LA.orbit_metrics(form, angles, exprs, tiny=tiny, edge=edge)
+        out['face_form'] = aggf
     # by expression: mean components
     out['face_by_expr'] = {e: LA.summarize([per[(e, a)]['components'] for a in angles if (e, a) in per]) for e in exprs}
     # ---- lamp invariance
@@ -71,8 +79,8 @@ def run(directory, tiny=0.001, edge=2, images=True):
         for p in full:
             lit, code, _ = load(p)
             for rid in np.unique(code):
-                if rid == 0:
-                    continue
+                if rid == 0 or 'outline' in names.get(int(rid), '').lower():
+                    continue                     # an outline (hull) is drawn, not shaded
                 reg = code == rid
                 if reg.sum() < 200:
                     continue
@@ -104,6 +112,12 @@ def summary_text(r):
              '%.3f' % v if v is not None else '-' for v in (f['iou_mean'], f['iou_min'], f['iou_out_mean'], f['iou_out_min'])),
          'nesting: %s of neighbour pairs nested' % ('%.1f%%' % (100 * f['nesting_share']) if f['nesting_share'] is not None else '-'),
          'verdict %s, noisy score %.2f' % (r['verdict'], r['noisy_score'])]
+    if r.get('face_form'):
+        g = r['face_form']
+        L.append('form shadow (without the "always shadow" zones): components mean %.2f max %d, single %.0f%%, nesting %s, '
+                 'IoU mean %s' % (g['components'].get('mean', 0), g['components'].get('max', 0), 100 * g['single_share'],
+                                  '%.1f%%' % (100 * g['nesting_share']) if g['nesting_share'] is not None else '-',
+                                  '%.3f' % g['iou_mean'] if g['iou_mean'] is not None else '-'))
     for e, s in r.get('face_by_expr', {}).items():
         L.append('  %-20s components mean %.2f max %d' % (e, s.get('mean', 0), s.get('max', 0)))
     for var, s in r.get('lamp_invariance', {}).items():
