@@ -513,6 +513,8 @@ def tools() -> list[Tool]:
                                             "punch_zoom на ней → держать punch_hold → вернуть; keys не нужны "
                                             "(прежние ключи в окне удара заменяются)"},
                 "punch_zoom": {"type": "number", "description": "пик удара, по умолчанию 1.15"},
+                "breathing": {"type": "boolean", "description": "пресет «дыхание» вместо keys: на каждой склейке "
+                              "1.0 → 1.2 с ease-out к концу куска, в конце ролика 1.15; в ответе breathing — замер"},
                 "punch_hold": {"type": "number", "description": "сколько держать пик, с (по умолчанию 0.8)"}}),
             h_set_camera, mutating=True, label=_label_camera,
         ),

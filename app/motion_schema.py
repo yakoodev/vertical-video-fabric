@@ -369,6 +369,8 @@ PROPS: dict[str, dict] = {
         # Эмфаза слов (comp.words[i].e, app/word_emphasis.py): кегль уровня 1 и цвет (null — активный).
         "emphScale": Opt(Num(1.25, 1, 2, 3)),
         "emphColor": Opt(Color(None, nullable=True)),
+        # Плавное появление фразы (страницы) с нуля за столько секунд; нет/0 — как было (app/stream_captions.py).
+        "pageFade": Opt(Num(0, 0, 1, 3)),
     },
     # Сообщения берутся не из слоя, а из чата клипа (comp.chat) — слой задаёт вид и фильтры.
     "chat": {

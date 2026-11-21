@@ -184,6 +184,8 @@ export type ResolvedCaptions = {
   tilt: number;
   emphScale: number;
   emphColor: string | null;
+  /** Плавное появление страницы (фразы) с нуля, секунды; 0 — как было (прыжок масштабом, прозрачность с 85%). */
+  pageFade: number;
 };
 
 /** Метка слов оригинала у переведённых субтитров (app/translation.ORIG_SPEAKER). */
@@ -220,6 +222,7 @@ const BASE: ResolvedCaptions = {
   tilt: 0,
   emphScale: 1.25,
   emphColor: null,
+  pageFade: 0,
 };
 
 const resolvedCache = new WeakMap<object, ResolvedCaptions>();
@@ -239,6 +242,7 @@ export function resolveCaptions(props: CaptionsProps): ResolvedCaptions {
   r.maxLines = Math.max(1, Math.min(3, Math.round(r.maxLines)));
   r.wordScale = Math.max(1, Math.min(1.4, r.wordScale));
   r.emphScale = Math.max(1, Math.min(2, Number(r.emphScale) || BASE.emphScale));
+  r.pageFade = Math.max(0, Math.min(1, Number(r.pageFade) || 0));
   r.size = Math.max(12, r.size);
   if (!r.font) r.font = BASE.font;
   resolvedCache.set(props, r);
@@ -597,6 +601,8 @@ function applyEmphasis(r: ResolvedCaptions, w: CaptionPageWord, look: WordLook, 
 }
 
 function pageEntrance(r: ResolvedCaptions, page: CaptionPage, t: number): { scale: number; alpha: number } {
+  // Стрим-шортс (app/stream_captions.py): фраза проявляется с нуля за pageFade, без прыжка масштабом.
+  if (r.pageFade > 0) return { scale: 1, alpha: ease("outQuad", clamp01((t - page.t0) / r.pageFade)) };
   // У удара каждое слово влетает само — страница целиком не выпрыгивает.
   if (r.animation === "none" || r.animation === "typewriter" || r.animation === "stomp") return { scale: 1, alpha: 1 };
   const p = clamp01((t - page.t0) / 0.12);

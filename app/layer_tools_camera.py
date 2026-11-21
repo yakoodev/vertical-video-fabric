@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app import motion
 from app.tool_core import (
-    _camera_of, _clip_duration, _current_render, _layers_of, _num, _save_render, ToolContext, ToolError
+    _camera_of, _clip_duration, _current_render, _layers_of, _num, _save_render, plan_clock, ToolContext, ToolError
 )
 
 PUNCH_LEAD = 0.2      # наезд-удар: от 1.0 до пика за столько секунд до слова
@@ -44,6 +44,15 @@ def slow_zoom_warnings(camera: list[dict]) -> list[str]:
 def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     keys = args.get("keys")
     punch = args.get("punch_at")
+    breathing = None
+    if args.get("breathing"):
+        # Пресет «дыхание» (app/zoom_breathing.py): на склейке 1.0 → 1.2 ease-out к концу куска, финал 1.15.
+        from app.zoom_breathing import breathing_keys, check_breathing
+
+        clock = plan_clock(ctx.store, ctx.store.get_clip_plan(ctx.plan_id))
+        cuts = [float(t) for t in clock.clip_starts[1:]]
+        keys = breathing_keys(cuts, float(clock.clip_duration))
+        breathing = check_breathing(keys, cuts, float(clock.clip_duration))
     if punch is not None:
         # Помощник: наезд-удар на секунды punch_at (число или список), поверх keys (их ключи в окне удара — прочь).
         times = punch if isinstance(punch, list) else [punch]
@@ -89,6 +98,8 @@ def h_set_camera(ctx: ToolContext, args: dict) -> dict:
     out = {"ok": True, "camera": camera, "dropped": len(keys) - len(camera), "warnings": warnings}
     if punch is not None:
         out["punch"] = {"at": times, "zoom": zoom, "check": f"view_frame на {times[0]:g} с — пик наезда"}
+    if breathing is not None:
+        out["breathing"] = breathing
     mode = (fresh.get("layout") or {}).get("mode")
     if camera and mode in ("pip_cam", "split"):
         # Компоновщик зумит только окно игры (app/stream_layout.camera_regions).
