@@ -1,4 +1,5 @@
 // Grab clean 1280x720 frames from a YouTube video at given seconds, using real Chrome.
+// STATUS 21.11: launched standalone, the first frame loads but seeks stall (readyState 0); the same steps via the Playwright MCP work. Use the MCP path (memory: youtube-study) until this is fixed.
 // Why: on this PC the video CDN only works in a browser (yt-dlp/curl hang), so frames are taken from the player.
 //
 // Usage: node tools/yt_frames/grab.cjs <videoId> <outDir> <sec,sec,...|every:N[:from-to]>
@@ -26,8 +27,9 @@ function parseSpec(s, duration) {
 const name = t => `${String(Math.floor(t / 60)).padStart(2, '0')}m${String(t % 60).padStart(2, '0')}s.png`;
 
 (async () => {
-  const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--autoplay-policy=no-user-gesture-required', '--window-position=-2400,0', '--window-size=1300,800'] });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+  const profile = process.env.YT_PROFILE || path.join(require('os').tmpdir(), 'yt_frames_profile');
+  const browser = await chromium.launchPersistentContext(profile, { channel: 'chrome', headless: false, viewport: { width: 1280, height: 720 }, args: ['--autoplay-policy=no-user-gesture-required', '--window-size=1300,800', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', '--disable-features=CalculateNativeWinOcclusion'] });
+  const page = browser.pages()[0] || await browser.newPage();
   const watchdog = setTimeout(() => { console.error('watchdog timeout'); process.exit(3); }, 30 * 60 * 1000);
   let ok = false;
   for (let attempt = 0; attempt < 3 && !ok; attempt++) {
@@ -49,9 +51,14 @@ const name = t => `${String(Math.floor(t / 60)).padStart(2, '0')}m${String(t % 6
   const secs = parseSpec(spec, duration);
   let n = 0;
   for (const t of secs) {
-    await page.evaluate(async t => { const v = document.querySelector('video.html5-main-video'); v.pause();
-      await new Promise(r => { const to = setTimeout(r, 10000); v.addEventListener('seeked', () => { clearTimeout(to); r(); }, { once: true }); v.currentTime = t; });
-      for (let i = 0; i < 40 && v.readyState < 2; i++) await new Promise(r => setTimeout(r, 200)); }, t);
+    await page.evaluate(async t => {
+      const v = document.querySelector('video.html5-main-video'); const p = document.getElementById('movie_player');
+      // seek through the YouTube player so it fetches the new range itself (a bare video.currentTime seek stalls)
+      if (p && p.seekTo) { p.seekTo(t, true); p.playVideo && p.playVideo(); } else { v.currentTime = t; v.play().catch(() => {}); }
+      for (let i = 0; i < 100; i++) { if (v.readyState >= 3 && Math.abs(v.currentTime - t) < 1.5) break; await new Promise(r => setTimeout(r, 200)); }
+      if (p && p.pauseVideo) p.pauseVideo(); else v.pause();
+      await new Promise(r => setTimeout(r, 150));
+    }, t);
     await page.waitForTimeout(300);
     const r = await page.evaluate(() => document.querySelector('video.html5-main-video').readyState);
     await page.screenshot({ path: path.join(outDir, name(t)), timeout: 15000 });
