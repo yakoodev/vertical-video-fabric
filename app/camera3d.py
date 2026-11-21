@@ -8,9 +8,12 @@
 страницы, макет интерфейса) наклонён в 3D и выпрямляется, пока камера наезжает в точку: всем слоям группы
 одна точка ``pivot`` и одни ключи rotX/rotY/scale (как шаблон «Экран с наклоном и наездом», templates/ads2.ts).
 
-Кривые — как у моушн-дизайнеров: мягкие in/out (cubic-bezier), перелёт — только там, где он
-читается (раскрытие наклоном, переворот карточки). Движение заканчивается в покое, кроме
-наезда и «Хичкока» — они держатся до следующего ключа камеры (как панч-ин).
+Кривые камеры асимметричные (CG Boost, «8 Cinematic Fundamentals»: симметричный ease-in/out выдаёт 3D-камеру):
+пик скорости в первых ~30% отрезка, торможение дольше разгона — ``CAM`` (резкий старт с места: наезд, «Хичкок»)
+и ``CAM_SOFT`` (старт мягче — внутренние отрезки облёта и «дыхания»); ``ease_profile`` меряет это у любой
+кривой. Перелёт — только там, где он читается (раскрытие наклоном, переворот карточки). Движение заканчивается
+в покое, кроме наезда и «Хичкока» — они держатся до следующего ключа камеры (как панч-ин). Слои (``card_flip``,
+``screen_tilt``) — свои кривые, это не камера.
 """
 
 from __future__ import annotations
@@ -48,6 +51,10 @@ SOFT = "bezier(0.45,0,0.55,1)"
 PUSH = "bezier(0.45,0,0.15,1)"
 OUT = "bezier(0.16,1,0.3,1)"
 OVERSHOOT = "bezier(0.34,1.45,0.64,1)"
+# Камера: быстрый уход с ключа и долгая доводка (пик скорости ~12% и ~21% отрезка).
+CAM = "bezier(0.2,0.35,0.25,1)"
+CAM_SOFT = "bezier(0.25,0.1,0.25,1)"
+EASE_PEAK_MAX = 0.30
 # Фокусное покоя в опорных px (кадр 1920 по вертикали, 40°) — для «Хичкока».
 REF_H = 1920.0
 FOCAL0 = REF_H / 2 / math.tan(math.radians(DEFAULT_FOV) / 2)
@@ -101,34 +108,65 @@ def camera_shape(preset: str, intensity: float) -> list[tuple[float, dict, str |
     """Ключи пресета: (доля отрезка, 3D-поля, ease к следующему)."""
     i = intensity
     if preset == "parallax_push":
-        return [(0.0, {"z": 0, "rotX": 0}, PUSH), (1.0, {"z": round(320 * i, 1), "rotX": round(-2 * i, 2)}, None)]
+        return [(0.0, {"z": 0, "rotX": 0}, CAM), (1.0, {"z": round(320 * i, 1), "rotX": round(-2 * i, 2)}, None)]
     if preset == "orbit":
         a = round(10 * i, 2)
         return [
-            (0.0, {"rotY": 0, "rotX": 0, "z": 0}, SOFT),
-            (0.35, {"rotY": -a, "rotX": round(2 * i, 2), "z": round(90 * i, 1)}, SOFT),
-            (0.8, {"rotY": a, "rotX": round(-1.5 * i, 2), "z": round(90 * i, 1)}, SOFT),
+            (0.0, {"rotY": 0, "rotX": 0, "z": 0}, CAM_SOFT),
+            (0.35, {"rotY": -a, "rotX": round(2 * i, 2), "z": round(90 * i, 1)}, CAM_SOFT),
+            (0.8, {"rotY": a, "rotX": round(-1.5 * i, 2), "z": round(90 * i, 1)}, CAM_SOFT),
             (1.0, {"rotY": 0, "rotX": 0, "z": 0}, None),
         ]
     if preset == "dolly_zoom":
         back = min(CAMERA_Z_LIMIT, 1600 * i)
         fov = math.degrees(2 * math.atan(REF_H / 2 / (FOCAL0 + back)))
-        return [(0.0, {"z": 0, "fov": DEFAULT_FOV}, "bezier(0.4,0,0.2,1)"), (1.0, {"z": -round(back, 1), "fov": round(fov, 2)}, None)]
+        return [(0.0, {"z": 0, "fov": DEFAULT_FOV}, CAM), (1.0, {"z": -round(back, 1), "fov": round(fov, 2)}, None)]
     if preset == "tilt_reveal":
         return [
             (0.0, {"rotX": round(16 * i, 2), "z": round(-120 * i, 1)}, OUT),
-            (0.75, {"rotX": round(-1.2 * i, 2), "z": round(10 * i, 1)}, SOFT),
+            (0.75, {"rotX": round(-1.2 * i, 2), "z": round(10 * i, 1)}, CAM_SOFT),
             (1.0, {"rotX": 0, "z": 0}, None),
         ]
     if preset == "float":
         return [
-            (0.0, {"rotX": 0, "rotY": 0, "z": 0}, SOFT),
-            (0.25, {"rotX": round(1.5 * i, 2), "rotY": round(-2.5 * i, 2), "z": round(40 * i, 1)}, SOFT),
-            (0.5, {"rotX": round(-1.0 * i, 2), "rotY": round(2.0 * i, 2), "z": round(70 * i, 1)}, SOFT),
-            (0.75, {"rotX": round(1.0 * i, 2), "rotY": round(1.5 * i, 2), "z": round(30 * i, 1)}, SOFT),
+            (0.0, {"rotX": 0, "rotY": 0, "z": 0}, CAM_SOFT),
+            (0.25, {"rotX": round(1.5 * i, 2), "rotY": round(-2.5 * i, 2), "z": round(40 * i, 1)}, CAM_SOFT),
+            (0.5, {"rotX": round(-1.0 * i, 2), "rotY": round(2.0 * i, 2), "z": round(70 * i, 1)}, CAM_SOFT),
+            (0.75, {"rotX": round(1.0 * i, 2), "rotY": round(1.5 * i, 2), "z": round(30 * i, 1)}, CAM_SOFT),
             (1.0, {"rotX": 0, "rotY": 0, "z": 0}, None),
         ]
     raise PresetError(f"{preset} — не пресет камеры")
+
+
+def _bezier_points(ease: str) -> tuple[float, float, float, float]:
+    import re
+
+    m = re.match(r"\s*bezier\(([^)]*)\)", str(ease or ""))
+    if not m:
+        raise PresetError(f"кривая {ease!r} — не bezier(x1,y1,x2,y2)")
+    x1, y1, x2, y2 = (float(v) for v in m.group(1).split(","))
+    return x1, y1, x2, y2
+
+
+def ease_profile(ease: str, samples: int = 2000) -> dict:
+    """Скорость кривой bezier по времени отрезка: ``peak_at`` — где пик (доля), ``accel`` — разгон до пика,
+    ``decel`` — торможение после него, ``start_speed``/``peak_speed`` — в долях средней скорости."""
+    x1, y1, x2, y2 = _bezier_points(ease)
+
+    def bez(a: float, b: float, u: float) -> float:
+        return 3 * a * u * (1 - u) ** 2 + 3 * b * u * u * (1 - u) + u ** 3
+
+    pts = [(bez(x1, x2, k / samples), bez(y1, y2, k / samples)) for k in range(samples + 1)]
+    speed = [((xa + xb) / 2, (yb - ya) / (xb - xa)) for (xa, ya), (xb, yb) in zip(pts, pts[1:]) if xb - xa > 1e-12]
+    at, peak = max(speed, key=lambda t: t[1])
+    return {"peak_at": round(at, 3), "accel": round(at, 3), "decel": round(1 - at, 3), "peak_speed": round(peak, 2),
+            "start_speed": round(speed[0][1], 2)}
+
+
+def ease_ok(ease: str) -> bool:
+    """Кривая камеры «как с рук»: пик скорости в первых ``EASE_PEAK_MAX`` и торможение дольше разгона."""
+    p = ease_profile(ease)
+    return p["peak_at"] <= EASE_PEAK_MAX and p["decel"] > p["accel"]
 
 
 def _soft(p: float) -> float:
@@ -315,4 +353,5 @@ def describe() -> list[dict]:
             for p in PRESETS]
 
 
-__all__ = ["PRESETS", "PresetError", "apply_preset", "camera_shape", "describe", "preset_name"]
+__all__ = ["PRESETS", "PresetError", "apply_preset", "camera_shape", "describe", "ease_ok", "ease_profile",
+           "preset_name"]
