@@ -185,3 +185,16 @@ def test_agreement_measures_peak_overlap_and_negative():
     assert ms.agreement(a, None) is None
     assert ms.agreement(a, {"bucket": 10, "curve": [0] * 8}) is None
     assert math.isclose(ms.agreement(a, a, top=2), 1.0)
+
+
+def test_window_peaks_for_audio_map(tmp_path, monkeypatch):
+    from app.settings import settings
+
+    monkeypatch.setattr(settings, "runtime_dir", tmp_path)
+    curve = [0.0] * 20
+    curve[3], curve[12] = 0.9, 0.3
+    ms.save_extras(6, {"viewer_clips": {"bucket": 10, "curve": curve}})
+    peaks = ms.window_peaks(None, 6, 0, 100)
+    assert peaks == [{"t": 30.0, "signal": "viewer_clips", "value": 0.9}]  # слабая корзина 0.3 — мимо
+    assert ms.window_peaks(None, 6, 50, 100) == []                       # вне окна
+    assert ms.window_peaks(None, 6, 0, 100, to_out=lambda t: t - 25)[0]["t"] == 5.0

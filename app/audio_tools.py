@@ -98,7 +98,18 @@ def _with_chat_peaks(ctx: Any, out: dict) -> dict:
             return out
         peaks = cs.audio_map_peaks(ctx.store, int(plan["source_id"]), min(a for a, _ in segs),
                                    max(b for _, b in segs), to_out=cs.clip_time_mapper(plan))
-    return {**out, "chat_peaks": peaks, "chat_note": cs.PEAKS_NOTE} if peaks else out
+    out = {**out, "chat_peaks": peaks, "chat_note": cs.PEAKS_NOTE} if peaks else out
+    try:  # немая реакция, клипы зрителей, тепловая карта/метки YouTube (app/moment_signals.py), если посчитаны
+        from app import moment_signals as ms
+
+        if out.get("time") == "source":
+            extra = ms.window_peaks(ctx.store, int(out["project_id"]), out.get("from_sec"), out.get("to_sec"))
+        else:
+            extra = ms.window_peaks(ctx.store, int(plan["source_id"]), min(a for a, _ in segs),
+                                    max(b for _, b in segs), to_out=cs.clip_time_mapper(plan))
+    except Exception:  # noqa: BLE001 - дополнение не ломает карту звука
+        extra = []
+    return {**out, "moment_peaks": extra, "moment_note": ms.PEAKS_NOTE} if extra else out
 
 
 # --------------------------------------------------------------------------- #

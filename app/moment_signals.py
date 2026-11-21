@@ -151,3 +151,24 @@ def agreement(a: dict | None, b: dict | None, top: int = 10) -> float | None:
     if not ta or not tb:
         return None
     return round(sum(1 for i in ta if {i - 1, i, i + 1} & tb) / len(ta), 3)
+
+
+PEAKS_NOTE = ("moment_peaks — сигналы моментов (дополнение, не приказ): reaction — немая реакция (плотная речь, затем "
+              "3–8 с без слов, но громко), viewer_clips — зрители Twitch сделали клип с этого места, yt_heatmap — "
+              "пересматривают на YouTube, yt_tags — [смех]/[крик] в автосубтитрах YouTube. t — начало 10-секундной корзины")
+
+
+def window_peaks(store: Any, source_id: int, lo: float | None, hi: float | None, to_out: Any = None,
+                 top: int = 8, min_value: float = 0.5) -> list[dict]:
+    """Сильные корзины сигналов источника в окне [lo, hi] (секунды исходника или через ``to_out`` — шкала ответа)."""
+    out: list[dict] = []
+    for name, signal in source_extras(store, int(source_id)).items():
+        size = float(signal["bucket"])
+        for i, v in enumerate(signal["curve"]):
+            t = i * size
+            if v < min_value or (lo is not None and t + size < lo) or (hi is not None and t > hi):
+                continue
+            mapped = t if to_out is None else to_out(max(t, lo or 0.0))
+            if mapped is not None:
+                out.append({"t": round(float(mapped), 2), "signal": name, "value": round(float(v), 2)})
+    return sorted(sorted(out, key=lambda p: -p["value"])[:top], key=lambda p: p["t"])
