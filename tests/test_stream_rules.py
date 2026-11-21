@@ -100,6 +100,23 @@ def test_no_black_bars_in_game_zone_and_negative():
     assert sp.check_no_black_bars(dark_scene, 730, 1920)["ok"]
 
 
+def test_black_bars_persistent_across_frames_not_dark_scene():
+    lit = np.full((1920, 1080), 120, np.uint8)
+    night = lit.copy()
+    night[730:1200] = 3  # тёмная сцена в одном кадре из пяти
+    assert sp.check_no_black_bars_frames([lit, lit, night, lit, lit], 730, 1920)["ok"]
+    boxed = lit.copy()
+    boxed[730:900] = 2   # letterbox во всех кадрах — полоса
+    res = sp.check_no_black_bars_frames([boxed] * 4 + [night], 730, 1920)
+    assert not res["ok"] and res["top_rows"] == 170
+
+
+def test_same_sfx_not_repeated_within_four_seconds():
+    spans = [(t, t + 0.8, "крик") for t in (10.0, 11.5, 13.0, 15.5)]
+    kept, dropped = sx.limit_density(sx.sfx_events([], spans, [], 30.0))
+    assert [e["t"] for e in kept] == [10.0, 15.5] and len(dropped) == 2
+
+
 def test_face_height_spread_and_negative():
     steady = [(0.4, 0.10 + 0.002 * (i % 3), 0.2, 0.12) for i in range(30)]
     assert sp.check_face_height(steady)["ok"]

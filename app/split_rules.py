@@ -151,6 +151,21 @@ def black_bar_rows(gray: Any, y0: int, y1: int) -> tuple[int, int]:
     return run(dark), run(dark[::-1])
 
 
+def check_no_black_bars_frames(frames: list[Any], y0: int, y1: int, persist: float = 0.8) -> dict:
+    """По нескольким кадрам: полоса — это тёмные строки у края, которые стоят на месте почти во всех кадрах.
+    Тёмная сцена (ночь, экран «WASTED») на одном-двух кадрах полосой не считается (пилот GTA 6 v5: 9 ложных
+    срабатываний покадровой проверки на ночном небе и затемнении)."""
+    runs = [black_bar_rows(f, y0, y1) for f in frames]
+    if not runs:
+        return {"ok": True, "top_rows": 0, "bottom_rows": 0, "limit_rows": 0, "frames": 0}
+    k = max(1, int(round(len(runs) * persist)))
+    top = sorted((r[0] for r in runs), reverse=True)[k - 1]      # столько строк тёмные хотя бы в k кадрах
+    bottom = sorted((r[1] for r in runs), reverse=True)[k - 1]
+    limit = max(2, int((y1 - y0) * BAR_MAX_ROWS_SHARE))
+    return {"ok": top <= limit and bottom <= limit, "top_rows": top, "bottom_rows": bottom, "limit_rows": limit,
+            "frames": len(runs)}
+
+
 def check_no_black_bars(gray: Any, y0: int, y1: int) -> dict:
     top, bottom = black_bar_rows(gray, y0, y1)
     limit = max(2, int((y1 - y0) * BAR_MAX_ROWS_SHARE))

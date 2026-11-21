@@ -25,6 +25,7 @@ VOLUME = {"transition": 0.5, "shout": 0.7, "ding": 0.55, "awkward": 0.6}
 PRIORITY = {"shout": 0, "ding": 0, "transition": 1, "awkward": 2}
 MAX_PER_MIN = 6
 MIN_GAP = 1.2
+SAME_KIND_GAP = 4.0  # один и тот же звук не чаще раза в 4 с (пилот GTA 6 v5: четыре «бума» за 4 с на крике)
 AWKWARD_PAUSE = 1.5
 SHOUT_MIN_SEC = 0.4
 CUT_LEAD = 0.05
@@ -79,7 +80,8 @@ def limit_density(events: list[dict], max_per_min: int = MAX_PER_MIN, min_gap: f
     dropped: list[dict] = []
     for ev in sorted(events, key=lambda e: (PRIORITY[e["kind"]], e["t"])):
         t = ev["t"]
-        near = any(abs(t - k["t"]) < min_gap for k in kept)
+        near = any(abs(t - k["t"]) < min_gap or (k["kind"] == ev["kind"] and ev["kind"] != "transition"
+                                                  and abs(t - k["t"]) < SAME_KIND_GAP) for k in kept)
         if near or _would_exceed(kept, t, max_per_min):
             dropped.append(ev)
         else:
