@@ -112,6 +112,8 @@ def h_freeze_frame(ctx: ToolContext, args: dict) -> dict:
 def h_suggest_cuts(ctx: ToolContext, args: dict) -> dict:
     from app.cuts import suggest_for_plan
 
+    if args.get("pace"):
+        return _pace_suggest(ctx, str(args["pace"]))
     mode = args.get("mode") if args.get("mode") in ("pauses", "fillers", "both") else "both"
     # Явная проверка на None: keep_pad=0 («тишину у слов не оставлять») — законное значение.
     min_pause = _num(args.get("min_pause"))
@@ -126,6 +128,26 @@ def h_suggest_cuts(ctx: ToolContext, args: dict) -> dict:
             "before_sec": clock.clip_duration,
             "after_sec": round(max(0.0, clock.clip_duration - float(out.get("saved_sec") or 0)), 3),
             "note": "шкала clip (до вырезов, как слои и субтитры get_clip); передай cuts в apply_cuts как есть"}
+
+
+def _pace_suggest(ctx: ToolContext, pace: str) -> dict:
+    """Пресет темпа по типу ролика (app/pace_presets.py): паузы дольше порога типа, с проверкой результата."""
+    from app.cuts import plan_duration
+    from app.pace_presets import PRESETS, check_pace, pace_cuts
+
+    if pace not in PRESETS:
+        raise ToolError(f"pace — из {', '.join(PRESETS)}")
+    plan = ctx.store.get_clip_plan(ctx.plan_id)
+    words = (ctx.store.get_clip_plan_subtitles(ctx.plan_id) or {}).get("words") or []
+    words = [w for w in words if isinstance(w, dict) and w.get("start") is not None and w.get("end") is not None]
+    if not words:
+        raise ToolError("у клипа нет пословных субтитров — сначала субтитры")
+    total = plan_duration(plan)
+    cuts = pace_cuts(words, total, pace)
+    clock = _clock(ctx)
+    return {"pace": pace, **PRESETS[pace], "cuts": plain_cuts_to_clip(clock, cuts), "time": "clip",
+            "check": check_pace(words, total, cuts, pace),
+            "note": "шкала clip; передай cuts в apply_cuts как есть. check — замер после вырезов"}
 
 
 def clip_cuts_to_plain(clock: Any, raw: Any) -> Any:
@@ -219,5 +241,18 @@ def h_make_compilation(ctx: ToolContext, args: dict) -> dict:
         first = ctx.store.get_clip_plan(ids[0])
     except KeyError:
         raise ToolError(f"клип {ids[0]} не найден") from None
-    return build_compilation(ctx.store, first["source_id"], ids, title=str(args.get("title") or ""),
-                             countdown=args.get("countdown", True) is not False)
+    order = args.get("order") if args.get("order") in ("countdown", "chrono", "strength", "bookend") else None
+    gag = None
+    if args.get("gag"):
+        from app.compilation import gag_clip_ids
+
+        gag = gag_clip_ids(ctx.store, first["source_id"], ids, str(args.get("gag")) if isinstance(args.get("gag"), str) else None)
+        if len(gag["clip_ids"]) < 2:
+            raise ToolError(f"гэг «{gag['phrase']}»: повторов {gag['repeats']}, клипов с ним {len(gag['clip_ids'])} — "
+                            "нужно хотя бы два")
+        ids, order = gag["clip_ids"], "bookend"
+    out = build_compilation(ctx.store, first["source_id"], ids, title=str(args.get("title") or ""),
+                            countdown=(order == "countdown") if order in ("countdown", "chrono")
+                            else args.get("countdown", True) is not False, order=order,
+                            trim_outro=args.get("trim_outro", True) is not False)
+    return {**out, **({"gag": gag} if gag else {})}

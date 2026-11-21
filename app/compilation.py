@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app import compilation_rules as R
 from app.auto_edit import caption_y_for
 from app.clip_spec import MAX_PIECES
 from app.motion import normalize_layers
@@ -34,6 +35,26 @@ def _unique_ids(plan_ids: Any) -> list[int]:
     return out
 
 
+def _theme_text(plan: dict) -> str:
+    return f"{plan.get('title') or ''} {plan.get('description') or ''}"
+
+
+def gag_clip_ids(store: Any, source_id: int, plan_ids: list[int], phrase: str | None = None) -> dict:
+    """Режим «один гэг × много повторов»: повторы фразы в транскрипте источника и клипы, что их покрывают."""
+    cues = store.get_source_transcript(int(source_id))
+    repeats = R.find_gag_repeats(cues, phrase)
+    if not repeats:
+        return {"phrase": phrase, "repeats": 0, "times": [], "clip_ids": []}
+    best = repeats[0]
+    ids = []
+    for pid in plan_ids:
+        plan = store.get_clip_plan(int(pid))
+        if any(float(sg["start_sec"]) - 1 <= t <= float(sg["end_sec"]) for sg in plan.get("segments") or []
+               for t in best["times"]):
+            ids.append(int(pid))
+    return {"phrase": best["phrase"], "repeats": best["count"], "times": best["times"], "clip_ids": ids}
+
+
 def build_compilation(
     store: Any,
     source_id: int,
@@ -42,8 +63,16 @@ def build_compilation(
     title: str = "",
     countdown: bool = True,
     caption_style: str = "hormozi",
+    order: str | None = None,
+    strengths: dict[int, float] | None = None,
+    trim_outro: bool = True,
 ) -> dict:
-    """Создать клип-компиляцию; вернуть {clip_plan_id, pieces, skipped, duration}."""
+    """Создать клип-компиляцию; вернуть {clip_plan_id, pieces, skipped, duration, check}.
+
+    ``order``: None — по ``countdown`` (как было); ``strength`` — сильнейший первым, второй по силе последним
+    (app/compilation_rules.py); ``bookend`` — то же, но последним сильнейший той же темы, что первый. Сила —
+    ``strengths[id]``, иначе ``quality``/``score`` клипа. ``trim_outro`` — хвост дольше 1 с после последнего
+    слова вырезается (без аутро)."""
     ids = _unique_ids(plan_ids)
     plans = []
     for pid in ids:
@@ -67,7 +96,19 @@ def build_compilation(
     if len(chosen) < 2:
         raise ValueError(f"в компиляцию влезает не больше {MAX_PIECES} кусков — выберите клипы короче")
 
-    order = list(reversed(chosen)) if countdown else chosen
+    def strength(p: dict) -> float:
+        if strengths and int(p["id"]) in strengths:
+            return float(strengths[int(p["id"])])
+        return float(p.get("quality") or p.get("score") or 0.0)
+
+    mode = order
+    if mode in ("strength", "bookend"):
+        countdown = False
+        order_list = (R.bookend_theme(chosen, strength, _theme_text) if mode == "bookend"
+                      else R.order_by_strength(chosen, strength))
+    else:
+        order_list = list(reversed(chosen)) if countdown else chosen
+    order = order_list
     segment_ids = [s["id"] for plan in order for s in plan["segments"]]
     total_n = len(order)
     name = title.strip() or f"ТОП-{total_n} моментов стрима"
@@ -131,6 +172,17 @@ def build_compilation(
         # субтитров совпадает с кусками точно (переход-наплыв съел бы доли секунды).
         "transition": {"type": "cut", "duration": 0.25, "smart": False, "audio": "smooth", "sfx": "none", "sfx_volume": 0.5},
     })
+    last_word = max((float(w["end"]) for w in words), default=None)
+    cut = R.outro_cut(offset, last_word) if trim_outro else None
+    if cut:
+        settings["cuts"] = [cut]
     store.set_clip_plan_render_settings(plan["id"], settings)
+    durations = [sum(float(s["end_sec"]) - float(s["start_sec"]) for s in p["segments"]) for p in order]
+    from app.formats import settings_layers_format
+
+    rng = R.PIECE_RANGE if settings_layers_format(settings) == "16:9" else R.SHORT_PIECE_RANGE
+    check = R.check_compilation(durations, [strength(p) for p in order], [_theme_text(p) for p in order],
+                                offset - (cut["end"] - cut["start"] if cut else 0.0), last_word, rng,
+                                bookend=mode == "bookend")
     return {"clip_plan_id": plan["id"], "pieces": len(segment_ids), "clips": len(order), "skipped": skipped,
-            "duration": round(offset, 2)}
+            "duration": round(offset, 2), "check": check}

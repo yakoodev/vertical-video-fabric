@@ -136,7 +136,10 @@ def tools() -> list[Tool]:
             "Длинные паузы и вырезы, после которых остался бы обрывок, помечены risky и в cuts не входят — в реакциях "
             "это часто сам момент, не вырезай их вслепую. Шкала clip: "
             "cuts можно передать в apply_cuts как есть. / Suggest jump cuts.",
-            _obj({"mode": {"type": "string"}, "min_pause": {"type": "number"}, "keep_pad": {"type": "number"}}),
+            _obj({"mode": {"type": "string"}, "min_pause": {"type": "number"}, "keep_pad": {"type": "number"},
+                  "pace": {"type": "string", "enum": ["reaction_full", "horizontal_game", "short", "explainer"],
+                           "description": "пресет темпа по типу ролика: полная реакция — паузы > 3 с и ≤ 10 %; "
+                                          "игровая горизонталка — > 6 с; шортс — > 0,7 с; объяснялка — > 0,3 с"}}),
             h_suggest_cuts, label=lambda a: "Ищу паузы и слова-паразиты",
         ),
         Tool(
@@ -165,9 +168,15 @@ def tools() -> list[Tool]:
         Tool(
             "make_compilation", "Собираю компиляцию",
             "Новый клип «ТОП-N» из клипов одного проекта: номера обратным отсчётом, названия, субтитры, whoosh. "
-            "clip_ids — от худшего к лучшему не важно, countdown ставит лучший (первый в списке) последним. / Compilation.",
+            "clip_ids — от худшего к лучшему не важно, countdown ставит лучший (первый в списке) последним. "
+            "order: strength — сильнейший первым, второй по силе последним (подборки 49/52); bookend — и последним "
+            "сильнейший той же темы, что первый; gag — фраза (или true — сама найдёт) для режима «один гэг × много "
+            "повторов»: берёт клипы с её повторами в транскрипте. Хвост дольше 1 с после последнего слова вырезается "
+            "(trim_outro: false — оставить). В ответе check — замер правил. / Compilation.",
             _obj({"clip_ids": {"type": "array", "items": {"type": "integer"}}, "title": {"type": "string"},
-                  "countdown": {"type": "boolean"}}, ["clip_ids"]),
+                  "countdown": {"type": "boolean"},
+                  "order": {"type": "string", "enum": ["countdown", "chrono", "strength", "bookend"]},
+                  "gag": {"type": ["string", "boolean"]}, "trim_outro": {"type": "boolean"}}, ["clip_ids"]),
             h_make_compilation, mutating=True, scope="global", label=lambda a: "Собираю компиляцию",
         ),
         Tool(
