@@ -149,20 +149,29 @@ def blend(quality: float, chat: float | None, weight: float = CHAT_WEIGHT) -> fl
 
 
 def rerank(store: Any, plans: list[dict], weight: float = CHAT_WEIGHT) -> list[dict]:
-    """Порядок кандидатов (как выдал анализ) с мягкой поправкой на чат; без чата — тот же порядок."""
+    """Порядок кандидатов (как выдал анализ) с мягкой поправкой на чат и сигналы ``app/moment_signals.py``
+    (немая реакция, клипы зрителей, тепловая карта и метки YouTube); без сигналов — тот же порядок."""
+    from app.moment_signals import blend_extras, plan_extras, source_extras
+
     signals: dict[int, dict | None] = {}
+    extras: dict[int, dict] = {}
     for plan in plans:
         sid = int(plan.get("source_id") or 0)
         if sid and sid not in signals:
             signals[sid] = source_signal(store, sid)
-    if not any(signals.values()):
+            try:
+                extras[sid] = source_extras(store, sid)
+            except Exception:  # noqa: BLE001 - дополнение не ломает отбор
+                extras[sid] = {}
+    if not any(signals.values()) and not any(extras.values()):
         return list(plans)
     n = max(1, len(plans))
 
     def key(item: tuple[int, dict]) -> float:
         index, plan = item
-        chat = plan_score(signals.get(int(plan.get("source_id") or 0)), plan)
-        return -blend(1 - index / n, chat, weight)
+        sid = int(plan.get("source_id") or 0)
+        chat = plan_score(signals.get(sid), plan)
+        return -blend_extras(blend(1 - index / n, chat, weight), plan_extras(extras.get(sid) or {}, plan))
 
     return [plan for _, plan in sorted(enumerate(plans), key=key)]
 

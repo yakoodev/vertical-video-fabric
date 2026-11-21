@@ -214,7 +214,13 @@ class AutomationService:
             self.store.ensure_clip_plans_for_source(source["id"])
             from app.chat_signal import rerank
 
-            # Порядок анализа, мягко поправленный всплесками чата Twitch (если чат есть).
+            try:  # немая реакция + клипы зрителей Twitch + тепловая карта/метки YouTube (app/moment_signals.py)
+                from app.moment_signals import refresh_source_signals
+
+                refresh_source_signals(self.store, int(source["id"]))
+            except Exception:  # noqa: BLE001 - дополнение: не вышло — отбор как раньше
+                pass
+            # Порядок анализа, мягко поправленный всплесками чата Twitch и сигналами моментов (если есть).
             plans = rerank(self.store, self.store.list_clip_plans(source_id=source["id"]))
             max_clips = int(publish.get("max_clips") or 0)
             if max_clips > 0:
