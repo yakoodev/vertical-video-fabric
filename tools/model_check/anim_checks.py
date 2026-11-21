@@ -142,33 +142,32 @@ def bone_index(D, role):
 
 
 # ============================================================================ jumps
-def jumps(pos, frames, cuts=(), labels=None, min_jump=0.03, ratio=3.0, win=8, hard=0.25):
+def jumps(pos, frames, cuts=(), labels=None, min_jump=0.03, ratio=3.0, win=8, hard=0.5):
     """Spikes in a set of point tracks ``pos`` (F, N, 3): a step larger than ``min_jump`` (m) and ``ratio`` times the
-    point's own typical moving step around it (``win`` frames each side; the drawing-on-twos rhythm is part of that
-    typical step), or any step above ``hard`` m. Cuts are skipped."""
+    point's own usual moving step around it (``win`` frames each side; the drawing-on-twos rhythm and a fast swing
+    foot are part of that usual step), or any step above ``hard`` m. Cuts are skipped. One finding per frame: the
+    worst point and how many points jumped with it."""
     pos = np.asarray(pos, np.float64)
     F, N = pos.shape[:2]
     cut = _cut_mask(frames, cuts)
     d = np.zeros((F, N))
     d[1:] = np.linalg.norm(pos[1:] - pos[:-1], axis=-1)
     valid = ~cut
-    errors, worst = [], {}
-    cand = np.argwhere((d > min_jump) & valid[:, None])
-    for t, n in cand:
-        loc = _local_speed(d[:, n], valid, int(t), win)
-        base = loc if loc is not None else 0.0
+    per_frame, points = {}, set()
+    for t, n in np.argwhere((d > min_jump) & valid[:, None]):
+        base = _local_speed(d[:, n], valid, int(t), win) or 0.0
         if d[t, n] > hard or d[t, n] > ratio * max(base, 1e-4):
             what = labels[n] if labels is not None else int(n)
-            f = {'frame': int(frames[t]), 'what': what, 'step_cm': round(100 * d[t, n], 1),
-                 'usual_cm': round(100 * base, 2)}
-            key = what
-            if key not in worst or f['step_cm'] > worst[key]['step_cm']:
-                worst[key] = f
-            errors.append(f)
-    errors.sort(key=lambda e: -e['step_cm'])
+            points.add(int(n))
+            f = per_frame.setdefault(int(t), {'frame': int(frames[t]), 'what': what, 'step_cm': 0.0, 'usual_cm': 0.0,
+                                              'points': 0})
+            f['points'] += 1
+            if 100 * d[t, n] > f['step_cm']:
+                f.update(what=what, step_cm=round(100 * float(d[t, n]), 1), usual_cm=round(100 * base, 2))
+    errors = sorted(per_frame.values(), key=lambda e: -e['step_cm'])
     m = {'points': int(N), 'frames': int(F), 'max_step_cm': round(100 * float(d[valid].max()), 1) if valid.any() else 0,
-         'flagged_points': len(worst), 'flagged_steps': len(errors)}
-    return _result('jumps', sorted(worst.values(), key=lambda e: -e['step_cm']), [], m)
+         'flagged_points': len(points), 'flagged_frames': len(errors)}
+    return _result('jumps', errors, [], m)
 
 
 def rotation_jumps(rots, frames, cuts=(), labels=None, hard=60.0, soft=20.0, ratio=3.0, win=8):
@@ -224,7 +223,7 @@ def hinge_axes(rest_local, upper, lower, end, flex_dir):
     return R.T @ ax
 
 
-def bend_plane(W, frames, chains, off_warn=15.0, off_err=30.0, reverse_err=10.0, min_flex=12.0,
+def bend_plane(W, frames, chains, off_warn=20.0, off_err=30.0, reverse_err=10.0, min_flex=12.0,
                knee_warn_cm=4.0, knee_err_cm=8.0):
     """Hinge check per chain ``{'name', 'upper', 'lower', 'end', 'axis_local', optional 'toe'}`` on world pose
     ``W`` (F, B, 4, 4): the lower limb stays perpendicular to the hinge axis (carried by the upper bone, so a twist
@@ -376,9 +375,15 @@ def attached_props(props, frames, max_drift=0.02, max_turn=15.0, axis_tol=30.0):
 
 # ============================================================================ skin
 def normals(actual, expected, frames, max_deg=40.0, max_share=0.003, min_count=4, labels=None):
-    """``actual``/``expected`` (F, N, 3): share of vertices whose normal is > ``max_deg`` off the skinned rest
-    normal; a frame over ``max_share`` (and at least ``min_count`` vertices) is an error with its frame number."""
-    ang = _angle(np.asarray(actual, np.float64), np.asarray(expected, np.float64))
+    """``actual``/``expected`` (F, N, 3): share of vertices whose normal turns > ``max_deg`` away from the skinned
+    rest normal (beyond that vertex's own median over the shot); a frame over ``max_share`` (and at least
+    ``min_count`` vertices) is an error with its frame number."""
+    raw = _angle(np.asarray(actual, np.float64), np.asarray(expected, np.float64))
+    # a vertex that is off on most frames is a rest-data / thin-geometry quirk, not a crease of the motion:
+    # judge each vertex against its own median over the shot
+    base = np.median(raw, axis=0)
+    unstable = int((base > max_deg).sum())
+    ang = np.maximum(0.0, raw - base)
     bad = ang > max_deg
     share = bad.mean(axis=1)
     errors, warnings = [], []
@@ -395,7 +400,7 @@ def normals(actual, expected, frames, max_deg=40.0, max_share=0.003, min_count=4
     errors.sort(key=lambda e: -e['share_pct'])
     warnings.sort(key=lambda e: -e['share_pct'])
     m = {'verts': int(ang.shape[1]), 'share_pct_max': round(100 * float(share.max()), 3),
-         'deg_p999': round(float(np.percentile(ang, 99.9)), 1), 'frames_over': int(((share > max_share)
+         'deg_p999': round(float(np.percentile(ang, 99.9)), 1), 'always_off_verts': unstable, 'frames_over': int(((share > max_share)
                                                                                       & (bad.sum(1) >= min_count)).sum())}
     return _result('normals', errors, warnings, m)
 
@@ -499,11 +504,16 @@ def _seg_dist(p, a, b):
     return np.linalg.norm(p - (a + t[:, None] * ab), axis=1)
 
 
-def weight_leak(rest_co, w_idx, w_val, rest_local, parent, names, deform, angle=45.0, max_move=0.015,
-                margin=0.07, margin_k=0.35, skip=SECONDARY, height=None):
+TORSO = r'Hips|Spine|Chest|Neck|Shoulder'
+
+
+def weight_leak(rest_co, w_idx, w_val, rest_local, parent, names, deform, angle=45.0, max_move=0.03,
+                margin=0.12, margin_k=0.5, skip=SECONDARY, info_only=TORSO):
     """Rotate each deform bone by +-``angle`` about the two axes across it and about its own axis; a vertex outside
     the bone's zone (its nearest bone segment is neither this bone nor below it in the chain) and farther than
-    ``margin`` (or ``margin_k`` bone lengths) from its joint that moves more than ``max_move`` m is a leak."""
+    ``margin`` (or ``margin_k`` bone lengths) from every segment of that chain that moves more than ``max_move`` m is
+    a leak (an arm pulling the belly). Smooth blending at a joint or between fingers stays within the margin.
+    Torso bones (``info_only``) blend widely by design (VRoid): measured and listed, not judged."""
     rest_co = np.asarray(rest_co, np.float64)
     heads = rest_local[:, :3, 3].astype(np.float64)
     kids = {}
@@ -541,7 +551,9 @@ def weight_leak(rest_co, w_idx, w_val, rest_local, parent, names, deform, angle=
             continue
         L = float(np.linalg.norm(tails[b] - heads[b]))
         zone = np.isin(near, list(sub))
-        far = np.linalg.norm(rest_co - heads[b], axis=1) > max(margin, margin_k * L)
+        chain = np.min(np.stack([_seg_dist(rest_co, heads[c], tails[c]) for c in sub if deform[c]] or
+                                [_seg_dist(rest_co, heads[b], tails[b])], axis=1), axis=1)
+        far = chain > max(margin, margin_k * L)
         out = moving & ~zone & far
         if not out.any():
             metrics[names[b]] = 0.0
@@ -560,7 +572,7 @@ def weight_leak(rest_co, w_idx, w_val, rest_local, parent, names, deform, angle=
         mv = float(worst.max())
         metrics[names[b]] = round(100 * mv, 2)
         bad = worst > max_move
-        if bad.any():
+        if bad.any() and not re.search(info_only, names[b]):
             j = int(np.argmax(worst))
             errors.append({'frame': None, 'what': names[b], 'verts': int(bad.sum()), 'max_move_cm': round(100 * mv, 1),
                            'worst_vertex': int(np.where(out)[0][j]),

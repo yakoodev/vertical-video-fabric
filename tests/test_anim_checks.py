@@ -295,3 +295,25 @@ def test_analyzer_passes_clean_and_each_real_data_negative_fails(tmp_path):
 def test_twist_threshold(deg, ok):
     D = dump(walk(extra=lambda t, r: r.update({'J_Bip_R_LowerLeg': rot((0, 0, 1), deg)}) if t == 0 else None))
     assert AC.import_twist(D)['ok'] is ok
+
+
+def test_normals_ignore_a_vertex_that_is_always_off_but_catch_a_new_crease():
+    F, N = 12, 400
+    exp = np.tile([0.0, 0.0, 1.0], (F, N, 1))
+    act = exp.copy()
+    act[:, :3] = [1.0, 0.0, 0.0]          # thin geometry: these 3 normals are off on every frame (not the motion)
+    r = AC.normals(act, exp, list(range(F)))
+    assert r['ok'] and r['metrics']['always_off_verts'] == 3
+    act[7, 10:20] = [0.0, 1.0, 0.0]       # negative control: a crease on frame 7
+    r = AC.normals(act, exp, list(range(F)))
+    assert not r['ok'] and [e['frame'] for e in r['errors']] == [7]
+
+
+def test_jumps_report_one_finding_per_frame():
+    t = np.arange(48)
+    base = np.stack([np.zeros(48), -0.01 * t, np.ones(48)], axis=1)
+    pts = np.stack([base + [0.01 * k, 0, 0] for k in range(5)], axis=1)
+    pts[30] += [0.0, 0.0, 0.2]            # the whole limb pops 20 cm
+    r = AC.jumps(pts, FR)
+    # out and back: two transitions, each one finding with all 5 points
+    assert sorted(e['frame'] for e in r['errors']) == [31, 32] and all(e['points'] == 5 for e in r['errors'])

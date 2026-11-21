@@ -168,6 +168,22 @@ def _inside_depth(tree, pts, reach=0.30):
     return out
 
 
+def _inside_parity(tree, p, reach=0.5):
+    """Point inside a closed prop: an odd number of surface crossings both straight up and straight down."""
+    for d in (Vector((0.0, 0.0, 1.0)), Vector((0.0, 0.0, -1.0))):
+        o, left, n = Vector(p), reach, 0
+        while left > 0 and n < 16:
+            loc, _nor, _idx, dist = tree.ray_cast(o, d, left)
+            if loc is None:
+                break
+            n += 1
+            o = loc + d * 1e-4
+            left -= dist + 1e-4
+        if n % 2 == 0:
+            return False
+    return True
+
+
 def _probe_sets(dom):
     """Foot (dominant foot/toe bone) and knee (dominant lower leg, near the knee joint) vertex ids per side."""
     out = {}
@@ -333,8 +349,9 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
                             loc, nor, _i, dist = pt.find_nearest(Vector(p), 0.25)
                             if loc is None:
                                 continue
-                            sd = (Vector(p) - loc).dot(nor)
-                            if sd < 0 and dist > 1e-4:
+                            # inside by ray parity (up and down), not by the face normal: open / flipped prop
+                            # meshes would make a normal test call the whole hand "inside"
+                            if dist > 1e-4 and _inside_parity(pt, p):
                                 pen = max(pen, dist)
                                 gap = 0.0
                             else:
