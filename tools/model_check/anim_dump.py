@@ -242,7 +242,10 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
         # contacts: hand vertices as clip_check selects them (dominant hand / finger bone of that side)
         ctrees = []
         for c in contacts:
-            ids = [i for i, b in enumerate(mains['dom']) if ('_%s_' % c['side']) in b and any(x in b for x in FINGERS)]
+            if c.get('hand_vertices') is not None:      # e.g. clip_check.Character(arm, body).hand[side]
+                ids = list(c['hand_vertices'])
+            else:
+                ids = [i for i, b in enumerate(mains['dom']) if ('_%s_' % c['side']) in b and any(x in b for x in FINGERS)]
             ctrees.append((c, np.array(ids, np.int64)))
         nF, nB = len(frames), len(bones)
         arm_world = np.zeros((nF, 4, 4), np.float32)
