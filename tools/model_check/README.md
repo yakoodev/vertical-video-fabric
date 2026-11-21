@@ -128,6 +128,36 @@ Outputs: D:\vvf-offload\model_check\{synth,mio,heroine2}\report\.
 - **Pose rotations.** `aim` uses the shortest rotation, so a bone's twist is not controlled (use `rot` about the bone's axis for that). IK constraints in a rig can override the FK pose.
 - **Mixed causes.** Texture flicker also flags EEVEE z-fighting, and its attribution is the majority part under the blob.
 
+## Animation checks (21.11)
+
+The pose check above has no motion. `anim_dump.py` + `anim_checks.py` check a keyed shot frame by frame.
+Every check has a negative control in `tests/test_anim_checks.py`: a deliberately broken input it must catch.
+
+```
+# inside Blender, after the shot builder has keyed everything (no render needed):
+import anim_dump as AD
+AD.dump(out_dir, arm, [body, face, hair], frames, cuts=[...], floor=[env objects], contacts=[...], props=[...])
+# then, with numpy only:
+python tools/model_check/anim_analyze.py out_dir            # anim_report.json + anim_summary.txt
+python tools/model_check/anim_analyze.py out_dir --negative freeze|leak|foot_spin   # break the real dump on purpose
+```
+
+| check | what fails | default limit |
+|---|---|---|
+| `jumps_bones`, `jumps_vertices` | a bone head / vertex steps more than 3 cm and 3x its usual moving step around it (90th percentile of ±8 frames; drawings on twos count as usual), or over 25 cm; cuts skipped | 3 cm, 3x |
+| `rotation_jumps` | foot / toe / hand turns between two frames: over 60° = error; over 20° and 3x its usual turn = warning | 60° / 20° |
+| `bend_plane` | knee and elbow fold about their hinge (the axis comes from the rest pose and follows the upper bone, so a thigh twist turns the plane with it) and to the right side; for knees also the knee distance from the plane "hip → ankle along the foot" | 30° off plane, 10° reversed, knee 8 cm |
+| `floor_contact` | a foot vertex, a knee-end shin vertex or the knee joint is inside a step / slab (a ray up hits the surface from behind; measured in Blender) | 1 cm |
+| `hand_contact` | where the shot says the hand holds a prop (weight ≥ 0.5): gap to the prop over 2 cm or deeper than 1.2 cm inside it; hand vertices as `clip_check.Character` selects them | 2 cm / 1.2 cm |
+| `normals_<mesh>` | normals more than 40° away from the rest normal carried by the skinning, on more than 0.3% of the vertices of a frame (dents, chips). Meshes with shape keys (Face) are reported only. `skin_selfcheck_p99_cm` compares our numpy skinning with Blender's evaluated mesh | 40°, 0.3% |
+| `import_twist` | on the first frame a deform bone is twisted about its own axis (toward its child joint) by more than 90° against rest; the top deform bone (hips: facing) is skipped | 90° |
+| `static` | something that should move has a range under 1 cm over the shot; a still run of 8 s is a warning | 1 cm |
+| `weight_leak` | rotating a deform bone ±45° (two cross axes and its own) moves vertices outside its zone (nearest bone segment not in its chain) farther than 7 cm / 0.35 bone lengths from its joint by more than 1.5 cm | 1.5 cm |
+| `attached_props` | a prop on a socket bone drifts (2 cm) or turns (15°) against it, or its axis is off the socket's (30°) | |
+
+The stairs pilot adapter (copies the build script, runs the dump instead of the render loop, does not touch the
+pilot's `work_*` folders): `D:vf-offload\series_unlucky\pilot_testnim_checkun_dump.py v2|v4`.
+
 ## Flicker video (for people)
 
 `python tools/model_check/flicker_video.py <run dir> <title>` writes `<run dir>/video_flicker/frames/*.jpg`:

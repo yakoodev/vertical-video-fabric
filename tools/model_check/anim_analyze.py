@@ -93,10 +93,21 @@ def run(D, skip_secondary=AC.SECONDARY, normals_skip=r'Face'):
     rb = [(r, b) for r, b in rb if b is not None]
     res.append(AC.rotation_jumps(W[:, [b for _r, b in rb], :3, :3], frames, cuts, labels=[r for r, _b in rb]))
     res.append(AC.bend_plane(W, frames, AC.default_chains(D)))
-    depths = {k[len('floor_'):]: D[k] for k in D if k.startswith('floor_') and not k.endswith('_at')}
+    depths = {k[len('floor_'):]: D[k] for k in D if k.startswith('floor_') and not k.endswith('_at')
+              and k != 'floor_selftest'}
     where = {k[len('floor_'):-3]: D[k] for k in D if k.startswith('floor_') and k.endswith('_at')}
     if info.get('floor'):
-        res.append(AC.floor_contact(depths, frames, where=where))
+        fc = AC.floor_contact(depths, frames, where=where)
+        if 'floor_selftest' in D:
+            # the dump's own negative control: the lowest sole point 3 cm lower is inside the floor on stance frames
+            st = np.asarray(D['floor_selftest'])
+            fc['metrics']['selftest_caught_pct'] = round(100 * float((st > 0.02).mean()), 1)
+            if (st > 0.02).mean() < 0.2:
+                fc['ok'] = False
+                fc['errors'].insert(0, {'frame': None, 'what': 'floor probe blind',
+                                        'caught_pct': fc['metrics']['selftest_caught_pct']})
+                fc['n_errors'] += 1
+        res.append(fc)
     for ci, c in enumerate(info.get('contacts') or []):
         res.append(AC.hand_contact(c['name'], D['contact%d_gap' % ci], D['contact%d_pen' % ci], D['contact%d_w' % ci],
                                    frames))

@@ -256,6 +256,7 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
         floor_depth = {k: np.zeros(nF, np.float32) for k in probes}
         floor_where = {k: np.zeros((nF, 3), np.float32) for k in probes}
         knee_depth = {S: np.zeros(nF, np.float32) for S in 'LR'}
+        selftest = np.zeros(nF, np.float32)
         c_gap = [np.full(nF, np.nan, np.float32) for _ in contacts]
         c_pen = [np.zeros(nF, np.float32) for _ in contacts]
         c_w = [np.zeros(nF, np.float32) for _ in contacts]
@@ -300,6 +301,12 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
                                 w = int(np.argmax(d))
                                 floor_depth[name][j] = d[w]
                                 floor_where[name][j] = pts[w]
+                        # negative control of the probe itself: the lowest sole point pushed 3 cm down must read
+                        # as inside the floor on stance frames (inverted floor normals would make the check blind)
+                        feet = np.concatenate([probes[k] for k in probes if k.endswith('_foot') and len(probes[k])])                             if any(k.endswith('_foot') and len(probes[k]) for k in probes) else np.zeros(0, np.int64)
+                        if len(feet):
+                            low = co_w[feet][int(np.argmin(co_w[feet][:, 2]))] - np.array([0.0, 0.0, 0.03], np.float32)
+                            selftest[j] = _inside_depth(tree, [tuple(low)])[0]
                         for S in 'LR':
                             kb = legs.get(S, {}).get('LowerLeg')
                             if kb:
@@ -346,6 +353,7 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
         arrays['floor_%s_at' % name] = floor_where[name]
     for S in knee_depth:
         arrays['floor_%s_kneejoint' % S] = knee_depth[S]
+    arrays['floor_selftest'] = selftest
     for ci in range(len(contacts)):
         arrays['contact%d_gap' % ci] = c_gap[ci]
         arrays['contact%d_pen' % ci] = c_pen[ci]
