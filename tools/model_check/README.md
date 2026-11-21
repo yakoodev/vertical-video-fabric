@@ -165,3 +165,37 @@ on the left, two beauty frames blink (θ and θ+0.5°); on the right, red marks 
 half-degree turn can explain. Then:
 `ffmpeg -framerate 4 -i <run dir>/video_flicker/frames/%05d.jpg -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" -pix_fmt yuv420p flicker.mp4`.
 Check: two half-overlapping cubes (coplanar faces) light up a whole strip (~12k px per view); our characters at rest show tens of px.
+
+## Light orbit (21.11): how clean is the cel shadow on the face
+
+The key light goes round the head (`--angles 72` = 5° steps, at `--elev 20`°) for every facial expression
+(VRoid `Fcl_ALL_*`, mouth A, eyes closed: 8 by default). Per frame the shader AOV `npr_lit` (1 = lit side of the cel
+shadow; the NPR looks in `D:\vvf-offload\anime3d\npr` write it) and a region code (face skin / face decals / hair /
+other parts) are rendered with EEVEE at 1 sample, hair hidden (`--hide`). A scene where nothing writes `npr_lit` gets a
+reference AOV (the scene lamps through Diffuse → Shader to RGB, lit above `--lit-thr`).
+
+```
+# the rig (Blender), then the numbers
+blender -b --factory-startup -P tools/model_check/light_orbit.py -- --out DIR --setup D:\vvf-offload\anime3d\npr\orbit_setup.py ^
+        --setup-args "--char hero --look flat" [--beauty] [--full] [--lamp-test]
+python tools/model_check/light_report.py DIR          # -> DIR/report/light_orbit.json, summary.txt, masks_sheet.png
+# or a model straight away: --model X.vrm ; tests: --synth
+```
+
+Metrics (`lit_analysis.py`, numpy only), shadow = face region with `npr_lit < 0.5`, decal pixels filled from the
+neighbouring skin:
+- **components**: 8-connected shadow pieces per frame (a sliver smaller than `--tiny` touching the 2-px band along the
+  face outline is not counted: a terminator lying on the silhouette breaks into pieces in any renderer);
+- **tiny_share / tiny_area**: share of the pieces (and of the shadow area) smaller than 0.1 % of the face;
+- **perim_ratio**: sub-pixel contour length of all pieces / perimeter of the convex hull of the shadow (a disc 1.03,
+  a crescent ~1.1–1.2, speckle far above);
+- **IoU** of each expression with the neutral face at the same angle (also without the eye/mouth zone);
+- **nesting**: from the front to the back the shadow may only grow, on the way back only shrink; a neighbour pair is
+  nested when < 0.2 % of the face breaks that;
+- `--lamp-test`: lamp power ×2 and an orange lamp every 30°, IoU with the base lamp (a shader that only uses the light
+  direction gives 1.0); `--full`: neutral face, everything visible, per-part components (hair, sleeves...).
+
+Negative controls: `--noise-normals 0.4` (random face normals: a normals-driven shader must score badly) and
+`--noise-map 0.2` (noise in the `NPR_FaceMap_*` threshold maps). `tests/test_light_orbit.py` checks the metrics on
+synthetic spheres (clean = 1 piece, nested, IoU 1; speckle, a jumping shadow, a sliding expression are caught) and,
+with `MODEL_CHECK_BLENDER`, runs the rig on the synthetic face clean vs noisy.
