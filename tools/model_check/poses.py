@@ -44,8 +44,10 @@ _ROLES = {
     'LowerLeg': ['shin{s}', 'lowerleg{s}', 'calf{s}', '{s}lowerleg', '{s}shin', '{s}calf', 'jbip{s}lowerleg',
                  'mixamorig{side}leg', '{side}lowerleg', '{side}leg', 'knee{s}'],
     'Foot': ['foot{s}', '{s}foot', 'jbip{s}foot', 'mixamorig{side}foot', '{side}foot', 'ankle{s}'],
+    'Toes': ['toes{s}', 'toe{s}', '{s}toes', '{s}toe', 'jbip{s}toebase', 'mixamorig{side}toebase', '{side}toes',
+             '{side}toe', 'toebase{s}', '{side}toebase'],
 }
-SIDED = {'Shoulder', 'UpperArm', 'LowerArm', 'Hand', 'UpperLeg', 'LowerLeg', 'Foot'}
+SIDED = {'Shoulder', 'UpperArm', 'LowerArm', 'Hand', 'UpperLeg', 'LowerLeg', 'Foot', 'Toes'}
 
 
 def norm(name):
