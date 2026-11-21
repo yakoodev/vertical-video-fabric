@@ -67,7 +67,55 @@ def perturb(D, kind):
     return D
 
 
-def run(D, skip_secondary=AC.SECONDARY, normals_skip=r'Face'):
+def shot_rules(D, sizes=None, step=12):
+    """Правила кадра (app/shot_rules.py) по камере дампа и голове героя: каждые ``step`` кадров. Подсказка — на
+    ok не влияет. ``sizes``: {имя плана из meta.shots: крупность}."""
+    if 'camera_m' not in D:
+        return None
+    root = os.path.dirname(os.path.dirname(HERE))
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    from app import shot_rules as SR
+
+    info = D['info']
+    frames = info['frames']
+    shots = (info.get('meta') or {}).get('shots') or []
+    head = AC.bone_index(D, 'head')
+    W = AC.world_pose(D)
+    res = info.get('camera') or {}
+    w, h = (res.get('res') or [1080, 1920])
+    sensor_v = float(res.get('sensor') or 36.0) * (1.0 if h >= w else h / w)
+    found, per = [], {}
+    for t in range(0, len(frames), step):
+        f = frames[t]
+        name = next((s[0] for s in shots if s[1] <= f <= s[2]), '')
+        size = (sizes or {}).get(name, '')
+        M = D['camera_m'][t].astype(np.float64)
+        pos = M[:3, 3]
+        fwd = -M[:3, 2]
+        up_c = M[:3, 1]
+        ref = np.array([0.0, 0.0, 1.0]) - fwd * fwd[2]
+        roll = 0.0
+        if np.linalg.norm(ref) > 1e-6:
+            ref /= np.linalg.norm(ref)
+            roll = float(np.degrees(np.arctan2(np.dot(fwd, np.cross(ref, up_c)), np.dot(ref, up_c))))
+        lens = float(D['camera_lens'][t])
+        fov = float(np.degrees(2 * np.arctan(sensor_v / 2 / max(1e-6, lens))))
+        cam = {'pos': pos.tolist(), 'target': (pos + fwd).tolist(), 'lens': lens, 'fov': fov, 'roll': roll}
+        actors = []
+        if head is not None:
+            hp = W[t, head, :3, 3]
+            actors.append({'id': 'hero', 'eyes': (hp + [0, 0, 0.07]).tolist(), 'head_top': (hp + [0, 0, 0.2]).tolist(),
+                           'main': True})
+        r = SR.frame_rules(cam, actors, size, up=SR.Z_UP, unit=1.0, aspect=w / h)
+        for x in r['findings']:
+            found.append({'frame': int(f), 'shot': name, 'rule': x['rule'], 'text': x['text']})
+        per.setdefault(name, {'lens_mm': round(lens, 1), 'roll_deg': round(roll, 1), 'size': size or None})
+    return {'check': 'shot_rules', 'ok': True, 'errors': [], 'warnings': found[:40], 'n_errors': 0,
+            'n_warnings': len(found), 'metrics': {'shots': per, 'note': 'подсказка, на итог не влияет'}}
+
+
+def run(D, skip_secondary=AC.SECONDARY, normals_skip=r'Face', sizes=None):
     info = D['info']
     frames = info['frames']
     cuts = info.get('cuts') or []
@@ -140,6 +188,9 @@ def run(D, skip_secondary=AC.SECONDARY, normals_skip=r'Face'):
               'axis': p.get('axis')} for i, p in enumerate(info.get('props') or [])]
     if props:
         res.append(AC.attached_props(props, frames))
+    sr = shot_rules(D, sizes)
+    if sr is not None:
+        res.append(sr)
     out = {'dump': info.get('meta'), 'frames': len(frames), 'ok': all(r['ok'] for r in res), 'checks': res}
     if D.get('negative_note'):
         out['negative'] = D['negative_note']
@@ -165,11 +216,13 @@ def main(argv=None):
     ap.add_argument('dump')
     ap.add_argument('--out')
     ap.add_argument('--negative')
+    ap.add_argument('--sizes', default='', help='shot sizes for the frame rules, e.g. D=close,B=medium')
     a = ap.parse_args(argv)
+    sizes = dict(x.split('=', 1) for x in a.sizes.split(',') if '=' in x)
     D = AC.load(a.dump)
     if a.negative:
         D = perturb(D, a.negative)
-    rep = run(D)
+    rep = run(D, sizes=sizes)
     out = a.out or a.dump
     os.makedirs(out, exist_ok=True)
     tag = ('_neg_' + a.negative) if a.negative else ''

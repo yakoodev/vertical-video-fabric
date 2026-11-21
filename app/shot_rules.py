@@ -197,17 +197,17 @@ def screen_order(prev: dict, cur: dict, up: Iterable[float] = Y_UP) -> list[dict
 
 
 def look_room(camera: dict, head: Iterable[float], gaze: Iterable[float], up: Iterable[float] = Y_UP,
-              who: str = "", reach: float | None = None) -> list[dict]:
+              who: str = "", reach: float | None = None, aspect: float = ASPECT) -> list[dict]:
     """Место перед взглядом ≥ 1.5 × места за спиной. Взгляд почти в камеру/от камеры (по экрану короче 25% от
     длины в профиль) не проверяется."""
     head = list(head)
-    p0 = project(camera, head, up)
+    p0 = project(camera, head, up, aspect)
     if p0 is None:
         return []
     dist = p0[2]
     k = reach or dist * 0.25
     g = _unit(list(gaze))
-    p1 = project(camera, [head[i] + g[i] * k for i in range(3)], up)
+    p1 = project(camera, [head[i] + g[i] * k for i in range(3)], up, aspect)
     if p1 is None:
         return []
     f, _r, _u = basis(camera, up)
@@ -420,7 +420,7 @@ def depth_fog(depth: Any, near: float, far: float) -> Any:
 
 def frame_rules(camera: dict, actors: list[dict], size: str, *, intent: str = "", tags: Iterable[str] = (),
                 weights: Iterable[tuple[float, float]] | None = None, up: Iterable[float] = Y_UP,
-                unit: float = 100.0) -> dict:
+                unit: float = 100.0, aspect: float = ASPECT) -> dict:
     """Правила одного кадра. ``actors``: ``[{id, eyes, head_top, gaze?, main?}]`` (точки мира). ``weights`` —
     пятна веса для баланса (по умолчанию — персонажи с весом 1). Возвращает ``{ok, problems, warnings, findings}``:
     ok — нет ошибок (предупреждения не валят)."""
@@ -430,7 +430,7 @@ def frame_rules(camera: dict, actors: list[dict], size: str, *, intent: str = ""
     for a in actors:
         who = str(a.get("id") or "")
         if a.get("gaze") is not None and a.get("eyes") is not None:
-            found += look_room(camera, a["eyes"], a["gaze"], up, who)
+            found += look_room(camera, a["eyes"], a["gaze"], up, who, aspect=aspect)
     if main is not None and main.get("eyes") is not None:
         found += eye_line(camera, main["eyes"], size, up, str(main.get("id") or ""))
         found += angle_intent(camera, main["eyes"], intent, up)
@@ -440,7 +440,7 @@ def frame_rules(camera: dict, actors: list[dict], size: str, *, intent: str = ""
     if weights is None:
         weights = []
         for a in actors:
-            p = project(camera, a.get("eyes") or a.get("center"), up) if (a.get("eyes") or a.get("center")) else None
+            p = project(camera, a.get("eyes") or a.get("center"), up, aspect) if (a.get("eyes") or a.get("center"))                 else None
             if p is not None:
                 weights.append((p[0], 1.0))
     found += balance(weights, tags)

@@ -195,7 +195,7 @@ def _dominant(ob):
 
 
 def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_materials=(), contacts=(), props=(),
-         stride=4, expect_moving=None, meta=None, log=print):
+         stride=4, expect_moving=None, meta=None, camera=None, log=print):
     """Write ``anim.npz`` + ``anim.json`` into ``out_dir``. ``meshes[0]`` is the main mesh (floor / contacts)."""
     t0 = time.time()
     os.makedirs(out_dir, exist_ok=True)
@@ -263,6 +263,8 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
         prop_m = [np.zeros((nF, 4, 4), np.float32) for _ in props]
         sock_m = [np.zeros((nF, 4, 4), np.float32) for _ in props]
         static_ctrees = {}
+        cam_m = np.zeros((nF, 4, 4), np.float32)
+        cam_lens = np.zeros(nF, np.float32)
         for j, f in enumerate(frames):
             sc.frame_set(f)
             dg = bpy.context.evaluated_depsgraph_get()
@@ -339,12 +341,17 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
                                 gap = min(gap, dist)
                         c_gap[ci][j] = gap if gap < 9.0 else np.nan
                         c_pen[ci][j] = pen
+            if camera is not None:
+                cam_m[j] = _mat(camera.matrix_world)
+                cam_lens[j] = camera.data.lens
             for pi, p in enumerate(props):
                 prop_m[pi][j] = _mat(p['object'].matrix_world)
                 sock_m[pi][j] = _mat(arm.matrix_world @ pb[p['socket']].matrix)
             if j % 60 == 0:
                 log('ANIMDUMP frame %d (%d/%d) %.0fs' % (f, j + 1, nF, time.time() - t0))
     arrays.update({'arm_world': arm_world, 'pose': pose})
+    if camera is not None:
+        arrays.update({'camera_m': cam_m, 'camera_lens': cam_lens})
     for k in range(len(meshes)):
         arrays['m%d_ev_co' % k] = ev_co[k]
         arrays['m%d_ev_no' % k] = ev_no[k]
@@ -370,7 +377,10 @@ def dump(out_dir, arm, meshes, frames, *, cuts=(), floor=(), floor_exclude_mater
                           'materials': list(c.get('materials') or ())} for c in contacts],
             'props': [{'name': p.get('name') or p['object'].name, 'socket': p['socket'],
                        'max_gap': p.get('max_gap'), 'axis': p.get('axis')} for p in props],
-            'expect_moving': expect_moving, 'meta': meta or {}, 'seconds': round(time.time() - t0, 1)}
+            'expect_moving': expect_moving,
+            'camera': None if camera is None else {'name': camera.name, 'sensor': camera.data.sensor_width,
+                                                   'sensor_fit': camera.data.sensor_fit,
+                                                   'res': [sc.render.resolution_x, sc.render.resolution_y]}, 'meta': meta or {}, 'seconds': round(time.time() - t0, 1)}
     with open(os.path.join(out_dir, 'anim.json'), 'w', encoding='utf-8') as fh:
         json.dump(info, fh, ensure_ascii=False, indent=1)
     log('ANIMDUMP done: %d frames, %d bones, %s, %.0fs' % (nF, nB, mesh_info, time.time() - t0))
