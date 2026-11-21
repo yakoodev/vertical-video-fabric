@@ -110,25 +110,39 @@ def test_youtube_heatmap_signal_and_negative():
 
 VTT = """WEBVTT
 
-00:00:01.000 --> 00:00:03.000
+00:00:01.000 --> 00:00:03.000 align:start position:0%
+привет<00:00:01.500><c> всем</c>
+
+00:00:12.000 --> 00:00:14.000 align:start position:0%
 привет всем
+пустите.<00:00:12.657><c> [смех]</c>
 
-00:00:12.500 --> 00:00:14.000
-[смех]
+00:00:14.000 --> 00:00:14.010 align:start position:0%
+пустите. [смех]
 
-00:00:13.000 --> 00:00:15.000
-<c>[смех]</c> да ну
+00:00:41.000 --> 00:00:42.000 align:start position:0%
+пустите. [смех]
+[Music]<00:00:41.200><c> [laughter]</c><00:00:41.500><c> [screaming]</c>
+"""
 
-00:00:41.000 --> 00:00:42.000
-[Music] [laughter] [screaming]
+PLAIN_VTT = """WEBVTT
+
+00:00:05.000 --> 00:00:07.000
+[смех] ну
+
+00:00:07.000 --> 00:00:09.000
+[смех] ну
+дальше [applause]
 """
 
 
 def test_auto_sub_tags_dedup_and_bins():
     tags = ext.parse_vtt_tags(VTT)
-    assert [k for _t, k in tags] == ["смех", "laughter", "screaming"]  # повтор «наплыва» и [Music] не считаются
+    # повторы «наката» (строка без пословных таймингов) и [Music] не считаются; время — тайминг перед меткой
+    assert tags == [(12.66, "смех"), (41.2, "laughter"), (41.5, "screaming")]
     sig = ext.tags_signal(tags, duration=50)
     assert sig["curve"][4] == 1.0 and sig["curve"][1] == 0.5 and sig["curve"][0] == 0.0
+    assert ext.parse_vtt_tags(PLAIN_VTT) == [(5.0, "смех"), (7.0, "applause")]  # без таймингов: новое против прошлого блока
     assert ext.parse_vtt_tags("WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nпросто текст") == []
 
 

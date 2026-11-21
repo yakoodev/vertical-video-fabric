@@ -149,27 +149,47 @@ def heatmap_signal(heatmap: list[dict] | None, duration: float | None = None, bu
     return {"bucket": bucket, "curve": _normalize(raw)}
 
 
+_INLINE_T = re.compile(r"<(\d+):(\d\d):(\d\d)[.,](\d{3})>")
+
+
+def _secs(g: Iterable[str]) -> float:
+    h, m, sec, ms_ = (int(x) for x in g)
+    return h * 3600 + m * 60 + sec + ms_ / 1000
+
+
 def parse_vtt_tags(text: str) -> list[tuple[float, str]]:
-    """(секунда, метка) по VTT: ``[смех]``, ``[laughter]``… Повторы одной реплики в «наплывах» автосубтитров
-    YouTube (одна строка в двух соседних блоках) считаются один раз."""
+    """(секунда, метка) по VTT: ``[смех]``, ``[laughter]``…
+
+    Автосубтитры YouTube «накатом»: новая строка идёт с пословными таймингами (``<00:01:02.360><c> слово</c>``),
+    а в следующих блоках повторяется простым текстом. Если в файле есть пословные тайминги — считаются только
+    строки с ними (время метки — тайминг перед ней, иначе начало блока); иначе — строки, которых не было в
+    прошлом блоке."""
+    text = text or ""
+    inline = "<c>" in text
     out: list[tuple[float, str]] = []
-    seen: set[tuple[int, str]] = set()
     t0 = None
-    for line in (text or "").splitlines():
+    prev: set[str] = set()
+    cur: set[str] = set()
+    for line in text.splitlines():
         m = _VTT_TIME.search(line)
         if m:
-            g = [int(x) for x in m.groups()]
-            t0 = g[0] * 3600 + g[1] * 60 + g[2] + g[3] / 1000
+            t0 = _secs(m.groups()[:4])
+            prev, cur = cur, set()
             continue
-        if t0 is None:
+        if t0 is None or not line.strip():
             continue
-        for tag in _TAG_RE.findall(re.sub(r"<[^>]+>", "", line)):
-            key = tag.strip().lower()
-            if key in TAG_WEIGHTS:
-                mark = (int(t0 // 2), key)
-                if mark not in seen:
-                    seen.add(mark)
-                    out.append((round(t0, 2), key))
+        plain = re.sub(r"<[^>]+>", "", line).strip()
+        cur.add(plain)
+        if inline and "<c>" not in line:
+            continue
+        if not inline and plain in prev:
+            continue
+        for m_tag in _TAG_RE.finditer(line):
+            key = m_tag.group(1).strip().lower()
+            if key not in TAG_WEIGHTS:
+                continue
+            stamps = [_secs(x.groups()) for x in _INLINE_T.finditer(line[: m_tag.start()])]
+            out.append((round(stamps[-1] if stamps else t0, 2), key))
     return out
 
 

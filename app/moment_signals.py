@@ -5,7 +5,8 @@
 пересчёт — ``refresh_source_signals`` (автопилот после анализа, MCP ``moment_signals``).
 
 Вес каждого — мягкий (``WEIGHTS``), как у чата: «только как дополнение». Нет ни одного сигнала — порядок и
-оценка как были.
+оценка как были. Метки автосубтитров — самый слабый: на подборках 47/49/50/52 их корзины совпали с top-10
+тепловой карты в 0–30 % случаев (случайно — 23–49 %), поэтому вес 0,03.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-WEIGHTS = {"reaction": 0.12, "viewer_clips": 0.10, "yt_heatmap": 0.10, "yt_tags": 0.06}
+WEIGHTS = {"reaction": 0.12, "viewer_clips": 0.10, "yt_heatmap": 0.10, "yt_tags": 0.03}
 VERSION = 1
 
 
