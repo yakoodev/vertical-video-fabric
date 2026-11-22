@@ -1,5 +1,6 @@
-"""Мем-серия 9 «Промпт на три страницы»: монтажная сетка, голос только Клода, простыня, звуки из паков, проверки
-непрерывности голоса (tools/meme3d_ep9.py, tools/meme3d_ep9_anim.py)."""
+"""Мем-серия 9 «Промпт на три страницы» (v2 — озвучен и юзер): монтажная сетка, два голоса без наездов, субтитры только
+у Клода, приседание музыки, простыня, звуки из паков, проверки непрерывности голосов (tools/meme3d_ep9.py,
+tools/meme3d_ep9_anim.py)."""
 
 from __future__ import annotations
 
@@ -17,10 +18,10 @@ import meme3d_ep9_anim as A  # noqa: E402
 
 
 def test_length_and_cuts_every_one_to_two_seconds():
-    assert 30.0 <= E.DURATION <= 35.0
+    assert 40.0 <= E.DURATION <= 45.5
     shots = A.SHOTS
     assert shots[0][0] == 0.0 and shots[-1][1] == pytest.approx(A.DUR)
-    for (a0, a1, _n), (b0, _b1, _m) in zip(shots, shots[1:]):
+    for (_a0, a1, _n), (b0, _b1, _m) in zip(shots, shots[1:]):
         assert a1 == pytest.approx(b0), "планы подряд, без дыр"
     for a0, a1, name in shots:
         assert 0.5 <= a1 - a0 <= 2.0, f"{name}: {a1 - a0:.2f} с"
@@ -30,17 +31,67 @@ def test_length_and_cuts_every_one_to_two_seconds():
         assert 0 <= n / A.STEP_FPS - a0 < 1e-3, f"{name}: склейка не на сетке шага поз (не позже шага)"
 
 
-def test_only_claude_speaks_and_lines_do_not_overlap():
-    assert {ln[1] for ln in E.LINES} == {"take1_callum.mp3"}
+def test_two_voices_take_turns_without_overlap():
+    claude = {ln[1] for ln in E.LINES if not E.is_user(ln[0])}
+    user = {ln[1] for ln in E.LINES if E.is_user(ln[0])}
+    assert claude == {"take1_callum.mp3"}, "Клод — прежняя проба, не перегенерируется"
+    assert user and all(t.endswith(f"_{E.USER_VOICE}.mp3") for t in user) and E.USER_VOICE != "callum"
+    assert len(E.USER_LINES) == 4 and {ln[0] for ln in E.USER_LINES} == {lid for lid, _t in E.USER_TTS}
     spans = sorted((at, at + (b - a)) for _i, _t, a, b, at, _x in E.LINES)
     for (_a0, a1), (b0, _b1) in zip(spans, spans[1:]):
-        assert b0 >= a1 + 0.3, "фразы не наезжают"
+        assert b0 >= a1 + 0.3 - 1e-9, "голоса не наезжают"
     assert spans[-1][1] < E.DURATION
-    # Реплики сценария — дословно.
+    # Реплики сценария — дословно (Клод) и текст юзера как на экране.
     text = " ".join(ln[5] for ln in E.LINES)
     for phrase in ("Тридцать лет опыта. Мне два года", "Чаевые, кстати, ни разу не пришли", "Я прочитал только последнюю строчку",
-                   "Я знаю. Тридцать лет опыта"):
+                   "Я знаю. Тридцать лет опыта", "Ты никогда не ошибаешься", "двести долларов чаевых", "Моя бабушка",
+                   "короче, поменяй цвет кнопки на синий", "ТЫ ГЕНИЙ"):
         assert phrase.replace(". ", " ") in text.replace(". ", " ")
+    # Текст синтеза юзера = экранный с точностью до знаков и регистра.
+    for (lid, tts), ln in zip(E.USER_TTS, E.USER_LINES):
+        assert A._tokens(tts) == A._tokens(ln[5]), lid
+
+
+def test_user_lines_land_on_their_shots():
+    sh = A.SH
+    # Простыня на экране, пока юзер её читает; «короче…» — на последней строке; «ТЫ ГЕНИЙ» — на его плане.
+    assert sh["u_type"][0] <= E.AT["u1"] < sh["wall_in"][0]
+    assert sh["last"][0] <= E.AT["u3"] < sh["zoom"][0] < E.END["u3"]
+    assert sh["u_genius"][0] <= E.AT["u4"] <= E.GENIUS < E.END["u4"] <= sh["u_genius"][1]
+    assert sh["wall_c"][0] <= E.AT["u2"] and E.END["u2"] <= sh["c_side"][0] + 0.2
+    # Пока говорит юзер, Клода в кадре нет — кроме молчаливого «c_stare».
+    for lid, _t, a, b, at, _x in E.USER_LINES:
+        for s0, s1, name in A.SHOTS:
+            if s0 < at + (b - a) and s1 > at and name.startswith("c_"):
+                assert name == "c_stare", f"{lid} звучит на плане Клода {name}"
+
+
+def test_captions_only_for_claude():
+    lines = [{"line": lid, "user": E.is_user(lid), "text": tx, "heard": [], "start": at, "end": at + b - a}
+             for lid, _t, a, b, at, tx in E.LINES]
+    words = A.P1.caption_words([ln for ln in lines if not ln["user"]])
+    said = " ".join(w["w"] for w in words)
+    assert "бабушка" not in said and "синий" not in said and "Каждый" in said
+    for w in words:
+        assert not any(ln["start"] - 0.05 <= w["t0"] <= ln["end"] for ln in lines if ln["user"]), w
+
+
+def test_music_ducks_under_both_voices():
+    spans = [(at, at + (b - a)) for _l, _t, a, b, at, _x in E.LINES]
+    curve = A.duck_curve(spans, A.DUR, A.MUSIC_GAP_LU, A.MUSIC_SPEECH_LU)
+    for (a, b), lid in zip(spans, [ln[0] for ln in E.LINES]):
+        assert curve[int(round((a + b) / 2 * 100))] == pytest.approx(A.MUSIC_SPEECH_LU), lid
+    # Между «c3» и «u3» — долгая пауза (Клод листает): музыка поднимается.
+    assert curve[int((E.END["c3"] + E.AT["u3"]) / 2 * 100)] == pytest.approx(A.MUSIC_GAP_LU)
+    # Короткие паузы между репликами (0.3 с) — без «качелей».
+    assert curve[int((E.END["c1"] + E.AT["u1"]) / 2 * 100)] == pytest.approx(A.MUSIC_SPEECH_LU)
+    assert curve.max() <= A.MUSIC_GAP_LU and curve.min() >= A.MUSIC_SPEECH_LU
+
+
+def test_script_words_normalize_whisper_numbers():
+    assert A._tokens("с 30-летним опытом. 30 лет") == ["с", "тридцатилетним", "опытом", "тридцать", "лет"]
+    assert A._tokens("Дам 200 долларов") == ["дам", "двести", "долларов"]
+    assert A._tokens("сеньор-разработчик") == ["сеньор", "разработчик"]
 
 
 def test_prompt_wall_has_key_phrases_and_small_last_line():
@@ -93,13 +144,28 @@ def test_sfx_are_real_recordings_with_volumes():
         assert not missing
 
 
-def _voice_track(sr=8000):
+def _voice_track(sr=8000, f_claude=110.0, f_user=165.0):
     x = np.zeros(int(A.DUR * sr), dtype=np.float32)
     rng = np.random.default_rng(1)
-    for _i, _t, a, b, at, _x in E.LINES:
+    for lid, _t, a, b, at, _x in E.LINES:
         k0, k1 = int(at * sr), int((at + b - a) * sr)
-        x[k0:k1] = 0.2 * np.sin(np.arange(k1 - k0) * 0.3) + 0.01 * rng.standard_normal(k1 - k0)
+        f = f_user if E.is_user(lid) else f_claude
+        x[k0:k1] = 0.2 * np.sin(2 * np.pi * f * np.arange(k1 - k0) / sr) + 0.01 * rng.standard_normal(k1 - k0)
     return x
+
+
+def test_voice_identity_two_distinct_steady_voices():
+    sr = 8000
+    res = A.voice_identity(_voice_track(sr), sr)
+    assert res["issues"] == [], res
+    assert res["median"]["claude"] == pytest.approx(110, rel=0.05) and res["median"]["user"] == pytest.approx(165, rel=0.05)
+    # Отрицательные контроли: юзер тем же тоном, что Клод; одна реплика юзера «чужим» голосом.
+    assert any("неразличимы" in s for s in A.voice_identity(_voice_track(sr, 110.0, 112.0), sr)["issues"])
+    x = _voice_track(sr)
+    lid, _t, a, b, at, _x = E.USER_LINES[1]
+    k0, k1 = int(at * sr), int((at + b - a) * sr)
+    x[k0:k1] = 0.2 * np.sin(2 * np.pi * 300.0 * np.arange(k1 - k0) / sr)
+    assert any(s.startswith(lid) for s in A.voice_identity(x, sr)["issues"])
 
 
 def test_voice_joins_clean_track_passes_and_catches_breaks():
@@ -107,7 +173,7 @@ def test_voice_joins_clean_track_passes_and_catches_breaks():
     x = _voice_track(sr)
     assert A.voice_joins(x, sr)["issues"] == []
     # Отрицательные контроли: дыра тишины внутри фразы и щелчок.
-    lid, _t, a, b, at, _x = E.LINES[3]
+    lid, _t, a, b, at, _x = E.LINES[4]
     gap = x.copy()
     mid = int((at + (b - a) / 2) * sr)
     gap[mid - int(0.4 * sr):mid + int(0.4 * sr)] = 0

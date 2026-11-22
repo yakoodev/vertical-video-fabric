@@ -6,12 +6,16 @@
     python tools/meme3d_ep9_anim.py D:/vvf-offload/memes/ep9 --hands                  # проверка руки с кружкой
     python tools/meme3d_ep9_anim.py D:/vvf-offload/memes/ep9                          # ролик + копия для TG + лист
 
-Голос — только Клод (callum); юзер — текстом в чате, звуком печати и мордой моти. ~30 планов за ~34 с:
-обложка «3 СТРАНИЦЫ» → «Каждый день мне пишут промпт» → юзер печатает, простыня в чате (маркер на «тридцатилетним
-опытом», «Ты гений») → «Тридцать лет опыта. Мне два года» → «шаг за шагом», «двести долларов чаевых», «бабушка» →
-«Чаевые, кстати, ни разу не пришли» → Клод листает: стр. 2, чай остывает, стр. 3, пар кончился, часы крутятся →
-последняя строка мелко, вылетает крупно → «Я прочитал только последнюю строчку» → кнопка синеет → «ТЫ ГЕНИЙ» →
-Клод отхлёбывает: «Я знаю. Тридцать лет опыта». Рот — виземы по слогам (вердикт владельца по рэп-клипу).
+    python tools/meme3d_ep9_anim.py D:/vvf-offload/memes/ep9 --tts-user               # голос юзера (платно, кэш)
+
+v2: Клод (callum) и юзер (E.USER_VOICE) — оба голосом, по очереди, не наезжая; музыка приседает под речь. Субтитры —
+только у Клода: текст юзера и так на экране (простыня, последняя строка, пузырь). ~36 планов за ~45 с:
+обложка «3 СТРАНИЦЫ» → «Каждый день мне пишут промпт» → юзер печатает и читает вслух, простыня в чате (маркер на
+«тридцатилетним опытом», «Ты гений»), Клод молча смотрит → «Тридцать лет опыта. Мне два года» → юзер: «шаг за шагом»,
+«двести долларов чаевых», «карьера», «бабушка» → «Чаевые, кстати, ни разу не пришли» → Клод листает: стр. 2, чай
+остывает, стр. 3, пар кончился, часы крутятся → последняя строка мелко (юзер бормочет), вылетает крупно → «Я прочитал
+только последнюю строчку» → кнопка синеет → юзер орёт «ТЫ ГЕНИЙ» → Клод отхлёбывает: «Я знаю. Тридцать лет опыта».
+Рот Клода — виземы по его слогам и огибающая только его дорожки (на голосе юзера рот закрыт).
 """
 
 from __future__ import annotations
@@ -54,12 +58,17 @@ MOUTH = {"width": 0.28, "y": 0.125, "color": "#1b1214"}  # рисованный 
 # --------------------------------------------------------------------------- планы
 
 SHOT_STARTS = [
-    (0.0, "cover"), (0.6, "c_cu"), (1.6, "u_type"), (2.6, "wall_in"), (E.HL1, "wall_hl1"), (E.GENIUS_SCROLL[0], "wall_b"),
-    (5.9, "u_smug"), (6.7, "c_dead"), (8.3, "c_ecu"), (E.STEP_SCROLL[0], "wall_c"), (E.TIPS_SCROLL[0], "wall_d"), (12.3, "u_rub"),
-    (E.CAREER_SCROLL[0], "wall_e"), (14.1, "c_side"), (15.3, "c_roll"),
+    (0.0, "cover"), (0.6, "c_cu"),
+    # Юзер печатает и читает простыню вслух; Клод молча смотрит на «…никогда не ошибаешься».
+    (2.5, "u_type"), (E.PASTE, "wall_in"), (E.HL1, "wall_hl1"), (E.GENIUS_SCROLL[0], "wall_b"), (7.05, "u_smug"), (8.3, "wall_b2"),
+    (9.4, "c_stare"), (10.6, "c_dead"), (12.25, "c_ecu"),
+    # Юзер: «шаг за шагом… вдохни… чаевых… карьера… бабушка».
+    (E.STEP_SCROLL[0], "wall_c"), (15.5, "u_rub"), (E.TIPS_SCROLL[0], "wall_d"), (18.75, "wall_d2"), (E.CAREER_SCROLL[0], "wall_e"),
+    (22.0, "u_beg"), (E.GRANNY_SCROLL[0], "wall_f"),
+    (24.35, "c_side"), (25.6, "c_roll"),
     (E.SCROLL0, "scroll"), (E.PAGE2, "page2"), (E.TEA1, "tea1"), (E.PAGE3, "page3"), (E.TEA2, "tea2"), (E.SPIN, "clock"), (E.TIRED, "c_tired"),
-    (E.LAST, "last"), (E.ZOOM - 0.05, "zoom"), (25.0, "c_weary"), (26.2, "c_ecu2"),
-    (E.SITE, "site"), (E.GENIUS, "u_genius"), (E.TEA, "tea_sip"), (31.5, "tea_cu"), (32.9, "c_end"),
+    (E.LAST, "last"), (E.ZOOM - 0.05, "zoom"), (35.85, "c_weary"), (37.1, "c_ecu2"),
+    (E.SITE, "site"), (E.AT["u4"], "u_genius"), (E.TEA, "tea_sip"), (42.2, "tea_cu"), (43.6, "c_end"),
 ]
 
 
@@ -79,8 +88,8 @@ def _shots() -> list[tuple[float, float, str]]:
 
 SHOTS = _shots()
 SH = {name: (a, b) for a, b, name in SHOTS}
-WALL_WINDOWS = [(SH["wall_in"][0], SH["wall_b"][1]), SH["wall_c"], SH["wall_d"], SH["wall_e"], SH["page2"], SH["page3"],
-                (SH["last"][0], SH["zoom"][1])]
+WALL_WINDOWS = [(SH["wall_in"][0], SH["wall_b"][1]), SH["wall_b2"], SH["wall_c"], (SH["wall_d"][0], SH["wall_e"][1]), SH["wall_f"],
+                SH["page2"], SH["page3"], (SH["last"][0], SH["zoom"][1])]
 
 # --------------------------------------------------------------------------- герой
 
@@ -104,9 +113,10 @@ def room_claude(env: list[float], mouth_keys: list[dict]) -> dict:
     # Обложка и «Каждый день мне пишут промпт» — ровно в камеру.
     k.f(0, "deadpan", [0.1, 0.05])
     k.p(AT["c1"], "inOutSine", tilt=0)
-    # «Тридцать лет опыта.» — каменно; «Мне два года.» — ещё каменнее, крупно.
-    k.p(SH["c_dead"][0], "step", turn=-4, tilt=-3)
-    k.f(SH["c_dead"][0], "stare", [0, 0])
+    # Молча смотрит, пока юзер дочитывает «…никогда не ошибаешься»; «Тридцать лет опыта.» — каменно;
+    # «Мне два года.» — ещё каменнее, крупно.
+    k.p(SH["c_stare"][0], "step", turn=-4, tilt=-3)
+    k.f(SH["c_stare"][0], "stare", [0, 0])
     k.f(SH["c_ecu"][0], "meh", [0, 0])
     k.f(AT["c2b"] - 0.05, "deadpan", [0, 0])
     # «Чаевые, кстати, ни разу не пришли.» — в сторону, потом закатывает глаза.
@@ -146,7 +156,9 @@ def room_claude(env: list[float], mouth_keys: list[dict]) -> dict:
 
 
 def mochi_windows() -> list[tuple[str, str, tuple[float, float]]]:
-    marks = [(0.0, "smug", "type"), (E.PASTE, "smug", "rub"), (E.SITE - 0.1, "normal", "idle"), (E.GENIUS_TYPE, "smug", "type"),
+    # Напыщенно потирает ручки → «глубоко вдохни» (блаженно) → чаевые (снова потирает) → «карьера!» (паника, ручки вверх).
+    marks = [(0.0, "smug", "type"), (E.PASTE, "smug", "rub"), (E.STEP_SCROLL[0], "happy", "idle"), (E.TIPS_SCROLL[0], "smug", "rub"),
+             (SH["u_beg"][0] - 0.1, "shock", "rage"), (SH["c_side"][0], "normal", "idle"), (E.GENIUS_TYPE, "smug", "type"),
              (E.GENIUS, "happy", "rage")]
     return [(eyes, mood, (t0, marks[i + 1][0] if i + 1 < len(marks) else DUR + 1)) for i, (t0, eyes, mood) in enumerate(marks)]
 
@@ -261,12 +273,17 @@ def camera() -> tuple[dict, list[dict]]:
     shot("wall_hl1", WALL_CU, push(WALL_CU, 0.08), dof=0.2)
     shot("wall_b", WALL, push(WALL, 0.07), dof=0.2, roll=-1.5)
     shot("u_smug", USER_CU, push(USER_CU, 0.08), dof=0.45)
+    shot("wall_b2", WALL_CU, push(WALL_CU, 0.1), dof=0.2, roll=1.5)
+    shot("c_stare", C_ECU, push(C_ECU, 0.05), dof=0.5)
     shot("c_dead", C_CU, push(C_CU, 0.06), dof=0.45)
     shot("c_ecu", C_ECU, push(C_ECU, 0.1), dof=0.5)
     shot("wall_c", WALL, push(WALL, 0.06), dof=0.2)
-    shot("wall_d", WALL_CU, push(WALL_CU, 0.1), dof=0.2, roll=1.5)
     shot("u_rub", USER_CU, push(USER_CU, 0.1), dof=0.45, roll=-2)
+    shot("wall_d", WALL, push(WALL, 0.07), dof=0.2)
+    shot("wall_d2", WALL_CU, push(WALL_CU, 0.1), dof=0.2, roll=1.5)
     shot("wall_e", WALL, push(WALL, 0.08), dof=0.2)
+    shot("u_beg", USER_CU, push(USER_CU, 0.14), dof=0.45, roll=2.5)
+    shot("wall_f", WALL_CU, push(WALL_CU, 0.12), dof=0.2, roll=-1.5)
     shot("c_side", C_SIDE, push(C_SIDE, 0.08), dof=0.45)
     shot("c_roll", C_CU, push(C_CU, 0.08), dof=0.45)
     shot("scroll", SCROLL_TWO, push(SCROLL_TWO, 0.06), dof=0.35)
@@ -305,41 +322,70 @@ def build_spec(env_c: list[float], mouth_keys: list[dict], mug_keys: list[dict] 
 # --------------------------------------------------------------------------- голос, субтитры, звук
 
 
-def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
-    """Реплики пробы → дорожка ролика целыми фразами (склейки только в тишине между фразами); слова Whisper сдвигаются
-    вместе с репликами, начало слова — не раньше начала отрезка (Whisper ставит его раньше тишины)."""
+USER_GAIN_DB = 0.0  # голос юзера относительно Клода — выравнивается в assemble_voice по LUFS проб, это поправка сверху
+
+
+def _lufs_of(x) -> float:
+    """Громкость отрезка по RMS речи (без тишины), дБ — для выравнивания двух голосов между собой."""
+    import numpy as np
+
+    hop = SR // 50
+    n = len(x) // hop * hop
+    rms = np.sqrt(np.mean(np.asarray(x[:n], np.float32).reshape(-1, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms)
+    loud = db[db > db.max() - 30]
+    return float(np.mean(loud)) if len(loud) else -60.0
+
+
+def assemble_voice(work: Path) -> tuple[Path, Path, list[dict], list[dict], dict]:
+    """Реплики проб → дорожка ролика целыми фразами (склейки только в тишине между фразами); слова Whisper сдвигаются
+    вместе с репликами, начало слова — не раньше начала отрезка (Whisper ставит его раньше тишины).
+
+    Возвращает (обе дорожки, только Клод — для рта, реплики Клода — для субтитров, все реплики, интервалы). Голос юзера
+    выравнивается по громкости речи к Клоду (+USER_GAIN_DB), чтобы музыка под обоими приседала одинаково."""
     import numpy as np
 
     takes: dict = {}
     n = int(DUR * SR)
-    mix_ = np.zeros(n, dtype=np.float32)
-    words, spans = [], {}
+    both = np.zeros(n, dtype=np.float32)
+    claude = np.zeros(n, dtype=np.float32)
+    lines, spans = [], {}
     fade = int(0.012 * SR)
     for lid, take, a, b, at, text in E.LINES:
         if take not in takes:
             takes[take] = (P1.decode(work / take), json.loads((work / take).with_suffix(".words.json").read_text("utf-8")))
+    # Одна поправка на все пробы юзера (по медиане их громкости): бормотание остаётся тише, крик — громче.
+    user_db = float(np.median([_lufs_of(takes[t][0]) for _l, t, *_r in E.USER_LINES]))
+    user_gain = 10 ** ((_lufs_of(takes[E.T1][0]) - user_db + USER_GAIN_DB) / 20)
+    for lid, take, a, b, at, text in E.LINES:
         src, heard = takes[take]
         seg = src[int(a * SR):int(b * SR)].copy()
+        if E.is_user(lid):
+            seg *= user_gain
         seg[:fade] *= np.linspace(0, 1, fade)
         seg[-fade:] *= np.linspace(1, 0, fade)
         k = int(at * SR)
         m = min(len(seg), n - k)
-        mix_[k:k + m] += seg[:m]
+        both[k:k + m] += seg[:m]
+        if not E.is_user(lid):
+            claude[k:k + m] += seg[:m]
         shift = at - a
         spans[lid] = (at, at + (b - a))
         got = [w for w in heard if a - 0.12 <= (w["t0"] + w["t1"]) / 2 <= b + 0.05]
-        words.append({"line": lid, "text": text, "heard": [{**w, "t0": round(max(w["t0"], a) + shift, 3), "t1": round(min(w["t1"], b) + shift, 3)}
-                                                           for w in got],
+        lines.append({"line": lid, "user": E.is_user(lid), "text": text,
+                      "heard": [{**w, "t0": round(max(w["t0"], a) + shift, 3), "t1": round(min(w["t1"], b) + shift, 3)} for w in got],
                       "start": round(at, 3), "end": round(at + (b - a), 3)})
-    path = work / "voice.wav"
-    P1.write_wav(path, mix_)
-    return path, words, spans
+    path, path_c = work / "voice.wav", work / "voice_claude.wav"
+    P1.write_wav(path, both)
+    P1.write_wav(path_c, claude)
+    return path, path_c, [ln for ln in lines if not ln["user"]], lines, spans
 
 
 def caption_layers() -> list[dict]:
     return [
         {"id": "hook", "type": "text", "start": 0.0, "end": SH["cover"][1], "x": 0.5, "y": 0.15,
-         "props": {"text": E.HOOK, "font": "Montserrat", "weight": 900, "size": 116,  # одной строкой во всю ширину (150 переносил «3» отдельно) "color": "#fff6e8", "align": "center", "uppercase": True,
+         # size 116 — одной строкой во всю ширину (150 переносил «3» отдельно)
+         "props": {"text": E.HOOK, "font": "Montserrat", "weight": 900, "size": 116, "color": "#fff6e8", "align": "center", "uppercase": True,
                    "lineHeight": 1.0, "stroke": {"color": "#2b1810", "width": 16},
                    "bg": {"color": "#d8342c", "opacity": 1, "radius": 36, "padX": 44, "padY": 26}}},
         {"id": "top", "type": "text", "start": SH["cover"][1], "end": 2.4, "x": 0.5, "y": 0.105,
@@ -373,7 +419,7 @@ def sfx_list() -> list[dict]:
         {"t": E.TYPE0, "path": fs / "typing-digital.ogg", "volume": 0.22, "len": E.PASTE - E.TYPE0},
         {"t": E.PASTE - 0.02, "path": ki / "maximize_004.ogg", "volume": 0.4},
         {"t": E.PASTE, "path": fs / "pop.ogg", "volume": 0.4},
-        {"t": E.TIPS_SCROLL[1], "path": fs / "cash.ogg", "volume": 0.18, "len": 0.8},
+        {"t": E.CASH, "path": fs / "cash.ogg", "volume": 0.18, "len": 0.8},
         {"t": END["c3"] + 0.05, "path": fs / "sad-trombone.ogg", "volume": 0.12, "len": 1.2},
         {"t": E.PAGE2 - 0.03, "path": ki / "select_002.ogg", "volume": 0.3},
         {"t": E.PAGE3 - 0.03, "path": ki / "select_003.ogg", "volume": 0.3},
@@ -389,7 +435,7 @@ def sfx_list() -> list[dict]:
         {"t": TEA + 0.32, "path": ki / "glass_001.ogg", "volume": 0.2, "len": 0.4},
     ]
     # Прокрутка простыни: короткие «щелчки колеса» на каждом её сдвиге.
-    for t0, _t1 in (E.GENIUS_SCROLL, E.STEP_SCROLL, E.TIPS_SCROLL, E.CAREER_SCROLL):
+    for t0, _t1 in (E.GENIUS_SCROLL, E.STEP_SCROLL, E.TIPS_SCROLL, E.CAREER_SCROLL, E.GRANNY_SCROLL):
         out.append({"t": t0, "path": ki / "scroll_001.ogg", "volume": 0.28, "len": 0.3})
     i = 0
     for a, b in ((E.SCROLL0, E.PAGE2 - 0.05), (E.PAGE2, E.TEA1 - 0.05), (E.PAGE3, E.TEA2 - 0.05), (E.LAST - 0.6, E.LAST - 0.1)):
@@ -410,8 +456,72 @@ def sfx_list() -> list[dict]:
     return out
 
 
+MUSIC_GAP_LU, MUSIC_SPEECH_LU = -12.0, -18.0  # музыка относительно голоса: в паузах и под речью
+DUCK_ATTACK, DUCK_RELEASE, DUCK_BRIDGE = 0.12, 0.35, 0.6  # с: присесть до речи, подняться после, паузы короче — не поднимать
+
+
+def duck_curve(spans: list[tuple[float, float]], dur: float, gap_db: float, speech_db: float, rate: int = 100) -> np.ndarray:
+    """Громкость музыки (дБ) по кадрам ``rate`` Гц: под речью (обоих голосов) — ``speech_db``, в паузах — ``gap_db``.
+    Короткие паузы между фразами (< DUCK_BRIDGE) не поднимают музыку; приседает заранее (DUCK_ATTACK), поднимается
+    плавно (DUCK_RELEASE) — без «качелей»."""
+    sp = sorted(spans)
+    merged: list[list[float]] = []
+    for a, b in sp:
+        if merged and a - merged[-1][1] < DUCK_BRIDGE:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    n = int(math.ceil(dur * rate)) + 1
+    t = np.arange(n) / rate
+    out = np.full(n, gap_db, dtype=np.float64)
+    depth = gap_db - speech_db
+    for a, b in merged:
+        down = np.clip((t - (a - DUCK_ATTACK)) / DUCK_ATTACK, 0, 1)
+        up = np.clip(1 - (t - b) / DUCK_RELEASE, 0, 1)
+        w = np.where(t < a, down, np.where(t <= b, 1.0, up))
+        out = np.minimum(out, gap_db - depth * w)
+    return out
+
+
+def ducked_music(music: Path, spans: list[tuple[float, float]], gain_db: float, out: Path) -> Path:
+    """Музыка ролика одним файлом: 0…ZOOM, тишина на вылете последней строки, с SITE — снова с начала трека; громкость
+    по ``duck_curve`` (+ ``gain_db`` — выравнивание трека к голосу). Стерео 48 кГц."""
+    import wave
+
+    sr = 48000
+    pcm = subprocess.run(["ffmpeg", "-v", "error", "-i", str(music), "-ac", "2", "-ar", str(sr), "-f", "f32le", "-"],
+                         capture_output=True, check=True).stdout
+    src = np.frombuffer(pcm, dtype=np.float32).reshape(-1, 2)
+    n = int(DUR * sr)
+
+    def take(k: int) -> np.ndarray:
+        reps = int(math.ceil(k / max(1, len(src))))
+        return np.tile(src, (reps, 1))[:k]
+
+    y = np.zeros((n, 2), dtype=np.float32)
+    a1, b0 = int(E.ZOOM * sr), int(E.SITE * sr)
+    y[:a1] = take(a1)
+    y[b0:] = take(n - b0)
+    t = np.arange(n) / sr
+    edge = np.ones(n)
+    edge *= np.clip(t / 0.3, 0, 1)  # вход
+    edge *= np.where(t < E.SITE, np.clip((E.ZOOM - t) / 0.25, 0, 1), np.clip((t - E.SITE) / 0.2, 0, 1))
+    edge *= np.clip((DUR - t) / 0.6, 0, 1)  # уход
+    curve = duck_curve(spans, DUR, MUSIC_GAP_LU, MUSIC_SPEECH_LU)
+    db = np.interp(t, np.arange(len(curve)) / 100, curve) + gain_db
+    y *= (edge * 10 ** (db / 20)).astype(np.float32)[:, None]
+    q = (np.clip(y, -1, 1) * 32767).astype(np.int16)
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(q.tobytes())
+    return out
+
+
 def mix(video: Path, voice: Path, out: Path, work: Path, report: dict) -> None:
-    """Сведение как в серии 8: музыка под голос (−14 LU), на вылете последней строки замолкает, на кнопке — снова."""
+    """Сведение: оба голоса одной дорожкой; музыка приседает под речь (−18 LU под голосом, −12 в паузах), на вылете
+    последней строки замолкает, на кнопке — снова."""
     from app.audio_mix_model import ebur128
     from app.motion import asset_key
     from app.motion_render import build_audio_layers_args, speech_level_db
@@ -421,14 +531,15 @@ def mix(video: Path, voice: Path, out: Path, work: Path, report: dict) -> None:
     if not music.is_file():
         music = P1.MUSIC_DIR / "chill-keys.mp3"
     voice_db = voice_lufs(voice)
-    layers = [{"id": "voice", "type": "audio", "start": 0.0, "end": DUR, "props": {"asset_id": 9001, "mode": "track", "volume": 1.0, "role": "voice"}}]
-    assets = {asset_key(9001): str(voice), asset_key(9002): str(music)}
     m_lufs = float(ebur128(music)["i"])
-    gain = round(voice_db - 14.0 - m_lufs, 2)
-    for lid, a, b, fi, fo in (("music", 0.0, E.ZOOM, 0.3, 0.25), ("music2", E.SITE, DUR, 0.2, 0.6)):
-        layers.append({"id": lid, "type": "audio", "start": a, "end": b,
-                       "props": {"asset_id": 9002, "mode": "track", "volume": 1.0, "gain_db": gain, "role": "music", "fadeIn": fi, "fadeOut": fo}})
-    report["music"] = {"file": music.name, "lufs": m_lufs, "voice_lufs": voice_db, "gain_db": gain}
+    gain = round(voice_db - m_lufs, 2)
+    spans = [(at, at + (b - a)) for _l, _tk, a, b, at, _tx in E.LINES]
+    music_file = ducked_music(music, spans, gain, work / "music_ducked.wav")
+    layers = [{"id": "voice", "type": "audio", "start": 0.0, "end": DUR, "props": {"asset_id": 9001, "mode": "track", "volume": 1.0, "role": "voice"}},
+              {"id": "music", "type": "audio", "start": 0.0, "end": DUR,
+               "props": {"asset_id": 9002, "mode": "track", "volume": 1.0, "gain_db": 0.0, "role": "music"}}]
+    assets = {asset_key(9001): str(voice), asset_key(9002): str(music_file)}
+    report["music"] = {"file": music.name, "lufs": m_lufs, "voice_lufs": voice_db, "under_speech_lu": MUSIC_SPEECH_LU, "in_gaps_lu": MUSIC_GAP_LU}
     notes: list[str] = []
     for n, s in enumerate(sfx_list()):
         if not Path(s["path"]).is_file():
@@ -462,16 +573,32 @@ def encode(src: Path, out: Path, tg: Path, work: Path) -> None:
                  "-bufsize", f"{kbps * 2}k", "-pass", str(n), "-passlogfile", str(log), *dst], f"копия для Telegram, проход {n}")
 
 
+NUMS = {"30": "тридцать", "2": "два", "200": "двести"}
+
+
 def _norm(s: str) -> str:
     import re
 
-    return re.sub(r"[^а-яa-z0-9]", "", s.lower().replace("ё", "е"))
+    w = re.sub(r"[^а-яa-z0-9]", "", s.lower().replace("ё", "е"))
+    return NUMS.get(w, w)
+
+
+def _tokens(text: str) -> list[str]:
+    """Слова → нормализованные; Whisper пишет числа цифрами («30-летним», «200») и склеивает дефисы — приводим к словам."""
+    import re
+
+    text = re.sub(r"30\s*-?\s*летн", "тридцатилетн", text.lower())
+    out = []
+    for x in text.replace("—", " ").replace("-", " ").split():
+        w = _norm(x)
+        if w:
+            out.append(w)
+    return out
 
 
 def script_words() -> list[str]:
-    """Слова сценария, как их пишет Whisper (числа цифрами), нормализованные."""
-    text = " ".join(ln[5] for ln in E.LINES).replace("Тридцать", "30").replace(" два ", " 2 ")
-    return [w for w in (_norm(x) for x in text.split()) if w]
+    """Слова сценария (обоих голосов, по времени), нормализованные."""
+    return [w for ln in sorted(E.LINES, key=lambda ln: ln[4]) for w in _tokens(ln[5])]
 
 
 def check_words(final: Path, work: Path) -> dict:
@@ -485,7 +612,7 @@ def check_words(final: Path, work: Path) -> dict:
     probe.with_suffix(".words.json").unlink(missing_ok=True)
     heard = [w for w in V.words(probe) if w["t0"] < END["c5b"] + 0.3 and w["t1"] - w["t0"] > 0.02]
     want = script_words()
-    got = [w for w in (_norm(h["w"]) for h in heard) if w]
+    got = [w for h in heard for w in _tokens(h["w"])]
     sm = difflib.SequenceMatcher(a=want, b=got, autojunk=False)
     diffs = [(op, " ".join(want[i1:i2]), " ".join(got[j1:j2])) for op, i1, i2, j1, j2 in sm.get_opcodes() if op != "equal"]
     return {"ratio": round(sm.ratio(), 3), "script_words": len(want), "heard_words": len(got), "diffs": diffs, "text": " ".join(w["w"] for w in heard)}
@@ -519,6 +646,52 @@ def voice_joins(x, sr: int = SR) -> dict:
         if jump > 0.5:
             issues.append(f"{lid}: щелчок {jump:.2f}")
     return {"phrases": len(spans), "issues": issues}
+
+
+def frame_f0(seg, sr: int, lo: float = 70.0, hi: float = 350.0) -> list[float]:
+    """Основной тон по кадрам 40 мс (автокорреляция, громкие кадры с явной периодичностью)."""
+    seg = np.asarray(seg, dtype=np.float64)
+    win, hop = int(0.04 * sr), int(0.02 * sr)
+    if len(seg) < win:
+        return []
+    peak = float(np.max(np.abs(seg))) or 1.0
+    lmin, lmax = int(sr / hi), int(sr / lo)
+    out = []
+    for i in range(0, len(seg) - win, hop):
+        f = seg[i:i + win] * np.hanning(win)
+        if np.sqrt(np.mean(f ** 2)) < 0.05 * peak:
+            continue
+        ac = np.correlate(f, f, mode="full")[win - 1:]
+        if ac[0] <= 0:
+            continue
+        lag = lmin + int(np.argmax(ac[lmin:lmax]))
+        if ac[lag] / ac[0] > 0.45:
+            out.append(sr / lag)
+    return out
+
+
+def voice_identity(x, sr: int = SR) -> dict:
+    """Непрерывность голосов по тону: медиана F0 каждой реплики; у каждого голоса реплики в пределах ±25% от его
+    медианы, а голоса юзера и Клода различимы (медианы расходятся > 10%)."""
+    per: dict[str, float] = {}
+    for lid, _tk, a, b, at, _tx in E.LINES:
+        f0 = frame_f0(np.asarray(x[int(at * sr):int((at + b - a) * sr)]), sr)
+        if len(f0) >= 5:
+            per[lid] = round(float(np.median(f0)), 1)
+    issues = []
+    med = {}
+    for who, ids in (("claude", [k for k in per if not E.is_user(k)]), ("user", [k for k in per if E.is_user(k)])):
+        if not ids:
+            issues.append(f"{who}: нет тона")
+            continue
+        m = float(np.median([per[k] for k in ids]))
+        med[who] = round(m, 1)
+        for k in ids:
+            if abs(per[k] / m - 1) > 0.25:
+                issues.append(f"{k}: тон {per[k]} Гц далеко от {who} {m:.0f} Гц")
+    if len(med) == 2 and abs(med["user"] / med["claude"] - 1) < 0.10:
+        issues.append(f"голоса неразличимы по тону ({med})")
+    return {"f0_per_line": per, "median": med, "issues": issues}
 
 
 def project(p: list[float], cam: list[float], fwd: list[float], fov: float = 34.0, aspect: float = 9 / 16) -> tuple[float, float, float]:
@@ -602,6 +775,25 @@ def hand_checks(samples: list[dict], hold_from: float) -> dict:
     return {"jumps": jumps, "hand_contact": contact}
 
 
+def tts_user(work: Path) -> int:
+    """Реплики юзера — по пробе на реплику (E.USER_TTS), голос E.USER_VOICE; готовая проба не перегенерируется.
+    Траты — в spend.log рядом с роликом."""
+    import meme3d_voice as V
+
+    log = work.parent / "spend.log"
+    for lid, text in E.USER_TTS:
+        out = work / E.user_take(lid)
+        fresh = not out.is_file()
+        info = V.tts(text, out, E.USER_VOICE)
+        ws = V.words(out)
+        print(lid, info["chars"], info["cost_rub"], " ".join(f"{w['w']}[{w['t0']:.2f}-{w['t1']:.2f}]" for w in ws))
+        if fresh:
+            with log.open("a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d')} v2 {out.name} {info['model']} {info['voice']} {info['chars']} chars "
+                        f"{info['cost_rub']:.4f} RUB (balance {info['balance_before']} -> {info['balance_after']})\n")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
@@ -615,18 +807,21 @@ def main() -> int:
     ap.add_argument("--name", default="ep9")
     ap.add_argument("--skip-render", action="store_true")
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--tts-user", action="store_true", help="озвучить реплики юзера (Polza, платно; готовые пробы не трогает)")
     a = ap.parse_args()
     os.environ.setdefault("MOTION_PACKS_DIR", str(P1.PACKS))
     out_dir = Path(a.out_dir).resolve()
     work = out_dir / "work"
     work.mkdir(parents=True, exist_ok=True)
     report: dict = {}
-    voice, lines, spans = assemble_voice(work)
+    if a.tts_user:
+        return tts_user(work)
+    voice, voice_c, lines, all_lines, spans = assemble_voice(work)
     words = P1.caption_words(lines)
     mouth = H.viseme_keys_from_words(syllable_words(words))
     mug_file = work / "mug_keys.json"
     mug_keys = json.loads(mug_file.read_text("utf-8")) if mug_file.is_file() else None
-    spec = build_spec(P1.mouth_envelope(voice), mouth, mug_keys)
+    spec = build_spec(P1.mouth_envelope(voice_c), mouth, mug_keys)
     if a.small:
         spec["width"], spec["height"] = 540, 960
         spec["quality"]["shadowSize"] = 1024
@@ -688,7 +883,8 @@ def main() -> int:
     P1.frame_sheet(final, times, [f"{t:.1f}s {n}" for t, (_, _, n) in zip(times, SHOTS)], out_dir / "contact_sheet.jpg", cols=8)
     report.update({"video": str(final), "tg": str(tg), "size_mb": round(final.stat().st_size / 2**20, 2), "tg_mb": round(tg.stat().st_size / 2**20, 2),
                    "duration": DUR, "caption_check": str(A6.caption_check(final, words, out_dir)), "whisper": check_words(final, work),
-                   "voice_joins": voice_joins(P1.decode(voice))})
+                   "voice_joins": voice_joins(P1.decode(voice)), "voice_identity": voice_identity(P1.decode(voice)),
+                   "user_subtitles": "нет: текст юзера на экране (простыня, последняя строка, пузырь «ТЫ ГЕНИЙ»)"})
     report["sub_sync"] = A8.sub_sync(words, work)
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
