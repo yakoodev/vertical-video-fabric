@@ -339,7 +339,7 @@ def assemble_voice(work: Path) -> tuple[Path, list[dict], dict]:
 def caption_layers() -> list[dict]:
     return [
         {"id": "hook", "type": "text", "start": 0.0, "end": SH["cover"][1], "x": 0.5, "y": 0.15,
-         "props": {"text": E.HOOK, "font": "Montserrat", "weight": 900, "size": 150, "color": "#fff6e8", "align": "center", "uppercase": True,
+         "props": {"text": E.HOOK, "font": "Montserrat", "weight": 900, "size": 116,  # одной строкой во всю ширину (150 переносил «3» отдельно) "color": "#fff6e8", "align": "center", "uppercase": True,
                    "lineHeight": 1.0, "stroke": {"color": "#2b1810", "width": 16},
                    "bg": {"color": "#d8342c", "opacity": 1, "radius": 36, "padX": 44, "padY": 26}}},
         {"id": "top", "type": "text", "start": SH["cover"][1], "end": 2.4, "x": 0.5, "y": 0.105,
