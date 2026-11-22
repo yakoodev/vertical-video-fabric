@@ -25,7 +25,7 @@ FEATURES: dict[str, dict[str, float]] = {
     "squint": {"eyeSquintLeft": 0.95, "eyeSquintRight": 0.95, "cheekSquintLeft": 0.8, "cheekSquintRight": 0.8,
                "mouthSmileLeft": 0.55, "mouthSmileRight": 0.55},
     # Язык — с подмигиванием («тэхэпэро»): один язык на маленьком окне читается хуже.
-    "tongue": {"tongueOut": 1.0, "jawOpen": 0.22, "eyeBlinkLeft": 1.0, "mouthSmileLeft": 0.35, "mouthSmileRight": 0.35},
+    "tongue": {"tongueOut": 1.0, "jawOpen": 0.32, "eyeBlinkLeft": 1.0, "mouthSmileLeft": 0.35, "mouthSmileRight": 0.35},
     "smile": {"mouthSmileLeft": 0.8, "mouthSmileRight": 0.8, "cheekSquintLeft": 0.45, "cheekSquintRight": 0.45},
     "frown": {"browDownLeft": 0.85, "browDownRight": 0.85, "mouthFrownLeft": 0.4, "mouthFrownRight": 0.4},
 }
@@ -109,8 +109,10 @@ def frame(mode: str, t: float, events: list[dict] | None = None, seed: int = 1, 
     every = blink_every or 2.7
     squint = feats.get("eyeSquintLeft", 0.0)
     expr["blink"] = round(_blinks(t, [every * (i + 0.35) for i in range(int(t / every) + 2)]) * (1 - squint), 3)
-    head = [round(3.2 * math.sin(2 * math.pi * t / 2.3 + 1.0) - 2.5 * feats.get("browInnerUp", 0.0), 2),
-            round(7.0 * math.sin(2 * math.pi * t / 3.1) + 11.0 * feats.get("cheekPuff", 0.0), 2),
+    # Язык анфас прячется во рту: голова наклоняется вперёд и вбок — язык виден над нижней губой.
+    tongue = feats.get("tongueOut", 0.0)
+    head = [round(3.2 * math.sin(2 * math.pi * t / 2.3 + 1.0) - 2.5 * feats.get("browInnerUp", 0.0) + 12.0 * tongue, 2),
+            round(7.0 * math.sin(2 * math.pi * t / 3.1) * (1 - tongue) + 11.0 * feats.get("cheekPuff", 0.0) + 18.0 * tongue, 2),
             round(4.5 * math.sin(2 * math.pi * t / 3.7 + 0.5) + 3.0 * feats.get("tongueOut", 0.0), 2)]
     look = [round(0.06 * math.sin(2 * math.pi * t / 3.1 + 0.4), 3), round(0.03 * math.sin(2 * math.pi * t / 2.3), 3)]
     return {"expr": {k: v for k, v in expr.items() if v > 0.001}, "head": head, "look": look}
