@@ -13,7 +13,9 @@ import hero_shot as kit
 from app import series3d_blender as B
 
 
-def build_lift(fonts, floors: list[str], open_hatch: bool = False):
+def build_lift(fonts, floors: list[str], open_hatch: bool = False, landing: bool = False):
+    """``landing`` (ч.5) — кабина стоит на этаже: за дверями не шахта с краем плиты, а коридор этажа
+    (``series_floor22``)."""
     L = {}
     steel = kit.brushed_steel("steel", color=kit.hexc("#8d9096"), rough=0.30)
     steel_dark = kit.brushed_steel("steel_dark", color=kit.hexc("#4a4d53"), rough=0.36)
@@ -138,16 +140,17 @@ def build_lift(fonts, floors: list[str], open_hatch: bool = False):
     kit.box("lintel", (door_w + 0.08, 0.05, 0.03), (0, fy + 0.0, door_h + 0.025), steel_dark, bevel=0.006)
     # за дверями — шахта: кабина застряла между этажами, в проёме — бетонный край перекрытия и низ дверей этажа
     sy = fy - 0.30
-    # вниз стена уходит далеко: с верхнего плана видно щель между кабиной и стеной
-    kit.box("shaft_wall", (door_w + 0.8, 0.04, 4.8), (0, sy, 0.2), shaft_concrete, bevel=0)
-    kit.box("shaft_slab", (door_w + 0.7, 0.26, 0.24), (0, fy - 0.17, 1.12), concrete, bevel=0.01)
-    kit.box("shaft_sill", (door_w + 0.1, 0.06, 0.02), (0, fy - 0.075, 1.25), steel_dark, bevel=0.003)
-    kit.box("landing_door", (door_w, 0.03, 0.8), (0, fy - 0.10, 1.66), door_paint)
-    # дверь этажа читается дверью: шов двух створок посередине и уплотнитель снизу
-    kit.box("landing_door_seam", (0.016, 0.004, 0.8), (0, fy - 0.0835, 1.66), door_rubber, bevel=0)
-    kit.box("landing_door_foot", (door_w, 0.004, 0.018), (0, fy - 0.0835, 1.275), door_rubber, bevel=0)
-    for x in (-0.30, 0.31):
-        kit.cylinder(f"cable{x:+.1f}", 0.008, H + 0.5, (x, sy + 0.05, H / 2), steel_dark, verts=10)
+    if not landing:
+        # вниз стена уходит далеко: с верхнего плана видно щель между кабиной и стеной
+        kit.box("shaft_wall", (door_w + 0.8, 0.04, 4.8), (0, sy, 0.2), shaft_concrete, bevel=0)
+        kit.box("shaft_slab", (door_w + 0.7, 0.26, 0.24), (0, fy - 0.17, 1.12), concrete, bevel=0.01)
+        kit.box("shaft_sill", (door_w + 0.1, 0.06, 0.02), (0, fy - 0.075, 1.25), steel_dark, bevel=0.003)
+        kit.box("landing_door", (door_w, 0.03, 0.8), (0, fy - 0.10, 1.66), door_paint)
+        # дверь этажа читается дверью: шов двух створок посередине и уплотнитель снизу
+        kit.box("landing_door_seam", (0.016, 0.004, 0.8), (0, fy - 0.0835, 1.66), door_rubber, bevel=0)
+        kit.box("landing_door_foot", (door_w, 0.004, 0.018), (0, fy - 0.0835, 1.275), door_rubber, bevel=0)
+        for x in (-0.30, 0.31):
+            kit.cylinder(f"cable{x:+.1f}", 0.008, H + 0.5, (x, sy + 0.05, H / 2), steel_dark, verts=10)
     # табло: чёрное стекло, цифры этажей (видна одна), стрелка
     disp = B.DISPLAY
     kit.box("display", (0.30, 0.03, 0.15), (disp[0], fy + 0.0, disp[2]), black, bevel=0.006)

@@ -66,6 +66,7 @@ from app.series3d_blender_camera import (  # noqa: F401
     ots_ok, camera_plan, TITLE_Y, PART_Y, face_target, face_bands, DOORWAY_CAMS, doorway_camera, authored_camera,
 )
 from app.series3d_blender_plan import beat_plan, has_plans, plan_key, shots_from_beats  # noqa: F401
+from app import series3d_chase as CH
 from app.series3d_blender_perform import (  # noqa: F401
     FPS, WALK_FOOT_X, WALK_PASS, STRIDE, DOOR_OPEN, VISEMES, VOWELS, _DIGITS, _letters, viseme_keys, lipsync,
     _pulse, _ang, _Track, perform, _beam_off_camera, planted_local, clip_to_world, walk_root, foot_slide,
@@ -107,7 +108,16 @@ SFX = {
     "lid_clunk": ("sfx:kenney-impact/impactPlate_heavy_002.ogg", 0.55),
     "lid_stop": ("sfx:kenney-impact/impactPlate_heavy_004.ogg", 0.35),
     "hatch_frame": ("sfx:kenney-impact/impactMetal_light_002.ogg", 0.45),
+    # ч.5: двери кабины разъезжаются сами с лязгом (лязг + стальной удар, скрежет створок, упор), телефон жужжит
+    "doors_clang": ("sfx:tension/clank.ogg", 0.85),
+    "doors_clang_hit": ("sfx:kenney-impact/impactMetal_heavy_000.ogg", 0.45),
+    "doors_slide": ("sfx:tension/metal-scrape.ogg", 0.3),
+    "doors_stop": ("sfx:kenney-impact/impactMetal_medium_001.ogg", 0.4),
+    "vibrate": ("sfx:kenney-interface/error_006.ogg", 0.35),
 }
+# Бег по бетону: пять записей шагов Kenney по кругу; у двойника — те же, тише (он сзади)
+STEPS = tuple(f"sfx:kenney-impact/footstep_concrete_{i:03d}.ogg" for i in range(5))
+SFX_VOL = {"step": 0.6, "step_double": 0.42}
 
 
 def sfx_for(job: dict, perf: dict) -> list[dict]:
@@ -154,7 +164,18 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
         elif k == "msg_in":
             add(SFX["msg_in"], t, "пришло сообщение", "msg_in")
         elif k == "lights_out":
+            if t < 0:
+                continue          # серия началась в полной темноте: гаснуть нечему
             add((S3.SFX["power_down"][0], 0.7), t - 0.1, "аварийный свет гаснет", "lights_out")
+        elif k == "doors_open":
+            # ч.5: створки дёрнулись с лязгом и поехали со скрежетом, встали в упор
+            add(SFX["doors_clang"], t, "двери лязгнули", "doors_open")
+            add(SFX["doors_clang_hit"], t + 0.02, "двери лязгнули", "doors_open_hit")
+            add(SFX["doors_slide"], t + 0.15, "створки едут", "doors_slide")
+            add(SFX["doors_stop"], t + CH.DOORS_OPEN_SEC - 0.05, "створки встали", "doors_stop")
+        elif k == "vibrate":
+            for p_ in range(CH.VIB_PULSES):
+                add(SFX["vibrate"], t + p_ * (CH.VIB_SEC + 0.18), "телефон вибрирует", "vibrate")
         elif k == "body_drop":
             bd = perf.get("body_drop") or {}
             hit = float((bd.get("t") or [t + 0.42])[0])       # удар об пол (perf.body_drop.t — момент удара)
@@ -184,6 +205,16 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
             add(SFX["doors_strain"], c["t"], "створки", "doors")
             if c.get("full"):
                 add(SFX["doors_open"], c["t"] + 1.0, "двери разъехались", "doors_open")
+        elif c["kind"] == "step":
+            # бег по бетону: свои записи на каждый шаг по кругу, громкость — в коде
+            n_ = len([x for x in out if x["kind"] == "step"])
+            add((STEPS[n_ % len(STEPS)], SFX_VOL["step"]), c["t"], "шаги по бетону", "step")
+    dbl = perf.get("double") or {}
+    for i_, (t_, _who) in enumerate(dbl.get("steps") or []):
+        # шаги двойника: те же записи в том же ритме (он отстаёт на SYNC_LAG), другой по счёту файл и тише — вторая пара
+        add((STEPS[(i_ + 2) % len(STEPS)], SFX_VOL["step_double"]), t_, "шаги сзади", "step_double")
+    for ev in dbl.get("sfx") or []:
+        add((ev["ref"], float(ev["volume"])), float(ev["t"]), ev["label"], ev["kind"])
     if job.get("ambience") is not None:
         # свой фон места (кубический мир: ночь в поле, а не гул кабины): [{ref, t, end, under_db, fade_in, fade_out,
         # label}] — как фон-петли кабины, без «напряжения» лифта
@@ -215,9 +246,14 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
         end = back or total
         if out_t is not None and out_t > b:
             end = min(end, out_t + 0.6)       # полная темнота — и гул шахты глохнет: дальше тишина
-        bed("dark", b + 0.6, end, "гул шахты", 2.5, 0.6 if out_t is not None else (1.0 if back else 2.0))
+        open_t = next((float(e["t"]) for e in job.get("events") or [] if e["kind"] == "doors_open"), None)
+        if open_t is not None:
+            end = min(end, open_t + 0.3)      # ч.5: дали питание, двери открылись — вместо гула шахты гудит кабина
+        bed("dark", b + 0.6, end, "гул шахты", 2.5, 0.6 if out_t is not None and out_t > b else (1.0 if back else 2.0))
         if back:
             bed("hum", back, total, "гул кабины", 0.3, 1.5)
+        elif open_t is not None:
+            bed("hum", open_t - 0.1, total, "гул кабины", 0.2, 1.5)
     return sorted(out, key=lambda x: x["t"])
 
 
@@ -273,7 +309,8 @@ def shot_fx(perf: dict, mode: str = "auto") -> dict[int, dict]:
     out: dict[int, dict] = {}
     cams = {c["n"]: c for c in perf.get("cameras") or []}
     walks = [(sg["start"], sg["start"] + 1.2) for sg in perf["track"] if sg["clip"] in ("Walking_A", "Walking_B", "Walking_C", "Hit_A",
-                                                                                          "Sit_Floor_Down", "Sit_Floor_StandUp")]
+                                                                                          "Sit_Floor_Down", "Sit_Floor_StandUp",
+                                                                                          "Running_A")]
     for s in perf["shots"]:
         if mode in ("all", "none"):
             on = mode == "all"
@@ -331,6 +368,9 @@ def with_outro(script: dict, words: list[dict], total: float, beats: list[dict] 
         sent = {"text": text, "role": "", "silent": True}
         if isinstance(o.get("cam"), dict) and o["cam"].get("pos"):
             sent["cam"] = o["cam"]      # камера плана от автора (series3d_blender_camera.authored_camera)
+        for key in CH.AUTHORED:         # бег, двойник, место, свет плана (ч.5) — как у озвученных фраз
+            if key != "cam" and key in o:
+                sent[key] = o[key]
         sentences.append(sent)
         t += sec
     plan_beats = list(beats or []) + extra_beats if beats else beats
@@ -351,6 +391,16 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
         k = next((i for i in shot.get("sentences") or [] if i in cams), None)
         if k is not None and shot.get("by") == "author" and shot.get("planned"):
             shot["cam"] = cams[k]
+    # поля автора во фразах (ч.5: бег, двойник, экран переписки, место, свет плана) — series3d_chase.apply_authored
+    spoken = [s_ for s_ in script.get("sentences") or [] if str(s_.get("text") or "").strip()]
+    if any(any(k_ in s_ or k_ + "s" in s_ for k_ in CH.AUTHORED if k_ != "cam") for s_ in spoken):
+        CH.apply_authored(plan["shots"], spoken)
+    if "dark" in (plan.get("start") or []):
+        # серия начинается в полной темноте (конец прошлой части): свет погас до первого кадра — без щелчка и гула
+        plan["events"] = [e for e in plan["events"] if e["kind"] not in ("blackout", "lights_out", "light_back")] + \
+            [{"kind": "blackout", "t": -1.0, "sentence": 0, "role": ""}, {"kind": "lights_out", "t": -1.0, "sentence": 0,
+                                                                          "role": ""}]
+        plan["events"].sort(key=lambda e: float(e["t"]))
     return {"version": SCENE_VERSION, "fps": FPS, "duration": round(float(total), 3), "title": script.get("title") or "",
             "shots": plan["shots"], "events": plan["events"], "words": plan["words"], "director": plan["director"],
             "speech": plan["speech"],
@@ -379,7 +429,8 @@ def _code_hash() -> str:
     h = hashlib.sha1()
     for p in (root / "tools" / "blender" / "series_scene.py", root / "tools" / "blender" / "hero_shot.py",
               root / "tools" / "blender" / "series_places.py", root / "tools" / "blender" / "series_lift.py",
-              root / "tools" / "blender" / "series_voxel.py",
+              root / "tools" / "blender" / "series_voxel.py", root / "tools" / "blender" / "series_floor22.py",
+              root / "tools" / "blender" / "series_double.py", root / "tools" / "blender" / "series_chat.py",
               root / "app" / "motion3d.py"):
         if p.is_file():
             h.update(_without_log_block(p.read_bytes()))
@@ -461,6 +512,12 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
                           sg["start"] + 60 > a / perf["fps"] - 2],
                 "camera": next((c for c in perf["cameras"] if c["n"] == c_n), None),
                 "look": job.get("look") or {}}
+        if perf.get("double"):      # ч.5: двойник в кадре — его дорожки тоже (у старых серий поля нет — ключи прежние)
+            d_ = perf["double"]
+            blob["double"] = {"root": d_["root"][a:b], "heading": d_["heading"][a:b],
+                              "track": [sg for sg in d_["track"] if sg["start"] < b / perf["fps"] + 1]}
+        if job.get("photos"):
+            blob["photos"] = job["photos"]
         if three:
             blob["backend"] = {"name": be, "code": three}
             if job.get("three_spec"):     # своя спека задания (у старых серий её нет — ключи прежние)
@@ -549,7 +606,13 @@ def scene_config(job: dict, work: Path, cache: Path, packs: Path | None = None) 
             raise FileNotFoundError(f"нет {rel} — python tools/fetch_packs.py --only {rel.split('/')[0]}")
         return str(p)
 
-    return {"job": str(work / "job.json"), "cache": str(cache), "out_dir": str(work),
+    extra: dict = {}
+    if {"floor22", "room"} & {str(s_.get("location")) for s_ in job.get("shots") or []}:
+        # ч.5: коридор этажа и комната — модели Kenney Furniture Kit (CC0); фото в переписке — снятые заранее PNG
+        extra["kenney"] = str(Path(need("kenney-furniture/wall.glb")).parent)
+    if job.get("photos"):
+        extra["photos"] = dict(job["photos"])
+    return {"job": str(work / "job.json"), "cache": str(cache), "out_dir": str(work), **extra,
             "character": need("kaykit-adventurers/Rogue_Hooded.glb"),
             "animations": [need(f"kaykit-animations/{n}.glb") for n in ("Rig_Medium_General", "Rig_Medium_MovementBasic",
                                                                           "Rig_Medium_Simulation")],

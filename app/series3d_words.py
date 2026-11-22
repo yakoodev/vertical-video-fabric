@@ -186,6 +186,8 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
             w = _wnorm(words[k]["word"])
             for kind, pattern in EVENTS:
                 if re.search(pattern, w):
+                    if kind == "jolt" and k > sp["w0"] and _wnorm(words[k - 1]["word"]) in ("после", "от"):
+                        break     # «темнота после падения» — о прошлом, рывка сейчас нет
                     events.append({"kind": kind, "t": float(words[k]["start"]), "word": words[k]["word"],
                                    "sentence": sp["i"], "role": sp["role"]})
                     break
@@ -219,7 +221,8 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
                                "sentence": sp["i"], "role": sp["role"]})
         # Ч.4: телефон поймал сеть и пришло сообщение (звук уведомления); «полная темнота» — гаснет и аварийный свет
         # (только если блэкаут уже был — см. ниже); «тот, кто был сверху, рухнул в кабину» — тело падает (удар об пол).
-        for kind, rx, word in (("msg_in", r"(пришл|пришел|пришло)\w*\s+(\w+\s+)?(сообщени|смс)|сообщени\w*\s+от\s+\w+",
+        # «новые сообщения от него» (ч.5) — его же отправленные, уведомления нет
+        for kind, rx, word in (("msg_in", r"(пришл|пришел|пришло)\w*\s+(\w+\s+)?(сообщени|смс)|сообщени\w*\s+от\s+(?!него\b|себя\b)\w+",
                                 r"^(пришл|пришел|сообщени)"),
                                ("lights_out", r"полн\w*\s+темнот|свет\w*\s+(пропал|исчез)|(пропал|исчез)\w*\s+(и\s+)?(весь\s+)?свет",
                                 r"^(пропал|исчез|полн)"),
@@ -228,7 +231,15 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
                                # «лучи двух фонариков заметались по стенам» — оба фонаря шарят по кабине в темноте
                                ("beams", r"луч\w*.{0,40}(замета|мечут|мечет|мета|шарят|шарил|заскольз|забега)|"
                                          r"(замета|мечут|мечет|шарят|заскольз|забега)\w*\s+(\w+\s+)?луч",
-                                r"^(замета|мечут|мечет|мета|шар|заскольз|забега)")):
+                                r"^(замета|мечут|мечет|мета|шар|заскольз|забега)"),
+                               # ч.5: «Двери с лязгом разъезжаются» — створки кабины расходятся целиком (этаж за ними),
+                               # «Телефон вибрирует» — жужжит в руке
+                               ("doors_open", r"двер\w*\s.{0,30}(разъезжа|разъехал|раскрыл|распахну|открыл|открыва)",
+                                r"^(разъезжа|разъехал|раскрыл|распахну|открыл|открыва)"),
+                               ("vibrate", r"(телефон|смартфон|мобильн)\w*\s+(\w+\s+)?(вибрир|завибрир|зажужж|жужж)",
+                                r"^(вибрир|завибрир|зажужж|жужж)")):
+            if kind == "doors_open" and sp is spans[0] and re.match(r"\W*если\b", low):
+                continue          # «Если двери лифта открылись сами…» — правило-крючок, а не событие серии
             if re.search(rx, low) and not any(e["kind"] == kind for e in events):
                 k = find_word(words, sp["w0"], sp["w1"], word)
                 events.append({"kind": kind, "t": float(words[k]["start"]) if k is not None else sp["t0"],
@@ -249,6 +260,9 @@ def detect_events(spans: list[dict], words: list[dict]) -> list[dict]:
     # тело рухнуло — это не рывок кабины: слово «рухнул»/«удар» той же фразы не даёт лязг рывка
     drop_s = {e["sentence"] for e in events if e["kind"] == "body_drop"}
     events = [e for e in events if not (e["kind"] == "jolt" and e["sentence"] in drop_s | {x + 1 for x in drop_s})]
+    # «Двери с лязгом разъезжаются» — лязг створок, а не рывок кабины
+    open_s = {e["sentence"] for e in events if e["kind"] == "doors_open"}
+    events = [e for e in events if not (e["kind"] == "jolt" and e["sentence"] in open_s)]
     first_low = spans[0]["text"].lower().replace("ё", "е") if spans else ""
     if keep and keep[0]["sentence"] == (spans[0]["i"] if spans else -1) and \
             re.search(r"\bв (блэкаут|блекаут|темноте)|во время (блэкаута|блекаута)", first_low):

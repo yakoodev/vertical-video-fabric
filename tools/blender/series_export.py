@@ -189,10 +189,11 @@ def fog_info(ob) -> dict:
 # ---------------------------------------------------------------- выгрузка
 
 def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[dict], log=print,
-                probes: dict | None = None) -> dict:
+                probes: dict | None = None, extra_arms: list | None = None) -> dict:
     """Сцена + записи кадров ``frames`` (номера кадров серии, по порядку). ``face_pts[f-1]`` — точка лица (мир
     Blender) кадра f, ``chunks`` — куски рендера (n, f0, f1, key, fx) для подсказок по планам; ``probes`` — номер
-    плана → где снимать пробу GI (мир Blender; камера автора снаружи, герой — в доме)."""
+    плана → где снимать пробу GI (мир Blender; камера автора снаружи, герой — в доме). ``extra_arms`` — ещё скелеты
+    со скином (двойник ч.5): их кости идут в записи следом за костями героя, имена костей у скелетов разные."""
     t0 = time.time()
     out.mkdir(parents=True, exist_ok=True)
     sc = bpy.context.scene
@@ -200,11 +201,12 @@ def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[d
     first = frames[0]
     sc.frame_set(first)
     vl.update()
+    arms = [arm, *(extra_arms or [])]
     obs = [o for o in sc.objects if o.type in ("MESH", "CURVE", "FONT") and not o.hide_render and not is_fog(o)]
-    hero_roots = {arm} | {o for o in sc.objects if o.name == "phone"}
+    hero_roots = set(arms) | {o for o in sc.objects if o.name == "phone"}
     objects, mats, mat_idx = [], [], {}
     for o in obs:
-        skin = skinned_by(o, arm)
+        skin = any(skinned_by(o, a_) for a_ in arms)
         dyn = (not skin) and is_dynamic(o)
         hero = skin or any(a in hero_roots for a in (o, *_ancestors(o)))
         o["vvf_obj"] = len(objects)
@@ -223,12 +225,14 @@ def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[d
     lights = [o for o in sc.objects if o.type == "LIGHT" and not o.hide_render]
     fogs = [o for o in sc.objects if o.type == "MESH" and is_fog(o)]
     fog_rows = [fog_info(o) for o in fogs]
-    bones = [pb.name for pb in arm.pose.bones]
-    rest_inv = {b.name: b.matrix_local.inverted() for b in arm.data.bones}
+    bones = [pb.name for a_ in arms for pb in a_.pose.bones]
+    if len(set(bones)) != len(bones):
+        raise RuntimeError("у скелетов есть кости с одним именем — скин копии повторит позу героя")
+    rest_inv = {b.name: b.matrix_local.inverted() for a_ in arms for b in a_.data.bones}
     # GLB: сцена в кадре first, скелет — в позе покоя на месте армируры этого кадра (A0)
-    a0_inv = arm.matrix_world.inverted()
+    a0_inv = {a_.name: a_.matrix_world.inverted() for a_ in arms}
     # выделение — вещи, скелет и цепочки родителей (пустышка лица на кости головы: без неё глаза и рот выпадают)
-    keep = set(obs) | {arm}
+    keep = set(obs) | set(arms)
     for o in obs:
         keep.update(_ancestors(o))
     for o in vl.objects:
@@ -257,8 +261,8 @@ def export_pose(out: Path, frames: list[int], cam, arm, face_pts, chunks: list[d
             camera = _m34(C @ cam.matrix_world) + [cd.lens, cd.sensor_width, cd.dof.focus_distance, cd.dof.aperture_fstop,
                                                     sc.view_settings.exposure, 1.0] + _gl_v(face)
             orows = [_m34(C @ o.matrix_world @ CI) for o in dyn_obs]
-            am = arm.matrix_world
-            brows = [_m34(C @ (am @ pb.matrix @ rest_inv[pb.name] @ a0_inv) @ CI) for pb in arm.pose.bones]
+            brows = [_m34(C @ (a_.matrix_world @ pb.matrix @ rest_inv[pb.name] @ a0_inv[a_.name]) @ CI)
+                     for a_ in arms for pb in a_.pose.bones]
             mvals = [float(s.default_value) for _i, _m, s in anim_mats]
             lrows, energies, dists = [], [], []
             for lo in lights:
