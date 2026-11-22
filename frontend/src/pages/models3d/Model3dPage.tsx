@@ -326,7 +326,7 @@ export function Model3dPage() {
             </label>
             <div className="m3d-acts">
               <button className="btn sm" onClick={makeCover} disabled={v.phase !== "ready"}>Сделать обложкой</button>
-              <a className="btn sm" href={a.urls.original} download={a.original_filename}>Скачать исходник</a>
+              <a className="btn sm" href={a.urls.original} download={a.original_filename}>Скачать файл модели</a>
               <button className="btn sm danger" onClick={() => setConfirmDel(true)}><Icon name="trash" size={15} /> Удалить</button>
             </div>
           </section>
