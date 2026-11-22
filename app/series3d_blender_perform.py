@@ -1170,7 +1170,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         # прошлом плане (переписка вставками подряд) — сразу, иначе на склейке экран полсекунды пустой
         k_sh = next((i_ for i_, x_ in enumerate(shot_out) if x_["t0"] <= t < x_["t1"]), None)
         sh_ = shot_out[k_sh] if k_sh is not None else None
-        held_ = bool(k_sh and shot_out[k_sh - 1].get("screen") and CH.is_chat(sh_.get("screen")))
+        # (или телефон уже в руке с прошлого плана: вставка переписки с первого кадра, а не полсекунды тёмного экрана)
+        f_sh = int(round(float(sh_["t0"]) * fps)) if sh_ else 0
+        held_ = bool(k_sh and CH.is_chat(sh_.get("screen")) and (shot_out[k_sh - 1].get("screen") or vis[max(0, f_sh - 1)]))
         scr = str(sh_.get("screen") or "") if sh_ and vis[f] and (held_ or t >= float(sh_.get("a0", sh_["t0"])) + 0.5) else ""
         # полная темнота: экран телефона гаснет, фонарик горит; серия, что началась в темноте (ч.5), — экран светит
         dim = 1.0 - float(lights[f].get("out", 0.0)) if (lights_out is None or lights_out >= 0) else 1.0
