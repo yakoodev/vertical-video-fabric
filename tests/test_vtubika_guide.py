@@ -81,6 +81,23 @@ def test_seq_is_one_apng_layer(tmp_path: Path) -> None:
     assert next(iter(assets.values())).endswith(".apng")
 
 
+def test_seq_count_auto_counts_frames_in_a_row(tmp_path: Path) -> None:
+    for i in range(1, 7):
+        _png(tmp_path / "seq" / f"f_{i:03d}.png")
+    _png(tmp_path / "seq" / "f_009.png")  # после дыры — не считается
+    plan = {"sentences": [{"text": "Мимика.", "gfx": [
+        {"kind": "seq", "pattern": str(tmp_path / "seq" / "f_{:03d}.png"), "count": "auto", "fps": 15}]}]}
+    words = [{"word": "Мимика.", "start": 0.0, "end": 0.5}]
+    layers, assets = G.layers(plan, words, total=3.0)
+    apng = next(iter(assets.values()))
+    from PIL import Image
+
+    assert getattr(Image.open(apng), "n_frames", 1) == 6
+    plan["sentences"][0]["gfx"][0]["pattern"] = str(tmp_path / "none" / "f_{:03d}.png")
+    with pytest.raises(G.GuideError):
+        G.layers(plan, words, total=3.0)
+
+
 def test_window_outside_short_timeline_is_skipped(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     words = _words(plan)
