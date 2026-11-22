@@ -20,6 +20,9 @@
         {"kind": "pngtuber", "idle": "…/idle.png", "talk": "…/talk.png", "blink": "…/blink.png", "w": 520},
         {"kind": "chip", "text": "молчу", "at": "молчишь"},
         {"kind": "text", "text": "vtubika.store/guides", "size": 64},
+        {"kind": "error", "app": "VTube Studio", "title": "Формат не поддерживается", "text": "model.vrm", "shake": "видит"},
+        {"kind": "files", "y": 0.4, "items": [{"ext": ".moc3", "name": "модель", "at": "файлы"},
+                                              {"ext": ".psd", "state": "bad", "state_at": "без"}]},
         {"kind": "layer", "layer": {…любой слой моушна…}}]}]
 
 Время пункта — как у событий ``do``: ``at`` (слово фразы, ``end``; нет — начало фразы), ``dt``; конец — ``until``
@@ -255,6 +258,68 @@ def _pip(lid: str, t0: float, t1: float, item: dict, accent: str) -> list[dict]:
     return [ring, vid]
 
 
+def _files(lid: str, t0: float, t1: float, item: dict, n: int, times: list[list[dict]], accent: str, plate: str) -> list[dict]:
+    """Ряд значков файлов (компонент ``file``): по центру ``x``, на высоте ``y``, через ``gap`` px; больше ``per_row`` —
+    второй ряд ниже. Значок появляется на своём слове ``at`` (``s`` — слово следующей фразы), отметка ``state``
+    (ok/bad) — на слове ``state_at`` (нет — сразу с появлением)."""
+    files = item.get("items") or []
+    if not files:
+        raise GuideError(f"фраза {n + 1}: пункт files без items")
+    size = float(item.get("size", 230))
+    gap = float(item.get("gap", 40))
+    per_row = max(1, int(item.get("per_row", 3)))
+    cx, cy = float(item.get("x", 0.5)), float(item.get("y", 0.42))
+    row_h = size * 1.45 + float(item.get("row_gap", 30))
+    cell = [max(size * 0.96, float(f.get("cell", 0)) or size * 1.25) for f in files]
+    out: list[dict] = []
+    rows = [files[i:i + per_row] for i in range(0, len(files), per_row)]
+    k = 0
+    for r, row in enumerate(rows):
+        widths = cell[k:k + len(row)]
+        total_w = sum(widths) + gap * (len(row) - 1)
+        x = W * cx - total_w / 2
+        for j, f in enumerate(row):
+            w = widths[j]
+            start = t0 + (_row_at(f, n, times, t0) if f.get("at") else 0.0)
+            start = round(min(max(t0, start), t1 - 0.1), 3)
+            props: dict[str, Any] = {"component": "file", "title": f.get("ext", ""), "size": size,
+                                     "variant": f.get("variant", "doc")}
+            if f.get("name"):
+                props["text"] = f["name"]
+            if f.get("icon"):
+                props["icon"] = f["icon"]
+            if f.get("state"):
+                props["state"] = f["state"]
+                sa = _row_at({"at": f["state_at"], "s": f.get("state_s", f.get("s", 0)), "dt": f.get("state_dt", -0.05)}, n, times, start) \
+                    if f.get("state_at") else 0.25
+                props["delay"] = round(max(0.0, sa), 3)
+            spot = {"x": round((x + w / 2) / W, 4), "y": round(cy + (r * row_h) / H, 4), "color": f.get("color") or item.get("color"),
+                    "in": item.get("in", "pop"), "in_dur": item.get("in_dur", 0.32)}
+            out.append(_ui(f"{lid}f{k}", start, t1, spot, props, accent, plate, TRACK["ui"]))
+            x += w + gap
+            k += 1
+    return out
+
+
+def _error(lid: str, t0: float, t1: float, item: dict, n: int, times: list[list[dict]], accent: str, plate: str) -> dict:
+    """Окно ошибки программы (компонент ``window``, вариант ``error``): имя программы ``app`` в шапке, красный
+    крест, ``title`` красным, пояснение ``text``. ``shake`` — слово фразы, на котором окно трясётся (ошибка «в лицо»)."""
+    props = {"component": "window", "variant": "error", "label": item.get("app", "Программа"), "title": item.get("title", "Ошибка"),
+             "w": float(item.get("w", 900)), "delay": float(item.get("icon_delay", 0.15))}
+    if item.get("text"):
+        props["text"] = item["text"]
+    if item.get("icon"):
+        props["icon"] = item["icon"]
+    lay = _ui(lid, t0, t1, item, props, accent, plate, int(item.get("track", TRACK["ui"])))
+    if item.get("shake"):
+        s = _local(item["shake"], n, times, t0, float(item.get("shake_dt", 0.0)))
+        x = float(item.get("x", 0.5))
+        amp = float(item.get("shake_amp", 0.018))
+        seq = [(0.0, 0), (0.05, -1), (0.1, 1), (0.15, -0.8), (0.2, 0.6), (0.25, -0.3), (0.3, 0)]
+        lay["keys"] = {"x": [{"t": round(s + dt, 3), "v": round(x + amp * a, 4)} for dt, a in seq]}
+    return lay
+
+
 def _text(lid: str, t0: float, t1: float, item: dict) -> dict:
     props = {"text": item["text"], "size": int(item.get("size", 64)), "weight": int(item.get("weight", 900)),
              "color": item.get("color", "#ffffff"), "maxWidth": int(item.get("maxWidth", 980)),
@@ -346,6 +411,10 @@ def layers(plan: dict, words: list[dict], total: float) -> tuple[list[dict], dic
                 out += _pngtuber(lid, t0, t1, item, words, assets, vf)
             elif kind == "text":
                 out.append(_text(lid, t0, t1, item))
+            elif kind == "files":
+                out += _files(lid, t0, t1, item, n, times, accent, plate)
+            elif kind == "error":
+                out.append(_error(lid, t0, t1, item, n, times, accent, plate))
             elif kind == "layer":
                 out.append({**item["layer"], "id": lid, "start": t0, "end": t1})
             else:

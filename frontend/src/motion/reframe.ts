@@ -161,7 +161,14 @@ export function uiSize(props: Obj): [number, number] {
     return [num(props.w, 900), 88 + (win ? 80 : 0) + (has("label") && !win ? 46 : 0) + (has("title") ? 78 : 0) + n * 86 + Math.max(0, n - 1) * 30];
   }
   if (comp === "toast") return [num(props.w, 920), 152];
+  if (comp === "window" && props.variant === "error") return [num(props.w, 940), Math.max(num(props.h, 0), 382 + (has("title") ? 58 : 0) + (has("text") ? 60 : 0))];
   if (comp === "window") return [num(props.w, 940), Math.max(num(props.h, 0), 172 + (n ? n * 90 : 160))];
+  if (comp === "file") {
+    const size = Math.max(80, num(props.size, 250));
+    const name = Array.from(String(props.text ?? "")).length;
+    const ns = Math.max(24, size * 0.15);
+    return [Math.max(size * 1.25, name ? name * ns * 0.55 + 12 : 0), size + (name ? ns * 1.6 : 0)];
+  }
   return [num(props.w, 900), 330];
 }
 

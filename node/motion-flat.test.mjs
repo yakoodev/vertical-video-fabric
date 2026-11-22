@@ -117,7 +117,31 @@ const ALL = [
   { component: "toast", title: "ChatGPT", text: "Отличная идея", badge: 1, icon: "message-circle" },
   { component: "window", variant: "browser", url: "kotiki-shop.рф", label: "Сайт", title: "Онлайн", text: "128 заказов" },
   { component: "window", variant: "chat", label: "Клод", items: [{ text: "Сделай сайт", from: "me" }, { text: "Готово", from: "them" }] },
+  { component: "window", variant: "error", label: "VTube Studio", title: "Формат не поддерживается", text: "model.vrm" },
+  { component: "file", title: ".model3.json", text: "модель", state: "ok", delay: 0 },
+  { component: "file", title: ".png", text: "textures", variant: "folder", state: "bad", delay: 0 },
 ];
+
+test("значок файла: длинное расширение ужимается в лист, крест «bad» выпрыгивает на delay", () => {
+  const g = createCanvas(10, 10).getContext("2d");
+  const short = E.measureFlat(g, { component: "file", title: ".vrm" });
+  const long = E.measureFlat(g, { component: "file", title: ".model3.json" });
+  assert.equal(long.w, short.w, "ширина листа не зависит от расширения");
+  const named = E.measureFlat(g, { component: "file", title: ".vrm", text: "трёхмерная" });
+  assert.ok(named.h > short.h);
+  const before = frame([ui({ component: "file", title: ".psd", state: "bad", delay: 2, theme: "brand" })], 1).toBuffer("image/png");
+  const after = frame([ui({ component: "file", title: ".psd", state: "bad", delay: 2, theme: "brand" })], 2.6).toBuffer("image/png");
+  assert.notDeepEqual(before, after);
+});
+
+test("окно ошибки: выше обычного окна с тем же текстом, значок выпрыгивает на delay", () => {
+  const g = createCanvas(10, 10).getContext("2d");
+  const err = E.measureFlat(g, { component: "window", variant: "error", label: "VTube Studio", title: "Формат не поддерживается", text: "model.vrm" });
+  const app = E.measureFlat(g, { component: "window", label: "VTube Studio", title: "Формат не поддерживается", text: "model.vrm" });
+  assert.ok(err.h > app.h && err.w === app.w);
+  const p = { component: "window", variant: "error", label: "VTube Studio", title: "Ошибка", delay: 2, theme: "dark" };
+  assert.notDeepEqual(frame([ui(p)], 1).toBuffer("image/png"), frame([ui(p)], 2.6).toBuffer("image/png"));
+});
 
 test("каждый компонент меряется, рисуется во всех темах; оценка рамки (uiSize) — того же порядка", () => {
   const g = createCanvas(10, 10).getContext("2d");

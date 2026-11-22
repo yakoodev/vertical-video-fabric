@@ -6,8 +6,8 @@
 import type { G } from "./draw.ts";
 import { FLAT_FONTS, type FlatFonts, type FlatPalette } from "./tokens.ts";
 
-export type FlatComponent = "hook" | "chip" | "title" | "stat" | "bars" | "counter" | "checklist" | "toast" | "window";
-export const FLAT_COMPONENTS: readonly FlatComponent[] = ["hook", "chip", "title", "stat", "bars", "counter", "checklist", "toast", "window"];
+export type FlatComponent = "hook" | "chip" | "title" | "stat" | "bars" | "counter" | "checklist" | "toast" | "window" | "file";
+export const FLAT_COMPONENTS: readonly FlatComponent[] = ["hook", "chip", "title", "stat", "bars", "counter", "checklist", "toast", "window", "file"];
 
 /** Подписи компонентов по-русски — инспектор, шпаргалка агента. */
 export const FLAT_COMPONENT_LABELS: Record<FlatComponent, string> = {
@@ -19,7 +19,8 @@ export const FLAT_COMPONENT_LABELS: Record<FlatComponent, string> = {
   counter: "счётчик-пилюля («942 692 просмотров»)",
   checklist: "чек-лист (галочки по одной)",
   toast: "уведомление",
-  window: "окно приложения / браузера / чата",
+  window: "окно приложения / браузера / чата / ошибки",
+  file: "значок файла с расширением («.vrm», папка)",
 };
 
 /** Пункт списка: строка чек-листа, полоса сравнения, сообщение чата в окне. */
@@ -51,7 +52,7 @@ export type FlatUiProps = {
   /** brand: основа (плашка бренда) — тёмная → тёмная тема, светлая → светлая. */
   plate?: string | null;
   /** Вариант компонента: chip solid|soft|outline|neutral, title plain|card, hook plain|fill|accent,
-   * counter pill|accent|plain, checklist card|window, window app|browser|chat, toast — light|dark (не задан — по теме). */
+   * counter pill|accent|plain, checklist card|window, window app|browser|chat|error, file doc|folder, toast — light|dark (не задан — по теме). */
   variant?: string;
   w?: number;
   h?: number;
@@ -81,6 +82,8 @@ export type FlatUiProps = {
   url?: string;
   time?: string;
   badge?: number;
+  /** file: отметка на значке — ok (зелёная галочка) | bad (красный крест); появляется на `delay` с слоя. */
+  state?: string;
   letter?: string;
   /** Время пунктов: первый на `delay` с слоя, дальше через `stagger`. */
   delay?: number;

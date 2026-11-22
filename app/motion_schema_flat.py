@@ -57,6 +57,7 @@ UI: dict = {
     "time": Opt(Text("", 20)),
     "badge": Opt(Num(0, 0, 999, integer=True)),
     "letter": Opt(Text("", 2)),
+    "state": Opt(Choice("none", ("none", "ok", "bad"))),  # file: галочка / крест на значке
     "delay": Opt(Num(0.5, 0, MAX_TIME_SEC, 3)),
     "stagger": Opt(Num(0.6, 0, 30, 3)),
     "reveal": Opt(Choice("check", FLAT_REVEALS)),
