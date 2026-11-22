@@ -13,6 +13,8 @@ import { lastProject, projectPath } from "@/lib/paths";
 const VideoListPage = lazyPage(() => import("@/pages/VideoListPage"), "VideoListPage");
 const VideoPage = lazyPage(() => import("@/pages/VideoPage"), "VideoPage");
 const ProjectPage = lazyPage(() => import("@/pages/project/ProjectPage"), "ProjectPage");
+// Окно 3D (three.js) — свой файл: грузится, только когда открыли модель.
+const Model3dPage = lazyPage(() => import("@/pages/models3d/Model3dPage"), "Model3dPage");
 const MontageAssetsPage = lazyPage(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const AutomationPage = lazyPage(() => import("@/pages/AutomationPage"), "AutomationPage");
 const ClipPage = lazyPage(() => import("@/pages/ClipPage"), "ClipPage");
@@ -83,6 +85,8 @@ export function App() {
         {/* Лестница: проект → видео или выпуск → клип; монтаж клипа — редактор внутри видео (?clip=). */}
         <Route path="p/:projectId" element={<RequireModule id="series"><ProjectPage /></RequireModule>} />
         <Route path="p/:projectId/new" element={<NewVideoPage />} />
+        {/* 3D-модель проекта: прямая ссылка на окно просмотра. */}
+        <Route path="p/:projectId/3d/:assetId" element={<Suspense fallback={<Loading />}><Model3dPage /></Suspense>} />
         <Route path="new" element={<NewVideoPage />} />
         <Route path="r/:releaseKey" element={<ReleasePage />} />
         <Route path="v/:sourceId/*" element={<VideoPage />} />

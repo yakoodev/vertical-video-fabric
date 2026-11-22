@@ -39,7 +39,8 @@ type Tab =
   | "hyp"
   | "stats"
   | "autopilot"
-  | "materials";
+  | "materials"
+  | "models3d";
 const TAB_ALIAS: Record<string, Tab> = { lore: "know", auto: "autopilot" };
 
 const ProjectVideosTab = lazyPage<{ projectId: number; onNewVideo: () => void }>(
@@ -50,6 +51,7 @@ const ProjectClips = lazyPage<{ projectId: number }>(() => import("@/components/
 const ProjectQuestions = lazyPage<{ projectId: number }>(() => import("@/pages/workspace/AllStreamQuestions"), "AllStreamQuestions");
 const ProjectFiles = lazyPage<{ projectId: number }>(() => import("@/pages/MontageAssetsPage"), "MontageAssetsPage");
 const ProjectMaterials = lazyPage<{ projectId: number }>(() => import("@/pages/project/ProjectMaterials"), "ProjectMaterials");
+const ProjectModels3d = lazyPage<{ projectId: number }>(() => import("@/pages/models3d/Models3dTab"), "Models3dTab");
 const ProjectReferences = lazyPage<{ projectId: number }>(
   () => import("@/pages/project/ProjectReferencesTab"),
   "ProjectReferencesTab",
@@ -175,6 +177,7 @@ export function ProjectPage() {
           {shown === "files" ? <ProjectFiles projectId={id} /> : null}
           {shown === "refs" ? <ProjectReferences projectId={id} /> : null}
           {shown === "materials" ? <ProjectMaterials projectId={id} /> : null}
+          {shown === "models3d" ? <ProjectModels3d projectId={id} /> : null}
         </Suspense>
         {shown === "know" ? <KnowledgeTab projectId={id} /> : null}
         {shown === "brief" ? <ProjectBriefTab project={p} /> : null}

@@ -1,0 +1,410 @@
+/* «3D-модели» проекта (pages/models3d): карточки по группам и окно просмотра. Телефон — окно сверху, панель под ним. */
+
+.m3d-tab {
+  position: relative;
+  max-width: 1400px;
+  min-height: 320px;
+}
+.m3d-tab.is-drag::after {
+  content: "Отпусти — добавлю модель";
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  color: var(--text);
+  font-weight: 600;
+  font-size: 18px;
+  z-index: 3;
+  pointer-events: none;
+}
+.m3d-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+.m3d-intro p {
+  flex: 1 1 420px;
+  margin: 0;
+  max-width: 780px;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.m3d-intro b {
+  color: var(--text);
+  font-weight: 600;
+}
+.m3d-uploading {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 6px 10px;
+  max-width: 560px;
+  margin-bottom: 12px;
+  color: var(--info);
+  font-size: 13px;
+}
+.m3d-uploading .m3d-bar {
+  grid-column: 1 / -1;
+}
+.m3d-group {
+  margin-bottom: 22px;
+}
+.m3d-group h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+  letter-spacing: 0.01em;
+}
+.m3d-group h2 .muted {
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-left: 4px;
+}
+.m3d-empty {
+  margin: 0;
+  font-size: 13px;
+}
+.m3d-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: 12px;
+}
+.m3d-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--inner-hi);
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.m3d-card:hover,
+.m3d-card:focus-visible {
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+.m3d-thumb {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  background: radial-gradient(circle at 50% 40%, var(--surface-3), var(--bg-elev));
+  display: grid;
+  place-items: center;
+}
+.m3d-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.m3d-thumb-ph {
+  font-family: var(--mono);
+  font-size: 22px;
+  color: var(--text-faint);
+}
+.m3d-badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--info-soft);
+  color: var(--info);
+  font-size: 11px;
+}
+.m3d-badge.is-bad {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.m3d-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 11px 11px;
+  font-size: 13px;
+}
+.m3d-card-body strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------- Окно просмотра ---------- */
+
+.m3d-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.m3d-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.m3d-head h1 {
+  margin: 0;
+  font-size: 22px;
+}
+.m3d-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-decoration: none;
+}
+.m3d-back .icon {
+  transform: scaleX(-1);
+}
+.m3d-kind {
+  padding: 2px 9px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-2);
+  font-size: 12px;
+}
+.m3d-head-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.m3d-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 14px;
+  align-items: start;
+}
+.m3d-canvas-wrap {
+  position: relative;
+  height: calc(100vh - var(--top-h) - 120px);
+  min-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  background: var(--surface);
+}
+.m3d-canvas {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+}
+.m3d-canvas canvas {
+  display: block;
+  cursor: grab;
+}
+.m3d-canvas canvas:active {
+  cursor: grabbing;
+}
+.m3d-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px;
+  text-align: center;
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  font-size: 14px;
+  z-index: 2;
+}
+.m3d-overlay .m3d-bar {
+  width: min(360px, 80%);
+}
+.m3d-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  overflow: hidden;
+}
+.m3d-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+.m3d-views {
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  z-index: 1;
+}
+.m3d-views .btn,
+.m3d-timeline .btn {
+  background: color-mix(in srgb, var(--surface-2) 86%, transparent);
+  backdrop-filter: blur(6px);
+}
+.m3d-views .btn.is-on {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+.m3d-timeline {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 10px;
+  border-radius: var(--r);
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  z-index: 1;
+}
+.m3d-timeline input[type="range"] {
+  flex: 1 1 200px;
+  accent-color: var(--accent);
+}
+.m3d-play {
+  min-width: 38px;
+}
+.m3d-time {
+  font-size: 12px;
+  color: var(--text-dim);
+  min-width: 84px;
+}
+.m3d-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - var(--top-h) - 120px);
+  overflow-y: auto;
+}
+.m3d-sec {
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  background: var(--surface);
+  box-shadow: var(--inner-hi);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.m3d-sec h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: none;
+}
+.m3d-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+.m3d-field > span {
+  color: var(--text-dim);
+}
+.m3d-field select,
+.m3d-field .input {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  color: var(--text);
+  font-size: 14px;
+}
+.m3d-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.m3d-check input {
+  accent-color: var(--accent);
+}
+.m3d-seg {
+  display: inline-flex;
+  flex-wrap: wrap;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.m3d-seg button {
+  flex: 1 1 auto;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+.m3d-seg button + button {
+  border-left: 1px solid var(--border-strong);
+}
+.m3d-seg button.on {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.m3d-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+.m3d-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 5px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+.m3d-facts dt {
+  color: var(--text-dim);
+}
+.m3d-facts dd {
+  margin: 0;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.m3d-file {
+  word-break: break-all;
+}
+.m3d-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.m3d-acts .btn.danger {
+  color: var(--danger);
+}
+
+@media (max-width: 900px) {
+  .m3d-layout {
+    grid-template-columns: 1fr;
+  }
+  .m3d-canvas-wrap {
+    height: 62vh;
+    min-height: 340px;
+  }
+  .m3d-side {
+    max-height: none;
+    overflow: visible;
+  }
+  .m3d-timeline {
+    left: 6px;
+    right: 6px;
+    bottom: 6px;
+  }
+}

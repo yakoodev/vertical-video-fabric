@@ -29,3 +29,5 @@ yt-dlp[default]>=2026.10.26
 bgutil-ytdlp-pot-provider==2.0.2
 # Подмена браузера для yt-dlp (--impersonate): без неё TikTok не отдаёт числа роликов («Unexpected response»).
 curl_cffi>=0.10,<0.14
+# Лёгкие копии 3D-моделей (app/assets3d_preview.py): текстуры → WebP; уже приезжает с instagrapi — здесь явно.
+Pillow>=10,<13

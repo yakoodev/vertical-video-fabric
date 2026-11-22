@@ -502,6 +502,10 @@ app.include_router(build_feed_router(AuthDep, lambda: store))
 from app.references_api import build_references_router  # noqa: E402
 
 app.include_router(build_references_router(AuthDep, lambda: store))
+# 🧊 «3D-модели» проекта и окно просмотра с анимациями (app/assets3d.py, app/anim3d.py).
+from app.assets3d_api import build_assets3d_router  # noqa: E402
+
+app.include_router(build_assets3d_router(AuthDep, lambda: store))
 # 🏠 «Главная»: сводка всего сервиса одним ответом (app/home.py).
 from app.home_api import build_home_router  # noqa: E402
 

@@ -45,6 +45,7 @@ export type ProjectTabKey =
   | "files"
   | "refs"
   | "materials"
+  | "models3d"
   | "chat"
   | "know"
   | "stats"
@@ -61,6 +62,8 @@ export const PROJECT_TABS: readonly ProjectTab[] = [
   { key: "refs", label: "Референсы", cmd: "Референсы проекта: примеры стиля" },
   // Маскоты и позы, миры и актёры, стиль, персонажи и бюджет ИИ-видео, темы канала (решение 16).
   { key: "materials", label: "Материалы", cmd: "Материалы проекта: маскоты, миры, персонажи" },
+  // Персонажи и вещи в 3D: крутить, выражения лица, движения; перетащить файл — новая модель (app/assets3d.py).
+  { key: "models3d", label: "3D-модели", cmd: "3D-модели проекта: персонажи и реквизит" },
   { key: "chat", label: "Чат", cmd: "Чат проекта", module: "agent_chat" },
   { key: "know", label: "Лор и правила", cmd: "Что агент знает, лор и правила" },
   { key: "stats", label: "Статистика" },

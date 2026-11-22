@@ -748,6 +748,10 @@ class Database:
             from app.references import ensure_schema as ensure_references
 
             ensure_references(conn)
+            # «3D-модели» проектов: персонажи и реквизит с лёгким превью для браузера (app/assets3d.py).
+            from app.assets3d import ensure_schema as ensure_assets3d
+
+            ensure_assets3d(conn)
 
     def _ensure_column(
         self,

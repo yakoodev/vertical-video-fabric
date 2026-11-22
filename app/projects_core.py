@@ -210,15 +210,19 @@ def update_project(store: Any, project_id: int, **fields: Any) -> dict:
 def delete_project(store: Any, project_id: int) -> dict:
     """Удалить проект: источники и клипы остаются (без проекта), файлы для монтажа становятся общими, правила,
     гипотезы, референсы (с файлами) и ручные публикации проекта уходят вместе с ним."""
+    from app import assets3d as A3
     from app import references as R
 
     project = get_project(store, project_id)
     refs = R.delete_project_files(store, int(project_id))
+    models = A3.delete_project_files(store, int(project_id))
     with store.db.transaction():
         store.db.execute("UPDATE sources SET project_id = NULL WHERE project_id = ?", (int(project_id),))
         store.db.execute("DELETE FROM projects WHERE id = ?", (int(project_id),))
     for ref_id in refs:  # строки референсов ушли каскадом — их папки тоже
         R.remove_files(ref_id)
+    for asset_id in models:  # и 3D-моделей
+        A3.remove_files(asset_id)
     return {"deleted": True, "project": project}
 
 
