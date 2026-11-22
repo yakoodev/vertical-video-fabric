@@ -1,0 +1,323 @@
+{
+  "id": "guide_phone",
+  "title": "Мини-гайд 5: Вебка за 3000, а модель как деревянная (айфон с разблокировкой по лицу, андроид, свет и камера)",
+  "format": "guide",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "lily",
+    "paid_ok": true
+  },
+  "script": "мини-гайд 5 «Вебка за 3000, а модель как деревянная». Сценарий утверждён владельцем 22.11 10:38 (D:/vvf-offload/vtubika/guide5_phone/script_draft.txt), правки только для гладкости речи. Ведущая Оля (olya_host) в камеру. Крючок: кадр 0 — ведущая крупно и «ДЕРЕВЯННАЯ?», под лицом окно «вебка» с аватаром, у которого рот еле открывается и брови стоят. С «Дело не в модели» — рядом та же модель с айфона: живой рот, голова, брови, щёки, прищур, язык на словах. Аватар — Лёша из своего каста (hinzka, 52 формы ARKit, коммерция разрешена), мимика кадрами tools/vtubika_guide_assets.py faces (app/vtubika_facetrack.py). Факты: камера TrueDepth — около 50 движений лица (ARKit); подойдёт любой айфон с Face ID (iPhone X и новее); андроид — обычная камера; без айфона — свет спереди, камера на уровне глаз, чувствительность рта. НЕЛЬЗЯ: английские слова в озвучке (VTube Studio, iPhone, Face ID, Android — только на экране), суммы кроме «три тысячи» из сценария, сроки, обещания. Предметы — плоские значки Lucide (webcam, smartphone, monitor, wifi, sun, settings), без самодельных коробок и ИИ-картинок. Скрин — статья vtubika.store/guides/telefon-kak-kamera-facetracking-vtube-studio (node/vrm/site_shots.mjs, только просмотр).",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {
+    "word": "Деревянная?",
+    "until": 1.6,
+    "y": 0.13,
+    "size": 116,
+    "accent": "#ff8a4c"
+  },
+  "vrm": {
+    "heroine": "olya_host",
+    "monitor": false,
+    "tail_wide": false
+  },
+  "guide": {
+    "accent": "#ff8a4c",
+    "plate": "#2b2f36",
+    "badge": {
+      "text": "МИНИ-ГАЙД №5",
+      "from": 1.65,
+      "y": 0.045,
+      "size": 28
+    }
+  },
+  "pronounce": {
+    "Free10": "фри десять"
+  },
+  "music": {
+    "file": "chill-keys.mp3",
+    "under_db": 9.0
+  },
+  "tail": 0.3,
+  "pace": {
+    "tempo_cap": 1.0,
+    "tempo": 1.12,
+    "lead": 0.15
+  },
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1480,
+    "duration": 2.3,
+    "music_fade": 2.3
+  },
+  "presets3d": {
+    "room": {
+      "name": "cozy_desk"
+    },
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": [
+      "bloom",
+      "dust_motes",
+      {
+        "name": "depth_of_field",
+        "amount": 2
+      },
+      "film_grain"
+    ]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {
+      "keyColor": "#fff4ec",
+      "keyPower": 2.1,
+      "fill": "#6a6a9a",
+      "fillPower": 0.9
+    }
+  },
+  "screen": {
+    "uptime": 600,
+    "title": "мини-гайд",
+    "camBg": ["#1a1630", "#0c0a18"],
+    "viewers": [],
+    "chat": []
+  },
+  "highlight": {
+    "вебку": "#ffd7bf",
+    "деревянная:": "#ff6b6b",
+    "еле": "#ff6b6b",
+    "брови": "#ff6b6b",
+    "модели.": "#8edfd1",
+    "плоско": "#ff6b6b",
+    "угадывает": "#ff6b6b",
+    "Айфон": "#8edfd1",
+    "объёме": "#8edfd1",
+    "пятидесяти": "#ff8a4c",
+    "брови,": "#8edfd1",
+    "щёки,": "#8edfd1",
+    "прищур,": "#8edfd1",
+    "язык.": "#8edfd1",
+    "старый": "#ff8a4c",
+    "любой": "#8edfd1",
+    "программу": "#ffd7bf",
+    "одной": "#8edfd1",
+    "сети,": "#8edfd1",
+    "адрес": "#ffd7bf",
+    "повторяет": "#8edfd1",
+    "андроиде": "#ffd7bf",
+    "обычная": "#ff6b6b",
+    "айфона?": "#ff8a4c",
+    "спереди,": "#8edfd1",
+    "глаз,": "#8edfd1",
+    "чувствительность": "#8edfd1",
+    "гайдах": "#ff8a4c",
+    "Витубики.": "#ff8a4c"
+  },
+  "faces": {
+    "base_spec": "D:/vvf-offload/vtubika/cast/work/specs/basem_stand.json",
+    "hero": "lyosha",
+    "fps": 15,
+    "stiff": "D:/vvf-offload/vtubika/guide5_phone/assets/face_stiff",
+    "lively": "D:/vvf-offload/vtubika/guide5_phone/assets/face_lively",
+    "lively_from": {"n": 1, "dt": -0.15},
+    "lively_to": {"n": 2, "dt": 0.35},
+    "events": [
+      {"n": 1, "at": "модели.", "what": "smile"},
+      {"n": 1, "at": "угадывает", "what": "frown"},
+      {"n": 2, "at": "объёме", "what": "smile"},
+      {"n": 2, "at": "брови,", "what": "brows", "hold": 0.4},
+      {"n": 2, "at": "щёки,", "what": "cheeks", "hold": 0.4},
+      {"n": 2, "at": "прищур,", "what": "squint", "hold": 0.45},
+      {"n": 2, "at": "язык.", "what": "tongue", "hold": 0.9}
+    ]
+  },
+  "sentences": [
+    {
+      "text": "Купил вебку за три тысячи, а модель как деревянная: рот еле открывается, брови стоят на месте.",
+      "pause_after": 0.2,
+      "show": [
+        "кадр 0 (обложка): ведущая крупно, сверху огромное «ДЕРЕВЯННАЯ?», под лицом окно «Вебка за 3000 ₽» (значок вебки) с аватаром Лёши — рот еле открывается, брови стоят (виден с кадра 0); по словам чипы «Рот еле открывается», «Брови стоят на месте» (красные)"
+      ],
+      "shots": [{"cam": "smile", "push": 0.06}],
+      "do": [
+        {"face": "talk", "talk": true, "dt": -0.2},
+        {"act": "Talk_Loop", "dt": -0.2}
+      ],
+      "vrm": [
+        {"look": "lens", "dt": -0.3, "span": 15, "dt_end": 1.0}
+      ],
+      "gfx": [
+        {"kind": "panel", "dt": -1.0, "until": "end", "dt_end": 0.2, "in": "none", "in_dur": 0.01,
+         "x": 0.5, "y": 0.634, "w": 440, "h": 380, "radius": 36, "fill": "#1d2027", "color": "#4a4f5c", "stroke_w": 4},
+        {"kind": "seq", "dt": -1.0, "until": "end", "dt_end": 0.2, "in": "none", "in_dur": 0.01, "shadow": false,
+         "pattern": "D:/vvf-offload/vtubika/guide5_phone/assets/face_stiff/f_{:03d}.png", "count": "auto", "fps": 15,
+         "x": 0.5, "y": 0.645, "w": 300},
+        {"kind": "chip", "dt": -1.0, "until": "end", "dt_end": 0.2, "in": "none", "in_dur": 0.01,
+         "text": "Вебка за 3000 ₽", "icon": "webcam", "variant": "soft", "x": 0.5, "y": 0.537, "size": 34},
+        {"kind": "chip", "at": "рот", "dt": -0.1, "until": "end", "dt_end": 0.2,
+         "text": "Рот еле открывается", "icon": "triangle-alert", "color": "#ff6b6b", "x": 0.5, "y": 0.69, "size": 36},
+        {"kind": "chip", "at": "брови", "dt": -0.1, "until": "end", "dt_end": 0.2,
+         "text": "Брови стоят на месте", "icon": "ban", "color": "#ff6b6b", "x": 0.5, "y": 0.728, "size": 36}
+      ]
+    },
+    {
+      "text": "Дело не в модели. Обычная вебка видит лицо плоско и угадывает мимику по картинке.",
+      "pause_after": 0.12,
+      "show": [
+        "притушенный кадр, ведущая в кружке слева внизу; заголовок «Дело не в модели» (чип «та же модель»); рядом два окна: слева «Вебка» — аватар деревянный, справа «Айфон» — та же модель живая (рот, голова, улыбка); по словам чипы «Видит лицо плоско», «Угадывает мимику по картинке» (красные)"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "vrm": [{"at": "модели.", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "scrim", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0},
+        {"kind": "layer", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0,
+         "layer": {"type": "particles", "x": 0.5, "y": 0.5, "track": 3, "opacity": 0.85,
+                   "props": {"kind": "rise", "count": 120, "colors": ["#ffd7bf", "#8edfd1", "#bda7f7", "#ff8a4c"],
+                             "shape": "dot", "size": 16, "spread": 980, "duration": 6, "seed": 7, "glow": true}}},
+        {"kind": "pip", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0, "x": 0.15, "y": 0.68, "w": 200},
+        {"kind": "title", "dt": -0.1, "chip": "та же модель", "text": "Дело не в модели", "size": 74, "color": "#8edfd1", "y": 0.13},
+        {"kind": "panel", "dt": -0.15, "span": 1, "dt_end": 0.35,
+         "x": 0.27, "y": 0.365, "w": 470, "h": 520, "radius": 36, "fill": "#1d2027", "color": "#ff6b6b", "stroke_w": 4},
+        {"kind": "seq", "dt": -0.15, "span": 1, "dt_end": 0.35, "shadow": false,
+         "pattern": "D:/vvf-offload/vtubika/guide5_phone/assets/face_stiff/f_{:03d}.png", "count": "auto", "fps": 15,
+         "x": 0.27, "y": 0.38, "w": 400},
+        {"kind": "chip", "dt": -0.15, "span": 1, "dt_end": 0.35, "text": "Вебка", "icon": "webcam", "color": "#ff6b6b",
+         "x": 0.27, "y": 0.237, "size": 38},
+        {"kind": "panel", "dt": -0.15, "span": 1, "dt_end": 0.35,
+         "x": 0.73, "y": 0.365, "w": 470, "h": 520, "radius": 36, "fill": "#1d2027", "color": "#8edfd1", "stroke_w": 4},
+        {"kind": "seq", "dt": -0.15, "span": 1, "dt_end": 0.35, "shadow": false,
+         "pattern": "D:/vvf-offload/vtubika/guide5_phone/assets/face_lively/f_{:03d}.png", "count": "auto", "fps": 15,
+         "x": 0.73, "y": 0.38, "w": 400},
+        {"kind": "chip", "dt": -0.15, "span": 1, "dt_end": 0.35, "text": "Айфон", "icon": "smartphone", "color": "#8edfd1",
+         "x": 0.73, "y": 0.237, "size": 38},
+        {"kind": "chip", "at": "плоско", "dt": -0.1, "until": "end", "dt_end": 0.1,
+         "text": "Видит лицо плоско", "icon": "eye", "color": "#ff6b6b", "x": 0.5, "y": 0.555, "size": 40},
+        {"kind": "chip", "at": "угадывает", "dt": -0.1, "until": "end", "dt_end": 0.1,
+         "text": "Угадывает мимику по картинке", "icon": "circle-help", "color": "#ff6b6b", "x": 0.5, "y": 0.605, "size": 40}
+      ]
+    },
+    {
+      "text": "Айфон с разблокировкой по лицу видит лицо в объёме и передаёт около пятидесяти движений: брови, щёки, прищур, даже язык.",
+      "say": "Айфон с разблокировкой по лицу видит лицо в объёме и передаёт около пятидесяти движений: брови, щёки, прищур, даже язык.",
+      "pause_after": 0.15,
+      "show": [
+        "окна остаются: слева деревянный, справа живой; заголовок «Лицо в объёме» (чип «Face ID · камера TrueDepth»); на «пятидесяти» чип «≈50 движений лица · ARKit»; на словах чипы «Брови», «Щёки», «Прищур», «Язык» — и живой аватар в этот момент поднимает брови, надувает щёки, щурится, показывает язык"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "Face ID · камера TrueDepth", "text": "Лицо в объёме", "size": 92, "color": "#8edfd1", "y": 0.13},
+        {"kind": "chip", "at": "пятидесяти", "dt": -0.1, "until": "end", "dt_end": 0.35,
+         "text": "≈50 движений лица · ARKit", "icon": "scan-face", "color": "#ff8a4c", "x": 0.5, "y": 0.535, "size": 40},
+        {"kind": "chip", "at": "брови,", "dt": -0.1, "until": "end", "dt_end": 0.35,
+         "text": "Брови", "icon": "check", "color": "#8edfd1", "x": 0.38, "y": 0.58, "size": 40},
+        {"kind": "chip", "at": "щёки,", "dt": -0.1, "until": "end", "dt_end": 0.35,
+         "text": "Щёки", "icon": "check", "color": "#8edfd1", "x": 0.66, "y": 0.58, "size": 40},
+        {"kind": "chip", "at": "прищур,", "dt": -0.1, "until": "end", "dt_end": 0.35,
+         "text": "Прищур", "icon": "check", "color": "#8edfd1", "x": 0.335, "y": 0.625, "size": 40},
+        {"kind": "chip", "at": "язык.", "dt": -0.1, "until": "end", "dt_end": 0.35,
+         "text": "Даже язык", "icon": "check", "color": "#8edfd1", "x": 0.695, "y": 0.625, "size": 40}
+      ]
+    },
+    {
+      "text": "Подойдёт и старый — любой айфон с разблокировкой по лицу. Ставишь программу для витуберов на телефон и на компьютер.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «Подойдёт и старый» (чип «какой айфон»); строки по словам: «iPhone X и новее / любой с Face ID», «VTube Studio / программа для витуберов», «На телефон», «И на компьютер»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "старый", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "какой айфон", "text": "Подойдёт и старый", "size": 72, "color": "#ff8a4c", "y": 0.13},
+        {"kind": "rows", "at": "любой", "dt": -0.2, "color": "#ff8a4c", "label": "что нужно", "y": 0.41,
+         "items": [
+           {"icon": "smartphone", "text": "iPhone X и новее", "sub": "любой с Face ID", "at": "любой"},
+           {"icon": "download", "text": "VTube Studio", "sub": "программа для витуберов", "at": "программу"},
+           {"icon": "smartphone", "text": "На телефон", "at": "телефон"},
+           {"icon": "monitor", "text": "И на компьютер", "at": "компьютер."}
+         ]}
+      ]
+    },
+    {
+      "text": "Телефон и компьютер — в одной сети, вводишь адрес компьютера, и модель повторяет за тобой.",
+      "say": "Телефон и компьютер — в одной сети, вводишь адрес компьютера и модель повторяет за тобой.",
+      "revoice": true,
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «Подключение»; строки по словам: «Одна сеть Wi-Fi / телефон и компьютер», «Адрес компьютера / вводишь в телефоне», «Модель повторяет за тобой»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "vrm": [{"at": "повторяет", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "одна сеть", "text": "Подключение", "size": 96, "color": "#8edfd1", "y": 0.13},
+        {"kind": "rows", "at": "одной", "dt": -0.2, "color": "#8edfd1", "label": "три шага", "y": 0.41,
+         "items": [
+           {"icon": "wifi", "text": "Одна сеть Wi-Fi", "sub": "телефон и компьютер", "at": "одной"},
+           {"icon": "monitor", "text": "Адрес компьютера", "sub": "вводишь в телефоне", "at": "адрес"},
+           {"icon": "check", "text": "Модель повторяет", "sub": "за тобой", "at": "повторяет"}
+         ]}
+      ]
+    },
+    {
+      "text": "На андроиде тоже работает, но там обычная камера — почти как вебка.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «Андроид» (чип «тоже работает»); строки по словам: «Работает», «Обычная камера», «Почти как вебка»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "тоже работает", "text": "Android", "size": 100, "color": "#ffd7bf", "y": 0.13},
+        {"kind": "rows", "at": "работает,", "dt": -0.2, "color": "#ffd7bf", "label": "но", "y": 0.41,
+         "items": [
+           {"icon": "check", "text": "Работает", "at": "работает,"},
+           {"icon": "camera", "text": "Обычная камера", "sub": "без объёма", "at": "обычная"},
+           {"icon": "webcam", "text": "Почти как вебка", "at": "вебка."}
+         ]}
+      ]
+    },
+    {
+      "text": "Нет айфона? Поставь свет спереди, а не за спиной, камеру — на уровень глаз, и подними чувствительность рта в настройках.",
+      "pause_after": 0.15,
+      "show": [
+        "заголовок «Нет айфона?» (чип «с вебкой»); строки по словам: «Свет спереди / а не за спиной», «Камера на уровне глаз», «Чувствительность рта / подними в настройках»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "настройках.", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "с вебкой", "text": "Нет айфона?", "size": 96, "color": "#ff8a4c", "y": 0.13},
+        {"kind": "rows", "at": "свет", "dt": -0.2, "color": "#ff8a4c", "label": "три правки", "y": 0.41,
+         "items": [
+           {"icon": "sun", "text": "Свет спереди", "sub": "а не за спиной", "at": "свет"},
+           {"icon": "webcam", "text": "Камера на уровне глаз", "at": "камеру"},
+           {"icon": "settings", "text": "Чувствительность рта", "sub": "подними в настройках", "at": "подними"}
+         ]}
+      ]
+    },
+    {
+      "text": "Пошаговая настройка — в гайдах на сайте Витубики.",
+      "say": "Пошаговая настройка — в гайдах на сайте Виту́бики.",
+      "pause_after": 0.0,
+      "show": [
+        "телефон: настоящая статья vtubika.store «телефон как камера» прокручивается; чип «Гайд на vtubika.store»"
+      ],
+      "shots": [{"cam": "smile", "push": 0.06}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "Витубики.", "nod": 1, "amp": 7}],
+      "gfx": [
+        {"kind": "image", "dt": 0.15, "until": "end", "dt_end": 1.0,
+         "src": "D:/vvf-offload/vtubika/guide5_phone/site/guide_phone.png", "device": "phone", "w": 370, "x": 0.5, "y": 0.3,
+         "crop": {"x": 0, "y": 0, "w": 1, "h": 0.2}, "scroll": [0.0, 0.25], "scroll_t0": 0.4},
+        {"kind": "chip", "at": "гайдах", "dt": -0.1, "until": "end", "dt_end": 1.0,
+         "text": "Гайд на vtubika.store", "icon": "file-text", "color": "#ff8a4c", "x": 0.5, "y": 0.6, "size": 40}
+      ]
+    }
+  ]
+}

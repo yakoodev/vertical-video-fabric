@@ -201,8 +201,17 @@ def _pngtuber(lid: str, t0: float, t1: float, item: dict, words: list[dict], ass
 
 
 def _seq(lid: str, t0: float, t1: float, item: dict, assets: dict[str, str]) -> dict:
-    """Последовательность PNG с альфой (поворот 3D-модели, анимированный ассет) — APNG по кругу одним слоем."""
-    apng = seq_apng(str(item["pattern"]), int(item["count"]), float(item.get("fps", 12)), int(item.get("from", 1)))
+    """Последовательность PNG с альфой (поворот 3D-модели, анимированный ассет) — APNG по кругу одним слоем.
+    ``"count": "auto"`` — сколько кадров по шаблону лежит подряд (ряд мимики пересобирается под длину озвучки)."""
+    first = int(item.get("from", 1))
+    count = item.get("count", "auto")
+    if count == "auto":
+        count = 0
+        while Path(str(item["pattern"]).format(first + count)).is_file():
+            count += 1
+        if not count:
+            raise GuideError(f"нет кадров {item['pattern']}")
+    apng = seq_apng(str(item["pattern"]), int(count), float(item.get("fps", 12)), first)
     lay = {"id": lid, "type": "image", "start": t0, "end": t1, "x": float(item.get("x", 0.5)), "y": float(item.get("y", 0.42)),
            "track": TRACK["media"], "props": {"asset_id": _asset(apng, assets), "w": float(item.get("w", 480))}, **_io(item)}
     if item.get("shadow", True):

@@ -10,6 +10,13 @@
   общей рамке. Слой гайда ``pngtuber`` (app/vtubika_guide.py) переключает их по словам озвучки.
 * ``turntable`` — модель в полный рост, камера обходит её по кругу: ``f_001.png…`` (прозрачный фон) и ``turn.mp4``
   (на цвете ``--bg``) — пример «3D-модель поворачивается».
+* ``faces`` — бюст анфас, мимика по кадрам (``app.vtubika_facetrack``): ``--mode stiff`` — «вебка» (рот еле
+  открывается, брови стоят), ``--mode lively`` — «айфон» (рот, голова, брови/щёки/прищур/язык на ``--events``).
+  Кадры ``f_001.png…`` с прозрачным фоном — слой гайда ``seq``. Модель — ``--hero`` из каста (по умолчанию Лёша:
+  52 формы ARKit) поверх позы и света ``--base-spec``::
+
+      python tools/vtubika_guide_assets.py faces --base-spec D:/vvf-offload/vtubika/cast/work/specs/basem_stand.json
+          --mode lively --dur 12 --fps 15 --events '[{"t": 7.1, "what": "brows"}]' --out D:/…/assets/face_lively
 
 База — спека стоячей модели каста (``node/vrm/stills.mjs``: модель, образ, поза рук, свет); кадры — ``node/vrm/stills.mjs``.
 """
@@ -26,6 +33,8 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 PACKS = r"D:\vvf-offload\vtubika\vrm\vendor"
 KEY = "#ff00ff"  # хромакей фона: у каста нет чистой мадженты (у зелёного — фартук Вари, у синего — Ася)
 
@@ -127,9 +136,50 @@ def turntable(base: dict, out: Path, gl: str, head: float, frames: int, fps: int
     return {"frames": frames, "fps": fps, "crop": crop, "video": str(out / "turn.mp4")}
 
 
+def faces(base: dict, out: Path, gl: str, mode: str, dur: float, fps: float, events: list[dict], seed: int,
+          hero: str | None, fov: float) -> dict:
+    from app import vtubika_facetrack as F
+
+    spec = copy.deepcopy(base)
+    if hero:
+        from app.vtubika_vrm_stage import HEROINES
+
+        her = HEROINES[hero]
+        spec["model"], spec["look"] = her["model"], her["look"]
+    spec["width"], spec["height"] = 810, 1440
+    cam = {"pos": {"bone": "head", "add": [0.05, 0.05, 2.6]}, "target": {"bone": "head", "add": [0, 0.05, 0]}, "fov": fov}
+    pose0 = base["shots"][0]["pose"]
+    hx, _hy, hz = (pose0.get("bones") or {}).get("head", [0, 0, 0])
+    head_y = float(pose0.get("look", [0, 1.4, 0])[1])
+    frames = F.track(mode, dur, fps, events, seed)
+    spec["shots"] = []
+    for i, fr in enumerate(frames):
+        look = [0.05 + fr["look"][0], head_y + fr["look"][1], 1.6]
+        sh = _shot(base, f"f_{i + 1:03d}", cam, fr["expr"], look)
+        h = fr["head"]
+        sh["pose"]["bones"] = {**(sh["pose"].get("bones") or {}), "head": [hx + h[0], h[1], hz + h[2]]}
+        spec["shots"].append(sh)
+    raw = out / "raw"
+    raw.mkdir(parents=True, exist_ok=True)
+    for old in out.glob("f_*.png"):
+        old.unlink()
+    _stills(spec, raw, gl)
+    n = len(frames)
+    # Хромакей и обрезка — одним вызовом ffmpeg на весь ряд (кадров сотни).
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(raw / "f_%03d.png"), "-vf", "colorkey=0xff00ff:0.32:0.08,format=rgba",
+          str(raw / "k_%03d.png")], "хромакей")
+    keyed = [raw / f"k_{i + 1:03d}.png" for i in range(n)]
+    crop = _bbox(keyed, max_aspect=1.12)
+    _run(["ffmpeg", "-y", "-v", "error", "-i", str(raw / "k_%03d.png"), "-vf", crop, str(out / "f_%03d.png")], "обрезка")
+    (out / "track.json").write_text(json.dumps({"mode": mode, "fps": fps, "events": events, "frames": frames},
+                                               ensure_ascii=False), "utf-8")
+    return {"mode": mode, "frames": n, "fps": fps, "dur": dur, "events": events, "crop": crop,
+            "pattern": str(out / "f_{:03d}.png")}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="примеры аватаров для мини-гайдов из каста VRM")
-    ap.add_argument("kind", choices=["pngtuber", "turntable"])
+    ap.add_argument("kind", choices=["pngtuber", "turntable", "faces"])
     ap.add_argument("--base-spec", required=True, help="спека стоячей модели каста (node/vrm/stills.mjs)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--head", type=float, help="высота головы модели, м (взгляд в камеру); нет — по спеке")
@@ -137,14 +187,25 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--fps", type=int, default=12)
     ap.add_argument("--bg", default="#20232b", help="цвет фона turn.mp4")
     ap.add_argument("--gl", default="gpu", choices=["gpu", "swiftshader"])
+    ap.add_argument("--mode", default="lively", choices=["stiff", "lively"], help="faces: «вебка» или «айфон»")
+    ap.add_argument("--dur", type=float, default=6.0, help="faces: длина ряда кадров, с")
+    ap.add_argument("--events", default="[]", help="faces: JSON [{t, what}] — мимика на секундах ряда (или @файл)")
+    ap.add_argument("--seed", type=int, default=1)
+    ap.add_argument("--hero", default="lyosha", help="faces: герой каста (app/vtubika_vrm_stage.HEROINES)")
+    ap.add_argument("--fov", type=float, default=12.0)
     args = ap.parse_args(argv)
     base = json.loads(Path(args.base_spec).read_text("utf-8"))
     base["stream"] = {**(base.get("stream") or {}), "chat": [], "noChat": True}
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     head = args.head or float(base["shots"][0]["pose"].get("look", [0, 1.4, 0])[1])
-    res = (pngtuber(base, out, args.gl, head) if args.kind == "pngtuber"
-           else turntable(base, out, args.gl, head, args.frames, args.fps, args.bg))
+    if args.kind == "faces":
+        ev = Path(args.events[1:]).read_text("utf-8") if args.events.startswith("@") else args.events
+        res = faces(base, out, args.gl, args.mode, args.dur, float(args.fps), json.loads(ev), args.seed, args.hero or None, args.fov)
+    elif args.kind == "pngtuber":
+        res = pngtuber(base, out, args.gl, head)
+    else:
+        res = turntable(base, out, args.gl, head, args.frames, args.fps, args.bg)
     (out / "assets.json").write_text(json.dumps({"kind": args.kind, "base": args.base_spec, **res}, ensure_ascii=False, indent=1), "utf-8")
     print(json.dumps(res, ensure_ascii=False))
     return 0
