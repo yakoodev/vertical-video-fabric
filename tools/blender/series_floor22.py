@@ -1,4 +1,5 @@
 """Ч.5: коридор 22-го этажа с лестницей вниз и комната героя (фото в переписке) — из моделей Kenney Furniture Kit (CC0).
+Ч.6: лестничная клетка через несколько этажей (``build_stairwell``, раскладка — ``app/series3d_stairs.py``).
 
 Не коробки: стены, проём лифта, двери квартир, пол, потолок, лестница с перилами, коврики, лампы, урна — настоящие модели
 пака ``kenney-furniture`` (масштаб ``K``: стена 1.29 ед. → 2.40 м). Каждая деталь сваривается (вершины на одном месте
@@ -91,10 +92,10 @@ def weld(bm, dist: float = 1e-4) -> int:
     return len(dup)
 
 
-def build(name: str, pieces: list[tuple[str, Matrix]], remap, split_z: float | None = None, skip: tuple = ()):
+def build(name: str, pieces: list[tuple[str, Matrix]], remap, split_z: float | list | None = None, skip: tuple = ()):
     """Один сваренный объект из деталей Kenney ``[(модель, матрица)]``. ``remap(материал Kenney, z грани)`` → наш
-    материал; ``split_z`` — разрезать по высоте (низ стены — краска, верх — побелка); ``skip`` — части модели
-    по имени материала, которые не берём."""
+    материал; ``split_z`` — разрезать по высоте (низ стены — краска, верх — побелка; списком — несколько полос, как
+    на лестнице через этажи); ``skip`` — части модели по имени материала, которые не берём."""
     bm = bmesh.new()
     mats: list = []
     for model, M in pieces:
@@ -114,9 +115,9 @@ def build(name: str, pieces: list[tuple[str, Matrix]], remap, split_z: float | N
                 mats.append(src_name)
             bpy.data.meshes.remove(tmp)
     weld(bm)
-    if split_z is not None:
+    for z_cut in ([split_z] if isinstance(split_z, (int, float)) else (split_z or [])):
         geom = list(bm.verts) + list(bm.edges) + list(bm.faces)
-        bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-5, plane_co=(0, 0, split_z), plane_no=(0, 0, 1))
+        bmesh.ops.bisect_plane(bm, geom=geom, dist=1e-5, plane_co=(0, 0, z_cut), plane_no=(0, 0, 1))
     out_mats: list = []
     for f in bm.faces:
         src = mats[f.material_index - 1000] if f.material_index >= 1000 else ""
@@ -254,6 +255,88 @@ def _fog_box(name, size, center, density=0.06):
     vol.inputs["Anisotropy"].default_value = 0.45
     nt.links.new(vol.outputs["Volume"], out.inputs["Volume"])
     return kit.box(f"{name}_fog_volume", size, center, fog, bevel=0)
+
+
+def build_stairwell(o, fonts, decal):
+    """Ч.6: лестничная клетка через несколько этажей (раскладка — ``app.series3d_stairs``): марши — модель Kenney
+    ``stairsOpen`` (ступени и перила), площадки — ``floorFull``, стены — ``wall``, двери этажей — ``doorway``; каждая
+    деталь сварена, детали не пересекаются и не касаются плоскостями (зазоры 1–2 мм). Номер этажа — краской на побелённой
+    плашке задней стены площадки, один стиль на всех этажах (третий снова «22»). Света нет — только фонарик и
+    заполняющий у камеры; дымка — луч фонарика читается."""
+    from app import series3d_stairs as ST
+
+    m = _mats()
+    if "sw_plate" not in bpy.data.materials:
+        m["plate"] = kit.principled("sw_plate", kit.hexc("#c9c3b4"), rough=0.92, bump=(30.0, 0.2, 5.0))
+        m["concrete"] = kit.principled("sw_concrete", kit.hexc("#55524c"), rough=0.9, bump=(44.0, 0.45, 7.0))
+    else:
+        m["plate"], m["concrete"] = bpy.data.materials["sw_plate"], bpy.data.materials["sw_concrete"]
+    ox, oy = o
+    n = len(ST.FLOORS)
+    xi, wt, st = ST.X_IN, ST.WALL_T, ST.SLAB_T
+    z_top = ST.floor_z(0) + 2.9
+    z_bot = ST.floor_z(n - 1) - st - 0.01
+    yb, ym = ST.Y_BACK, ST.Y_MID_BACK
+    band = ST.FLIGHT_DROP                         # площадки через полэтажа: краска до 1.3 м над каждой, выше — побелка
+    paint_h = 1.30
+    cuts = []
+    k = int(math.floor(z_bot / band)) - 1
+    while k * band < z_top + band:
+        cuts += [k * band, k * band + paint_h]
+        k += 1
+    cuts = [c for c in cuts if z_bot < c < z_top]
+
+    def paint(src, z):
+        return m["green"] if (z % band) < paint_h else m["white"]
+
+    def W(x, y, z, rz=0.0, s=(1.0, 1.0, 1.0), rx=0.0):
+        return T(ox + x, oy + y, z, rz=rz, s=s, rx=rx)
+
+    hz = (z_top - z_bot) / 1.29
+    ln = (yb - ym) + 2 * wt
+    build("sw_wall_left", [("wall", W(-xi - wt, yb + wt, z_bot, rz=-math.pi / 2, s=(ln, wt / 0.05, hz)))], paint, split_z=cuts)
+    build("sw_wall_right", [("wall", W(xi + wt, ym - wt, z_bot, rz=math.pi / 2, s=(ln, wt / 0.05, hz)))], paint, split_z=cuts)
+    wx = 2 * xi - 0.002
+    build("sw_wall_back", [("wall", W(-xi + 0.001, yb, z_bot, s=(wx, wt / 0.05, hz)))], paint, split_z=cuts)
+    build("sw_wall_mid", [("wall", W(-xi + 0.001, ym - wt, z_bot, s=(wx, wt / 0.05, hz)))], paint, split_z=cuts)
+    # потолок над верхним этажом и пол внизу клетки
+    build("sw_ceiling", [("floorFull", W(-xi + 0.001, yb, z_top + st, rx=math.pi, s=(wx, yb - ym, st / 0.05)))],
+          lambda s, z: m["white"])
+    build("sw_land_bottom", [("floorFull", W(-xi + 0.001, ym + 0.001, ST.floor_z(n - 1) - st,
+                                             s=(wx, -ym - 0.003, st / 0.05)))], lambda s, z: m["concrete"])
+    steps = {"woodDark": m["concrete"], "wood": m["rail"], "metal": m["dark"]}
+    font = fonts.get("display")
+    for i, label in enumerate(ST.FLOORS):
+        zf = ST.floor_z(i)
+        # площадка этажа: от края марша (y = 0, зазор 2 мм) до задней стены
+        build(f"sw_land_{i}", [("floorFull", W(-xi + 0.002, 0.002, zf - st, s=(2 * xi - 0.004, yb - 0.004, st / 0.05)))],
+              lambda s, z: m["concrete"])
+        if i < n - 1:
+            zm = ST.mid_z(i)
+            build(f"sw_land_mid{i}", [("floorFull", W(-xi + 0.002, ym + 0.002, zm - st,
+                                                       s=(2 * xi - 0.004, -ST.FLIGHT_RUN - ym - 0.004, st / 0.05)))],
+                  lambda s, z: m["concrete"])
+            # марш A (вниз к −Y, левая половина) и марш B (вниз к +Y, правая) — верх ступеней на 2 мм ниже площадки
+            build(f"sw_flight_a{i}", [("stairsOpen", W(-ST.GAP, -ST.FLIGHT_RUN, zm - 0.002, rz=math.pi / 2,
+                                                         s=(ST.SX, ST.SW, ST.SZ)))],
+                  lambda s, z: steps.get(s, m["concrete"]))
+            build(f"sw_flight_b{i}", [("stairsOpen", W(ST.GAP, 0.0, ST.floor_z(i + 1) - 0.002, rz=-math.pi / 2,
+                                                         s=(ST.SX, ST.SW, ST.SZ)))],
+                  lambda s, z: steps.get(s, m["concrete"]))
+        if not label:
+            continue
+        # дверь в коридор этажа — левая половина задней стены (коробка на 3 мм от стены)
+        build(f"sw_door_{i}", [("doorway", W(-0.75 + 0.243 * K, yb - 0.003, zf + 0.001, rz=math.pi, s=(K, K, K)))],
+              lambda s, z: m["metal"] if s == "metal" else m["door"])
+        # номер этажа: побелённая плашка и цифры краской — над маршем, по которому приходят сверху
+        nx, nz = ST.NUMBER_AT
+        kit.box(f"sw_plate_{i}", (0.86, 0.006, 0.86), (ox + nx, oy + yb - 0.006, zf + nz - 0.05), m["plate"], bevel=0)
+        kit.text(f"sw_no_{i}", label, 0.78, (ox + nx, oy + yb - 0.013, zf + nz + 0.04), m["ink"], font=font)
+        kit.text(f"sw_word_{i}", "ЭТАЖ", 0.12, (ox + nx, oy + yb - 0.013, zf + nz - 0.36), m["ink"],
+                 font=fonts.get("words") or font)
+    _fog_box("sw", (2 * xi - 0.02, yb - ym - 0.02, z_top - z_bot - 0.02), (ox, oy + (yb + ym) / 2, (z_top + z_bot) / 2),
+             density=0.05)
+    return {}
 
 
 def build_room(o, fonts, decal):

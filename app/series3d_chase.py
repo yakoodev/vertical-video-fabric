@@ -8,8 +8,10 @@
   от начала плана). Бег, начатый в прошлом плане, не прерывается: на склейке герой ставится в начало нового пути, шаг
   идёт дальше той же фазой. Путь кончился раньше плана — останавливается;
 * ``double`` — двойник (копия героя в той же одежде, ``perform_double``): ``{"do": "lie" | "twitch" | "rise" |
-  "stand" | "walk" | "run", "pos": [x, y], "heading": h, "path": […], "at": с}``. Что задано в плане, держится до
-  следующего указания; ``run`` идёт в ритм героя (та же фаза шага с отставанием ``SYNC_LAG``);
+  "stand" | "walk" | "run" | "echo", "pos": [x, y], "heading": h, "path": […], "at": с, "z": пол}``. Что задано в
+  плане, держится до следующего указания; ``run`` идёт в ритм героя (та же фаза шага с отставанием ``SYNC_LAG``);
+  ``echo`` (ч.6) — его не видно, слышны только шаги: каждый шаг героя в плане с отставанием ``lag``; ``z`` — стоит на
+  ступени лестницы;
 * ``screen`` — экран телефона плана сильнее правил (``chat_value``: переписка списком, с фото); ``location``, ``fill``
   (заполняющий свет плана, Вт — в полной темноте, иначе лежащего за спиной не видно), ``look``.
 
@@ -47,7 +49,10 @@ CONTACT_Z = 0.20              # стопа на полу: ниже этой вы
 SYNC_LAG = 0.08               # двойник бежит в ритм героя, отстаёт на ~2 кадра: шаги слышны второй парой
 LIE_CLIP, RISE_CLIP, TWITCH_CLIP = "Lie_Idle", "Lie_StandUp", "Lie_StandUp"
 DOUBLE_CLIPS = ("Lie_Idle", "Lie_StandUp", "Idle_A", "Walking_C", RUN_CLIP)
-AUTHORED = ("cam", "run", "double", "screen", "location", "fill", "look", "look_at", "flash")
+# ч.6: ``z`` — высота пола, с которой план начинается (лестница: склейкой на другом марше), ``flicker`` — фонарик
+# мигает и гаснет (``{"at": с, "dark": с}`` от начала плана)
+AUTHORED = ("cam", "run", "double", "screen", "location", "fill", "look", "look_at", "flash", "z", "flicker")
+ECHO_LAG = 0.24               # «шаги сзади в том же ритме»: эхо шагов героя с отставанием (двойника не видно)
 # Звуки двойника (настоящие записи паков, громкость в коде): шевельнулся на полу — шорох ткани по металлу пола;
 # встаёт — ткань и упор ногой
 SFX_DOUBLE = {"twitch": {"ref": "sfx:kenney-impact/impactSoft_medium_002.ogg", "volume": 0.5, "label": "шевелится на полу",
@@ -379,6 +384,11 @@ def perform_double(shots: list[dict], times: list[float], hero_track: m.ClipTrac
     pos = tuple(first.get("pos") or (0.0, 0.0))
     heading = float(first.get("heading", 0.0))
     pos_keys: list[tuple[float, tuple, float]] = [(0.0, pos, heading)]
+    # ч.6: высота пола под ним (стоит на ступени лестницы — ``z``) и эхо шагов героя (``echo``: его не видно)
+    z_keys: list[tuple[float, float]] = [(0.0, float(first.get("z", 0.0)))]
+    echoes: list[float] = []
+    hero_steps = [t for t, _s in strikes_in(hero_track, times)] + \
+        [t for t, _s in strikes_in(hero_track, times, clip="Walking_C", cycle=WALK)]
     add(LIE_CLIP if first.get("do", "lie") in ("lie", "twitch") else "Idle_A", 0.0, blend=0.01)
     windows: list[dict] = []
     walks: list[dict] = []
@@ -392,8 +402,15 @@ def perform_double(shots: list[dict], times: list[float], hero_track: m.ClipTrac
             pos = (float(d["pos"][0]), float(d["pos"][1]))
             heading = float(d.get("heading", heading))
             pos_keys.append((t_cut, pos, heading))
+        if d.get("z") is not None:
+            z_keys.append((t_cut, float(d["z"])))
         if do != "run":
             running = None
+        if do == "echo":
+            # «шаги сзади в том же ритме»: каждый шаг героя в этом плане — его шаг с отставанием; встал — тишина
+            lag = float(d.get("lag", ECHO_LAG))
+            echoes += [round(t + lag, 3) for t in hero_steps if t0 - 1e-6 <= t < t1]
+            continue
         if do == "lie" and seg["clip"] != LIE_CLIP:
             add(LIE_CLIP, t0 + at, blend=0.3)
         elif do == "twitch":
@@ -472,11 +489,21 @@ def perform_double(shots: list[dict], times: list[float], hero_track: m.ClipTrac
         heads[f] = round(unwrap(heads[f - 1], heads[f]), 5)
     steps = [(t, "double") for t, _side in strikes_in(track, times)]
     steps += [(t, "double") for t, _side in strikes_in(track, times, clip="Walking_C", cycle=WALK)]
-    return {"track": [{"clip": sg.clip, "start": round(sg.start, 4), "duration": sg.duration, "blend": sg.blend,
-                       "speed": round(sg.speed, 4), "loop": sg.loop, "offset": round(sg.offset, 4), "ease_in": sg.ease_in,
-                       "ease_out": sg.ease_out, "end": None if sg.end is None else round(sg.end, 4)} for sg in track.segments],
-            "root": root, "heading": heads, "gaze": [None] * n,
-            "body": [{"startle": 0.0, "lean": 0.0, "roll": 0.0}] * n, "steps": sorted(steps), "sfx": sfx}
+    steps += [(t, "double") for t in echoes]
+    out = {"track": [{"clip": sg.clip, "start": round(sg.start, 4), "duration": sg.duration, "blend": sg.blend,
+                      "speed": round(sg.speed, 4), "loop": sg.loop, "offset": round(sg.offset, 4), "ease_in": sg.ease_in,
+                      "ease_out": sg.ease_out, "end": None if sg.end is None else round(sg.end, 4)} for sg in track.segments],
+           "root": root, "heading": heads, "gaze": [None] * n,
+           "body": [{"startle": 0.0, "lean": 0.0, "roll": 0.0}] * n, "steps": sorted(steps), "sfx": sfx}
+    if any(z for _t, z in z_keys):
+        zs, zi = [], 0
+        zk = sorted(z_keys, key=lambda k: k[0])
+        for t in times:
+            while zi + 1 < len(zk) and zk[zi + 1][0] <= t + 1e-9:
+                zi += 1
+            zs.append(round(zk[zi][1], 4))
+        out["root_z"] = zs          # стоит на ступени: корень выше (series_scene.bake_body)
+    return out
 
 
 # Шаг двойника — осторожная ходьба героя (Walking_C, замер — series3d_blender_stage.WALK_FEET)

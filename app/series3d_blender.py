@@ -431,7 +431,7 @@ def _code_hash() -> str:
               root / "tools" / "blender" / "series_places.py", root / "tools" / "blender" / "series_lift.py",
               root / "tools" / "blender" / "series_voxel.py", root / "tools" / "blender" / "series_floor22.py",
               root / "tools" / "blender" / "series_double.py", root / "tools" / "blender" / "series_chat.py",
-              root / "app" / "motion3d.py"):
+              root / "app" / "motion3d.py", root / "app" / "series3d_stairs.py"):
         if p.is_file():
             h.update(_without_log_block(p.read_bytes()))
     return h.hexdigest()[:12]
@@ -516,6 +516,10 @@ def chunk_keys(job: dict, perf: dict) -> list[dict]:
             d_ = perf["double"]
             blob["double"] = {"root": d_["root"][a:b], "heading": d_["heading"][a:b],
                               "track": [sg for sg in d_["track"] if sg["start"] < b / perf["fps"] + 1]}
+            if d_.get("root_z"):
+                blob["double"]["rz"] = d_["root_z"][a:b]
+        if perf.get("feet_dz"):     # ч.6: лестница — высота корня и цели стоп (у старых серий поля нет — ключи прежние)
+            blob["stairs"] = {"rz": (perf.get("root_z") or [])[a:b], "feet": perf["feet_dz"][a:b]}
         if job.get("photos"):
             blob["photos"] = job["photos"]
         if three:
@@ -607,8 +611,9 @@ def scene_config(job: dict, work: Path, cache: Path, packs: Path | None = None) 
         return str(p)
 
     extra: dict = {}
-    if {"floor22", "room"} & {str(s_.get("location")) for s_ in job.get("shots") or []}:
-        # ч.5: коридор этажа и комната — модели Kenney Furniture Kit (CC0); фото в переписке — снятые заранее PNG
+    if {"floor22", "room", "stairwell"} & {str(s_.get("location")) for s_ in job.get("shots") or []}:
+        # ч.5: коридор этажа и комната — модели Kenney Furniture Kit (CC0); фото в переписке — снятые заранее PNG;
+        # ч.6: лестничная клетка — оттуда же
         extra["kenney"] = str(Path(need("kenney-furniture/wall.glb")).parent)
     if job.get("photos"):
         extra["photos"] = dict(job["photos"])

@@ -265,6 +265,18 @@ LOCS["room"] = {
     "keywords": r"(?!)",
     "spots": {"entry": (0.0, 0.1, 0.0), "center": (0.0, 0.1, 0.0)},
     "targets": {"key": (0.0, 0.1, 0.85), "lamp": (1.15, 1.25, 0.95)}}
+# Ч.6: лестничная клетка — марши вниз через несколько этажей, номера этажей краской (раскладка — app/series3d_stairs.py,
+# сцена — tools/blender/series_floor22.build_stairwell). Высоты точек — абсолютные (этаж i на −3.35·i м).
+LOCS["stairwell"] = {
+    "label": "лестничная клетка (марши вниз, номера этажей на стенах)", "origin": (300.0, 0.0), "author_only": True,
+    "bounds": (-1.40, 1.40, -4.50, 1.45, -14.0, 3.2),
+    "props": ("марши вниз", "перила", "площадки этажей", "номер этажа краской на стене", "пролёт между маршами"),
+    "keywords": r"(?!)",
+    "spots": {"entry": (-0.75, 0.75, 0.0), "center": (-0.75, 0.75, 0.0)},
+    "targets": {"key": (0.78, 1.49, 1.62), "no0": (0.78, 1.49, 1.62), "no1": (0.78, 1.49, -1.73),
+                "no2": (0.78, 1.49, -5.08), "no3": (0.78, 1.49, -8.43),
+                # с площадки третьего этажа (снова «22»): вниз по маршу в темноту, вверх по маршу — на четвёртую ступень
+                "below": (-0.70, -2.80, -11.45), "above": (0.77, -0.90, -8.84), "ceiling": (0.0, 0.0, 3.0)}}
 LIFT_LOCS = {k: v for k, v in LOCS.items() if v.get("world", "lift") == "lift" and not v.get("author_only")}
 LOC_NAMES = tuple(LIFT_LOCS)
 LOC_TARGETS = ("doors", "lamp", "decal", "deep", "apartment", "motor", "cabinet", "edge", "center")
@@ -308,10 +320,13 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
 
 # Свет вне кабины (сцена Blender): заполняющий у камеры («от фонарика/лампы», Вт при 0.8 м до героя), контровой
 # сзади-сверху (Вт) и экспозиция места — герой и место читаются в каждом кадре (проверка — лист «фраза → что в кадре»).
-FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5, "blockhouse": 0.9, "floor22": 3.2, "room": 2.0}
-RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0, "blockhouse": 1.2, "floor22": 9.0, "room": 6.0}
+# лестничная клетка (ч.6): кроме фонарика света нет — заполняющий чуть сильнее коридора ч.5 (там лица тонули в темноте)
+FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5, "blockhouse": 0.9, "floor22": 3.2, "room": 2.0,
+          "stairwell": 4.5}
+RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0, "blockhouse": 1.2, "floor22": 9.0, "room": 6.0,
+         "stairwell": 10.0}
 EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2, "blockhouse": 0.0, "floor22": 0.55,
-            "room": 0.5}
+            "room": 0.5, "stairwell": 0.6}
 
 
 def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:

@@ -265,6 +265,7 @@ import series_floor22  # noqa: E402
 
 BUILDERS["floor22"] = series_floor22.build_floor22
 BUILDERS["room"] = series_floor22.build_room
+BUILDERS["stairwell"] = series_floor22.build_stairwell     # ч.6: лестничная клетка через несколько этажей
 
 
 def build_places(used: set[str], fonts, decals: dict[str, str]) -> dict:
