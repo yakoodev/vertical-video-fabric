@@ -23,6 +23,7 @@ import { DUEL_PROPS } from "./meme_props_duel.ts";
 import { CMT_PROPS } from "./meme_props_cmt.ts";
 import { RP_PROPS } from "./meme_props_rp.ts";
 import { RAP_PROPS } from "./meme_props_rap.ts";
+import { PROMPT_PROPS } from "./meme_props_prompt.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, ...extra });
@@ -561,4 +562,6 @@ export const MEME_PROPS: Record<string, (p: Record<string, any>) => Prop> = {
   ...RP_PROPS,
   // Рэп-клип «Уроню БД»: поводок-цепь, серверные стойки, значки БД, жетоны, огонь, кнопка отмены (meme_props_rap.ts).
   ...RAP_PROPS,
+  // Серия 9 «Промпт на три страницы»: пар над кружкой (meme_props_prompt.ts).
+  ...PROMPT_PROPS,
 };

@@ -19,6 +19,7 @@ import { UI_FONT, roundRect } from "./ui.ts";
 import { ease } from "./timeline.ts";
 import { MEME_PAINTERS } from "./meme_painters.ts";
 import { RP_PAINTERS } from "./meme_painters_rp.ts";
+import { PROMPT_PAINTERS } from "./meme_painters_prompt.ts";
 import { drawFlatIcon, flatComponent, flatFont, flatPill, flatSize, isToon, rgbaOf, screenPalette, windowDots } from "./ui_flat.ts";
 
 const font = (w: number, px: number) => `${w} ${Math.round(px)}px ${UI_FONT}, Arial, sans-serif`;
@@ -888,4 +889,6 @@ export const PANEL_PAINTERS: Record<string, Painter> = {
   ...MEME_PAINTERS,
   // Мем 5 «Ролевик»: чат с цензурой, льдом и системной плашкой, «думаю…» (meme_painters_rp.ts).
   ...RP_PAINTERS,
+  // Мем 9 «Промпт на три страницы»: простыня с прокруткой и маркером, кнопка на сайте (meme_painters_prompt.ts).
+  ...PROMPT_PAINTERS,
 };

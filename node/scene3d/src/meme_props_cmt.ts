@@ -24,6 +24,7 @@ import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeom
 import type { Prop } from "./props.ts";
 import { CMT_PAINTERS, drawBlob, wrapLines } from "./meme_painters_cmt.ts";
 import { RP_PAINTERS } from "./meme_painters_rp.ts";
+import { PROMPT_PAINTERS } from "./meme_painters_prompt.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, ...extra });
@@ -119,7 +120,7 @@ export function laptop(p: Record<string, any>): Prop {
   sticker.position.set(w * 0.22, lh * 0.62, -0.0065);
   sticker.rotation.y = Math.PI;
   hinge.add(sticker);
-  const painter = CMT_PAINTERS[p.screen || "tt_stats"] || RP_PAINTERS[p.screen];
+  const painter = CMT_PAINTERS[p.screen || "tt_stats"] || RP_PAINTERS[p.screen] || PROMPT_PAINTERS[p.screen];
   const lidKeys: Record<string, any>[] = p.lid || [{ t: 0, a: 105 }];
   let last = -1;
   const update = (t: number) => {

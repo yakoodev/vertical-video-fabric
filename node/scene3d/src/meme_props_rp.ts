@@ -15,6 +15,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import type { Prop } from "./props.ts";
+import { PROMPT_PAINTERS } from "./meme_painters_prompt.ts";
 import { RP_PAINTERS, drawClaudeAvatar, drawRich, drawUserAvatar, measureRich, rr, wrapRich } from "./meme_painters_rp.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
@@ -56,7 +57,7 @@ export function chatPanel(p: Record<string, any>): Prop {
   const sc = canvasPlane(w * 0.93, h * 0.94, Number(p.px ?? 900));
   sc.mesh.position.set(0, h / 2, d / 2 + 0.0012);
   bob.add(sc.mesh);
-  const painter = RP_PAINTERS[p.screen || "rp_chat"];
+  const painter = RP_PAINTERS[p.screen || "rp_chat"] || PROMPT_PAINTERS[p.screen];
   let last = -1;
   const amp = Number(p.bob ?? 0.003);
   const update = (t: number) => {
