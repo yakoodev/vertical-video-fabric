@@ -110,8 +110,10 @@ def synth_scene():
         bpy.ops.mesh.primitive_cylinder_add(radius=0.016, depth=0.002, location=(x, -0.099, 1.615), rotation=(math.pi / 2, 0, 0))
         e = bpy.context.object; e.name = 'Eye_synth'
         e.data.materials.append(mat('EyeWhite_synth', (1, 1, 1, 1), emit=True))
+        e.visible_shadow = False                 # a decal: its cast shadow on the skin would be extra pieces
     bpy.ops.mesh.primitive_uv_sphere_add(segments=32, ring_count=16, radius=0.106, location=(0, 0.01, 1.64))
     h = bpy.context.object; h.name = 'Hair_synth'; h.scale.z = 0.7
+    h.visible_shadow = False
     h.data.materials.append(mat('Hair_synth', (0.1, 0.1, 0.12, 1)))
     bpy.ops.object.light_add(type='SUN', location=(0, -1, 3))
     bpy.context.object.data.energy = math.pi
