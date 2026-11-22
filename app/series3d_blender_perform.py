@@ -16,6 +16,7 @@ from app.series3d_blender_stage import (
 )
 from app.series3d_blender_direction import EMOTIONS, HAND_ACTIONS
 from app.series3d_blender_camera import SIT_DROP, PHONE_SHOW, _rot, camera_plan
+from app import series3d_chase as CH
 
 LID_AJAR = 0.40          # «крышка приподнялась»: доля HATCH_OPEN_DEG (≈ 44°) — щель, в неё светит фонарик
 TORCH_POS = (HATCH_LID[0], HATCH_LID[1] - 0.17, H + 0.30)   # фонарик над щелью люка (крышка поднимается с ближнего края)
@@ -258,6 +259,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     head_keys.keys = [(0.0, heading)]
     add_clip("Idle_A", 0.0, blend=0.01)
     shot_out = []
+    runs: list[dict] = []             # окна бега героя по пути автора (series3d_chase.run_window)
+    running: dict | None = None       # бег прошлого плана ещё идёт: на склейке фаза шага не сбрасывается
+    flash_over: list[tuple[float, float, float]] = []   # фонарик по указанию автора плана: (с, по, горит)
     for k, s in enumerate(shots):
         t0, t1 = float(s["t0"]), float(s["t1"])
         # склейка на границе кадра, как у кусков рендера (chunks: round(t0·fps)): иначе первый кадр плана — ещё со старого
@@ -287,7 +291,22 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         # автор снимает проём: от первого такого кадра до «сомкнулись» герой держит створки у края, за ним видно шахту
         at_door = door_from is not None and door_from <= t0 < door_until and loc == "cabin" and posture == "stand" \
             and a not in HAND_ACTIONS
-        if on_bag:
+        run_spec = s.get("run") if isinstance(s.get("run"), dict) else None
+        if running is not None and not run_spec:
+            add_clip("Idle_A", t_cut, blend=0.3)       # бег прошлого плана кончился на склейке
+            running = None
+        if run_spec:
+            # бег по пути автора: на склейке — в начале пути, лицом по пути (шаги и корень — run_window/run_root)
+            path0 = run_spec["path"]
+            x0_, y0_, h0_ = CH.path_at(path0, 0.0)
+            h0_ = CH.unwrap(heading, CH.path_heading(path0, 0.0))
+            pos_keys.append((t_cut, (x0_, y0_)))
+            head_keys.key(t_cut - 1e-3, heading)
+            head_keys.key(t_cut, h0_)
+            pos, heading, posture = (x0_, y0_), h0_, "stand"
+            spot, hd = pos, heading
+            want_h = heading
+        elif on_bag:
             spot, hd = pos, heading       # стоит на рюкзаке под люком: никуда не ходит
             want_h = heading
             if s.get("screen"):
@@ -751,7 +770,20 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             phone_mode.key(a0 + 0.1, phone_mode.keys[-1][1])
             phone_mode.key(a0 + 0.5, 1.0)
 
-        if str(s.get("screen") or "").startswith("msg|"):
+        if s.get("flash") is not None and s.get("by") == "author":
+            # автор плана: фонарик горит/погашен (ч.5: в темноте читает экран — фонарь не бьёт в объектив)
+            flash_over.append((t_cut, t1, 1.0 if s["flash"] else 0.0))
+        if run_spec:
+            win = CH.run_window(track, add_clip, t_cut, t1, run_spec, running, clip_len)
+            runs.append(win)
+            running = win if win["stop"] is None else None
+            pos = tuple(win["path"][-1])
+            heading = CH.unwrap(heading, CH.path_heading(win["path"], CH.path_len(win["path"]) - 0.01))
+            head_keys.key((win["stop"] if win["stop"] is not None else t1) + 0.02, heading)
+            # на бегу смотрит (и светит) вперёд по пути — не оборачивается
+            gaze.keys = [k_ for k_ in gaze.keys if not (t0 - 1e-6 <= k_[0] < t1)]
+            gaze.key(t0 + 0.01, CH.ahead_point(win["path"], z=0.75 if a == "phone_light" else 0.95))
+        if CH.is_chat(s.get("screen")):
             msg_seen = True
         show_track.key(t0, show_track.keys[-1][1])
         show_track.key(a0 + 0.5 if s.get("screen") else t0 + 0.35, 1.0 if s.get("screen") else 0.0)
@@ -810,7 +842,24 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     tl = track
     head_c = head_keys.curve()
     heads = [round(head_c.at(t), 5) for t in times]
+    run_over: dict[int, tuple[float, float, float]] = {}
+    for k_, win in enumerate(runs):
+        got = CH.run_root(track, [win], times)
+        nxt_t = runs[k_ + 1]["t0"] if k_ + 1 < len(runs) else 1e9
+        got = {f: v for f, v in got.items() if times[f] < nxt_t}
+        if got and win["stop"] is not None:
+            last = max(got)       # остановился — дальше стоит там, где кончился шаг
+            end_t = times[last] + 0.5 / fps
+            if not any(abs(k__[0] - end_t) < 0.1 for k__ in pos_keys):   # склейка следующего плана сильнее
+                pos_keys.append((end_t, got[last][:2]))
+        run_over.update(got)
+    for f, (_x, _y, h_) in sorted(run_over.items()):
+        heads[f] = round(CH.unwrap(heads[f - 1] if f else h_, h_), 5)
     root = walk_root(tl, sorted(pos_keys, key=lambda k: k[0]), walks, heads, times)
+    for f, (x_, y_, _h) in run_over.items():
+        root[f] = (x_, y_)
+    for t_, side_ in CH.strikes_in(track, times):
+        contacts.append({"kind": "step", "t": t_, "side": side_, "who": "hero"})
     rz_c = rz_track.curve()
     rzs = [round(rz_c.at(t), 4) for t in times]
     bag_c = bag_track.curve(ease="step")
@@ -837,6 +886,12 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             prev = hand["r"][f]
             if prev is None or prev[1] < w:
                 hand["r"][f] = (tuple(round(c, 5) for c in p), round(w, 4), r["id"])
+    open_t = next((float(e["t"]) for e in events if e["kind"] == "doors_open"), None)
+    if open_t is not None:
+        # «Двери разъезжаются» (ч.5): створки кабины расходятся целиком — за ними этаж (коридор, series_floor22)
+        dc_ = door_tracks.setdefault("cabin", _Track(door_slit))
+        dc_.key(open_t, dc_.curve().at(open_t))
+        dc_.key(open_t + CH.DOORS_OPEN_SEC, CH.DOORS_FULL)
     pm_c = phone_mode.curve()
     show_c = show_track.curve()
     door_cs = {k: v.curve() for k, v in door_tracks.items()}
@@ -945,7 +1000,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         if c["kind"] == "press" and c["button"] != "bell":
             lit_at.setdefault(c["button"], c["t"])
     door_c = door_c0
-    fl_c = flash_track.curve(ease="linear")
+    fl_c = CH.Override(flash_track.curve(ease="linear"), flash_over)
     hatch_c, latch_c = hatch_track.curve(), latch_track.curve()
     torch_c = torch_track.curve(ease="linear")
     named_display = [(float(x_["t0"]), float(x_["t1"])) for x_ in shot_out if x_["location"] == "cabin"
@@ -1038,6 +1093,15 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             lights[-1]["out"] = round(out, 4)
             if out > 0 and "torch" in lights[-1]:
                 lights[-1]["torch"] = round(lights[-1]["torch"] * (1.0 + 0.4 * out), 4)   # чужой фонарик — ярче в темноте
+        if open_t is not None:
+            # ч.5: «Двери с лязгом разъезжаются» — дали питание: створки уходят, свет кабины тускло мигает и льётся в
+            # коридор, табло горит; полная темнота кончилась (аварийный красный не возвращается)
+            sp = CH.spill_at(t, open_t)
+            lights[-1]["spill"] = round(sp, 4)
+            if sp > 0:
+                lt_ = lights[-1]
+                lt_.update(main=round(max(lt_["main"], CH.SPILL_MAIN * sp * CH.spill_flicker(t, open_t)), 4),
+                           display=round(max(lt_["display"], sp), 4), out=round(lt_.get("out", 0.0) * (1.0 - sp), 4))
         if drop_t is not None:
             # тело-копия (series_scene.body_drop): 0 — его нет; дальше — стопы bp (x, y, z), наклон набок, курс
             bp = drop_pose(t, drop_t)
@@ -1051,7 +1115,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
 
     phone = []
     pm = phone_mode.curve()
-    fl = flash_track.curve(ease="linear")
+    fl = CH.Override(flash_track.curve(ease="linear"), flash_over)
     beam_raw = []
     for f, t in enumerate(times):
         # луч — туда, куда смотрит герой (в объектив/на телефон — вперёд в пол: не слепить камеру)
@@ -1089,6 +1153,9 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     if drops:
         perf["body_drop"] = {"t": [round(td, 3) for td in drops], "start": round(drop_t, 3), "hang": DROP_HANG,
                              "fall": DROP_FALL, "tip": DROP_TIP}
+    dbl = CH.perform_double(shot_out, times, track, clip_len)
+    if dbl:   # ч.5: двойник — копия героя в той же одежде (series_scene.build_double)
+        perf["double"] = dbl
     perf["cameras"] = camera_plan(perf, int(job.get("seed") or 7))
     # луч фонарика не в объектив: камера в конусе — увести луч вбок-вниз (иначе кадр — белая вспышка)
     beam_raw = _beam_off_camera(perf, beam_raw)
@@ -1097,14 +1164,23 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     beam_s: list[tuple] = []
     for a_, b_ in zip(cut_frames, cut_frames[1:]):
         beam_s.extend(m.spring_follow(beam_raw[a_:b_], 1.0 / fps, 0.18))
+    vib_ts = [float(e["t"]) for e in events if e["kind"] == "vibrate"]
     for f, t in enumerate(times):
-        # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с)
-        sh_ = next((x_ for x_ in shot_out if x_["t0"] <= t < x_["t1"]), None)
-        scr = str(sh_.get("screen") or "") if sh_ and vis[f] and t >= float(sh_.get("a0", sh_["t0"])) + 0.5 else ""
-        dim = 1.0 - float(lights[f].get("out", 0.0))      # полная темнота: экран телефона гаснет, фонарик горит
+        # экран со значением (часы, заряд) — в плане с ``screen``, когда телефон уже у лица (через 0.5 с); экран и в
+        # прошлом плане (переписка вставками подряд) — сразу, иначе на склейке экран полсекунды пустой
+        k_sh = next((i_ for i_, x_ in enumerate(shot_out) if x_["t0"] <= t < x_["t1"]), None)
+        sh_ = shot_out[k_sh] if k_sh is not None else None
+        # (или телефон уже в руке с прошлого плана: вставка переписки с первого кадра, а не полсекунды тёмного экрана)
+        f_sh = int(round(float(sh_["t0"]) * fps)) if sh_ else 0
+        held_ = bool(k_sh and CH.is_chat(sh_.get("screen")) and (shot_out[k_sh - 1].get("screen") or vis[max(0, f_sh - 1)]))
+        scr = str(sh_.get("screen") or "") if sh_ and vis[f] and (held_ or t >= float(sh_.get("a0", sh_["t0"])) + 0.5) else ""
+        # полная темнота: экран телефона гаснет, фонарик горит; серия, что началась в темноте (ч.5), — экран светит
+        dim = 1.0 - float(lights[f].get("out", 0.0)) if (lights_out is None or lights_out >= 0) else 1.0
         phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
                       "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
                       **({"dim": round(dim, 4)} if dim < 1.0 else {}),
+                      # «телефон вибрирует» (ч.5): дрожит в руке (series_scene.attach_phone)
+                      **({"vib": 1.0} if vis[f] and any(CH.vibration(t, tv) for tv in vib_ts) else {}),
                       # на экране: «−» в шрифте сцены нет — дефис; «-12°C» короче — крупнее
                       **({"screen": scr.replace("−", "-").replace(" °", "°")} if scr else {})})
     perf["phone"] = phone

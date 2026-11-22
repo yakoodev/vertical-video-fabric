@@ -96,7 +96,7 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
         phone_c = to_world(root, heading, (PHONE_SHOW[0], PHONE_SHOW[1],
                                            PHONE_SHOW[2] + 0.07 - (SIT_DROP if posture == "sit" else 0.0) + rz_))
         # телефон — в середине кадра (выше субтитров), лицо — сверху
-        msg = str(shot.get("screen")).startswith("msg|")
+        msg = str(shot.get("screen")).startswith(("msg|", "chat|"))
         # переписка — строки мельче цифр: телефон крупнее, лицо краем (кадр ≈ 0.40 м против 0.62)
         center = tuple(phone_c[i] * (0.9 if msg else 0.8) + face[i] * (0.1 if msg else 0.2) for i in range(3))
         p = around(0.62, (-20, 20, -32, 32, 0, -45, 45), 0.0, center)
@@ -104,7 +104,7 @@ def shot_camera(kind: str, shot: dict, root: tuple[float, float], heading: float
             # кадр ≈ 0.62 м по высоте (телефон и лицо целиком) при любом отступе камеры от стен
             lens = max(20.0, min(85.0 if msg else 40.0, (125.0 if msg else 58.0) * math.dist(p, center)))
             cam = out("detail", p, center, 0.0, round(lens, 1), fstop=4.0, focus="point", push=0.95)
-            if msg and str(shot.get("screen")).count("|") >= 7:
+            if msg and (str(shot.get("screen")).count("|") >= 7 or str(shot.get("screen")).startswith("chat|")):
                 # переписка с ответом (две реплики) — вставкой: экран во весь кадр, камера идёт за телефоном (series_scene)
                 cam["insert"] = "phone"
             return cam

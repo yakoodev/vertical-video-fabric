@@ -260,6 +260,11 @@ BUILDERS = {"corridor": build_corridor, "landing": build_landing, "shaft": build
 import series_voxel  # noqa: E402
 
 BUILDERS["blockhouse"] = series_voxel.build_blockhouse
+# ч.5: коридор 22-го этажа и комната героя — модели Kenney Furniture Kit (CC0), сваренные (series_floor22.py)
+import series_floor22  # noqa: E402
+
+BUILDERS["floor22"] = series_floor22.build_floor22
+BUILDERS["room"] = series_floor22.build_room
 
 
 def build_places(used: set[str], fonts, decals: dict[str, str]) -> dict:

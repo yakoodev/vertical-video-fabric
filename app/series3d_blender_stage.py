@@ -51,7 +51,9 @@ MAX_PRESS_Z = 0.83                 # выше чиби-рука не доста�
 
 # Длины клипов KayKit (с) и шаг — замер в Blender (сцена сверяет и пишет в отчёт расхождение).
 CLIP_LEN = {"Idle_A": 1.067, "Idle_B": 2.133, "Walking_A": 1.067, "Walking_B": 1.067, "Walking_C": 1.6,
-            "Sit_Floor_Down": 1.0, "Sit_Floor_Idle": 4.0, "Sit_Floor_StandUp": 1.133, "Hit_A": 0.667, "Hit_B": 0.867}
+            "Sit_Floor_Down": 1.0, "Sit_Floor_Idle": 4.0, "Sit_Floor_StandUp": 1.133, "Hit_A": 0.667, "Hit_B": 0.867,
+            # ч.5: бег (series3d_chase), двойник лежит на полу кабины и встаёт
+            "Running_A": 0.8, "Lie_Idle": 2.667, "Lie_StandUp": 2.333}
 
 # Шаг: KayKit Walking_C (осторожная ходьба, 2 шага за 1.6 с, шаг ≈ 18 см у героя) — ровнее Walking_A/B.
 # Стопы клипа на месте (замер в Blender, система героя без масштаба): (y левой, z левой, y правой, z правой) на кадр
@@ -242,7 +244,28 @@ LOCS["blockhouse"] = {
                 "corner": (-0.92, 0.46, 0.85), "ceiling": (0.0, 0.0, 1.38), "bed": (-0.70, 0.40, 0.25),
                 "house": (0.0, -0.2, 0.9)},
 }
-LIFT_LOCS = {k: v for k, v in LOCS.items() if v.get("world", "lift") == "lift"}
+# Ч.5: кабина приехала на 22-й этаж — двери открываются прямо в его коридор (начало координат — то же, что у кабины:
+# герой выбегает из дверей без склейки), в конце коридора лестница вниз. Собран из моделей Kenney Furniture Kit (CC0,
+# tools/blender/series_floor22.py); места и камеры ставит автор (``author_only``: режиссёру и сценаристу не предлагается).
+FLOOR22 = {"wall_y": FRONT - 0.07, "x": 0.93, "end_y": -8.50, "stairs_end_y": -11.89, "height": 2.40, "stairs_drop": 2.49}
+LOCS["floor22"] = {
+    "label": "коридор 22-го этажа и лестница", "origin": (0.0, 0.0), "author_only": True,
+    "bounds": (-0.86, 0.86, -11.8, FRONT - 0.1, 0.1, 2.33),
+    "props": ("двери лифта", "двери квартир", "коврики", "погасшие лампы", "номер этажа «22» на стене", "лестница вниз"),
+    "keywords": r"(?!)",
+    "spots": {"entry": (0.0, -1.6, 0.0), "center": (0.0, -4.5, 0.0), "stairs": (0.0, -8.25, 0.0)},
+    "targets": {"key": (0.0, -8.7, 0.8), "deep": (0.0, -8.0, 0.8), "doors": (0.0, FRONT - 0.07, 0.9),
+                "lift": (0.0, -0.2, 1.0), "sound": (0.0, FRONT - 0.07, 0.9), "decal": (-0.9, -7.55, 1.45),
+                "ceiling": (0.0, -4.0, 2.4), "lamp": (0.0, -3.0, 2.3)}}
+# Комната героя (фото в переписке ч.5): тот же набор Kenney — кровать, стол с монитором, лампа, полка; далеко от лифта.
+LOCS["room"] = {
+    "label": "комната героя", "origin": (200.0, 0.0), "author_only": True,
+    "bounds": (-1.55, 1.55, -1.55, 1.55, 0.1, 2.3),
+    "props": ("кровать", "стол с монитором", "настольная лампа", "полка с книгами", "ковёр"),
+    "keywords": r"(?!)",
+    "spots": {"entry": (0.0, 0.1, 0.0), "center": (0.0, 0.1, 0.0)},
+    "targets": {"key": (0.0, 0.1, 0.85), "lamp": (1.15, 1.25, 0.95)}}
+LIFT_LOCS = {k: v for k, v in LOCS.items() if v.get("world", "lift") == "lift" and not v.get("author_only")}
 LOC_NAMES = tuple(LIFT_LOCS)
 LOC_TARGETS = ("doors", "lamp", "decal", "deep", "apartment", "motor", "cabinet", "edge", "center")
 
@@ -275,7 +298,8 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
     """Точка интереса локации (мир): key — главная вещь (надпись, номер этажа, тросы), ceiling, sound, …"""
     if loc == "cabin":
         cab = {"key": DISPLAY, "display": DISPLAY, "ceiling": HATCH, "sound": (0.05, DOOR_FACE_Y, 0.8),
-               "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH_LID, "latch": LATCH}
+               "doors": (0.0, DOOR_FACE_Y, 0.8), "hatch": HATCH_LID, "latch": LATCH,
+               "out": (0.0, -4.5, 0.45)}     # ч.5: за открытыми дверями — вглубь коридора этажа
         return cab.get(name) or default or DISPLAY
     t = loc_of(loc)["targets"]
     p = t.get(name) or t.get("key")
@@ -284,9 +308,10 @@ def loc_target(loc: str, name: str, default: tuple | None = None) -> tuple:
 
 # Свет вне кабины (сцена Blender): заполняющий у камеры («от фонарика/лампы», Вт при 0.8 м до героя), контровой
 # сзади-сверху (Вт) и экспозиция места — герой и место читаются в каждом кадре (проверка — лист «фраза → что в кадре»).
-FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5, "blockhouse": 0.9}
-RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0, "blockhouse": 1.2}
-EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2, "blockhouse": 0.0}
+FILL_W = {"corridor": 5.0, "shaft": 4.0, "landing": 3.0, "techfloor": 3.5, "blockhouse": 0.9, "floor22": 3.2, "room": 2.0}
+RIM_W = {"corridor": 25.0, "shaft": 22.0, "landing": 15.0, "techfloor": 18.0, "blockhouse": 1.2, "floor22": 9.0, "room": 6.0}
+EXPOSURE = {"cabin": 0.0, "corridor": 0.35, "shaft": 0.3, "landing": 0.15, "techfloor": 0.2, "blockhouse": 0.0, "floor22": 0.55,
+            "room": 0.5}
 
 
 def inside_loc(loc: str, p: tuple, margin: float = 0.0) -> bool:
@@ -322,6 +347,16 @@ def show_items(loc: str, shot: dict) -> list[dict]:
         if scr.startswith("msg|"):
             _m, to, body, state, net, batt, clock = (scr.split("|") + [""] * 7)[:7]
             scr = " · ".join(x for x in (f"{to}: {body}", state, net, batt, clock) if x)
+        elif scr.startswith("chat|"):
+            # переписка списком (ч.5, series3d_chase.chat_spec): кому и последние сообщения
+            import json as _json
+
+            try:
+                spec = _json.loads(scr[5:])
+            except ValueError:
+                spec = {}
+            items = [str(it.get("in") or it.get("out") or ("фото" if it.get("photo") else "")) for it in spec.get("items") or []]
+            scr = f"{spec.get('to', '')}: " + " / ".join(x for x in items[-3:] if x)
         out.append({"item": f"экран «{scr}»", "point": None, "screen": True})
     if shot.get("show_none"):
         return out            # крючок: лицо, названное — следующим куском фразы

@@ -120,6 +120,9 @@ def bake_body(arm, clips, perf, frames, cam_pos_at):
 
     raw = []
     for i in range(n):
+        if perf["gaze"][i] is None:
+            raw.append((0.0, 0.0))        # взгляда нет (двойник, ч.5): голова — как в клипе
+            continue
         rp = V(root[i])
         sit_z = -B.SIT_DROP * 1.1 if _posture(perf, times[i]) == "sit" else 0.0
         eye_w = rp + Matrix.Rotation(heads[i], 3, "Z") @ (head_rest * S + eye_h) + V((0, 0, sit_z))
@@ -374,8 +377,13 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
             d = (-face_dir).lerp(away, 0.85).normalized()
         q = d.to_track_quat("Y", "Z")
         # показывает экран — телефон над кулаком и чуть к камере (кулак не закрывает цифры)
-        chat = str(ph.get("screen") or "").count("|") >= 7
+        chat = str(ph.get("screen") or "").count("|") >= 7 or str(ph.get("screen") or "").startswith("chat|")
         off = V((0.0, -0.03, 0.075 + (0.016 if chat else 0.0))) if ph.get("screen") else V((0.0, 0.0, 0.058))
+        if ph.get("vib"):
+            # «телефон вибрирует» (ч.5): мелкая дрожь в руке
+            t_ = (f - 1) / FPS
+            off = off + V((0.0021 * math.sin(t_ * 173.0), 0.0012 * math.sin(t_ * 151.0 + 0.7), 0.0018 * math.sin(t_ * 191.0 + 1.3)))
+            q = q @ Euler((math.radians(1.6) * math.sin(t_ * 163.0), 0.0, math.radians(1.2) * math.sin(t_ * 181.0)), "XYZ").to_quaternion()
         locs.append(tuple(grip + q.to_matrix() @ off))
         rots.append(tuple(q.to_euler("XYZ")))
         scales.append((PHONE_SCALE,) * 3)
@@ -506,6 +514,17 @@ def phone_screen_text(phone, perf, frames, font):
     for j, val in enumerate(values):
         back = kit.box(f"phone_scr_back{j}", (0.036, 0.0006, 0.077), (0, -0.0053, 0), back_mat, bevel=0.0)
         back.parent = phone
+        if val.startswith("chat|"):
+            # ч.5: переписка списком с фото (series_chat), содержимое чуть уезжает вверх — листает
+            import series_chat
+
+            parts, ginfo = series_chat.chat_list(j, val, phone, kit.load_font(MSG_FONTS) or font, CFG.get("photos") or {})
+            vis_i = [1 if perf["phone"][i].get("screen") == val else 0 for i in range(len(frames))]
+            on = [i for i, v in enumerate(vis_i) if v]
+            kit.key_vec(back, "scale", frames, [((1, 1, 1) if v else (0, 0, 0)) for v in vis_i], interp="CONSTANT")
+            series_chat.key_chat(ginfo, vis_i, frames, (on[0], on[-1]) if on else None)
+            out[val] = parts[0]
+            continue
         if val.startswith("msg|"):
             # переписка — шрифтом с честной кириллицей: у Bahnschrift в Blender часть строчных букв (т, и, э) ломается
             chat = len(val.split("|")) >= 8 and val.split("|")[7]
@@ -812,7 +831,10 @@ def build_lights(L, perf, frames, phone):
     # полная темнота (lt.out): светить больше нечему — фонарик на полную, луч и то, на что он попал, читаются
     near = [near[i] + (1.6 - near[i]) * lt[i].get("out", 0.0) for i in range(n)]
     flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] for i in range(n)]
-    scr_e = [1.2 * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) * ph[i].get("dim", 1.0) for i in range(n)]
+    # серия с первого кадра в полной темноте (ч.5): экран — единственный свет у лица, вплотную он выжигал подбородок и
+    # кулак в белое пятно под bloom — тише
+    scr_k = 0.4 if lt and lt[0].get("out", 0.0) >= 0.99 else 1.0
+    scr_e = [1.2 * scr_k * ph[i]["on"] * (1.0 - 0.6 * ph[i]["aim"]) * ph[i].get("dim", 1.0) for i in range(n)]
     kit.fcurve(flash.data, "energy", 0, frames, flash_e)
     kit.fcurve(screen.data, "energy", 0, frames, scr_e)
     sn = kit.SCREEN_MAT.node_tree.nodes["Emission"]
@@ -955,6 +977,7 @@ def build_camera(arm, perf, frames, rig):
     eye.parent = cam
     eye.location = (0.0, 0.12, 0.05)
     eye.rotation_euler = (0, 0, 0)
+    fills = {s_["n"]: s_["fill"] for s_ in perf["shots"] if s_.get("fill") is not None}
     vals = []
     for k in range(n):
         lt = perf["lights"][k]
@@ -966,6 +989,9 @@ def build_camera(arm, perf, frames, rig):
         else:
             base = 0.5 + 3.5 * (1.0 - lt["main"]) if lt["dark"] or lt["main"] < 0.5 else 0.35
         base *= 1.0 - lt.get("out", 0.0)        # полная темнота: и «глазной» свет гаснет
+        fill = fills.get(shot_of[k])
+        if fill is not None:
+            base = max(base, float(fill))       # автор плана: в темноте лежащего за спиной должно быть видно (ч.5)
         vals.append(base * min(3.0, max(0.5, (d / 0.8) ** 2)))
     kit.fcurve(eye.data, "energy", 0, frames, vals)
     # контровой сзади-сверху (от камеры через героя): силуэт и капюшон отделяются от тёмного фона
@@ -1234,12 +1260,17 @@ def main():
     nf = perf["frames"]
     sc.frame_start, sc.frame_end = 1, nf
     fonts = {"display": kit.load_font(CFG.get("font_display", [])), "ui": kit.load_font(CFG.get("font_ui", [])),
-             "symbols": kit.load_font(CFG.get("font_symbols", []))}
+             "symbols": kit.load_font(CFG.get("font_symbols", [])), "words": kit.load_font(MSG_FONTS)}
     floors = sorted({lt["floor"] for lt in perf["lights"]})
     # люк открывается (ч.3) — в потолке настоящий проём; у остальных серий потолок прежний
     opens = any(lt.get("hatch", 0.0) > 0.01 for lt in perf["lights"]) or bool(perf.get("torch"))
-    L = series_lift.build_lift(fonts, floors, open_hatch=opens)
     used = {sh.get("location") or "cabin" for sh in perf["shots"]}
+    if CFG.get("kenney"):
+        import series_floor22
+
+        series_floor22.PACK[:] = [Path(CFG["kenney"])]
+    # ч.5: кабина на этаже — за дверями коридор 22-го этажа, а не шахта с краем плиты
+    L = series_lift.build_lift(fonts, floors, open_hatch=opens, landing="floor22" in used)
     decals: dict[str, str] = {}
     for sh in perf["shots"]:
         if sh.get("decal") and sh.get("location") and sh["location"] not in decals:
@@ -1268,6 +1299,15 @@ def main():
     bpy.context.view_layer.update()
     frames = list(range(1, nf + 1))
     log(f"кадров {nf}, планов {len(perf['shots'])}, клипов {len(perf['track'])}")
+    dbl = None
+    if perf.get("double"):
+        # ч.5: двойник — копия героя в той же одежде, своё тело по дорожкам perf.double (до запекания героя: без его ключей)
+        import series_double
+
+        dbl, dbl_objs = series_double.build_double(arm)
+        bake_body(dbl, clips, {**perf["double"], "shots": [], "fps": FPS}, frames, cam_pos_estimate(perf))
+        fixed = series_double.rename_bones(dbl, dbl_objs)
+        log(f"двойник: объектов {len(dbl_objs)}, клипов {len(perf['double']['track'])}, переименовано {fixed}")
     body = bake_body(arm, clips, perf, frames, cam_pos_estimate(perf))
     log("тело запечено")
     ik = setup_ik(arm)
@@ -1281,6 +1321,10 @@ def main():
     body_drop(arm, perf, frames)
     floor_bag(pack, mats, perf, frames)
     places.key_place_doors(built_places, perf, frames)
+    if "floor22" in built_places:
+        import series_floor22
+
+        series_floor22.key_spill(built_places["floor22"], perf, frames)    # свет кабины льётся в коридор
     series_voxel.key_world(built_places, perf, frames, JOB.get("events") or [])
     cam, face_pts, shot_of = build_camera(arm, perf, frames, rig)
     log("сцена собрана")
@@ -1328,6 +1372,21 @@ def main():
                           "text": sh.get("text"), "show": seen})
     report = {"contact_err_mm": contact_err, "shots": shots_rep, "setup_sec": round(time.time() - T0, 1), "frames": nf,
               "clip_len_diff": diff, "feet": measure_feet(arm, perf, frames)}
+    if CFG.get("anim_dump"):
+        # проверка движения (tools/model_check: рывки, пол, суставы) — герой и двойник, без рендера
+        sys.path.insert(0, str(ROOT / "tools" / "model_check"))
+        import anim_dump as AD
+
+        cuts = sorted({int(round(c["t0"] * FPS)) + 1 for c in perf["cameras"]})
+        floor_obs = [o for o in bpy.data.objects if o.name in ("floor", "f22_floor", "f22_floor_low", "f22_stairs")]
+        step = int(CFG.get("anim_dump_step", 1))
+        for who, a_ in (("hero", arm), ("double", dbl)):
+            if a_ is None:
+                continue
+            meshes = sorted((o for o in bpy.data.objects if o.type == "MESH" and o.parent == a_ and o.parent_type == "OBJECT"),
+                            key=lambda o: ("Body" not in o.name, o.name))
+            AD.dump(str(Path(CFG["anim_dump"]) / who), a_, meshes, frames[::step], cuts=cuts, floor=floor_obs, log=log)
+        report["anim_dump"] = str(CFG["anim_dump"])
     if CFG.get("save_blend"):
         bpy.ops.wm.save_as_mainfile(filepath=str(out_dir / "series.blend"))
     if CFG.get("export_frames"):
@@ -1368,7 +1427,8 @@ def main():
         t_r = time.time()
         probes = {c["n"]: c["probe"] for c in perf["cameras"] if c.get("probe")}
         report["pose"] = series_export.export_pose(Path(CFG["export_dir"]), [int(f) for f in CFG["pose_frames"]], cam, arm,
-                                                   face_pts, CFG.get("chunks") or [], log=log, probes=probes)
+                                                   face_pts, CFG.get("chunks") or [], log=log, probes=probes,
+                                                   extra_arms=[dbl] if dbl is not None else [])
         report["render_sec"], report["rendered"] = round(time.time() - t_r, 1), 0
     elif stills:
         t_r = time.time()
