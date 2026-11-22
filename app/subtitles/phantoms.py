@@ -23,9 +23,18 @@ from typing import Any
 # тексту (нижний регистр, ё → е, без знаков), подстрокой.
 PHANTOM_PHRASES = (
     "субтитры сделал", "субтитры делал", "субтитры создавал", "субтитры подготовил",
-    "субтитры подогнал", "субтитры by", "редактор субтитров", "корректор",
+    "субтитры подогнал", "субтитры добавил", "субтитры by", "редактор субтитров", "корректор",
     "продолжение следует", "спасибо за просмотр", "подписывайтесь на канал",
     "amara org", "dimatorzok", "диматорзок",
+    # Английские (исследование 2025 по 300 000 записей без речи, ролик «Скрытый слой»): чаще всего «thank you».
+    "thanks for watching", "thank you for watching", "subtitles by",
+)
+# Фантомы, которые выдают себя только целиком: подпись звука из титров («ПОЗИТИВНАЯ МУЗЫКА» — стенд
+# tools/asr_bench, small на тоне и музыке), голое «Thank you». Внутри живой фразы эти слова обычны. Не меньше двух
+# слов: стоп-лист проверяют и по одному слову (app/meme_edit_inputs.py) — «музыка» и «спасибо» там живые.
+PHANTOM_WHOLE = (
+    re.compile(r"^(?:\w+ ){1,2}музыка$"),
+    re.compile(r"^thank you(?: so much| very much)?$"),
 )
 FRAME_SEC = 0.02
 # Сегмент «звучит», если над порогом речи хотя бы столько секунд (щелчок мыши — меньше).
@@ -42,7 +51,8 @@ def _norm(text: Any) -> str:
 def is_phantom_text(text: Any) -> bool:
     """Текст — известная галлюцинация распознавания (титры, «продолжение следует»)."""
     norm = _norm(text)
-    return bool(norm) and any(phrase in norm for phrase in PHANTOM_PHRASES)
+    return bool(norm) and (any(phrase in norm for phrase in PHANTOM_PHRASES)
+                           or any(p.match(norm) for p in PHANTOM_WHOLE))
 
 
 def frame_levels(pcm: bytes, rate: int = 16000, step: float = FRAME_SEC) -> list[float]:
@@ -97,21 +107,58 @@ def is_silent(levels: list[float], threshold: float, start: float, end: float, s
     return heard_sec(levels, threshold, start, end, step) < MIN_HEARD_SEC
 
 
+# Фантом по тексту выкидывается, только если звук его не подтверждает: детектор голоса слышит речь меньше чем
+# на этой доле сегмента (или под ним тишина). Живое «Спасибо за просмотр» (стенд tools/asr_bench, фразы sapi_*)
+# детектор слышит почти целиком — остаётся; «Продолжение следует» на шуме, музыке и хвосте тишины — ~0.
+PHANTOM_MIN_VAD_SHARE = 0.5
+
+
+def pcm_speech_spans(pcm: bytes, rate: int = 16000) -> list[tuple[float, float]] | None:
+    """Отрезки речи детектора голоса по сырым 16-битным сэмплам (нет звука или детектора — ``None``)."""
+    if len(pcm) < 2:
+        return None
+    import numpy as np
+
+    from app.subtitles.speech_evidence import speech_spans
+
+    return speech_spans(np.frombuffer(pcm[: len(pcm) // 2 * 2], dtype="<i2").astype(np.float32) / 32768.0, rate)
+
+
+def phantom_unconfirmed(start: float, end: float, spans: list[tuple[float, float]] | None, levels: list[float],
+                        threshold: float) -> bool:
+    """Фантомный текст на ``[start, end]`` не подтверждён звуком: тишина, детектор не слышит голос или улик нет
+    вовсе (тогда — по-старому, стоп-лист без условий)."""
+    from app.subtitles.speech_evidence import vad_share
+
+    if levels and is_silent(levels, threshold, start, end):
+        return True
+    share = vad_share(start, end, spans)
+    return share is None or share < PHANTOM_MIN_VAD_SHARE
+
+
 def drop_phantoms(result: Any, pcm: bytes, rate: int = 16000) -> tuple[Any, int]:
-    """Сегменты распознавания (``SubtitleResult``) без фантомов: известный текст или тишина на
-    дорожке речи — сегмент и его слова выкидываются. Второе — сколько выкинуто (слов, а у
-    движка без слов — сегментов)."""
+    """Сегменты распознавания (``SubtitleResult``) без фантомов: тишина на дорожке речи или известный текст, который
+    звук не подтверждает (детектор голоса его почти не слышит), — сегмент и его слова выкидываются. Второе — сколько
+    выкинуто (слов, а у движка без слов — сегментов)."""
     from dataclasses import replace
 
     segments = list(getattr(result, "segments", None) or [])
     words = list(getattr(result, "words", None) or [])
     levels = frame_levels(pcm, rate)
     threshold = speech_threshold(levels) if levels else 0.0
+    vad: list = []  # детектор голоса — лениво, только если встретился фантомный текст
+
+    def unconfirmed(a: float, b: float) -> bool:
+        if not vad:
+            vad.append(pcm_speech_spans(pcm, rate))
+        return phantom_unconfirmed(a, b, vad[0], levels, threshold)
+
     dropped: list[tuple[float, float]] = []
     kept = []
     for seg in segments:
-        silent = bool(levels) and is_silent(levels, threshold, float(seg.start), float(seg.end))
-        if is_phantom_text(seg.text) or silent:
+        a, b = float(seg.start), float(seg.end)
+        silent = bool(levels) and is_silent(levels, threshold, a, b)
+        if silent or (is_phantom_text(seg.text) and unconfirmed(a, b)):
             dropped.append((float(seg.start), float(seg.end)))
         else:
             kept.append(seg)
@@ -127,7 +174,7 @@ def drop_phantoms(result: Any, pcm: bytes, rate: int = 16000) -> tuple[Any, int]
 
     clean_words = [w for w in words if not gone(w)]
     # Фантом из нескольких слов без сегментов: «Продолжение следует» словами подряд.
-    clean_words = _drop_phantom_runs(clean_words)
+    clean_words = drop_phantom_runs(clean_words, unconfirmed)
     removed = len(words) - len(clean_words)
     if not dropped and not removed:
         return result, 0
@@ -147,9 +194,9 @@ def _run_is_phantom(run: str) -> bool:
     return False
 
 
-def _drop_phantom_runs(words: list[Any], max_len: int = 4) -> list[Any]:
-    """Слова подряд (до ``max_len``), которые вместе — фантом, выкидываются. Одно слово —
-    только имя «автора титров» (корректор в живой речи бывает)."""
+def drop_phantom_runs(words: list[Any], unconfirmed: Any = None, max_len: int = 4) -> list[Any]:
+    """Слова подряд (до ``max_len``), которые вместе — фантом, выкидываются (если ``unconfirmed(start, end)`` —
+    только не подтверждённые звуком). Одно слово — только имя «автора титров» (корректор в живой речи бывает)."""
     out: list[Any] = []
     i = 0
     while i < len(words):
@@ -157,7 +204,9 @@ def _drop_phantom_runs(words: list[Any], max_len: int = 4) -> list[Any]:
         for n in range(min(max_len, len(words) - i), 0, -1):
             run = _norm(" ".join(str(w.word) for w in words[i:i + n]))
             if (n > 1 and _run_is_phantom(run)) or run in ("dimatorzok", "диматорзок"):
-                hit = n
+                span = (float(words[i].start), float(words[i + n - 1].end))
+                if unconfirmed is None or unconfirmed(*span):
+                    hit = n
                 break
         if hit:
             i += hit

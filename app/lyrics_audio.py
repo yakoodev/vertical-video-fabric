@@ -147,7 +147,7 @@ def read_mono(path: Path) -> tuple[Any, int]:
     return x.reshape(-1, ch).mean(1), sr
 
 
-def transcribe(path: Path, lang: str, model: str, prompt: str = "") -> tuple[list[dict], str]:
+def transcribe(path: Path, lang: str, model: str, prompt: str = "", stem: bool = True) -> tuple[list[dict], str]:
     """Слова Whisper с временем (секунды файла) и язык. VAD выключен: на пении он режет строки."""
     from app.heavy_queue import heavy_slot
     from app.subtitles.whisper_local import WhisperSubtitleProvider
@@ -170,7 +170,52 @@ def transcribe(path: Path, lang: str, model: str, prompt: str = "") -> tuple[lis
                                       "p": round(float(getattr(word, "probability", 1.0) or 0.0), 3)})
         finally:
             provider._schedule_unload()  # noqa: SLF001
-    return words, str(getattr(info, "language", "") or lang or "")
+    return guard_words(words, path, stem=stem), str(getattr(info, "language", "") or lang or "")
+
+
+def guard_words(words: list[dict], path: Path, stem: bool = True) -> list[dict]:
+    """Защита слов песни от выдумок Whisper (VAD тут нельзя: пение он за голос не считает — ролик «Скрытый слой»,
+    docs/knowledge/youtube/skrytyj-sloj.md). Вместо него — громкость вокала:
+
+    * ``stem`` (распознавали стем demucs): слово, под которым вокал молчит (проигрыш, вступление), — выдумка;
+      фантомные титры подряд («Продолжение следует», «Субтитры сделал …») — только если вокал под ними молчит
+      (спетое «продолжение следует» остаётся);
+    * без стема (полоса голоса из смеси — музыка звучит всё время, громкость не улика) — фантомные титры по одному
+      стоп-листу. Слова — ``{w, s, e, p}``, время файла ``path``."""
+    import wave
+
+    from app.subtitles.phantoms import drop_phantom_runs, frame_levels, is_silent, speech_threshold
+
+    if not words:
+        return words
+    levels: list[float] = []
+    if stem:
+        try:
+            with wave.open(str(path), "rb") as f:
+                ch, rate = f.getnchannels(), f.getframerate()
+                if f.getsampwidth() == 2:
+                    pcm = f.readframes(f.getnframes())
+                    if ch > 1:  # стем demucs — стерео: громкость по среднему каналов
+                        import numpy as np
+
+                        x = np.frombuffer(pcm[: len(pcm) // (2 * ch) * 2 * ch], dtype="<i2").reshape(-1, ch)
+                        pcm = x.mean(axis=1).astype("<i2").tobytes()
+                    levels = frame_levels(pcm, rate)
+        except (OSError, EOFError, wave.Error):  # нет звука: только стоп-лист
+            levels = []
+    threshold = speech_threshold(levels) if levels else 0.0
+    quiet = (lambda a, b: is_silent(levels, threshold, a, b)) if levels else None
+    if quiet is not None:
+        words = [w for w in words if not quiet(float(w["s"]), float(w["e"]))]
+
+    class _W:  # drop_phantom_runs ждёт .word/.start/.end
+        __slots__ = ("raw", "word", "start", "end")
+
+        def __init__(self, raw: dict):
+            self.raw, self.word, self.start, self.end = raw, raw["w"], float(raw["s"]), float(raw["e"])
+
+    kept = drop_phantom_runs([_W(w) for w in words], quiet)
+    return [k.raw for k in kept]
 
 
 # --------------------------------------------------------------------------- #
@@ -200,7 +245,7 @@ def align_audio(path: Path, lyrics: str = "", lang: str = "", start: float = 0.0
         stage("распознаю слова (Whisper)")
         heard_src = vocals if method == "demucs" else mix
         prompt = " ".join(line["text"] for line in lines_in)[:HINT_CHARS] if hint and lines_in else ""
-        heard, language = transcribe(heard_src, lang, model, prompt)
+        heard, language = transcribe(heard_src, lang, model, prompt, stem=method == "demucs")
         heard = [{**w, "s": round(w["s"] + start, 3), "e": round(w["e"] + start, 3)} for w in heard]
         stage("выравниваю текст по слогам")
         x, sr = read_mono(vocals)

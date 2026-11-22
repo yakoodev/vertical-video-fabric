@@ -214,7 +214,10 @@ def asr_words(path: Path, t0: float = 0.0, t1: float | None = None) -> list[dict
     args = ["ffmpeg", "-v", "error", "-ss", f"{t0}", "-i", str(path), *cut, "-map", "0:a", "-f", "s16le", "-ac", "1", "-ar", "16000", "-"]
     audio = np.frombuffer(subprocess.run(args, capture_output=True, check=True).stdout, np.int16).astype(np.float32) / 32768.0
     model = WhisperModel("small", device="cpu", compute_type="int8", download_root=str(Path.home() / ".cache/huggingface/hub"))
-    segs, _ = model.transcribe(audio, language="ru", word_timestamps=True, beam_size=5)
+    # VAD и без подсказки прошлым текстом: на тишине small пишет «Редактор субтитров …» (стенд tools/asr_bench).
+    segs, _ = model.transcribe(audio, language="ru", word_timestamps=True, beam_size=5, vad_filter=True,
+                               vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
+                               condition_on_previous_text=False)
     out = [{"word": w.word.strip(), "start": round(w.start + t0, 2), "end": round(w.end + t0, 2), "p": round(w.probability, 3)}
            for s in segs for w in s.words]
     del model

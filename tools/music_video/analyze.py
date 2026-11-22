@@ -55,8 +55,13 @@ def whisper(stem: Path, lang: str, prompt: str | None, model: str, t0: float) ->
         for w in s.words:
             txt = w.word.strip().strip(",.!?…«»\"—-").strip()
             if txt:
-                out.append({"w": txt, "s": round(w.start + t0, 3), "e": round(w.end + t0, 3), "p": round(w.probability, 2)})
-    return out
+                out.append({"w": txt, "s": round(w.start, 3), "e": round(w.end, 3), "p": round(w.probability, 2)})
+    # Выдумки на проигрышах (стем молчит) и титры «Продолжение следует» — как в сервисе (app/lyrics_audio.guard_words).
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from app.lyrics_audio import guard_words
+
+    out = guard_words(out, stem, stem=True)
+    return [{**w, "s": round(w["s"] + t0, 3), "e": round(w["e"] + t0, 3)} for w in out]
 
 
 def spec_plot(stem_x: np.ndarray, sr: int, t0: float, a: float, b: float, words: list[dict], onsets: list, out: Path,

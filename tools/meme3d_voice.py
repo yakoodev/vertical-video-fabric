@@ -80,7 +80,11 @@ def words(path: Path) -> list[dict]:
     audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     model = WhisperModel("mobiuslabsgmbh/faster-whisper-large-v3-turbo", device="cpu", compute_type="int8",
                          cpu_threads=4)
-    segs, _ = model.transcribe(audio, language="ru", word_timestamps=True, vad_filter=False, beam_size=5)
+    # VAD и без подсказки прошлым текстом: на паузах «...» и хвосте тишины Whisper дописывает титры (стенд
+    # tools/asr_bench, docs/knowledge/youtube/skrytyj-sloj.md).
+    segs, _ = model.transcribe(audio, language="ru", word_timestamps=True, vad_filter=True, beam_size=5,
+                               vad_parameters={"min_silence_duration_ms": 500, "speech_pad_ms": 200},
+                               condition_on_previous_text=False)
     out = []
     for s in segs:
         for w in s.words or []:

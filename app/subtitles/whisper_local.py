@@ -15,11 +15,39 @@ log = logging.getLogger(__name__)
 _NO_SPEECH_THRESHOLD = 0.6
 _MIN_AVG_LOGPROB = -1.0
 _MUSIC_LOGPROB = -0.5  # «песня» под музыкой обычно декодируется неуверенно
-def _is_hallucination(segment: Any) -> bool:
+# Улики из звука (app/subtitles/speech_evidence.py; стенд tools/asr_bench, docs/knowledge/youtube/skrytyj-sloj.md):
+# * фантомный текст («Продолжение следует», «Редактор субтитров …») выкидывается, только если детектор голоса слышит
+#   речь меньше чем на половине сегмента: живое «Спасибо за просмотр» (фразы sapi_*) он слышит на 0.8–0.9;
+# * «поверить датчику»: no_speech > 0.6 при доле детектора < 0.3 — выкинуть, даже если текст уверенный. Один no_speech
+#   нельзя: на дубляже под музыкой он 0.9 на чистых репликах (стенд: 62 сегмента дубляжа, 524 слова), а детектор
+#   голоса эти реплики слышит (доля 0.7–1.0);
+# * тишина по громкости под сегментом — выкинуть всегда.
+_PHANTOM_MIN_SHARE = 0.5
+_TRUST_NO_SPEECH = 0.6
+_TRUST_MAX_SHARE = 0.3
+
+
+def _is_hallucination(segment: Any, evidence: Any = None) -> bool:
     """True when a decoded segment looks like non-speech (music, silence) rather
-    than real dialogue — the usual source of phantom subtitles."""
-    if _is_phantom(segment):
+    than real dialogue — the usual source of phantom subtitles. ``evidence`` — улики звука
+    (``speech_evidence.Evidence``); без них фантомный текст выкидывается по одному стоп-листу, как раньше."""
+    no_speech = _num(getattr(segment, "no_speech_prob", None))
+    share = None
+    if evidence is not None:
+        start, end = _num(getattr(segment, "start", None)), _num(getattr(segment, "end", None))
+        if start is not None and end is not None:
+            if evidence.silent(start, end):
+                return True
+            share = evidence.share(start, end)
+    if _is_phantom(segment) and (share is None or share < _PHANTOM_MIN_SHARE):
         return True
+    if no_speech is not None and share is not None and no_speech > _TRUST_NO_SPEECH and share < _TRUST_MAX_SHARE:
+        return True
+    return _is_non_speech(segment)
+
+
+def _is_non_speech(segment: Any) -> bool:
+    """Старое правило по уверенности декодера (без улик звука)."""
     no_speech = _num(getattr(segment, "no_speech_prob", None))
     avg_logprob = _num(getattr(segment, "avg_logprob", None))
     if avg_logprob is not None and avg_logprob < _MIN_AVG_LOGPROB:
@@ -55,12 +83,15 @@ def _is_phantom(segment: Any) -> bool:
     return is_phantom_text(getattr(segment, "text", "") or "")
 
 
-def _salvage_words(segment: Any) -> list[Any]:
+def _salvage_words(segment: Any, evidence: Any = None) -> list[Any]:
     """Уверенные слова сегмента, который фильтр счёл «не речью» (пение, TTS, речь под игрой).
 
-    Пусто — сегмент действительно мусор: известный фантом, почти наверняка тишина,
-    мало уверенных слов или повтор одного слога («ла-ла-ла»)."""
+    Пусто — сегмент действительно мусор: известный фантом, почти наверняка тишина (в том числе по звуку: тишина
+    громкости или детектор голоса почти не слышит голос при высоком no_speech), мало уверенных слов или повтор
+    одного слога («ла-ла-ла»)."""
     if _is_phantom(segment):
+        return []
+    if evidence is not None and _evidence_says_silence(segment, evidence):
         return []
     no_speech = _num(getattr(segment, "no_speech_prob", None))
     if no_speech is not None and no_speech >= _SALVAGE_MAX_NO_SPEECH:
@@ -117,8 +148,9 @@ class WhisperSubtitleProvider:
         size = str(model or "").strip() or settings.whisper_model_size
         whisper = self._get_model(size)
         language = str(profile.get("language") or "").strip() or None
+        source, evidence, trimmed = _prepare_audio(audio_path)
         segments_iter, info = whisper.transcribe(
-            str(audio_path),
+            source,
             language=language,
             word_timestamps=True,
             # Voice-activity filter with a bit of padding: instrumental music and
@@ -155,8 +187,8 @@ class WhisperSubtitleProvider:
             original = segment
             # Belt-and-braces on top of the decoder thresholds: never emit words
             # for a window that scores as non-speech / low confidence.
-            if _is_hallucination(segment):
-                kept = _salvage_words(segment)
+            if _is_hallucination(segment, evidence):
+                kept = _salvage_words(segment, evidence)
                 if not kept:
                     dropped += 1
                     continue
@@ -181,6 +213,16 @@ class WhisperSubtitleProvider:
                 start = round(max(0.0, start), 3)
                 end = round(max(end, start + 0.05), 3)
                 words.append(SubtitleWord(word=token, start=start, end=end))
+
+        if evidence is not None and words:
+            # Фантом, прилипший к живой фразе одним сегментом («…на канал. Продолжение следует.»): его слова подряд,
+            # если детектор голоса их не слышит.
+            from app.subtitles.phantoms import drop_phantom_runs, phantom_unconfirmed
+
+            before = len(words)
+            words = drop_phantom_runs(words, lambda a, b: phantom_unconfirmed(
+                a, b, evidence.spans, evidence.levels, evidence.threshold))
+            dropped += int(len(words) < before)
 
         language_name = str(getattr(info, "language", None) or profile.get("language") or "und")
 
@@ -214,6 +256,7 @@ class WhisperSubtitleProvider:
                 "whisperLanguageProbability": round(_num(getattr(info, "language_probability", None)) or 0.0, 3),
                 "droppedNonSpeech": dropped,
                 "salvagedSegments": salvaged,
+                **({"trimmedTailAt": trimmed} if trimmed is not None else {}),
             },
         )
 
@@ -303,6 +346,38 @@ class WhisperSubtitleProvider:
             compute_type=settings.whisper_compute_type,
             download_root=str(settings.whisper_model_dir),
         )
+
+
+def _evidence_says_silence(segment: Any, evidence: Any) -> bool:
+    start, end = _num(getattr(segment, "start", None)), _num(getattr(segment, "end", None))
+    if start is None or end is None:
+        return False
+    if evidence.silent(start, end):
+        return True
+    share = evidence.share(start, end)
+    no_speech = _num(getattr(segment, "no_speech_prob", None))
+    return share is not None and no_speech is not None and no_speech > _TRUST_NO_SPEECH and share < _TRUST_MAX_SHARE
+
+
+def _prepare_audio(audio_path: Any) -> tuple[Any, Any, float | None]:
+    """Звук для Whisper и улики: (что отдать в transcribe, Evidence или None, где обрезан хвост тишины или None).
+
+    Хвост почти тишины длиннее 3 с (голосовое, озвучка с запасом, клип с тишиной в конце) Whisper не отдаём: когда
+    окно 30 с целиком тихое, декодер пишет титры или повторяет последнюю фразу. Начало не трогаем — время слов
+    остаётся временем файла. Файл не прочитался (тесты, нет декодера) — путь как есть, без улик."""
+    from app.subtitles import speech_evidence as SE
+
+    audio = SE.load_audio(audio_path)
+    if audio is None or not len(audio):
+        return str(audio_path), None, None
+    try:
+        evidence = SE.Evidence.of(audio)
+    except Exception:  # noqa: BLE001 - улики необязательны
+        return audio, None, None
+    cut = SE.speech_end_cut(evidence.levels, evidence.threshold)
+    if cut is not None and cut * SE.RATE < len(audio):
+        return audio[: int(cut * SE.RATE)], evidence, cut
+    return audio, evidence, None
 
 
 class _Salvaged:
