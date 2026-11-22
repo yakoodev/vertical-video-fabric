@@ -53,7 +53,7 @@ number 120 · title 76 · heading 44 · chip 36 · body/item 36 · sub 27 · lab
 | поле | смысл |
 |---|---|
 | `theme`, `accent`, `plate` | тема и цвета (см. выше) |
-| `variant` | chip `solid`/`soft`/`outline`/`neutral`; title `plain`/`card`; hook `plain`/`fill`/`accent`; counter `pill`/`accent`/`plain`; checklist `card`/`window`; window `app`/`browser`/`chat`; toast `light`/`dark` (нет — по теме) |
+| `variant` | chip `solid`/`soft`/`outline`/`neutral`; title `plain`/`card`; hook `plain`/`fill`/`accent`; counter `pill`/`accent`/`plain`; checklist `card`/`window`; window `app`/`browser`/`chat`/`error`; file `doc`/`folder`; toast `light`/`dark` (нет — по теме) |
 | `w`, `h`, `size` | ширина, высота окна, кегль главного текста |
 | `label` | подпись капсом (stat, bars, checklist), чип над заголовком (title), имя приложения (window, checklist window) |
 | `title`, `text`, `icon` | главный текст, второй текст, значок Lucide |
@@ -62,6 +62,7 @@ number 120 · title 76 · heading 44 · chip 36 · body/item 36 · sub 27 · lab
 | `items` | `[{text, sub, note, icon, value, max, color, dim, at, done, from}]` ≤ 10 — пункты чек-листа, полосы сравнения, сообщения окна-чата |
 | `marker`, `markerLabel` | порог на полосах (доля 0..1) с подписью («1:00») |
 | `url`, `time`, `badge`, `letter` | адрес браузера; время, счётчик и буква значка уведомления |
+| `state` | file: `ok` — зелёная галочка, `bad` — красный крест на значке (выпрыгивает на `delay` с слоя) |
 | `delay`, `stagger`, `reveal` | время пунктов: первый на `delay` с слоя (0.5), дальше через `stagger` (0.6); `item.at` — своя секунда; checklist `check` — все видны, галочки по одной; `appear` — пункты появляются по одному |
 | `font`, `bodyFont` | свои гарнитуры display / body |
 
@@ -82,7 +83,11 @@ number 120 · title 76 · heading 44 · chip 36 · body/item 36 · sub 27 · lab
   строк, `badge`.
 - **window** — окно с «светофором»: `app` (имя в шапке, `title` — заголовок в теле, `text` или `items` чек-листом),
   `browser` (адресная строка с замком `url`), `chat` (`items` пузырями: `from: me` — справа акцентом, `them` —
-  слева; перед ответом — «печатает…»).
+  слева; перед ответом — «печатает…»), `error` (окно ошибки программы: красный значок `icon` — по умолчанию
+  `circle-x` — выпрыгивает на `delay`, `title` красным по центру, пояснение `text`, кнопка «ОК»).
+- **file** — значок файла: лист с загнутым углом (`variant: folder` — папка, `icon` на ней), крупная плашка
+  расширения `title` («.vrm», «.model3.json» ужимается), имя `text` под листом, `size` — высота листа (250),
+  `state` — отметка ok/bad. Один слой — один значок; ряд раскладывает план (мини-гайд, пункт `files`).
 
 Рамка слоя для перекомпоновки и линтов — оценка `ui_size` (app/aspect.py) ↔ `uiSize` (reframe.ts), сверка —
 фикстура `tests/fixtures/reframe_cases.json`.

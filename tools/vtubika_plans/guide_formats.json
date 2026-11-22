@@ -1,0 +1,285 @@
+{
+  "id": "guide_formats",
+  "title": "Мини-гайд 6: Купил модель — а она не открывается (форматы: двумерная, трёхмерная, аватар-картинка, заготовка со слоями)",
+  "format": "guide",
+  "voice": {
+    "provider": "polza",
+    "model": "elevenlabs/eleven-v4",
+    "voice": "lily",
+    "paid_ok": true
+  },
+  "script": "мини-гайд 6 «Купил модель — а она не открывается». Ночь 22→23.11, «сюжеты свои» (D:/vvf-offload/vtubika/guide6_formats/script_draft.txt), правки только для гладкости речи. Ведущая Оля (olya_host) в камеру, голос Lily — как в гайде 5. Крючок: кадр 0 — ведущая крупно и «НЕ ОТКРЫВАЕТСЯ?», под лицом окно программы с красным «Формат не поддерживается» (model.vrm), окно трясётся на «не видит». Дальше значки файлов с окончаниями (компонент file). Факты: двумерная модель — папка: .model3.json + .moc3 + текстуры, открывает VTube Studio, трёхмерную не откроет; трёхмерная — один файл .vrm, открывают VSeeFace, VNyan, Warudo; аватар-картинка — набор картинок, хватит бесплатной программы (veadotube mini); только .psd — заготовка без риггинга. Карточки vtubika.store показывают «Что это» (формат) и «Работает в» (программа) — проверено 23.11 на /model/daily-boy (YELLOW, только блок характеристик, без превью модели). НЕЛЬЗЯ: английские слова в озвучке (названия программ и окончания — только на экране), суммы, скидки, сроки, обещания (Free10 только в концовке, как в гайде 5). Предметы — плоские значки (file, Lucide), без коробок и ИИ-картинок; примеры аватаров — свой каст CC0 (turn_asya, png_varya из гайда 1).",
+  "hero": "alina",
+  "look": "cozy",
+  "hook": {
+    "word": "Не открывается?",
+    "until": 1.7,
+    "y": 0.13,
+    "size": 104,
+    "accent": "#ff6b6b"
+  },
+  "vrm": {
+    "heroine": "olya_host",
+    "monitor": false,
+    "tail_wide": false
+  },
+  "guide": {
+    "accent": "#ff8a4c",
+    "plate": "#2b2f36",
+    "badge": {
+      "text": "МИНИ-ГАЙД №6",
+      "from": 1.75,
+      "y": 0.045,
+      "size": 28
+    }
+  },
+  "pronounce": {
+    "Free10": "фри десять"
+  },
+  "music": {
+    "file": "chill-keys.mp3",
+    "under_db": 9.0
+  },
+  "tail": 0.3,
+  "pace": {
+    "tempo_cap": 1.0,
+    "tempo": 1.12,
+    "lead": 0.15
+  },
+  "end_card": {
+    "promo": "Промокод Free10 — скидка 10%",
+    "promo_y": 1480,
+    "duration": 2.3,
+    "music_fade": 2.3
+  },
+  "presets3d": {
+    "room": {
+      "name": "cozy_desk"
+    },
+    "look": "anime_soft",
+    "light": "monitor_glow",
+    "fx": [
+      "bloom",
+      "dust_motes",
+      {
+        "name": "depth_of_field",
+        "amount": 2
+      },
+      "film_grain"
+    ]
+  },
+  "room3d": {
+    "origin": [0.1, 0.2, 0.9],
+    "dof": 2.8,
+    "vrm_light": {
+      "keyColor": "#fff4ec",
+      "keyPower": 2.1,
+      "fill": "#6a6a9a",
+      "fillPower": 0.9
+    }
+  },
+  "screen": {
+    "uptime": 600,
+    "title": "мини-гайд",
+    "camBg": ["#1a1630", "#0c0a18"],
+    "viewers": [],
+    "chat": []
+  },
+  "highlight": {
+    "модель,": "#ffd7bf",
+    "не": "#ff6b6b",
+    "видит": "#ff6b6b",
+    "потрачены,": "#ff6b6b",
+    "стрима": "#ff6b6b",
+    "формате.": "#ff8a4c",
+    "Двумерная": "#8edfd1",
+    "папка:": "#8edfd1",
+    "окончаниями": "#ff8a4c",
+    "текстуры.": "#8edfd1",
+    "двумерных": "#8edfd1",
+    "трёхмерную": "#ff6b6b",
+    "Трёхмерная": "#bda7f7",
+    "один": "#bda7f7",
+    "трёхмерных": "#bda7f7",
+    "Аватар-картинка": "#ffd7bf",
+    "картинок": "#ffd7bf",
+    "бесплатной": "#8edfd1",
+    "ловушка:": "#ff6b6b",
+    "заготовка": "#ff6b6b",
+    "слоями": "#ff6b6b",
+    "риггинга": "#ff6b6b",
+    "формат,": "#ff8a4c",
+    "программа": "#ff8a4c",
+    "риггинг.": "#ff8a4c",
+    "Витубики": "#ff8a4c",
+    "карточке": "#ff8a4c"
+  },
+  "sentences": [
+    {
+      "text": "Купил модель, открываешь программу — а она не видит файл. Деньги потрачены, стрима нет.",
+      "pause_after": 0.2,
+      "show": [
+        "кадр 0 (обложка): ведущая крупно, сверху огромное «НЕ ОТКРЫВАЕТСЯ?», под лицом окно «VTube Studio» с красным крестом и «Формат не поддерживается · model.vrm» (видно с кадра 0); на «не видит» окно трясётся; окно остаётся до конца фразы"
+      ],
+      "shots": [{"cam": "smile", "push": 0.06}],
+      "do": [
+        {"face": "talk", "talk": true, "dt": -0.2},
+        {"act": "Talk_Loop", "dt": -0.2}
+      ],
+      "vrm": [
+        {"look": "lens", "dt": -0.3, "span": 15, "dt_end": 1.0}
+      ],
+      "gfx": [
+        {"kind": "error", "dt": -1.0, "until": "end", "dt_end": 0.2, "in": "none", "in_dur": 0.01, "icon_delay": 0.0,
+         "app": "VTube Studio", "title": "Формат не поддерживается", "text": "model.vrm",
+         "x": 0.5, "y": 0.64, "w": 900, "scale": 0.82, "shake": "видит", "shake_dt": -0.05}
+      ]
+    },
+    {
+      "text": "Всё дело в формате. Двумерная модель — это папка: внутри файлы модели с особыми окончаниями и текстуры.",
+      "pause_after": 0.12,
+      "show": [
+        "притушенный кадр, ведущая в кружке слева внизу; заголовок «Всё дело в формате» (чип «Live2D · двумерная»); на «папка» значок папки «Live2D» (моя_модель), на «файлы» — значки «.model3.json» и «.moc3», на «текстуры» — папка «.png» (textures)"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "vrm": [{"at": "формате.", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "scrim", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0},
+        {"kind": "layer", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0,
+         "layer": {"type": "particles", "x": 0.5, "y": 0.5, "track": 3, "opacity": 0.85,
+                   "props": {"kind": "rise", "count": 120, "colors": ["#ffd7bf", "#8edfd1", "#bda7f7", "#ff8a4c"],
+                             "shape": "dot", "size": 16, "spread": 980, "duration": 6, "seed": 7, "glow": true}}},
+        {"kind": "pip", "dt": -0.15, "until_s": 6, "until": "end", "dt_end": 1.0, "x": 0.15, "y": 0.70, "w": 200},
+        {"kind": "title", "dt": -0.1, "chip": "Live2D · двумерная", "text": "Всё дело в формате", "size": 70, "color": "#8edfd1", "y": 0.13},
+        {"kind": "files", "at": "папка:", "dt": -0.15, "x": 0.5, "y": 0.29, "size": 240, "color": "#8edfd1",
+         "items": [{"ext": "Live2D", "name": "моя_модель", "variant": "folder"}]},
+        {"kind": "files", "at": "файлы", "dt": -0.15, "x": 0.5, "y": 0.505, "size": 250, "gap": 16, "color": "#8edfd1",
+         "items": [
+           {"ext": ".model3.json", "name": "модель", "cell": 330},
+           {"ext": ".moc3", "name": "модель", "at": "модели", "cell": 300},
+           {"ext": ".png", "name": "textures", "variant": "folder", "at": "текстуры.", "cell": 300}
+         ]}
+      ]
+    },
+    {
+      "text": "Её открывает программа для двумерных моделей. А трёхмерную она не откроет.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «VTube Studio» (чип «программа для Live2D»); значки: «.model3.json» с зелёной галочкой на «открывает», «.vrm» с красным крестом на «не откроет»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "vrm": [{"at": "откроет.", "nod": 1, "amp": 5}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "программа для Live2D", "text": "VTube Studio", "size": 92, "color": "#8edfd1", "y": 0.13},
+        {"kind": "files", "dt": -0.1, "x": 0.5, "y": 0.37, "size": 300, "gap": 40,
+         "items": [
+           {"ext": ".model3.json", "name": "двумерная", "state": "ok", "state_at": "открывает", "color": "#8edfd1", "cell": 400},
+           {"ext": ".vrm", "name": "трёхмерная", "state": "bad", "state_at": "не", "at": "трёхмерную", "color": "#bda7f7", "cell": 380}
+         ]},
+        {"kind": "chip", "at": "не", "dt": -0.05, "until": "end", "dt_end": 0.3,
+         "text": "Не откроет", "icon": "circle-x", "color": "#ff6b6b", "x": 0.5, "y": 0.62, "size": 50}
+      ]
+    },
+    {
+      "text": "Трёхмерная модель — обычно один файл. Её открывают программы для трёхмерных аватаров.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «3D-модель» (чип «трёхмерная»); слева модель из своего каста поворачивается; справа на «один файл» большой значок «.vrm»; на «программы» чипы «VSeeFace», «VNyan», «Warudo»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "один", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "трёхмерная", "text": "3D-модель", "size": 100, "color": "#bda7f7", "y": 0.13},
+        {"kind": "seq", "dt": -0.1, "pattern": "D:/vvf-offload/vtubika/guide1_model_types/assets/turn_asya/f_{:03d}.png",
+         "count": 48, "fps": 12, "x": 0.29, "y": 0.445, "w": 290},
+        {"kind": "files", "at": "один", "dt": -0.15, "x": 0.71, "y": 0.29, "size": 280, "color": "#bda7f7",
+         "items": [{"ext": ".vrm", "name": "один файл"}]},
+        {"kind": "chip", "at": "программы", "dt": -0.1, "text": "VSeeFace", "icon": "monitor", "color": "#bda7f7", "x": 0.71, "y": 0.5, "size": 48},
+        {"kind": "chip", "at": "программы", "dt": 0.25, "text": "VNyan", "icon": "monitor", "color": "#bda7f7", "x": 0.71, "y": 0.555, "size": 48},
+        {"kind": "chip", "at": "программы", "dt": 0.6, "text": "Warudo", "icon": "monitor", "color": "#bda7f7", "x": 0.71, "y": 0.61, "size": 48}
+      ]
+    },
+    {
+      "text": "Аватар-картинка — просто набор картинок с эмоциями, ему хватит бесплатной программы.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «PNGTuber» (чип «аватар-картинка»); слева картинка-аватар говорит на словах; справа значки «.png» молчит / говорит / моргает; на «бесплатной» чип «veadotube mini — бесплатно»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "бесплатной", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "аватар-картинка", "text": "PNGTuber", "size": 100, "color": "#ffd7bf", "y": 0.13},
+        {"kind": "pngtuber", "dt": -0.1, "idle": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/idle.png",
+         "talk": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/talk.png",
+         "blink": "D:/vvf-offload/vtubika/guide1_model_types/assets/png_varya/blink.png", "x": 0.3, "y": 0.41, "w": 520},
+        {"kind": "files", "at": "набор", "dt": -0.15, "x": 0.78, "y": 0.27, "size": 180, "per_row": 1, "row_gap": -14, "color": "#ffd7bf",
+         "items": [
+           {"ext": ".png", "name": "молчит"},
+           {"ext": ".png", "name": "говорит", "at": "картинок"},
+           {"ext": ".png", "name": "моргает", "at": "эмоциями,"}
+         ]},
+        {"kind": "chip", "at": "бесплатной", "dt": -0.1, "until": "end", "dt_end": 0.3,
+         "text": "veadotube mini — бесплатно", "icon": "check", "color": "#8edfd1", "x": 0.53, "y": 0.612, "size": 38}
+      ]
+    },
+    {
+      "text": "И ещё ловушка: заготовка для художника вместо готовой модели. Если в архиве только файл со слоями — без риггинга она не двигается.",
+      "pause_after": 0.15,
+      "show": [
+        "заголовок «Ловушка» (чип «заготовка»); большой значок «.psd» (слои), на «без риггинга» — красный крест; чипы «Только слои», «Без риггинга не двигается» (красные)"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "talk", "talk": true}],
+      "vrm": [{"at": "двигается.", "nod": 1, "amp": 5}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "заготовка, а не модель", "text": "Ловушка", "size": 104, "color": "#ff6b6b", "y": 0.13},
+        {"kind": "files", "dt": -0.1, "x": 0.5, "y": 0.34, "size": 340, "color": "#ffd7bf",
+         "items": [{"ext": ".psd", "name": "только слои", "state": "bad", "state_at": "без"}]},
+        {"kind": "chip", "at": "слоями", "dt": -0.1, "until": "end", "dt_end": 0.3,
+         "text": "Только слои", "icon": "triangle-alert", "color": "#ff6b6b", "x": 0.5, "y": 0.552, "size": 48},
+        {"kind": "chip", "at": "без", "dt": -0.1, "until": "end", "dt_end": 0.3,
+         "text": "Без риггинга не двигается", "icon": "ban", "color": "#ff6b6b", "x": 0.5, "y": 0.605, "size": 48}
+      ]
+    },
+    {
+      "text": "Перед покупкой смотри в описании: формат, программа и есть ли риггинг.",
+      "pause_after": 0.12,
+      "show": [
+        "заголовок «Перед покупкой» (чип «смотри в описании»); строки по словам: «Формат / .model3.json · .vrm · .png», «Программа / VTube Studio, VSeeFace…», «Риггинг / модель двигается»"
+      ],
+      "shots": [{"cam": "face", "push": 0.07}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "риггинг.", "nod": 1, "amp": 6}],
+      "gfx": [
+        {"kind": "title", "dt": -0.1, "chip": "смотри в описании", "text": "Перед покупкой", "size": 84, "color": "#ff8a4c", "y": 0.13},
+        {"kind": "rows", "at": "формат,", "dt": -0.2, "color": "#ff8a4c", "label": "три пункта", "y": 0.41,
+         "items": [
+           {"icon": "file-text", "text": "Формат", "sub": ".model3.json · .vrm · .png", "at": "формат,"},
+           {"icon": "monitor", "text": "Программа", "sub": "VTube Studio, VSeeFace…", "at": "программа"},
+           {"icon": "check", "text": "Риггинг", "sub": "модель двигается", "at": "риггинг."}
+         ]}
+      ]
+    },
+    {
+      "text": "В каталоге Витубики формат и программа написаны в карточке модели.",
+      "say": "В каталоге Виту́бики формат и программа написаны в карточке модели.",
+      "pause_after": 0.0,
+      "show": [
+        "настоящий блок карточки vtubika.store «Подойдёт ли вам»: «3D-модель в формате VRM», «Работает в: VSeeFace, Warudo, VNyan»; чип «В карточке на vtubika.store»"
+      ],
+      "shots": [{"cam": "smile", "push": 0.06}],
+      "do": [{"face": "happy", "talk": true}],
+      "vrm": [{"at": "карточке", "nod": 1, "amp": 7}],
+      "gfx": [
+        {"kind": "image", "dt": 0.1, "until": "end", "dt_end": 1.0,
+         "src": "D:/vvf-offload/vtubika/guide6_formats/site/fit_block.png", "w": 1010, "x": 0.5, "y": 0.37, "radius": 30},
+        {"kind": "chip", "at": "карточке", "dt": -0.1, "until": "end", "dt_end": 1.0,
+         "text": "В карточке на vtubika.store", "icon": "file-text", "color": "#ff8a4c", "x": 0.5, "y": 0.575, "size": 40}
+      ]
+    }
+  ]
+}

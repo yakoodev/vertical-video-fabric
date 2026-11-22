@@ -132,6 +132,10 @@ def _flat() -> dict:
          "props": {"component": "chip", "title": "3 секунды", "icon": "clock"}},
         {"id": "cnt", "type": "ui", "start": 2, "end": 4, "x": 0.6, "y": 0.75,
          "props": {"component": "counter", "value": 942692, "unit": "просмотров", "icon": "eye"}},
+        {"id": "errwin", "type": "ui", "start": 0, "end": 1.2, "y": 0.64,
+         "props": {"component": "window", "variant": "error", "label": "VTube Studio", "title": "Формат не поддерживается", "text": "model.vrm"}},
+        {"id": "file", "type": "ui", "start": 2, "end": 4, "x": 0.7, "y": 0.4,
+         "props": {"component": "file", "title": ".vrm", "text": "трёхмерная", "size": 230, "state": "bad"}},
         {"id": "blur", "type": "fx", "start": 1.2, "end": 4, "props": {"kind": "backdrop"}},
     ])
     return {"name": "flat", "layers": layers, "camera": [], "sizes": {}}

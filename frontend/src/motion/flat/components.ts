@@ -7,6 +7,7 @@
  * или пункты отмечаются. Всё — функция времени слоя: превью и рендер совпадают кадр в кадр.
  */
 import { drawCards, measureCards } from "./cards.ts";
+import { drawFile, fileLayout } from "./file.ts";
 import { card, castShadow, fitSize, formatNumber, type G, iconTile, outBack, outCubic, pill, rgbaOf, rrect, setFont, text, textWidth, wrap } from "./draw.ts";
 import { drawFlatIcon, flatIconName } from "./icons.ts";
 import { type FlatFrame, type FlatUiProps, fontsOf, num, str } from "./kit.ts";
@@ -319,6 +320,10 @@ export function measureFlat(g: G, p: FlatUiProps): Box {
       const L = layoutOf(g, p, p.component);
       return { w: L.w, h: L.h };
     }
+    case "file": {
+      const L = fileLayout(g, p);
+      return { w: L.w, h: L.h };
+    }
     default:
       return measureCards(g, p);
   }
@@ -345,6 +350,9 @@ export function drawFlat(fc: FlatFrame, p: FlatUiProps): void {
       break;
     case "toast":
       drawToast(fc, p, layoutOf(g, p, "toast"));
+      break;
+    case "file":
+      drawFile(fc, p, fileLayout(g, p));
       break;
     default:
       drawCards(fc, p);

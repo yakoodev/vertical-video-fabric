@@ -231,8 +231,15 @@ def ui_size(props: dict) -> tuple[float, float]:
                                            + (78 if has("title") else 0) + n * 86 + max(0, n - 1) * 30)
     if comp == "toast":
         return _num(props.get("w"), 920), 152
+    if comp == "window" and props.get("variant") == "error":
+        return _num(props.get("w"), 940), max(_num(props.get("h"), 0), 382 + (58 if has("title") else 0) + (60 if has("text") else 0))
     if comp == "window":
         return _num(props.get("w"), 940), max(_num(props.get("h"), 0), 172 + (n * 90 if n else 160))
+    if comp == "file":
+        size = max(80.0, _num(props.get("size"), 250))
+        name = len(str(props.get("text") or ""))
+        ns = max(24.0, size * 0.15)
+        return max(size * 1.25, name * ns * 0.55 + 12 if name else 0), size + (ns * 1.6 if name else 0)
     return _num(props.get("w"), 900), 330
 
 

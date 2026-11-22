@@ -161,7 +161,7 @@ AD_ICONS = ("shield", "lock", "check", "user", "users", "store", "card", "star",
             "cart", "gift", "bell", "mic", "coin", "globe", "phone", "headphones", "sparkle", "trend", "game")
 AD_THEMES = ("dark", "light")
 # Плоская тема (слой ui): компоненты, темы палитр, предел пунктов, режимы чек-листа.
-FLAT_COMPONENTS = ("hook", "chip", "title", "stat", "bars", "counter", "checklist", "toast", "window")
+FLAT_COMPONENTS = ("hook", "chip", "title", "stat", "bars", "counter", "checklist", "toast", "window", "file")
 FLAT_THEMES = ("red", "dark", "light", "brand")
 FLAT_ITEMS_MAX = 10
 FLAT_REVEALS = ("check", "appear")

@@ -117,3 +117,72 @@ def test_plan_guide_model_types_is_valid() -> None:
     from app import vtubika_plan as P
 
     assert not re.search(r"[A-Za-z]", P.narration_text(plan)), P.narration_text(plan)
+
+
+def test_files_row_appears_on_words_with_marks(tmp_path: Path) -> None:
+    plan = {"sentences": [{"text": "Внутри файлы модели и текстуры без риггинга.",
+                           "gfx": [{"kind": "files", "y": 0.4, "size": 200, "gap": 40,
+                                    "items": [{"ext": ".moc3", "name": "модель"},
+                                              {"ext": ".png", "variant": "folder", "at": "текстуры"},
+                                              {"ext": ".psd", "state": "bad", "state_at": "без", "at": "модели"}]}]}]}
+    words = _words(plan)
+    layers, _ = G.layers(plan, words, total=words[-1]["end"] + 1.0)
+    files = [la for la in layers if la["props"].get("component") == "file"]
+    assert [f["props"]["title"] for f in files] == [".moc3", ".png", ".psd"]
+    # Ряд по центру кадра, слева направо; все до конца пункта.
+    xs = [f["x"] for f in files]
+    assert xs == sorted(xs) and abs((xs[0] + xs[-1]) / 2 - 0.5) < 0.01
+    assert {f["end"] for f in files} == {files[0]["end"]}
+    # Значок — на своём слове (−0.1 с), первый — с начала пункта.
+    assert files[0]["start"] == pytest.approx(0.0)
+    assert files[1]["start"] == pytest.approx(words[4]["start"] - 0.1, abs=1e-3)
+    assert files[1]["props"]["variant"] == "folder"
+    # Крест — на «без», время от начала своего значка.
+    psd = files[2]
+    assert psd["props"]["state"] == "bad"
+    assert psd["start"] + psd["props"]["delay"] == pytest.approx(words[5]["start"] - 0.05, abs=1e-3)
+
+
+def test_error_window_shakes_on_word() -> None:
+    plan = {"sentences": [{"text": "Открываешь программу а она не видит файл.",
+                           "gfx": [{"kind": "error", "app": "VTube Studio", "title": "Формат не поддерживается",
+                                    "text": "model.vrm", "shake": "видит", "x": 0.5, "y": 0.64}]}]}
+    words = _words(plan)
+    layers, _ = G.layers(plan, words, total=words[-1]["end"] + 1.0)
+    win = layers[0]
+    assert win["props"]["component"] == "window" and win["props"]["variant"] == "error"
+    assert win["props"]["label"] == "VTube Studio" and win["props"]["text"] == "model.vrm"
+    xs = win["keys"]["x"]
+    assert xs[0]["t"] == pytest.approx(words[5]["start"] - win["start"], abs=1e-3)
+    assert xs[0]["v"] == 0.5 and xs[-1]["v"] == 0.5 and min(k["v"] for k in xs) < 0.5 < max(k["v"] for k in xs)
+
+
+def test_files_without_items_is_an_error() -> None:
+    plan = {"sentences": [{"text": "Пусто.", "gfx": [{"kind": "files", "items": []}]}]}
+    with pytest.raises(G.GuideError):
+        G.layers(plan, _words(plan), total=3.0)
+
+
+def test_plan_guide_formats_is_valid() -> None:
+    """Гайд 6 «не открывается»: крючок, окно ошибки с кадра 0, значки файлов, в речи — без английских слов и сумм."""
+    import re
+
+    from app import vtubika_plan as P
+
+    plan = json.loads((Path(__file__).resolve().parent.parent / "tools" / "vtubika_plans" / "guide_formats.json").read_text("utf-8"))
+    assert plan["hook"]["word"].upper() == "НЕ ОТКРЫВАЕТСЯ?"
+    assert plan["vrm"]["heroine"] == "olya_host" and plan["voice"]["voice"] == "lily"
+    first = plan["sentences"][0]["gfx"]
+    err = next(g for g in first if g["kind"] == "error")
+    assert err["dt"] < 0 and err["in"] == "none" and "не поддерживается" in err["title"]
+    kinds = {g["kind"] for s in plan["sentences"] for g in s.get("gfx") or []}
+    assert "files" in kinds and kinds <= {"scrim", "panel", "pip", "title", "rows", "ui", "chip", "image", "seq", "pngtuber",
+                                          "text", "layer", "files", "error"}
+    exts = {f["ext"] for s in plan["sentences"] for g in s.get("gfx") or [] if g["kind"] == "files" for f in g["items"]}
+    assert {".model3.json", ".moc3", ".vrm", ".png", ".psd"} <= exts
+    speech = P.narration_text(plan)
+    assert not re.search(r"[A-Za-z]", speech), speech
+    assert not re.search(r"\d|₽|рубл|скидк|процент", speech), speech
+    # Free10 — только в концовке, как в гайде 5.
+    assert "Free10" in plan["end_card"]["promo"]
+    assert "Free10" not in json.dumps(plan["sentences"], ensure_ascii=False)

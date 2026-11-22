@@ -4,6 +4,7 @@
  * Общая сетка: поля 44, подпись капсом сверху, крупное — display 900, мелкое — body; одна кромка и тень.
  */
 import { bar, card, checkCircle, formatNumber, type G, iconTile, outBack, outCubic, pill, rgbaOf, rrect, setFont, text, textWidth, windowDots, wrap } from "./draw.ts";
+import { ERROR_RED } from "./file.ts";
 import { drawFlatIcon, flatIconName } from "./icons.ts";
 import { type FlatFrame, type FlatItem, type FlatUiProps, fontsOf, itemAt, items, num, str } from "./kit.ts";
 import { alpha, type FlatFonts, RADII, SHADOWS, TYPE } from "./tokens.ts";
@@ -316,6 +317,11 @@ type Bubble = { lines: string[]; w: number; h: number; me: boolean };
 type WindowL = { w: number; h: number; chrome: number; rows: Row[] | null; bubbles: Bubble[] | null; body: string[]; titleLines: string[] };
 
 const MSG = 31;
+// Окно ошибки: значок, заголовок, пояснение, кнопка.
+const ERR_ICON = 96;
+const ERR_TITLE = 50;
+const ERR_BODY = 38;
+const ERR_BTN = 64;
 
 function windowLayout(g: G, p: FlatUiProps): WindowL {
   const fonts = fontsOf(p);
@@ -328,6 +334,15 @@ function windowLayout(g: G, p: FlatUiProps): WindowL {
   let body: string[] = [];
   // Шапка окна — имя приложения (label, иначе title); title при заданном label — заголовок в теле.
   setFont(g, TYPE.heading, fonts, 42);
+  if (p.variant === "error") {
+    // Окно ошибки программы: красный значок, заголовок красным, пояснение, кнопка «ОК» — всё по центру.
+    setFont(g, TYPE.heading, fonts, ERR_TITLE);
+    const tl = p.title ? wrap(g, p.title, inner, 2) : [];
+    setFont(g, TYPE.body, fonts, ERR_BODY);
+    const bl = p.text ? wrap(g, p.text, inner, 3) : [];
+    const contentH = ERR_ICON + 22 + tl.length * ERR_TITLE * 1.15 + (bl.length ? 16 + bl.length * ERR_BODY * 1.3 : 0) + 28 + ERR_BTN;
+    return { w, h: Math.max(num(p.h, 0), chrome + PAD * 2 + contentH), chrome, rows: null, bubbles: null, body: bl, titleLines: tl };
+  }
   const titleLines = p.variant !== "chat" && p.label && p.title ? wrap(g, p.title, inner, 2) : [];
   const headH = titleLines.length ? titleLines.length * 42 * 1.15 + 30 : 0;
   let contentH = 0;
@@ -360,6 +375,10 @@ function drawWindow(fc: FlatFrame, p: FlatUiProps, L: WindowL): void {
   drawChrome(fc, left, top, L.w, L.chrome, browser ? "" : str(p.label || p.title || (p.variant === "chat" ? "Чат" : "Приложение")), browser ? str(p.url || "example.com") : null, RADII.lg);
   const x = left + PAD;
   let y = top + L.chrome + PAD;
+  if (p.variant === "error") {
+    drawErrorBody(fc, p, L, top + L.chrome + PAD);
+    return;
+  }
   for (const line of L.titleLines) {
     text(g, line, x, y + 42 * 0.58, TYPE.heading, pal.text, { fonts, size: 42 });
     y += 42 * 1.15;
@@ -417,6 +436,43 @@ function drawWindow(fc: FlatFrame, p: FlatUiProps, L: WindowL): void {
     text(g, line, x, y + 32 * 0.62, TYPE.body, pal.text, { fonts, size: 32 });
     y += 32 * 1.35;
   }
+}
+
+/** Тело окна ошибки: значок выпрыгивает на `delay` с слоя (по умолчанию сразу), заголовок — красным (ERROR_RED). */
+function drawErrorBody(fc: FlatFrame, p: FlatUiProps, L: WindowL, y0: number): void {
+  const { g, pal, fonts } = fc;
+  const red = ERROR_RED;
+  let y = y0;
+  // delay ≤ 0 — значок сразу на месте (кадр 0 — обложка), иначе выпрыгивает.
+  const k = num(p.delay, 0) <= 0 ? 1 : outBack((fc.local - num(p.delay, 0)) / 0.35);
+  g.save();
+  g.translate(0, y + ERR_ICON / 2);
+  g.scale(Math.max(0.01, k), Math.max(0.01, k));
+  g.beginPath();
+  g.arc(0, 0, ERR_ICON / 2, 0, Math.PI * 2);
+  g.fillStyle = rgbaOf(alpha(red.slice(0, 7), 0.18));
+  g.fill();
+  drawFlatIcon(g, flatIconName(p.icon) ? p.icon : "circle-x", 0, 0, ERR_ICON * 0.66, rgbaOf(red), 2.4);
+  g.restore();
+  y += ERR_ICON + 22;
+  for (const line of L.titleLines) {
+    text(g, line, 0, y + ERR_TITLE * 0.58, TYPE.heading, red, { fonts, size: ERR_TITLE, align: "center" });
+    y += ERR_TITLE * 1.15;
+  }
+  if (L.body.length) y += 16;
+  for (const line of L.body) {
+    text(g, line, 0, y + ERR_BODY * 0.62, TYPE.body, pal.muted, { fonts, size: ERR_BODY, align: "center" });
+    y += ERR_BODY * 1.3;
+  }
+  y += 28;
+  const bw = 200;
+  g.save();
+  g.beginPath();
+  rrect(g, -bw / 2, y, bw, ERR_BTN, ERR_BTN / 2);
+  g.fillStyle = rgbaOf(pal.text, 0.12);
+  g.fill();
+  g.restore();
+  text(g, "ОК", 0, y + ERR_BTN / 2, TYPE.item, pal.text, { fonts, size: 30, align: "center" });
 }
 
 /* ---------- раздача ---------- */
