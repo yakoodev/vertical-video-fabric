@@ -10,11 +10,13 @@
  *   ``zoom: [{t, v}]`` — последняя строка вылетает крупно в центр, остальное темнеет. ``paste`` — когда пузырь
  *   появился (поп), ``status: [{t, text, color}]`` — статус в шапке, ``fs`` — кегль при ширине 720, ``scale``.
  * - ``button_site`` — страничка сайта с большой кнопкой: цвет ``from`` → ``to`` в ``at`` (волна от клика и курсор),
- *   ``label`` — надпись кнопки, ``title`` — заголовок, ``toast`` — плашка после смены.
+ *   ``label`` — надпись кнопки, ``title`` — заголовок, ``toast`` — плашка после смены; ``empty`` — кнопки нет
+ *   (серия 10): пунктир на её месте, курсор ищет её с ``at``.
  *
  * Чистые функции разметки и прокрутки (``parseMarks``, ``layoutWall``, ``scrollAt``) — без холста, для тестов.
  */
 import { drawRich, drawUserAvatar, measureRich, rr } from "./meme_painters_rp.ts";
+import { drawEmptySpot, NIGHT_PAINTERS } from "./meme_painters_night.ts";
 
 type G = CanvasRenderingContext2D;
 type Painter = (g: G, W: number, H: number, t: number, p: Record<string, any>) => void;
@@ -360,6 +362,11 @@ const buttonSite: Painter = (g, W, H, t, p) => {
     rr(g, (W - w) / 2, (290 + i * 44) * s, w, 20 * s, 10 * s);
     g.fill();
   }
+  // Серия 10: кнопки нет — пунктирная пустота на её месте (meme_painters_night.ts).
+  if (p.empty) {
+    drawEmptySpot(g, W, H, t, p);
+    return;
+  }
   // Кнопка.
   const at = Number(p.at ?? 1e9);
   const k = clamp01((t - at) / 0.22);
@@ -425,4 +432,5 @@ const buttonSite: Painter = (g, W, H, t, p) => {
   }
 };
 
-export const PROMPT_PAINTERS: Record<string, Painter> = { prompt_wall: promptWall, button_site: buttonSite };
+// Серия 10 «Сделай за ночь»: дерево файлов (meme_painters_night.ts) — через этот же реестр экранов окна и ноутбука.
+export const PROMPT_PAINTERS: Record<string, Painter> = { prompt_wall: promptWall, button_site: buttonSite, ...NIGHT_PAINTERS };

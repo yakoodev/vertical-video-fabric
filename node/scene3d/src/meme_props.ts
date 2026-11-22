@@ -24,6 +24,7 @@ import { CMT_PROPS } from "./meme_props_cmt.ts";
 import { RP_PROPS } from "./meme_props_rp.ts";
 import { RAP_PROPS } from "./meme_props_rap.ts";
 import { PROMPT_PROPS } from "./meme_props_prompt.ts";
+import { NIGHT_PROPS } from "./meme_props_night.ts";
 
 const std = (color: string, extra: Partial<THREE.MeshStandardMaterialParameters> = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: 0.62, metalness: 0, ...extra });
@@ -564,4 +565,6 @@ export const MEME_PROPS: Record<string, (p: Record<string, any>) => Prop> = {
   ...RAP_PROPS,
   // Серия 9 «Промпт на три страницы»: пар над кружкой (meme_props_prompt.ts).
   ...PROMPT_PROPS,
+  // Серия 10 «Сделай за ночь»: стопка документации растёт (meme_props_night.ts).
+  ...NIGHT_PROPS,
 };

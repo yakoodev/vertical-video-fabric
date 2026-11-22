@@ -4,7 +4,8 @@
  * - ``monitor`` — ретро-монитор на ножке, экран — окно браузера с чатом (desk_ui.drawBrowser); state ``tab`` —
  *   активная вкладка, ``badge: {tab, text}`` — счётчик на вкладке (с момента ключа), ``glow`` — яркость;
  * - ``keyboard`` — клавиатура (клавиши одной сеткой), ``plant`` — горшок с листьями (листья чуть качаются),
- *   ``desk_lamp`` — лампа на шарнирах (свет — полем ``light`` объекта), ``window_frame`` — окно с вечерним небом;
+ *   ``desk_lamp`` — лампа на шарнирах (свет — полем ``light`` объекта), ``window_frame`` — окно с вечерним небом
+ *   (``sky`` — градиент, ``stars`` — сколько звёзд, ``sun`` {x, y, r, color} — диск солнца, ``lit`` — доля горящих окон);
  * - ``thought_bubble`` — облачко мыслей: пухлые «облака» + картинка из desk_ui.PANEL_PAINTERS (``panel``,
  *   ``panelParams``), хвостик кружков к голове (``trail``); state ``open`` 1/0 — раздувается «попом» / сдувается,
  *   картинка анимируется от момента открытия.
@@ -221,9 +222,23 @@ export function windowFrame(p: Record<string, any>): Prop {
   g.fillRect(0, 0, cw, chh);
   const r = rng(p.seed ?? 3);
   g.fillStyle = "rgba(255,240,210,0.9)";
-  for (let i = 0; i < 22; i++) {
+  const stars = Math.max(0, Math.round(p.stars ?? 22));
+  for (let i = 0; i < stars; i++) {
     g.beginPath();
     g.arc(r() * cw, r() * chh * 0.5, 1 + r() * 2.2, 0, Math.PI * 2);
+    g.fill();
+  }
+  // Солнце/луна диском с мягким ореолом: ``sun: {x, y, r, color}`` (доли окна).
+  if (p.sun) {
+    const sx = Number(p.sun.x ?? 0.7) * cw, sy = Number(p.sun.y ?? 0.6) * chh, sr = Number(p.sun.r ?? 0.08) * cw;
+    const halo = g.createRadialGradient(sx, sy, sr * 0.6, sx, sy, sr * 3.2);
+    halo.addColorStop(0, "rgba(255,236,190,0.7)");
+    halo.addColorStop(1, "rgba(255,236,190,0)");
+    g.fillStyle = halo;
+    g.fillRect(0, 0, cw, chh);
+    g.fillStyle = p.sun.color || "#fff1c9";
+    g.beginPath();
+    g.arc(sx, sy, sr, 0, Math.PI * 2);
     g.fill();
   }
   // Силуэт города.
@@ -233,7 +248,7 @@ export function windowFrame(p: Record<string, any>): Prop {
     const bw = 30 + r() * 60, bh = chh * (0.12 + r() * 0.3);
     g.fillRect(x, chh - bh, bw, bh);
     g.fillStyle = "rgba(255,214,140,0.85)";
-    for (let k = 0; k < 6; k++) if (r() > 0.45) g.fillRect(x + 6 + r() * (bw - 14), chh - bh + 8 + r() * (bh - 16), 6, 8);
+    for (let k = 0; k < 6; k++) if (r() > 1 - Number(p.lit ?? 0.55)) g.fillRect(x + 6 + r() * (bw - 14), chh - bh + 8 + r() * (bh - 16), 6, 8);
     g.fillStyle = p.city || "#3a2a44";
     x += bw + 4;
   }

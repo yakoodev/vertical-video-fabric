@@ -337,16 +337,18 @@ def _lufs_of(x) -> float:
     return float(np.mean(loud)) if len(loud) else -60.0
 
 
-def assemble_voice(work: Path) -> tuple[Path, Path, list[dict], list[dict], dict]:
+def assemble_voice(work: Path, ep=None, dur: float | None = None) -> tuple[Path, Path, list[dict], list[dict], dict]:
     """Реплики проб → дорожка ролика целыми фразами (склейки только в тишине между фразами); слова Whisper сдвигаются
     вместе с репликами, начало слова — не раньше начала отрезка (Whisper ставит его раньше тишины).
 
     Возвращает (обе дорожки, только Клод — для рта, реплики Клода — для субтитров, все реплики, интервалы). Голос юзера
-    выравнивается по громкости речи к Клоду (+USER_GAIN_DB), чтобы музыка под обоими приседала одинаково."""
+    выравнивается по громкости речи к Клоду (+USER_GAIN_DB), чтобы музыка под обоими приседала одинаково. ``ep`` —
+    модуль разметки другой серии того же устройства (LINES, USER_LINES, T1, is_user; серия 10), ``dur`` — её длина."""
     import numpy as np
 
+    E = ep or globals()["E"]
     takes: dict = {}
-    n = int(DUR * SR)
+    n = int((dur or DUR) * SR)
     both = np.zeros(n, dtype=np.float32)
     claude = np.zeros(n, dtype=np.float32)
     lines, spans = [], {}
@@ -558,14 +560,14 @@ def mix(video: Path, voice: Path, out: Path, work: Path, report: dict) -> None:
     report["mix_notes"] = notes
 
 
-def encode(src: Path, out: Path, tg: Path, work: Path) -> None:
+def encode(src: Path, out: Path, tg: Path, work: Path, dur: float | None = None) -> None:
     """Финал (crf 17) и копия для Telegram — x264 в два прохода под < 19 МБ."""
     common = ["-fps_mode", "cfr", "-r", str(FPS), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-profile:v", "high", "-level", "4.2", "-g", str(FPS)]
     vf = ["-vf", "scale=1080:1920:flags=lanczos,setsar=1"]
     P1._run(["ffmpeg", "-y", "-v", "error", "-i", str(src), *vf, *common, "-preset", "slow", "-crf", "17", "-maxrate", "12M", "-bufsize", "24M",
              "-movflags", "+faststart", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", str(out)], "финал")
     audio_kbps = 128
-    kbps = int(18.3 * 8 * 1024 / DUR) - audio_kbps
+    kbps = int(18.3 * 8 * 1024 / (dur or DUR)) - audio_kbps
     log = work / "x264_2pass"
     for n in (1, 2):
         dst = ["-an", "-f", "mp4", "NUL"] if n == 1 else ["-c:a", "aac", "-b:a", f"{audio_kbps}k", "-ar", "48000", "-movflags", "+faststart", str(tg)]
@@ -618,13 +620,13 @@ def check_words(final: Path, work: Path) -> dict:
     return {"ratio": round(sm.ratio(), 3), "script_words": len(want), "heard_words": len(got), "diffs": diffs, "text": " ".join(w["w"] for w in heard)}
 
 
-def voice_joins(x, sr: int = SR) -> dict:
+def voice_joins(x, sr: int = SR, lines: list | None = None) -> dict:
     """Непрерывность голоса по готовой дорожке: фразы не наезжают и не стыкуются без паузы, внутри фразы нет вставленной
     тишины длиннее 0.6 с и щелчков (скачок соседних сэмплов > 0.5)."""
     import numpy as np
 
     issues = []
-    spans = [(at, at + (b - a), lid) for lid, _tk, a, b, at, _tx in E.LINES]
+    spans = [(at, at + (b - a), lid) for lid, _tk, a, b, at, _tx in (lines or E.LINES)]
     for (_a0, a1, la), (b0, _b1, lb) in zip(spans, spans[1:]):
         if b0 < a1 + 0.05:
             issues.append(f"{la}→{lb}: наезд или стык без паузы ({b0 - a1:+.2f} с)")
@@ -670,11 +672,11 @@ def frame_f0(seg, sr: int, lo: float = 70.0, hi: float = 350.0) -> list[float]:
     return out
 
 
-def voice_identity(x, sr: int = SR) -> dict:
+def voice_identity(x, sr: int = SR, lines: list | None = None) -> dict:
     """Непрерывность голосов по тону: медиана F0 каждой реплики; у каждого голоса реплики в пределах ±25% от его
     медианы, а голоса юзера и Клода различимы (медианы расходятся > 10%)."""
     per: dict[str, float] = {}
-    for lid, _tk, a, b, at, _tx in E.LINES:
+    for lid, _tk, a, b, at, _tx in (lines or E.LINES):
         f0 = frame_f0(np.asarray(x[int(at * sr):int((at + b - a) * sr)]), sr)
         if len(f0) >= 5:
             per[lid] = round(float(np.median(f0)), 1)
@@ -750,7 +752,7 @@ def _box_gap(p: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> tuple[float, floa
     return gap, inside
 
 
-def hand_checks(samples: list[dict], hold_from: float) -> dict:
+def hand_checks(samples: list[dict], hold_from: float, shots: list | None = None) -> dict:
     """Проверки tools/model_check (anim_checks) для руки с кружкой: рывки рук и кружки по кадрам (``jumps``) и контакт
     ближней руки с кружкой, пока держит (``hand_contact``). ``samples`` — вывод --inspect-list по кадрам."""
     sys.path.insert(0, str(ROOT / "tools" / "model_check"))
@@ -769,7 +771,7 @@ def hand_checks(samples: list[dict], hold_from: float) -> dict:
         gap.append(best[0])
         pen.append(best[1])
         weight.append(1.0 if s["t"] >= hold_from else 0.0)
-    cuts = [round(a0 * FPS) for a0, _a1, _n in SHOTS]
+    cuts = [round(a0 * FPS) for a0, _a1, _n in (shots or SHOTS)]
     jumps = AC.jumps(np.asarray(pos), frames, cuts=cuts, labels=["hand_l", "hand_r", "mug"])
     contact = AC.hand_contact("mug", gap, pen, weight, frames)
     return {"jumps": jumps, "hand_contact": contact}
