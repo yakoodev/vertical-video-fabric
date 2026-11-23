@@ -355,6 +355,11 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
             store.db.execute(f"UPDATE feed_versions SET {sets} WHERE id = ?", (*updates.values(), same))
             _touch(store, work_id)
         return get_version(store, same)
+    from app import feed_replace
+
+    target = feed_replace.replace_target(store, int(work_id), resolved)
+    if target is not None:  # сова, гайды: новая сборка заменяет файл невыложенной версии (app/clip_replace.py)
+        return get_version(store, feed_replace.replace_files(store, target, resolved, note, label))
     moved: list[tuple[int, Path, Path]] = []
     with store.db.transaction():
         row = store.db.query_one("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM feed_versions WHERE work_id = ?",

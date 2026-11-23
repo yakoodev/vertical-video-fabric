@@ -605,6 +605,10 @@ class Database:
             from app.feed import ensure_feed_schema
 
             ensure_feed_schema(conn)
+            # Новая версия заменяет невыложенную прошлую (сова, гайды): кто кого заменил (app/clip_replace.py).
+            from app.clip_replace import ensure_schema as ensure_clip_replace_schema
+
+            ensure_clip_replace_schema(conn)
             # Автопилот канала: очередь одобрения, лента, расписание, Telegram, чат проекта (app/autopilot.py).
             from app.autopilot import ensure_autopilot_schema
 

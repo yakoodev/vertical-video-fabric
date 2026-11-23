@@ -47,9 +47,9 @@ def test_upload_key_keeps_episode_numbers():
 def test_same_title_same_project_becomes_version(env):
     client, store, _size = env
     pid = P.create_project(store, "Витубика")["id"]
-    first = _up(client, title="Гайд №5", project_id=str(pid), pipeline="vtubika_guide")
-    second = _up(client, title="Гайд №5 (v1b)", project_id=str(pid), pipeline="vtubika_guide")
-    third = _up(client, name="гайд_5_v2.mp4", title="Гайд №5 v2", project_id=str(pid), pipeline="vtubika_guide")
+    first = _up(client, title="Гайд №5", project_id=str(pid), pipeline="music_video")
+    second = _up(client, title="Гайд №5 (v1b)", project_id=str(pid), pipeline="music_video")
+    third = _up(client, name="гайд_5_v2.mp4", title="Гайд №5 v2", project_id=str(pid), pipeline="music_video")
     assert second["version_of"] == first["clip_plan_id"] and second["version_auto"] is True
     assert third["version_of"] == second["clip_plan_id"]
     assert _members(store, first["clip_plan_id"]) == [first["clip_plan_id"], second["clip_plan_id"], third["clip_plan_id"]]

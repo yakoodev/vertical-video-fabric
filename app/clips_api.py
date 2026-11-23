@@ -24,8 +24,8 @@ from app.thumbs import clip_thumb
 
 COVER_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
 # Что ещё отдаёт загрузка: версия чего (и узнана ли сама), почему не версия, версия в «Ленте».
-UPLOAD_EXTRA = ("version_of", "version_auto", "version_note", "feed_work_id", "feed_version", "feed_version_id",
-                "feed_note")
+UPLOAD_EXTRA = ("version_of", "version_auto", "version_note", "replaced", "feed_work_id", "feed_version",
+                "feed_version_id", "feed_note")
 
 
 def _clip_screen(clip: dict) -> str:
@@ -346,6 +346,10 @@ def build_clips_router(
                 linked = clip_upload.attach_upload_version(get_store(), plan_id, previous)
                 clip = {**clip, **linked, "version_auto": auto and bool(linked.get("version_of"))}
                 if linked.get("version_of"):
+                    from app import clip_replace
+
+                    if clip_replace.replaces(pipeline):  # сова, гайды: прошлая невыложенная заменяется, не копится
+                        clip = {**clip, "replaced": clip_replace.supersede_older(get_store(), plan_id)["replaced"]}
                     name = store_title(plan_id)
                     clip.update(upload_versions.follow_in_feed(get_store(), plan_id, before, name))
             return clip
