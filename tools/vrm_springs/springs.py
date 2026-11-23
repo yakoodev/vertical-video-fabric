@@ -392,6 +392,7 @@ DEFAULTS = {
     'Hood': dict(dragForce=0.45),
     'TopsUpperArm': dict(dragForce=0.85, stiffiness=4.0),
     'Bust': dict(keep=True),
+    'Sleeve': dict(keep=True),          # (more damping only made the sleeve ends flick: their own setup is kept)
     'cloth': dict(dragForce=0.4),
 }
 CLOTH_COLLIDE = {'HoodString': ('J_Bip_C_UpperChest', 'J_Bip_C_Spine', 'J_Bip_C_Chest'),
@@ -456,6 +457,10 @@ def fix(glb: Glb, profile: dict | None = None) -> dict:
     hair_bones = ('J_Bip_C_Head', 'J_Bip_C_Neck', 'J_Bip_C_UpperChest', 'J_Bip_L_Shoulder', 'J_Bip_R_Shoulder',
                   'J_Bip_C_Chest', 'J_Bip_C_Spine')
 
+    # stiff front / side / crown locks only meet the head and neck: a shoulder sphere rising into their 7 cm virtual
+    # tails snapped them sideways for 2-3 frames in a walk (measured: 7 cm tip steps)
+    head_bones = ('J_Bip_C_Head', 'J_Bip_C_Neck')
+
     def head_clearance(tails_xyz):
         """smallest gap between the rest tails and the new head / face spheres"""
         gap = 1.0
@@ -496,7 +501,8 @@ def fix(glb: Glb, profile: dict | None = None) -> dict:
             hit = hair_hit(tl, p['hitRadius'])
             groups.append({'comment': 'Hair_' + cls, 'stiffiness': p['stiffiness'], 'gravityPower': p['gravityPower'],
                            'gravityDir': _vec((0, -1, 0)), 'dragForce': p['dragForce'], 'center': -1,
-                           'hitRadius': round(hit, 4), 'bones': [r], 'colliderGroups': usable(tl, hit - 0.0031, hair_bones)})
+                           'hitRadius': round(hit, 4), 'bones': [r],
+                           'colliderGroups': usable(tl, hit - 0.0031, hair_bones if cls == 'back' else head_bones)})
             ncol.append(len(groups[-1]['colliderGroups']))
             hits.append(round(hit, 4))
         rep['hair'][cls] = dict(roots=[rig.nodes[r]['name'] for r in roots], colliders=[min(ncol), max(ncol)],
