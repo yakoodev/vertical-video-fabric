@@ -345,6 +345,21 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
     if len(specs) > MAX_VARIANTS:
         raise ValueError(f"не больше {MAX_VARIANTS} вариантов в версии")
     resolved = [_resolve_media(store, spec) for spec in specs]
+    same = _same_as_latest(store, int(work_id), [m.get("clip_id") for m in resolved])
+    if same is not None:
+        # Те же клипы, что в последней версии (её уже добавила загрузка, app/upload_versions.py): второй раз ту же
+        # версию не заводим — заметка и подпись агента ложатся на неё.
+        updates = {k: v for k, v in (("note", _long_text(note, 2000)), ("label", _text(label, 40))) if v}
+        if updates:
+            sets = ", ".join(f"{k} = ?" for k in updates)
+            store.db.execute(f"UPDATE feed_versions SET {sets} WHERE id = ?", (*updates.values(), same))
+            _touch(store, work_id)
+        return get_version(store, same)
+    from app import feed_replace
+
+    target = feed_replace.replace_target(store, int(work_id), resolved)
+    if target is not None:  # сова, гайды: новая сборка заменяет файл невыложенной версии (app/clip_replace.py)
+        return get_version(store, feed_replace.replace_files(store, target, resolved, note, label))
     moved: list[tuple[int, Path, Path]] = []
     with store.db.transaction():
         row = store.db.query_one("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM feed_versions WHERE work_id = ?",
@@ -364,6 +379,25 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
     _after_variants(store, moved)
     _kick_previews(store)
     return get_version(store, int(version["id"]))
+
+
+# Заметка версии, которую добавила сама загрузка файла (app/upload_versions.follow_in_feed).
+UPLOAD_NOTE = "Новая загрузка «"
+
+
+def _same_as_latest(store: Any, work_id: int, clip_ids: list[Any]) -> int | None:
+    """id последней версии работы, если её добавила загрузка (``UPLOAD_NOTE``) и в ней ровно эти клипы, иначе None.
+    Остальные повторы — как раньше: новая версия (перезапуск задания может сдать тот же файл ещё раз)."""
+    if not clip_ids or not all(clip_ids):
+        return None
+    latest = store.db.query_one("SELECT id, note FROM feed_versions WHERE work_id = ? ORDER BY n DESC LIMIT 1",
+                                (int(work_id),))
+    if not latest or not str(latest["note"] or "").startswith(UPLOAD_NOTE):
+        return None
+    rows = store.db.query_all("SELECT id, clip_id FROM feed_variants WHERE version_id = ?", (int(latest["id"]),))
+    if sorted(int(c) for c in clip_ids) != sorted(int(r["clip_id"] or 0) for r in rows):
+        return None
+    return int(latest["id"])
 
 
 def add_variant(store: Any, version_id: int, spec: dict) -> dict:

@@ -125,6 +125,11 @@ def marks_for_plans(store: Any, plan_ids: list[int]) -> dict:
     return {"pubs": _publications_by_plan(store, ids), "notes": _notes_by_plan(store, ids)}
 
 
+def published_count(store: Any, plan_ids: list[int]) -> int:
+    """Сколько раз выложены планы (сервисом, руками, отметкой ленты — у неё тоже есть план): 0 — ещё нигде."""
+    return sum(len(v) for v in _publications_by_plan(store, sorted({int(i) for i in plan_ids})).values())
+
+
 def card_marks(plan_ids: list[int], marks: dict) -> dict:
     """Поля карточки клипа: опубликовано всего, список публикаций, заметка."""
     pubs = _sorted([p for i in plan_ids for p in marks["pubs"].get(int(i), [])])

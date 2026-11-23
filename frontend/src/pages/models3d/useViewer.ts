@@ -1,11 +1,12 @@
 /**
  * Окно просмотра 3D как хук: сцена, загрузка модели с ходом, VRM-риг и цикл кадров. Состояние кнопок — в React,
  * цикл кадров читает его через ref (без перерисовки страницы 60 раз в секунду); время клипа отдаётся ~10 раз в
- * секунду для полосы прокрутки.
+ * секунду для полосы прокрутки. У клипов «лестница» и «сидит» — реквизит по самой анимации (viewer/props.ts).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { fetchWithProgress, type AnimClip, type Asset3d } from "@/api/assets3d";
+import { ClipProp, PROP_BONES, type PropInfo, type PropKind } from "./viewer/props";
 import { Stage, type Background, type LightPreset, type ViewPreset } from "./viewer/stage";
 import { parseModel, VrmRig, type PoseName } from "./viewer/vrmRig";
 
@@ -22,6 +23,8 @@ export interface ViewerOptions {
   speed: number;
   loop: boolean;
   move: boolean;
+  /** Показать реквизит клипа (ступени, стул), если он у клипа есть. */
+  prop: boolean;
 }
 
 export const DEFAULT_OPTIONS: ViewerOptions = {
@@ -37,6 +40,7 @@ export const DEFAULT_OPTIONS: ViewerOptions = {
   speed: 1,
   loop: true,
   move: false,
+  prop: true,
 };
 
 export type Phase = "loading" | "parsing" | "ready" | "error";
@@ -49,6 +53,8 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
   const clipRef = useRef<AnimClip | null>(null);
   const timeRef = useRef(0);
   const seekRef = useRef<number | null>(null);
+  const propRef = useRef<ClipProp | null>(null);
+  const propCache = useRef(new Map<string, ClipProp | null>());
   const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState("");
   const [progress, setProgress] = useState({ done: 0, total: 0 });
@@ -57,6 +63,7 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
   const [clipDuration, setClipDuration] = useState(0);
   const [ended, setEnded] = useState(false);
   const [vrmReady, setVrmReady] = useState(false);
+  const [propInfo, setPropInfo] = useState<PropInfo | null>(null);
   optsRef.current = opts;
 
   // Сцена и модель: заново при смене модели.
@@ -68,6 +75,9 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
     stageRef.current = stage;
     rigRef.current = null;
     clipRef.current = null;
+    propRef.current = null;
+    propCache.current = new Map();
+    setPropInfo(null);
     setVrmReady(false);
     setPhase("loading");
     setProgress({ done: 0, total: 0 });
@@ -134,6 +144,11 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
             step = 0;
           }
           rig.update(timeRef.current, step, o.loop);
+          const prop = propRef.current;
+          if (prop) {
+            prop.update(rig.frameIndex(timeRef.current, o.loop));
+            stage.placeProp(rig.propShift(timeRef.current, o.loop), o.prop);
+          }
         } else {
           sceneT += dt;
           rig.update(sceneT, dt, true);
@@ -167,6 +182,7 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
       alive = false;
       abort.abort();
       cancelAnimationFrame(raf);
+      for (const p of propCache.current.values()) p?.dispose();
       stage.dispose();
       stageRef.current = null;
       rigRef.current = null;
@@ -187,15 +203,31 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
     rig.autoBlink = opts.autoBlink;
   }, [opts.expression, opts.pose, opts.breathing, opts.autoBlink, vrmReady]);
 
-  const setClip = useCallback((clip: AnimClip | null, move: boolean, loop = true) => {
+  const setClip = useCallback((clip: AnimClip | null, move: boolean, loop = true, propKind: PropKind | null = null) => {
     const rig = rigRef.current;
+    const stage = stageRef.current;
     clipRef.current = clip;
     timeRef.current = 0;
     setEnded(false);
     setClipTime(0);
-    if (!rig) return;
+    if (!rig || !stage) return;
     rig.setClip(clip, move, loop);
     setClipDuration(rig.duration());
+    // Реквизит меряется по клипу один раз (путь «с перемещением» от режима не зависит).
+    let prop: ClipProp | null = null;
+    if (clip && propKind) {
+      const key = `${propKind}:${clip.id}`;
+      if (!propCache.current.has(key)) {
+        const tr = rig.trace(PROP_BONES);
+        propCache.current.set(key, !tr ? null : propKind === "stairs"
+          ? ClipProp.stairs(tr, (b) => rig.restHeight(b), stage.propMat, stage.propEdge)
+          : ClipProp.chair(tr, rig.legLength, stage.propMat, stage.propEdge));
+      }
+      prop = propCache.current.get(key) ?? null;
+    }
+    propRef.current = prop;
+    stage.setProp(prop?.root ?? null);
+    setPropInfo(prop?.info ?? null);
     if (!move || !clip) stageRef.current?.reset(true);
   }, []);
 
@@ -215,5 +247,5 @@ export function useViewer(asset: Asset3d | undefined, opts: ViewerOptions) {
   const snapshot = useCallback(() => stageRef.current?.snapshot() ?? Promise.resolve(null), []);
 
   return { hostRef, phase, error, progress, expressions, vrmReady, clipTime, clipDuration, ended, setClip, seek, restart,
-    view, reset, snapshot };
+    view, reset, snapshot, propInfo };
 }

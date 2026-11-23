@@ -45,9 +45,12 @@ def create_plan(store: Any, source: dict, title: str, description: str = "", pro
 
 
 def register_source_file(store: Any, source_path: Path, safe_name: str, size: int, metadata: Any, title: str,
-                         description: str = "", project_id: int | None = None) -> dict:
+                         description: str = "", project_id: int | None = None, pipeline: str = "") -> dict:
     """Готовый файл, уже лежащий в папке исходников, — клип: скрытый источник ``clip_upload`` (нетронутая копия),
-    копия файла выходом клипа (status succeeded), план (``create_plan``). Ответ — запись клипа."""
+    копия файла выходом клипа (status succeeded), план (``create_plan``). ``pipeline`` — какой конвейер загрузил
+    (app/upload_versions.py: версия узнаётся только у загрузок того же конвейера). Ответ — запись клипа."""
+    from app.upload_versions import clean_pipeline
+
     import shutil
     from uuid import uuid4
 
@@ -56,7 +59,8 @@ def register_source_file(store: Any, source_path: Path, safe_name: str, size: in
     source = store.create_source(
         UPLOAD_SOURCE_TYPE, source_path, original_filename=safe_name, size_bytes=size,
         duration_sec=metadata.duration_sec, width=metadata.width, height=metadata.height, fps=metadata.fps,
-        metadata={"standalone_clip": True}, status="ready",
+        metadata={"standalone_clip": True, **({"pipeline": clean_pipeline(pipeline)} if clean_pipeline(pipeline) else {})},
+        status="ready",
     )
     clip_path = settings.clip_dir / f"{uuid4().hex}-{safe_name}"
     clip_path.parent.mkdir(parents=True, exist_ok=True)

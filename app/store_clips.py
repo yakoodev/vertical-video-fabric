@@ -314,6 +314,10 @@ class ClipsStore:
                 clip_id,
             ),
         )
+        if status == "succeeded":
+            from app.clip_replace import safe_after_render
+
+            safe_after_render(self, clip_id)  # сова и гайды: новая версия заменяет прошлую невыложенную
         return self.get_clip(clip_id)
 
     def delete_clip(self, clip_id: int) -> None:

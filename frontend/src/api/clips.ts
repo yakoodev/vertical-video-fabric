@@ -72,7 +72,11 @@ export const clipsApi = {
     fd.append("title", options.title ?? "");
     fd.append("description", options.description ?? "");
     if (options.projectId) fd.append("project_id", String(options.projectId));
-    return api.form<{ clip_id: number; clip_plan_id: number; to: string; project_id: number | null }>("/api/clips/upload", fd);
+    // Тот же ролик (название, проект, формат) ещё не выложен — новый файл становится его версией (version_of, app/upload_versions.py).
+    return api.form<{
+      clip_id: number; clip_plan_id: number; to: string; project_id: number | null;
+      version_of?: number; version_auto?: boolean; version_note?: string; feed_version?: string;
+    }>("/api/clips/upload", fd);
   },
 };
 

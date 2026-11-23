@@ -84,7 +84,9 @@ export class VrmRig {
   private clipRoot0 = new THREE.Vector3();
   private blinkT = 2.5;
   private hipsWorld = new THREE.Vector3();
+  /** Пол под стопами по кадрам (сглаженный минимум) и на первом кадре: «на месте» — первое, «с перемещением» — второе. */
   private ground: Float32Array | null = null;
+  private ground0 = 0;
   private avgX: Float32Array | null = null;
   private avgZ: Float32Array | null = null;
   /** Высота носков и пяток в покое (м) — от неё меряем, стоит ли клип на полу. */
@@ -151,7 +153,8 @@ export class VrmRig {
       }
       const fps = clip.fps || 30;
       const ground = movingAvg(movingMin(low, Math.round(fps * 1.2), loop), Math.round(fps * 0.4), loop);
-      this.ground = move ? new Float32Array(n).fill(ground[0]) : ground;
+      this.ground = ground;
+      this.ground0 = ground[0];
       const rx = new Float32Array(n), rz = new Float32Array(n);
       for (let f = 0; f < n; f++) {
         const r = clip.root[Math.min(f, clip.root.length - 1)];
@@ -242,10 +245,57 @@ export class VrmRig {
       const off = raw
         ? new THREE.Vector3(0, r.y, 0)
         : this.clipMove
-          ? new THREE.Vector3(r.x - this.clipRoot0.x * k, r.y - this.lerpArr(this.ground, at), r.z - this.clipRoot0.z * k)
+          ? new THREE.Vector3(r.x - this.clipRoot0.x * k, r.y - this.ground0, r.z - this.clipRoot0.z * k)
           : new THREE.Vector3(r.x - this.lerpArr(this.avgX, at), r.y - this.lerpArr(this.ground, at), r.z - this.lerpArr(this.avgZ, at));
       hips.position.copy(this.hips0).add(off.applyQuaternion(this.R0i));
     }
+  }
+
+  /** Высота кости над полом в покое (м): от неё меряем, где подошва (реквизит, пол клипа). */
+  restHeight(name: string): number {
+    return this.feet0.find(([n]) => n === name)?.[1] ?? 0;
+  }
+
+  /** Ближайший кадр клипа ко времени (для реквизита: какой кусок лестницы показывать). */
+  frameIndex(time: number, loop: boolean): number {
+    if (!this.clip) return 0;
+    const at = this.frameAt(time, loop);
+    return at.k < 0.5 ? at.i : at.j;
+  }
+
+  /**
+   * Где кости по всем кадрам «с перемещением» (мир): по этому пути строится реквизит — ступени по стопам, стул по тазу.
+   * Режим и кости после прохода — как были.
+   */
+  trace(names: string[]): { fps: number; frames: number; pos: Record<string, Float32Array> } | null {
+    const c = this.clip;
+    if (!c?.root?.length) return null;
+    const keep = this.clipMove;
+    this.clipMove = true;
+    const pos: Record<string, Float32Array> = {};
+    const nodes = names.map((n) => [n, this.node(n)] as const).filter(([, o]) => o);
+    for (const [n] of nodes) pos[n] = new Float32Array(c.frames * 3);
+    for (let f = 0; f < c.frames; f++) {
+      this.applyClip(f / c.fps, false);
+      this.vrm.scene.updateMatrixWorld(true);
+      for (const [n, o] of nodes) o!.getWorldPosition(this.tmp).toArray(pos[n], f * 3);
+    }
+    this.clipMove = keep;
+    this.resetBones();
+    return { fps: c.fps || 30, frames: c.frames, pos };
+  }
+
+  /**
+   * Насколько мир «на месте» сдвинут против мира «с перемещением» в этот момент: реквизит построен во втором и едет
+   * вместе с персонажем (лестница уходит вниз и назад, пока он шагает на месте). С перемещением — ноль.
+   */
+  propShift(time: number, loop: boolean, out = new THREE.Vector3()): THREE.Vector3 {
+    const c = this.clip;
+    if (!c?.root?.length || this.clipMove) return out.set(0, 0, 0);
+    const at = this.frameAt(time, loop);
+    const k = c.legLength ? this.legLength / c.legLength : 1;
+    return out.set(this.clipRoot0.x * k - this.lerpArr(this.avgX, at), this.ground0 - this.lerpArr(this.ground, at),
+      this.clipRoot0.z * k - this.lerpArr(this.avgZ, at));
   }
 
   private applyPose(t: number) {

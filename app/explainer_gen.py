@@ -651,6 +651,13 @@ def assemble(store: Any, video_id: int) -> dict:
     version = CG.finish_assembly(store, clip_id, previous)
     if version["note"] and not version["linked"]:
         notes.append(version["note"])
+    if version["linked"]:
+        # Прошлые невыложенные сборки заменятся этой, когда у неё будет готовый файл (app/clip_replace.py).
+        from app.clip_replace import request as replace_previous
+
+        replace_previous(store, clip_id)
+        version = {**version, "note": "новая версия заменит прошлую невыложенную, когда отрендерится; выложенные "
+                                      "остаются версиями клипа"}
     timeline = {"duration": total, "clip_id": clip_id, "audio_sec": round(audio_sec, 2),
                 "editor_url": f"/clips/{clip_id}", "version": version, "subtitle_fixes": sub_fixes,
                 "voice": E.describe_voice(voice, float(job.get("cost_rub") or 0.0)), "dry_run": dry,

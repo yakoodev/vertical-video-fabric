@@ -23,6 +23,9 @@ from app.thumbs import clip_thumb
 
 
 COVER_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+# Что ещё отдаёт загрузка: версия чего (и узнана ли сама), почему не версия, версия в «Ленте».
+UPLOAD_EXTRA = ("version_of", "version_auto", "version_note", "replaced", "feed_work_id", "feed_version",
+                "feed_version_id", "feed_note")
 
 
 def _clip_screen(clip: dict) -> str:
@@ -73,11 +76,15 @@ def build_clips_router(
         project_id: Annotated[str, Form()] = "",
         version_of: Annotated[str, Form(description="id клипа (плана), прошлой загрузки этого же ролика: новый файл "
                                                      "станет его версией, а не отдельным клипом")] = "",
+        new_clip: Annotated[str, Form(description="true — отдельным клипом, даже если это похоже на новую версию прошлой "
+                                                   "загрузки (app/upload_versions.py)")] = "",
+        pipeline: Annotated[str, Form(description="какой конвейер загружает (vtubika_guide, explainer…): версией "
+                                                   "становится только загрузка того же конвейера")] = "",
     ) -> dict:
-        clip = await _accept_upload(file, title, description, project_id, version_of)
+        clip = await _accept_upload(file, title, description, project_id, version_of, new_clip, pipeline)
         return {"clip_id": int(clip["id"]), "clip_plan_id": int(clip["clip_plan_id"]), "to": _clip_screen(clip),
                 "project_id": (clip.get("project_id") if clip.get("version_of") else None) or _optional_form_int(project_id),
-                **{k: clip[k] for k in ("version_of", "version_note") if clip.get(k)}}
+                **{k: clip[k] for k in UPLOAD_EXTRA if clip.get(k)}}
 
     @router.post("/ui/clips/{clip_id}/render", include_in_schema=False)
     def ui_render_uploaded_clip(
@@ -310,8 +317,10 @@ def build_clips_router(
             raise HTTPException(status_code=404, detail="cover not found") from exc
         return FileResponse(path, media_type="image/jpeg")
 
-    async def _accept_upload(file: UploadFile, title: str, description: str, project_id: str, version_of: str = "") -> dict:
-        from app import clip_upload
+    async def _accept_upload(file: UploadFile, title: str, description: str, project_id: str, version_of: str = "",
+                             new_clip: str = "", pipeline: str = "") -> dict:
+        from app import clip_upload, upload_versions
+        from app.clip_groups import group_members
         from app.projects import get_project
 
         try:
@@ -324,10 +333,25 @@ def build_clips_router(
                     clip_upload.check_version_of(get_store(), previous)  # тоже до записи файла
                 except KeyError as exc:
                     raise HTTPException(status_code=404, detail=f"нет клипа #{previous} для version_of") from exc
-            clip = await _register_uploaded_clip(file, title, description, wanted)
+            clip = await _register_uploaded_clip(file, title, description, wanted, pipeline)
+            plan_id = int(clip["clip_plan_id"])
+            auto = False
+            if previous is None and str(new_clip).strip().lower() not in ("1", "true", "yes", "on"):
+                found = upload_versions.find_previous(get_store(), plan_id, wanted)
+                previous, auto = found["of"], found["of"] is not None
+                if found["note"]:
+                    clip = {**clip, "version_note": found["note"]}
             if previous is not None:
-                linked = clip_upload.attach_upload_version(get_store(), int(clip["clip_plan_id"]), previous)
-                clip = {**clip, **linked}
+                before = [int(m["id"]) for m in group_members(get_store(), previous)]
+                linked = clip_upload.attach_upload_version(get_store(), plan_id, previous)
+                clip = {**clip, **linked, "version_auto": auto and bool(linked.get("version_of"))}
+                if linked.get("version_of"):
+                    from app import clip_replace
+
+                    if clip_replace.replaces(pipeline):  # сова, гайды: прошлая невыложенная заменяется, не копится
+                        clip = {**clip, "replaced": clip_replace.supersede_older(get_store(), plan_id)["replaced"]}
+                    name = store_title(plan_id)
+                    clip.update(upload_versions.follow_in_feed(get_store(), plan_id, before, name))
             return clip
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Такого проекта нет") from exc
@@ -336,7 +360,12 @@ def build_clips_router(
         finally:
             await file.close()
 
-    async def _register_uploaded_clip(file: UploadFile, title: str, description: str, project_id: int | None = None) -> dict:
+    def store_title(plan_id: int) -> str:
+        row = get_store().db.query_one("SELECT title FROM clip_plans WHERE id = ?", (int(plan_id),))
+        return str(row["title"]) if row else ""
+
+    async def _register_uploaded_clip(file: UploadFile, title: str, description: str, project_id: int | None = None,
+                                      pipeline: str = "") -> dict:
         """Ingest a finished video and register it as a real clip with its own screen.
 
         The pristine upload is stored in the source directory as a backing
@@ -373,6 +402,6 @@ def build_clips_router(
             source_path.unlink(missing_ok=True)
             raise ValueError(f"uploaded clip is not a readable video: {exc}") from exc
         return clip_upload.register_source_file(get_store(), source_path, safe_name, size, metadata, title,
-                                                description, project_id)
+                                                description, project_id, pipeline)
 
     return router

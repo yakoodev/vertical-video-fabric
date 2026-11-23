@@ -138,6 +138,12 @@ def _project_of(store: Any, plan: dict) -> dict | None:
     return {"id": int(row["id"]), "name": row["name"]} if row else None
 
 
+def _replaced(store: Any, group_id: Any) -> list[dict]:
+    from app.clip_replace import replaced_in_group
+
+    return replaced_in_group(store, group_id)
+
+
 def clip_view(store: Any, clip_plan_id: int) -> dict:
     """Всё для экрана клипа /clips/:id одним ответом."""
     from app.nav import titles_for
@@ -302,6 +308,8 @@ def clip_view(store: Any, clip_plan_id: int) -> dict:
             for p in plans
         ],
         "versions": clip_versions(store, plans),
+        # Прошлые невыложенные версии, которые заменила новая (сова, гайды — app/clip_replace.py): файлы остались.
+        "replaced": _replaced(store, head.get("clip_group_id")),
         "version_count": card["versions"],
         "drafts": card["drafts"],
         "segments": segments,
