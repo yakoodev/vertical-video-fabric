@@ -193,7 +193,20 @@ def parse_renames(values: Iterable[str]) -> list[tuple[int, str]]:
     return out
 
 
+def utf8_console() -> None:
+    """Вывод в UTF-8: в консоли Windows (cp1251) печать «→» и кавычек «» падала с UnicodeEncodeError посреди
+    загрузки (22.11). Поток без ``reconfigure`` (подменённый) — как есть, но без падений на знаках."""
+    for stream in (sys.stdout, sys.stderr):
+        enc = (getattr(stream, "encoding", "") or "").lower().replace("-", "")
+        if enc != "utf8" and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # поток уже закрыт или не перенастраивается
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    utf8_console()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--base", default="http://127.0.0.1:8088")
     ap.add_argument("--token-file", default="")

@@ -14,7 +14,7 @@ import pytest
 from app import stream_preview as sp
 from app.render import _render_filter, build_ffmpeg_render_args
 from app.transitions import join_picture_filters, normalize_transition, plan_joins
-from test_api_pipeline import _require_ffmpeg
+from test_api_pipeline import _require_compositor, _require_ffmpeg
 from test_clip_spec import _setup
 
 
@@ -198,7 +198,7 @@ def test_stream_has_the_frames_of_the_real_render_and_no_database_writes(tmp_pat
 
 
 def test_edit_rebuilds_only_the_changed_chunks(tmp_path, monkeypatch):
-    _require_ffmpeg()
+    _require_compositor()  # без компоновщика титр не рисуется — куски не меняются
     client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     client.patch(f"/api/clip-plans/{plan['id']}/render-settings", json={"settings": {
         "end_hold_sec": 0,

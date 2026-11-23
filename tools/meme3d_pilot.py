@@ -35,6 +35,23 @@ MAIN_ROOT = ROOT.parent.parent.parent if ".claude" in str(ROOT) else ROOT
 PACKS = MAIN_ROOT / "vendor" / "packs"
 MUSIC_DIR = Path(r"D:\vvf-offload\vtubika\music")
 
+
+def models_dir() -> Path | None:
+    """Библиотека 3D-вещей (docs/3d/models.md) для render.mjs на этом компьютере: SCENE3D_MODELS_DIR, каталог сервиса
+    D:/vvf-data/runtime/models3d (в контейнере это /data/runtime/models3d), иначе data/ основного репозитория.
+    Без неё render.mjs искал <репозиторий>/data/runtime/models3d, получал 404 на manifest.json и строил вещи серии
+    из примитивов (мем 9, 22.11: «библиотека моделей недоступна (HTTP 404)»)."""
+    for cand in (os.environ.get("SCENE3D_MODELS_DIR"), r"D:\vvf-data\runtime\models3d",
+                 str(MAIN_ROOT / "data" / "runtime" / "models3d")):
+        if cand and (Path(cand) / "manifest.json").is_file():
+            return Path(cand)
+    return None
+
+
+MODELS = models_dir()
+if MODELS is not None:
+    os.environ["SCENE3D_MODELS_DIR"] = str(MODELS)  # render.mjs мем-серий (импорт P1) берёт её отсюда; годная из env — она же
+
 import meme3d_scene as S  # noqa: E402
 
 FPS = 30

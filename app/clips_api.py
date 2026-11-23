@@ -71,10 +71,13 @@ def build_clips_router(
         title: Annotated[str, Form()] = "",
         description: Annotated[str, Form()] = "",
         project_id: Annotated[str, Form()] = "",
+        version_of: Annotated[str, Form(description="id клипа (плана), прошлой загрузки этого же ролика: новый файл "
+                                                     "станет его версией, а не отдельным клипом")] = "",
     ) -> dict:
-        clip = await _accept_upload(file, title, description, project_id)
+        clip = await _accept_upload(file, title, description, project_id, version_of)
         return {"clip_id": int(clip["id"]), "clip_plan_id": int(clip["clip_plan_id"]), "to": _clip_screen(clip),
-                "project_id": _optional_form_int(project_id)}
+                "project_id": (clip.get("project_id") if clip.get("version_of") else None) or _optional_form_int(project_id),
+                **{k: clip[k] for k in ("version_of", "version_note") if clip.get(k)}}
 
     @router.post("/ui/clips/{clip_id}/render", include_in_schema=False)
     def ui_render_uploaded_clip(
@@ -307,14 +310,25 @@ def build_clips_router(
             raise HTTPException(status_code=404, detail="cover not found") from exc
         return FileResponse(path, media_type="image/jpeg")
 
-    async def _accept_upload(file: UploadFile, title: str, description: str, project_id: str) -> dict:
+    async def _accept_upload(file: UploadFile, title: str, description: str, project_id: str, version_of: str = "") -> dict:
+        from app import clip_upload
         from app.projects import get_project
 
         try:
             wanted = _optional_form_int(project_id)
             if wanted is not None:
                 get_project(get_store(), wanted, include_sources=False)  # до записи файла: чужой номер не оставит мусора
-            return await _register_uploaded_clip(file, title, description, wanted)
+            previous = _optional_form_int(version_of)
+            if previous is not None:
+                try:
+                    clip_upload.check_version_of(get_store(), previous)  # тоже до записи файла
+                except KeyError as exc:
+                    raise HTTPException(status_code=404, detail=f"нет клипа #{previous} для version_of") from exc
+            clip = await _register_uploaded_clip(file, title, description, wanted)
+            if previous is not None:
+                linked = clip_upload.attach_upload_version(get_store(), int(clip["clip_plan_id"]), previous)
+                clip = {**clip, **linked}
+            return clip
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Такого проекта нет") from exc
         except ValueError as exc:

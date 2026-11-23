@@ -16,6 +16,7 @@ import {
   type CaptionWord,
   type CropProp,
   type Ctx2D,
+  type FlatComponent,
   type KeyPoint,
   type Layer,
   type LayerBox,
@@ -284,12 +285,49 @@ export function layerTitle(layer: Layer): string {
       return "Логотип кистью";
     case "ui": {
       const title = layer.props.title || layer.props.label || layer.props.text;
-      const kind = ({ hook: "Хук", chip: "Чип", title: "Заголовок", stat: "Карточка с числом", bars: "Сравнение", counter: "Счётчик", checklist: "Чек-лист", toast: "Уведомление", window: "Окно", file: "Значок файла" } as Record<string, string>)[layer.props.component] ?? "Плоский UI";
+      const kind = UI_COMPONENT_TITLES[layer.props.component] ?? "Плоский UI";
       return title ? `${kind}: ${title}` : kind;
     }
     default:
       return "Слой";
   }
+}
+
+/**
+ * Подписи и значки компонентов слоя ui (flat/kit.ts) в списке слоёв, таймлайне и инспекторе. Тип
+ * `Record<FlatComponent, …>`: новый компонент кита без подписи или значка не соберётся (tsc), а
+ * tests/test_frontend_kit_labels.py ловит это ещё в pytest — 23.11 сборка падала на `file` прямо перед выкладкой.
+ */
+export const UI_COMPONENT_TITLES: Record<FlatComponent, string> = {
+  hook: "Хук",
+  chip: "Чип",
+  title: "Заголовок",
+  stat: "Карточка с числом",
+  bars: "Сравнение",
+  counter: "Счётчик",
+  checklist: "Чек-лист",
+  toast: "Уведомление",
+  window: "Окно",
+  file: "Значок файла",
+};
+
+export const UI_COMPONENT_ICON: Record<FlatComponent, string> = {
+  hook: "❗",
+  chip: "⬭",
+  title: "H",
+  stat: "#",
+  bars: "▤",
+  counter: "№",
+  checklist: "☑",
+  toast: "🔔",
+  window: "🗔",
+  file: "📄",
+};
+
+/** Значок слоя: у плоского UI — по компоненту, у остальных — по типу. */
+export function layerIcon(layer: Layer): string {
+  if (layer.type === "ui") return UI_COMPONENT_ICON[layer.props.component] ?? LAYER_ICON.ui;
+  return LAYER_ICON[layer.type];
 }
 
 export const LAYER_ICON: Record<Layer["type"], string> = {

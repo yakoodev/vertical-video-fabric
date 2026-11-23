@@ -175,7 +175,8 @@ def caption_layer_pages(words: list[dict], props: Any, start: float = 0.0, end: 
         nxt = pages[k + 1]["t0"]
         pages[k]["t1"] = nxt if nxt - pages[k]["t1"] < CAPTION_BRIDGE else min(pages[k]["t1"], nxt)
     if pages and math.isfinite(end):
-        pages[-1]["t1"] = min(pages[-1]["t1"], end)
+        hold = isinstance(props, dict) and bool(props.get("holdEnd"))  # как у движка: последняя — до конца слоя
+        pages[-1]["t1"] = max(pages[-1]["t1"], end) if hold else min(pages[-1]["t1"], end)
     return [p for p in pages if p["t1"] > p["t0"]]
 
 

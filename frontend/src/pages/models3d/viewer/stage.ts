@@ -13,6 +13,8 @@ export type ViewPreset = "front" | "threeQuarter" | "side" | "back";
 const VIEW_AZIMUTH: Record<ViewPreset, number> = { front: 0, threeQuarter: 35, side: 90, back: 180 };
 const BG: Record<Background, number> = { dark: 0x15121e, light: 0xe8e6ee };
 const GRID: Record<Background, [number, number]> = { dark: [0x3a3350, 0x262033], light: [0xb9b4c6, 0xd3cfdc] };
+/** Цвет каркаса («Показать сетку модели») под фон. */
+const WIRE: Record<Background, number> = { dark: 0x9fd8ff, light: 0x3a3350 };
 
 function shadowTexture(): THREE.Texture {
   const c = document.createElement("canvas");
@@ -41,6 +43,17 @@ export class Stage {
   private tween: { from: THREE.Vector3; to: THREE.Vector3; t0: number; dur: number } | null = null;
   private resizeObs: ResizeObserver;
   private toonMats = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  /** Каркас: свои материалы мешей на время показа сетки (у VRM — MToon с контуром, его wireframe давал красный
+   * контур, а волосы оставались залитыми). Одинаковый каркас для любой модели, контур VRM скрыт. */
+  private wireMats = new Map<THREE.Mesh, { material: THREE.Material | THREE.Material[]; wire: THREE.Mesh }>();
+  private wireMat = new THREE.MeshBasicMaterial({ color: WIRE.dark, wireframe: true });
+  private hiddenMat = new THREE.MeshBasicMaterial({ visible: false });
+  /** Только глубина, чуть дальше настоящей: задние линии каркаса прячутся, передние — видны. */
+  private occluderMat = new THREE.MeshBasicMaterial({
+    colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+    // линии рисуются без отсечения граней — глубину пишут обе стороны (карточки волос двусторонние)
+    side: THREE.DoubleSide,
+  });
   private gradient: THREE.DataTexture;
   background: Background = "dark";
   light: LightPreset = "studio";
@@ -100,6 +113,7 @@ export class Stage {
   setBackground(bg: Background) {
     this.background = bg;
     this.scene.background = new THREE.Color(BG[bg]);
+    this.wireMat.color.setHex(WIRE[bg]);
     if (this.grid) {
       this.scene.remove(this.grid);
       this.grid.geometry.dispose();
@@ -137,6 +151,8 @@ export class Stage {
   /** «Мультяшный» свет для обычных моделей: материал с тремя ступенями тени (VRM и так рисуется мультяшно). */
   private applyToon() {
     if (!this.model) return;
+    const wire = this.wireframe;
+    if (wire) this.setWireframe(false); // свет меняет «свои» материалы, каркас — поверх них
     const toon = this.light === "toon";
     this.model.traverse((o) => {
       const mesh = o as THREE.Mesh;
@@ -149,33 +165,68 @@ export class Stage {
           const s = m as THREE.MeshStandardMaterial;
           return new THREE.MeshToonMaterial({
             color: s.color?.clone() ?? new THREE.Color(0xffffff), map: s.map ?? null, gradientMap: this.gradient,
-            transparent: s.transparent, alphaTest: s.alphaTest, side: s.side, wireframe: this.wireframe,
+            transparent: s.transparent, alphaTest: s.alphaTest, side: s.side,
           });
         });
         mesh.material = Array.isArray(mesh.material) ? conv : conv[0];
       } else if (!toon && this.toonMats.has(mesh)) {
         mesh.material = this.toonMats.get(mesh)!;
         this.toonMats.delete(mesh);
-        this.setWireframe(this.wireframe);
       }
     });
+    if (wire) this.setWireframe(true);
   }
 
+  /**
+   * Каркас с невидимыми задними линиями: сам меш рисует только глубину (occluder), поверх — копия на той же геометрии
+   * и скелете с линиями. Без этого плотные слои волос VRoid (~30 тыс. треугольников друг над другом) сливались в
+   * сплошную заливку — «волосы не переключаются».
+   */
   setWireframe(on: boolean) {
     this.wireframe = on;
+    const meshes: THREE.Mesh[] = [];
     this.model?.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        (m as THREE.MeshBasicMaterial).wireframe = on;
-      }
+      if ((o as THREE.Mesh).isMesh && !o.userData.m3dWire) meshes.push(o as THREE.Mesh);
     });
+    for (const mesh of meshes) {
+      const saved = this.wireMats.get(mesh);
+      if (on && !saved) {
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        // Контур MToon (вторая группа меша, isOutline) в каркасе не нужен: он и давал красноватую обводку.
+        const isOutline = (m: THREE.Material) => Boolean((m as THREE.Material & { isOutline?: boolean }).isOutline);
+        const pick = (conv: THREE.Material[]) => (Array.isArray(mesh.material) ? conv : conv[0]);
+        const lines = pick(mats.map((m) => (isOutline(m) ? this.hiddenMat : this.wireMat)));
+        let wire: THREE.Mesh;
+        if ((mesh as THREE.SkinnedMesh).isSkinnedMesh) {
+          const sk = mesh as THREE.SkinnedMesh;
+          const copy = new THREE.SkinnedMesh(sk.geometry, lines);
+          copy.bindMode = sk.bindMode;
+          copy.bind(sk.skeleton, sk.bindMatrix);
+          wire = copy;
+        } else {
+          wire = new THREE.Mesh(mesh.geometry, lines);
+        }
+        wire.morphTargetInfluences = mesh.morphTargetInfluences; // выражения лица — те же
+        wire.morphTargetDictionary = mesh.morphTargetDictionary;
+        wire.frustumCulled = false;
+        wire.renderOrder = 1;
+        wire.userData.m3dWire = true;
+        this.wireMats.set(mesh, { material: mesh.material, wire });
+        mesh.material = pick(mats.map((m) => (isOutline(m) ? this.hiddenMat : this.occluderMat)));
+        mesh.add(wire);
+      } else if (!on && saved) {
+        mesh.material = saved.material;
+        mesh.remove(saved.wire);
+        this.wireMats.delete(mesh);
+      }
+    }
     this.dirty = true;
   }
 
   setModel(obj: THREE.Object3D) {
     if (this.model) this.scene.remove(this.model);
     this.toonMats.clear();
+    this.wireMats.clear();
     this.model = obj;
     this.scene.add(obj);
     obj.updateMatrixWorld(true);

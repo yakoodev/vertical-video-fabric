@@ -519,7 +519,9 @@ def build_layers(store: Any, mascot: dict, placed: list[dict], words: list[dict]
     layers.append({"id": "caps", "type": "captions", "name": "Субтитры", "start": 0.0, "end": round(total, 3),
                    "x": 0.5, "y": 0.84,
                    "props": {"style": mascot.get("captions_style") or "hormozi", "size": 92, "activeColor": accent,
-                             "uppercase": True, "maxWords": 3, "maxLines": 2, "emphColor": accent}})
+                             "uppercase": True, "maxWords": 3, "maxLines": 2, "emphColor": accent,
+                             # последняя фраза («Пиши почему») — до конца ролика, а не гаснет за ~1 с до него
+                             "holdEnd": True}})
     # Кадр 0 — обложка: TikTok при заливке не из приложения берёт его, и «вылет» позы давал пустой фон.
     for layer in layers:
         if layer.get("start") == 0:

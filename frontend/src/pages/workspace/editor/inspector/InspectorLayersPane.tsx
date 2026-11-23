@@ -2,7 +2,7 @@ import { type MontageInsert } from "@/api/types";
 import { Group } from "@/pages/workspace/InspectorParts";
 import { type SubtitleWord } from "@/pages/workspace/subtitlePreview";
 import { formatRefSize, type Layer } from "@/motion";
-import { duplicateLayer, LAYER_ICON, layerTitle } from "@/pages/workspace/motion/edit";
+import { duplicateLayer, layerIcon, layerTitle } from "@/pages/workspace/motion/edit";
 import { LayerInspector } from "@/pages/workspace/motion/LayerInspector";
 import { CameraPanel } from "@/pages/workspace/motion/CameraPanel";
 import { formatDuration } from "@/components/ui";
@@ -61,7 +61,7 @@ export function InspectorLayersPane({ session }: { session: DraftsEditorSession 
                     if (now < l.start || now > l.end) seekClipTime(l.start + Math.min(0.6, (l.end - l.start) / 2), false);
                   }}
                 >
-                  <span className="ed-layer-ico">{LAYER_ICON[l.type]}</span>
+                  <span className="ed-layer-ico">{layerIcon(l)}</span>
                   <span className="ed-layer-name">{layerTitle(l)}</span>
                   <span className="mono muted ed-layer-time">{formatDuration(l.start)}</span>
                   <button

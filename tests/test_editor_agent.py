@@ -8,7 +8,7 @@ import copy
 import pytest
 
 from app.ai import editor_agent
-from test_api_pipeline import _require_ffmpeg
+from test_api_pipeline import _require_compositor, _require_ffmpeg
 from test_clip_spec import _setup
 
 
@@ -401,7 +401,7 @@ def test_unresolved_failure_and_partial_batches():
 def test_report_without_looking_is_nudged_then_service_takes_contact_sheet(tmp_path, monkeypatch):
     """QA 01.11 (клип 889): 36 шагов, ни одного view_frame/contact_sheet — весь ролик оказался ютуб-клипом.
     Хочет отчитаться без взгляда — напоминание; снова без взгляда — лист кадров снимает сервис."""
-    _require_ffmpeg()
+    _require_compositor()  # лист кадров и кадр снимает компоновщик
     _client, store, _source, plan, _a, _b = _setup(tmp_path, monkeypatch)
     fake = ScriptedGemini([
         [_call("add_layers", {"layers": [HOOK]})],
@@ -422,7 +422,7 @@ def test_report_without_looking_is_nudged_then_service_takes_contact_sheet(tmp_p
 def test_avatar_in_several_places_needs_view_frame_in_each(tmp_path, monkeypatch):
     """QA 02.11 (клип 892): аватар в двух местах, агент снял один contact_sheet и сдал ролик с 4 с волос без
     лица. Отчёт принимается только после view_frame в каждом отрезке места; не посмотрел — снимает сервис."""
-    _require_ffmpeg()
+    _require_compositor()  # лист кадров и кадр снимает компоновщик
     _client, store, source, plan, a, _b = _setup(tmp_path, monkeypatch)
     plan = store.create_clip_plan(source["id"], plan["analysis_id"], "Один кусок", segment_ids=[a["id"]])
     left = {"x": 0.1, "y": 0.0, "w": 0.45, "h": 1.0}

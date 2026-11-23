@@ -221,6 +221,18 @@ def _require_ffmpeg() -> None:
         pytest.skip("ffmpeg is not available")
 
 
+def _require_compositor() -> None:
+    """Слои моушна (титры, лист кадров) рисует собранный компоновщик node/motion-render.mjs — в свежем checkout
+    (worktree) его нет, пока не выполнен ``npm run build:motion``: тест пропускается, а не падает чужой ошибкой."""
+    _require_ffmpeg()
+    from app.motion_render import CompositorMissing, compositor_command
+
+    try:
+        compositor_command()
+    except CompositorMissing:
+        pytest.skip("компоновщик моушна не собран (npm run build:motion)")
+
+
 def test_each_clip_renders_with_its_own_saved_settings(tmp_path, monkeypatch):
     """Per-clip settings: a saved transition applies to that clip only.
 

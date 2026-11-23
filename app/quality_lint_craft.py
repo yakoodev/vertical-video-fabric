@@ -25,7 +25,8 @@ ZERO_SCALE_INS = ("pop", "spin", "words")
 NOTABLE_ENTRANCES = ("focus", "colorize", "slot", "letters", "scramble", "glitch", "rise")
 ENTRANCE_NAMES = {"focus": "из размытия", "colorize": "из серого в цвет", "slot": "слот-машина",
                   "letters": "по буквам", "scramble": "расшифровка", "glitch": "глитч", "rise": "из-под маски"}
-COUNTER_RE = re.compile(r"^\s*(?:(?:шаг|step|часть|part|слайд|slide|глава|№)\s*)?\d{1,2}\s*(?:/|из|of)\s*\d{1,2}\s*$", re.I)
+COUNTER_RE = re.compile(r"^\s*(?:(шаг|step|часть|part|слайд|slide|глава|№)\s*)?(\d{1,2})\s*(/|из|of)\s*(\d{1,2})\s*$", re.I)
+COUNTER_EDGE_Y = 0.14   # счётчик-обвязка живёт у края кадра (сверху/снизу) мелко, факт-чип — в кадре
 CORNER_X, CORNER_Y = 0.22, 0.14
 MAX_ZERO_FINDINGS = 8
 
@@ -92,17 +93,56 @@ def subject_findings(layers_all: list[dict], duration: float, canvas: bool, came
 # ---------------------------------------------------------------- слайдовая обвязка
 
 
+def counter_parts(text: str) -> tuple[str, int, int, bool] | None:
+    """«02/05», «шаг 3 из 5» → (слово, номер, всего, с нулём); не похоже на счётчик (или номер больше «всего») — None."""
+    m = COUNTER_RE.match(text or "")
+    if not m:
+        return None
+    word, a, _sep, b = m.groups()
+    n, total = int(a), int(b)
+    if total < 2 or n < 1 or n > total:
+        return None
+    return (word or "").lower(), n, total, a.startswith("0") or b.startswith("0")
+
+
+def _slide_counters(layers_all: list[dict]) -> set[str]:
+    """Какие текстовые слои — счётчик слайдов. Однозначно: со словом («шаг 3 из 5», «слайд 2/4») или с нулём
+    («02/05»). Голое «2 из 3» / «2/3» — это часто факт-чип («2 из 3 людей не досматривают»): счётчик, только если
+    таких несколько с одним «всего» и разными номерами (1/4, 2/4…) или он мелко у края кадра."""
+    found: dict[str, tuple[str, int, int, bool]] = {}
+    for layer in layers_all:
+        if layer.get("type") == "text":
+            parts = counter_parts(str(_props(layer).get("text") or ""))
+            if parts:
+                found[str(layer.get("id") or id(layer))] = parts
+    series: dict[int, set[int]] = {}
+    for _w, n, total, _z in found.values():
+        series.setdefault(total, set()).add(n)
+    out: set[str] = set()
+    for layer in layers_all:
+        lid = str(layer.get("id") or id(layer))
+        if lid not in found:
+            continue
+        word, _n, total, zero = found[lid]
+        y = _num(layer.get("y"), 0.5)
+        edge = (y <= COUNTER_EDGE_Y or y >= 1 - COUNTER_EDGE_Y) and _num(_props(layer).get("size"), 96) <= 64
+        if word or zero or len(series[total]) >= 2 or edge:
+            out.add(lid)
+    return out
+
+
 def chrome_findings(layers_all: list[dict], duration: float) -> list[dict]:
     W = frame_size()[0]
     out: list[dict] = []
     typewriters = [l for l in layers_all if l.get("type") == "text" and _in_type(l) == "typewriter"]
+    counters = _slide_counters(layers_all)
     for layer in layers_all:
         kind = layer.get("type")
         props = _props(layer)
         text = str(props.get("text") or "")
         start, end = _num(layer.get("start")), _num(layer.get("end"))
         lid = str(layer.get("id") or "")
-        if kind == "text" and COUNTER_RE.match(text):
+        if kind == "text" and str(layer.get("id") or id(layer)) in counters:
             out.append(_finding("slide_chrome", "warn", f"счётчик «{_short(text, 12)}» — слайдовая обвязка: ролик "
                                                         "выглядит презентацией",
                                 "убери счётчик: порядок и так видно по монтажу", t=start, layer=lid,

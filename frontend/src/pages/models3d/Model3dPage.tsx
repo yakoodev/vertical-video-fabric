@@ -184,7 +184,8 @@ export function Model3dPage() {
       </div>
 
       <div className={`m3d-layout${isVrm ? " has-timeline" : ""}`}>
-        <div className="m3d-canvas-wrap">
+        {/* Шкала анимации — под картинкой, а не поверх: на нижнем ракурсе она закрывала ноги персонажа. */}
+        <div className={`m3d-canvas-wrap${isVrm && clipId ? " has-tl" : ""}`}>
           <div className="m3d-canvas" ref={v.hostRef} />
           {a.status !== "ready" ? (
             <div className="m3d-overlay">

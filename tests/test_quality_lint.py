@@ -92,6 +92,11 @@ def test_captions_layer_pages_and_burned_subtitles():
     orig = [{**w, "s": "orig"} for w in words]
     assert not Q.caption_layer_pages(orig, {"style": "hormozi"})
     assert Q.caption_layer_pages(orig, {"style": "minimal", "speakers": ["orig"]})
+    # holdEnd (как у движка): последняя страница — до конца слоя (сова 23.11: «Пиши почему» гасла за ~1 с до конца).
+    assert pages[-1]["t1"] < 10
+    assert Q.caption_layer_pages(words, {"style": "hormozi", "holdEnd": True}, 0, 10)[-1]["t1"] == 10
+    assert motion.normalize_layers([{"id": "c", "type": "captions", "start": 0, "end": 5,
+                                     "props": {"holdEnd": True}}])[0]["props"]["holdEnd"] is True
 
     low = motion.normalize_layers([{"id": "cap", "type": "captions", "start": 0, "end": 10, "x": 0.5, "y": 0.86,
                                     "props": {"style": "hormozi"}}])

@@ -745,6 +745,10 @@ test("субтитры: страницы по фразам, паузам и ко
   const minimal = E.captionPages(ctx, SPEECH, { style: "minimal" }, 0, 10, "Montserrat");
   assert.equal(minimal[0].words[0].text, "Ребята,");
   assert.deepEqual(E.captionWordsFrom([{ word: "да", start: 1, end: 2 }]), [{ t0: 1, t1: 2, w: "да" }]);
+  // holdEnd: последняя страница («Пиши почему») — до конца слоя, а не гаснет через HOLD после слова.
+  const held = E.captionPages(ctx, SPEECH, { style: "hormozi", maxWords: 3, holdEnd: true }, 0, 10, "Montserrat");
+  assert.equal(held[held.length - 1].t1, 10);
+  assert.ok(pages[pages.length - 1].t1 < 10);
 });
 
 /** Сколько непрозрачных пикселей в горизонтальной полосе кадра. */
