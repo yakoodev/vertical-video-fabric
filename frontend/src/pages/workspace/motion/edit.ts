@@ -284,7 +284,7 @@ export function layerTitle(layer: Layer): string {
       return "Логотип кистью";
     case "ui": {
       const title = layer.props.title || layer.props.label || layer.props.text;
-      const kind = { hook: "Хук", chip: "Чип", title: "Заголовок", stat: "Карточка с числом", bars: "Сравнение", counter: "Счётчик", checklist: "Чек-лист", toast: "Уведомление", window: "Окно" }[layer.props.component] ?? "Плоский UI";
+      const kind = ({ hook: "Хук", chip: "Чип", title: "Заголовок", stat: "Карточка с числом", bars: "Сравнение", counter: "Счётчик", checklist: "Чек-лист", toast: "Уведомление", window: "Окно", file: "Значок файла" } as Record<string, string>)[layer.props.component] ?? "Плоский UI";
       return title ? `${kind}: ${title}` : kind;
     }
     default:
