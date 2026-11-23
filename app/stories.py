@@ -456,13 +456,32 @@ def narration_text(ep: dict) -> str:
     return str((ep.get("script") or {}).get("text") or "").strip()
 
 
+def narration_lines(ep: dict, names: tuple[str, ...] = (), dialog: bool = False) -> list[dict] | None:
+    """3D-серия с озвучкой по фразам (``script.narration = "sentences"``, ``app/series3d_lines.py``): строки озвучки
+    с паузами автора; иначе ``None`` — текст целиком, как раньше."""
+    from app import series3d_lines as LN
+
+    if not is_3d(ep) or LN.mode(ep.get("script"), ep.get("options")) != "sentences":
+        return None
+    sentences = [x for x in (ep.get("script") or {}).get("sentences") or [] if str(x.get("text") or "").strip()]
+    return LN.plan(sentences, names, dialog) or None
+
+
+def narration_key_text(ep: dict) -> str:
+    """Текст ключа записи озвучки: у озвучки по фразам в нём и паузы (другие паузы — другая запись)."""
+    from app import series3d_lines as LN
+
+    lines = narration_lines(ep)
+    return LN.key_text(narration_text(ep), lines) if lines else narration_text(ep)
+
+
 def narration_ref(store: Any, ep: dict) -> dict | None:
     """Готовая озвучка эпизода тем же голосом и тем же текстом (иначе — нет)."""
     from app.aivideo_gen import _asset_path, _fresh, _line_key
 
     voice = world_voice(store, get_world(store, int(ep["world_id"])), is_dry(ep))
     ref = V.selected_ref(store, int(ep["project_id"]), T_EP, int(ep["id"]), NARRATION_KIND)
-    if not _fresh(ref) or ref["prompt"] != _line_key(voice, narration_text(ep)):
+    if not _fresh(ref) or ref["prompt"] != _line_key(voice, narration_key_text(ep)):
         return None
     return ref if _asset_path(store, ref) else None
 
@@ -715,14 +734,23 @@ class _Extension:
         note = {"gemini": "Gemini TTS, бесплатно", "none": "сухой прогон"}.get(voice["provider"],
                                                                               "цена TTS из app/dubbing.py")
         dialog: dict = {}
+        hero = False
+        names: tuple[str, ...] = ()
         if is_3d(ep) and voice["provider"] == "gemini":
             from app.dubbing import hero_voice_for
             from app.series3d_blender import dialog_lines, has_hero_lines, hero_names
 
             sentences = [x for x in (ep.get("script") or {}).get("sentences") or [] if str(x.get("text") or "").strip()]
             names = hero_names(ep.get("script"))
-            if has_hero_lines(sentences, names):   # прямая речь героя — другим голосом, рассказчик — своим
+            hero = has_hero_lines(sentences, names)
+            if hero:   # прямая речь героя — другим голосом, рассказчик — своим
                 dialog = {"dialog": dialog_lines(sentences, names), "hero_voice": hero_voice_for(voice["voice"])}
+        lines = narration_lines(ep, names, hero)
+        if lines:      # озвучка по фразам: запись на фразу тем же голосом, паузы автора (app/series3d_lines.py)
+            from app import series3d_lines as LN
+
+            dialog = {**({"hero_voice": dialog["hero_voice"]} if dialog else {}), "lines": lines,
+                      "key_text": LN.key_text(text, lines)}
         return {"stage": STAGE, "kind": "tts", "target_type": T_EP, "target_id": int(ep["id"]),
                 "ref_kind": NARRATION_KIND, "slot": "", "label": f"озвучка «{P._text(ep['title'] or ep['premise'], 60)}»",
                 "provider": voice["provider"], "model": voice["model"], "voice": voice["voice"],

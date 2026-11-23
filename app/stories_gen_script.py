@@ -10,6 +10,7 @@ from app import projects as P
 from app import stories as S
 from app import stories_disaster as D
 from app import stories_staging as ST
+from app import stories_staging_script as STS
 
 CPS = 14.0  # символов русской речи рассказчика в секунду
 
@@ -254,6 +255,11 @@ def normalize_script(store: Any, world: dict, data: dict, ep: dict | None = None
     script = {"title": P._text(data.get("title"), 100), "logline": P._text(data.get("logline"), 300),
               "sentences": sentences, "text": text, "chars": len(text), "est_sec": est, "shots": shots,
               "warnings": warnings}
+    # 3D-серия: озвучка по фразам, зерно, фон места, звуки событий, фото в переписке — как написал автор
+    extra = STS.script_staging(data, warnings)
+    if extra.get("photos"):
+        extra["photos"] = STS.check_photos(store, int(world["project_id"]), extra["photos"], warnings) or None
+    script.update({k: v for k, v in extra.items() if v is not None})
     if disaster:
         script = D.finish_script(script, data, ep or {})
         script["chars"] = len(script["text"])

@@ -38,7 +38,10 @@ from app import stories_gen as X
 from app.auth import is_agent_request
 
 SCRIPT_FIELDS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
-                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats", "outro")
+                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats", "outro",
+                 # 3D-серия: озвучка по фразам, зерно, фон, звуки событий, фото в переписке (app/stories_staging_script.py)
+                 "narration", "seed", "ambience", "event_sfx", "photos")
+SCRIPT_SOURCES = ("owner", "agent")
 
 
 def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRouter:
@@ -254,7 +257,11 @@ def build_stories_router(auth_dep: Any, get_store: Callable[[], Any]) -> APIRout
 
     @router.put("/api/stories/episodes/{episode_id}/script", summary="Свой сценарий")
     def api_episode_script(episode_id: int, _auth: auth_dep, payload: dict = Body(...)) -> dict:
-        out = call(X.set_script, episode_id, {k: payload.get(k) for k in SCRIPT_FIELDS}, "owner")
+        # кто написал сценарий (script.source): owner по умолчанию, агент может сказать «agent»
+        source = str(payload.get("source") or "owner").strip().lower()
+        if source not in SCRIPT_SOURCES:
+            raise HTTPException(status_code=400, detail=f"source: {' | '.join(SCRIPT_SOURCES)}")
+        out = call(X.set_script, episode_id, {k: payload.get(k) for k in SCRIPT_FIELDS}, source)
         X.kick()
         return out
 
