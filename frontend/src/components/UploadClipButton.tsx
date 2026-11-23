@@ -15,7 +15,7 @@ export function UploadClipButton({ projectId, className = "btn primary", label =
   const upload = useMutation({
     mutationFn: (file: File) => clipsApi.uploadEdited(file, { projectId }),
     onSuccess: (made) => {
-      toast.success("Клип загружен");
+      toast.success(made.version_of ? "Загружено новой версией этого клипа" : "Клип загружен");
       qc.invalidateQueries({ queryKey: qk.clips() });
       qc.invalidateQueries({ queryKey: clipGroupKeys.all });
       qc.invalidateQueries({ queryKey: navKeys.all });

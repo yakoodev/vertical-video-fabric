@@ -345,6 +345,16 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
     if len(specs) > MAX_VARIANTS:
         raise ValueError(f"не больше {MAX_VARIANTS} вариантов в версии")
     resolved = [_resolve_media(store, spec) for spec in specs]
+    same = _same_as_latest(store, int(work_id), [m.get("clip_id") for m in resolved])
+    if same is not None:
+        # Те же клипы, что в последней версии (её уже добавила загрузка, app/upload_versions.py): второй раз ту же
+        # версию не заводим — заметка и подпись агента ложатся на неё.
+        updates = {k: v for k, v in (("note", _long_text(note, 2000)), ("label", _text(label, 40))) if v}
+        if updates:
+            sets = ", ".join(f"{k} = ?" for k in updates)
+            store.db.execute(f"UPDATE feed_versions SET {sets} WHERE id = ?", (*updates.values(), same))
+            _touch(store, work_id)
+        return get_version(store, same)
     moved: list[tuple[int, Path, Path]] = []
     with store.db.transaction():
         row = store.db.query_one("SELECT COALESCE(MAX(n), 0) + 1 AS n FROM feed_versions WHERE work_id = ?",
@@ -364,6 +374,19 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
     _after_variants(store, moved)
     _kick_previews(store)
     return get_version(store, int(version["id"]))
+
+
+def _same_as_latest(store: Any, work_id: int, clip_ids: list[Any]) -> int | None:
+    """id последней версии работы, если в ней ровно эти клипы (и только клипы), иначе None."""
+    if not clip_ids or not all(clip_ids):
+        return None
+    latest = store.db.query_one("SELECT id FROM feed_versions WHERE work_id = ? ORDER BY n DESC LIMIT 1", (int(work_id),))
+    if not latest:
+        return None
+    rows = store.db.query_all("SELECT id, clip_id FROM feed_variants WHERE version_id = ?", (int(latest["id"]),))
+    if sorted(int(c) for c in clip_ids) != sorted(int(r["clip_id"] or 0) for r in rows):
+        return None
+    return int(latest["id"])
 
 
 def add_variant(store: Any, version_id: int, spec: dict) -> dict:
