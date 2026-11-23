@@ -146,5 +146,25 @@
     "joints": 2
    }
   ]
+ },
+ "hero__outfit_stage": {
+  "params": {
+   "back": {
+    "stiffiness": 1.8,
+    "gravityPower": 0.25,
+    "dragForce": 0.65
+   }
+  },
+  "_why": "long hair on bare shoulders: full back weight pushed the tips through the shoulders (measured)"
+ },
+ "hero__outfit_home": {
+  "params": {
+   "back": {
+    "stiffiness": 1.8,
+    "gravityPower": 0.25,
+    "dragForce": 0.65
+   }
+  },
+  "_why": "long hair on bare shoulders: full back weight pushed the tips through the shoulders (measured)"
  }
 }
