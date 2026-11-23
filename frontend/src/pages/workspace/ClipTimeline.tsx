@@ -7,7 +7,7 @@ import { formatDuration } from "@/components/ui";
 import { addMute, normalizeMute, type MuteSpan } from "@/api/mute";
 import { FX_LABEL, joinShift, keyDbAt, maxShift, setJoinShift, type AudioEdit, type VolumeKey } from "@/api/audioEdit";
 import type { Background, CameraKey, Layer } from "@/motion";
-import { LAYER_ICON, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
+import { layerIcon, MAX_TRACK, layerTitle } from "@/pages/workspace/motion/edit";
 import { BackdropStrip, canvasLabel } from "@/pages/workspace/canvasClip";
 import { MEME_DRAG_TYPE } from "@/pages/workspace/editor/useVideoMemePlace";
 
@@ -446,7 +446,7 @@ export function ClipTimeline({
         title={`${layerTitle(l)} · ${formatDuration(l.start)}–${formatDuration(l.end)}`}
       >
         <span className="ctl-grip" data-resize="start" />
-        <span className="ctl-layer-ico">{LAYER_ICON[l.type]}</span>
+        <span className="ctl-layer-ico">{layerIcon(l)}</span>
         <span className="ctl-block-label">{layerTitle(l)}</span>
         {[...keyTimes].map((kt) => (
           <span key={kt} className="ctl-key" style={{ left: kt * pps }} />

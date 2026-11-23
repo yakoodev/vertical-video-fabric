@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import type { CaptionWord, Layer } from "@/motion";
 import type { MotionFont } from "@/api/motion";
-import { LAYER_ICON, layerTitle } from "@/pages/workspace/motion/edit";
+import { layerIcon, layerTitle } from "@/pages/workspace/motion/edit";
 import type { PickedPoint } from "@/pages/workspace/motion/TrackPanel";
 import { SceneInspector } from "@/pages/workspace/motion/SceneInspector";
 import { AudioSection } from "./inspector/AudioSection";
@@ -58,7 +58,7 @@ export function LayerInspector({ layer, words = [], fonts, now, clipDuration, on
   return (
     <div className="li">
       <div className="li-head">
-        <span className="li-ico">{LAYER_ICON[layer.type]}</span>
+        <span className="li-ico">{layerIcon(layer)}</span>
         <input
           className="input li-name"
           value={layer.name ?? ""}
