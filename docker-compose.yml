@@ -13,11 +13,13 @@ services:
       POSTING_AUTH_ENABLED: ${POSTING_AUTH_ENABLED:-true}
       POSTING_API_TOKEN: ${POSTING_API_TOKEN:-}
       WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+      TORRENT_LISTEN_PORT: ${TORRENT_LISTEN_PORT:-6881}
     ports:
       - "8088:8088"
       # Торренты (aria2): входящие пиры и DHT, по порту на одновременный торрент.
-      - "51413-51414:51413-51414/tcp"
-      - "51413-51414:51413-51414/udp"
+      # 6881-6882, а не 51413: Windows после перезагрузки резервирует 51401-51500 (Hyper-V), и контейнер не поднимается.
+      - "6881-6882:6881-6882/tcp"
+      - "6881-6882:6881-6882/udp"
     volumes:
       - vv-fabric-data:/data
     restart: unless-stopped
