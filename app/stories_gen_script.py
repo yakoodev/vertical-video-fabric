@@ -9,6 +9,7 @@ from typing import Any
 from app import projects as P
 from app import stories as S
 from app import stories_disaster as D
+from app import stories_staging as ST
 
 CPS = 14.0  # символов русской речи рассказчика в секунду
 
@@ -237,7 +238,8 @@ def normalize_script(store: Any, world: dict, data: dict, ep: dict | None = None
             continue
         shots = [s for s in (_shot(x, char_map, loc_map, scene_ids, warnings, n)
                              for x in (raw.get("shots") or [])[:MAX_SHOTS_PER_SENTENCE]) if s]
-        sentences.append({"text": _sentence(raw["text"]), "shots": shots,
+        # постановка 3D-серии (бег, двойник, экран, место, свет, камера…) — как написал автор, после проверки формы
+        sentences.append({"text": _sentence(raw["text"]), "shots": shots, **ST.staging(raw, warnings, f"фраза {n}"),
                           **(D.sentence_extra(raw) if disaster else {})})
     if not sentences:
         raise S.StoryError("в сценарии нет фраз")
