@@ -24,9 +24,9 @@ EXT = 'VRMC_springBone'
 # soft and heavy at the tip, damped so it lags and settles instead of flicking
 HAIR = {
     'front': dict(stiffness=(4.0, 2.0, 1.3), gravity=(0.05, 0.15, 0.25), drag=(0.6, 0.64, 0.7)),
-    'side': dict(stiffness=(3.2, 1.6, 1.0), gravity=(0.1, 0.22, 0.38), drag=(0.58, 0.62, 0.7)),
+    'side': dict(stiffness=(3.4, 1.6, 0.9), gravity=(0.06, 0.1, 0.16), drag=(0.58, 0.62, 0.7)),
     'crown': dict(stiffness=(4.0, 2.2, 1.2), gravity=(0.05, 0.12, 0.2), drag=(0.6, 0.62, 0.65)),
-    'back': dict(stiffness=(2.6, 1.1, 0.6), gravity=(0.15, 0.3, 0.45), drag=(0.55, 0.6, 0.66)),
+    'back': dict(stiffness=(3.0, 1.3, 0.75), gravity=(0.06, 0.12, 0.18), drag=(0.55, 0.6, 0.68)),
     'tail': dict(stiffness=(2.2, 1.2, 0.8, 0.55), gravity=(0.2, 0.35, 0.5, 0.6), drag=(0.55, 0.58, 0.6, 0.62)),
     'bun': dict(stiffness=(3.5, 2.5), gravity=(0.1, 0.2), drag=(0.65, 0.65)),
 }
@@ -180,7 +180,7 @@ def build(glb, rep: dict, profile: dict | None = None) -> dict:
             continue
         chain = rig.chain(i)
         cls = rig.classify(chain)
-        js = hair_spring('Hair_%s_%s' % (cls, nm[-2:]), chain, cls, near + (body if cls == 'back' else []))
+        js = hair_spring('Hair_%s_%s' % (cls, nm[-2:]), chain, cls, near + (body if cls in ('back', 'side') else []))
         out['hair'].setdefault(cls, []).append([j.get('hitRadius') for j in js[:-1]])
     for t, spec in zip(rep.get('tails', []), profile.get('tails', [])):
         cls = spec.get('kind', 'tail')
