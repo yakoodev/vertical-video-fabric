@@ -113,7 +113,8 @@ def bake_body(arm, clips, perf, frames, cam_pos_at):
             return tuple(cam_pos_at(i))
         if g == "phone":
             sit = B.SIT_DROP if _posture(perf, times[i]) == "sit" else 0.0
-            return B.to_world(perf["root"][i], heads[i], (-0.035, 0.20, 0.50 - sit))
+            # корень выше пола (на рюкзаке, на ступени лестницы) — и телефон в руке выше
+            return B.to_world(perf["root"][i], heads[i], (-0.035, 0.20, 0.50 - sit + float(rz[i])))
         if g == "beam":
             return tuple(perf["phone"][i]["beam"])
         return tuple(g)
@@ -179,6 +180,75 @@ def bake_body(arm, clips, perf, frames, cam_pos_at):
 
 def _posture(perf, t):
     return B._posture_at(perf["shots"], t)
+
+
+# ============================================================== ноги на ступенях (ч.6)
+
+LEG_POLE = {"l": V((0.17, -1.5, 0.55)), "r": V((-0.17, -1.5, 0.55))}
+
+def key_legs(arm, perf, frames):
+    """Лестница (``perf.feet_dz``, app/series3d_stairs.plan_ground): IK ноги (голень + бедро) ведёт щиколотку к стопе
+    клипа + ``dz`` — опорная стопа стоит на своей ступени, пока корень идёт вниз; стопа держит поворот клипа (плоско,
+    носок не клюёт в ступень). Кадры не на лестнице — влияние 0 (нога как в клипе)."""
+    fd = perf.get("feet_dz")
+    if not fd:
+        return 0
+    sc = bpy.context.scene
+    rigs = {}
+    for side in ("l", "r"):
+        tgt = kit.link(bpy.data.objects.new(f"ik_foot_{side}", None))
+        rot = kit.link(bpy.data.objects.new(f"ik_foot_rot_{side}", None))
+        rot.rotation_mode = "QUATERNION"
+        c = arm.pose.bones[f"lowerleg.{side}"].constraints.new("IK")
+        c.name = "IK_leg"
+        c.target = tgt
+        c.chain_count = 2
+        c.use_tail = True
+        c.influence = 0.0
+        # колено вперёд: полюс перед коленом (система скелета; угол −90° повторяет позу клипа — замер pole_probe ч.6,
+        # 0.1 см). Без полюса у почти прямой ноги IK на кадр выворачивал колено назад (model_check bend_plane)
+        pole = kit.link(bpy.data.objects.new(f"ik_knee_{side}", None))
+        pole.parent = arm
+        pole.location = LEG_POLE[side]
+        c.pole_target = pole
+        c.pole_angle = math.radians(-90.0)
+        cr = arm.pose.bones[f"foot.{side}"].constraints.new("COPY_ROTATION")
+        cr.name = "IK_foot_rot"
+        cr.target = rot
+        cr.influence = 0.0
+        rigs[side] = (tgt, rot, c, cr)
+    locs = {"l": [], "r": []}
+    quats = {"l": [], "r": []}
+    infl = []
+    n_on = 0
+    for i, f in enumerate(frames):
+        d = fd[i] if i < len(fd) else None
+        infl.append(1.0 if d is not None else 0.0)
+        if d is None:
+            for side in ("l", "r"):
+                locs[side].append(locs[side][-1] if locs[side] else (0.0, 0.0, 0.0))
+                quats[side].append(quats[side][-1] if quats[side] else (1.0, 0.0, 0.0, 0.0))
+            continue
+        n_on += 1
+        sc.frame_set(f)                     # ограничения ещё без ключей (влияние 0) — поза клипа
+        for k, side in enumerate(("l", "r")):
+            pb = arm.pose.bones[f"foot.{side}"]
+            p = arm.matrix_world @ pb.head
+            locs[side].append((p.x, p.y, p.z + float(d[k])))
+            q = (arm.matrix_world @ pb.matrix).to_quaternion()
+            if quats[side] and V(quats[side][-1][1:]).dot(V(q[1:])) + quats[side][-1][0] * q[0] < 0:
+                q = -q
+            quats[side].append(tuple(q))
+    for side in ("l", "r"):
+        tgt, rot, c, cr = rigs[side]
+        kit.key_vec(tgt, "location", frames, locs[side])
+        kit.key_vec(rot, "rotation_quaternion", frames, quats[side])
+        kit.fcurve(arm, f'pose.bones["lowerleg.{side}"].constraints["IK_leg"].influence', 0, frames, infl,
+                   interp="CONSTANT")
+        kit.fcurve(arm, f'pose.bones["foot.{side}"].constraints["IK_foot_rot"].influence', 0, frames, infl,
+                   interp="CONSTANT")
+    log(f"ноги на ступенях: {n_on} кадров")
+    return n_on
 
 
 # ============================================================== руки (IK)
@@ -355,8 +425,11 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
     (герой показывает экран), чтобы значение читалось."""
     sc = bpy.context.scene
     locs, rots, scales = [], [], []
+    # вставка «экран во весь кадр» (план insert): телефон перед кулаком, ладонь — за ним (ч.5: кулак закрывал низ экрана)
+    starts = sorted((int(round(c["t0"] * FPS)) + 1, bool(c.get("insert") == "phone")) for c in perf["cameras"])
     for i, f in enumerate(frames):
         ph = perf["phone"][i]
+        insert = next((ins for f0, ins in reversed(starts) if f >= f0), False)
         if not ph["on"]:
             scales.append((0.0, 0.0, 0.0))
             locs.append((0, 0, -1))
@@ -379,6 +452,8 @@ def attach_phone(arm, phone, perf, frames, cam_at=None):
         # показывает экран — телефон над кулаком и чуть к камере (кулак не закрывает цифры)
         chat = str(ph.get("screen") or "").count("|") >= 7 or str(ph.get("screen") or "").startswith("chat|")
         off = V((0.0, -0.03, 0.075 + (0.016 if chat else 0.0))) if ph.get("screen") else V((0.0, 0.0, 0.058))
+        if ph.get("screen") and insert:
+            off = V((0.0, -0.10, 0.07))       # экран к камере перед кулаком (кулак-«чиби» ±6 см): кулак за телефоном
         if ph.get("vib"):
             # «телефон вибрирует» (ч.5): мелкая дрожь в руке
             t_ = (f - 1) / FPS
@@ -830,7 +905,7 @@ def build_lights(L, perf, frames, phone):
     near = [min(1.0, max(0.3, (math.dist(perf["root"][i], ph[i]["beam"][:2]) / 0.9) ** 2)) for i in range(n)]
     # полная темнота (lt.out): светить больше нечему — фонарик на полную, луч и то, на что он попал, читаются
     near = [near[i] + (1.6 - near[i]) * lt[i].get("out", 0.0) for i in range(n)]
-    flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] for i in range(n)]
+    flash_e = [70.0 * near[i] * ph[i]["light"] * ph[i]["on"] * (1.0 - lt[i].get("black", 0.0)) for i in range(n)]
     # серия с первого кадра в полной темноте (ч.5): экран — единственный свет у лица, вплотную он выжигал подбородок и
     # кулак в белое пятно под bloom — тише
     scr_k = 0.4 if lt and lt[0].get("out", 0.0) >= 0.99 else 1.0
@@ -992,6 +1067,7 @@ def build_camera(arm, perf, frames, rig):
         fill = fills.get(shot_of[k])
         if fill is not None:
             base = max(base, float(fill))       # автор плана: в темноте лежащего за спиной должно быть видно (ч.5)
+        base *= 1.0 - lt.get("black", 0.0)      # ч.6: фонарик мигает и гаснет — «глазной» свет вместе с ним
         vals.append(base * min(3.0, max(0.5, (d / 0.8) ** 2)))
     kit.fcurve(eye.data, "energy", 0, frames, vals)
     # контровой сзади-сверху (от камеры через героя): силуэт и капюшон отделяются от тёмного фона
@@ -1012,7 +1088,8 @@ def build_camera(arm, perf, frames, rig):
         rim_loc.append(tuple(p))
         rim_rot.append(tuple((face - p).to_track_quat("-Z", "Y")))
         lt = perf["lights"][k]
-        rim_e.append((B.RIM_W.get(place, 0.0) if place != "cabin" else (12.0 if lt["dark"] else 0.0)) * (1.0 - lt.get("out", 0.0)))
+        rim_e.append((B.RIM_W.get(place, 0.0) if place != "cabin" else (12.0 if lt["dark"] else 0.0)) * (1.0 - lt.get("out", 0.0))
+                     * (1.0 - lt.get("black", 0.0)))
     rim.rotation_mode = "QUATERNION"
     kit.key_vec(rim, "location", frames, rim_loc)
     kit.key_vec(rim, "rotation_quaternion", frames, rim_rot)
@@ -1310,6 +1387,7 @@ def main():
         log(f"двойник: объектов {len(dbl_objs)}, клипов {len(perf['double']['track'])}, переименовано {fixed}")
     body = bake_body(arm, clips, perf, frames, cam_pos_estimate(perf))
     log("тело запечено")
+    key_legs(arm, perf, frames)          # ч.6: по лестнице — стопы на ступенях
     ik = setup_ik(arm)
     contact_err = fit_contacts(arm, ik, perf, frames)
     key_face(rig, perf, body, frames)
@@ -1378,7 +1456,8 @@ def main():
         import anim_dump as AD
 
         cuts = sorted({int(round(c["t0"] * FPS)) + 1 for c in perf["cameras"]})
-        floor_obs = [o for o in bpy.data.objects if o.name in ("floor", "f22_floor", "f22_floor_low", "f22_stairs")]
+        floor_obs = [o for o in bpy.data.objects if o.name in ("floor", "f22_floor", "f22_floor_low", "f22_stairs")
+                     or o.name.startswith(("sw_land", "sw_flight"))]     # ч.6: площадки и марши лестницы
         step = int(CFG.get("anim_dump_step", 1))
         for who, a_ in (("hero", arm), ("double", dbl)):
             if a_ is None:

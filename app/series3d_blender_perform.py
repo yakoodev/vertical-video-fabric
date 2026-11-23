@@ -17,6 +17,7 @@ from app.series3d_blender_stage import (
 from app.series3d_blender_direction import EMOTIONS, HAND_ACTIONS
 from app.series3d_blender_camera import SIT_DROP, PHONE_SHOW, _rot, camera_plan
 from app import series3d_chase as CH
+from app import series3d_stairs as ST
 
 LID_AJAR = 0.40          # «крышка приподнялась»: доля HATCH_OPEN_DEG (≈ 44°) — щель, в неё светит фонарик
 TORCH_POS = (HATCH_LID[0], HATCH_LID[1] - 0.17, H + 0.30)   # фонарик над щелью люка (крышка поднимается с ближнего края)
@@ -262,6 +263,8 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     runs: list[dict] = []             # окна бега героя по пути автора (series3d_chase.run_window)
     running: dict | None = None       # бег прошлого плана ещё идёт: на склейке фаза шага не сбрасывается
     flash_over: list[tuple[float, float, float]] = []   # фонарик по указанию автора плана: (с, по, горит)
+    blacks: list[tuple[float, float, float]] = []       # ч.6: фонарик мигает и гаснет — (с, по, горит): свет у камеры — за ним
+    stair_z: float | None = None                         # ч.6: пол под героем на лестнице (по ходу планов)
     for k, s in enumerate(shots):
         t0, t1 = float(s["t0"]), float(s["t1"])
         # склейка на границе кадра, как у кусков рендера (chunks: round(t0·fps)): иначе первый кадр плана — ещё со старого
@@ -773,16 +776,33 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         if s.get("flash") is not None and s.get("by") == "author":
             # автор плана: фонарик горит/погашен (ч.5: в темноте читает экран — фонарь не бьёт в объектив)
             flash_over.append((t_cut, t1, 1.0 if s["flash"] else 0.0))
+        if isinstance(s.get("flicker"), dict) and s.get("by") == "author":
+            # ч.6: фонарик мигает и гаснет — дальше полная темнота до конца серии (lights.black)
+            fk_ = ST.flicker_spans(t_cut + float(s["flicker"].get("at", 0.5)), t_cut + float(s["flicker"].get("dark", 2.0)))
+            flash_over[:0] = fk_
+            blacks.extend(fk_)
+        if loc == ST.LOC and s.get("z") is not None:
+            stair_z = float(s["z"])         # автор: план начинается на этой высоте пола (склейкой на другом марше)
         if run_spec:
             win = CH.run_window(track, add_clip, t_cut, t1, run_spec, running, clip_len)
             runs.append(win)
             running = win if win["stop"] is None else None
             pos = tuple(win["path"][-1])
+            if win["t0"] - t_cut > 0.05:
+                head_keys.key(win["t0"], heading)     # ждёт, не крутясь на месте, пока не побежал (курс начала пути)
             heading = CH.unwrap(heading, CH.path_heading(win["path"], CH.path_len(win["path"]) - 0.01))
             head_keys.key((win["stop"] if win["stop"] is not None else t1) + 0.02, heading)
-            # на бегу смотрит (и светит) вперёд по пути — не оборачивается
+            # на бегу смотрит (и светит) вперёд по пути — не оборачивается (по лестнице — от пола в конце пути)
             gaze.keys = [k_ for k_ in gaze.keys if not (t0 - 1e-6 <= k_[0] < t1)]
-            gaze.key(t0 + 0.01, CH.ahead_point(win["path"], z=0.75 if a == "phone_light" else 0.95))
+            gz_ = 0.0
+            if loc == ST.LOC:
+                stair_z = gz_ = ST.ahead_z(loc, win["path"], stair_z)
+            t_g = t0 + 0.01
+            if s.get("look") and s.get("by") == "author" and win["t0"] - t0 > 0.5:
+                # ч.6: автор назвал, куда смотреть, пока не побежал (номер этажа на стене) — потом вперёд по пути
+                gaze.key(t0 + 0.01, loc_target(loc, str(s["look"])))
+                t_g = win["t0"] - 0.2
+            gaze.key(t_g, CH.ahead_point(win["path"], z=(0.75 if a == "phone_light" else 0.95) + gz_))
         if CH.is_chat(s.get("screen")):
             msg_seen = True
         show_track.key(t0, show_track.keys[-1][1])
@@ -847,8 +867,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         got = CH.run_root(track, [win], times)
         nxt_t = runs[k_ + 1]["t0"] if k_ + 1 < len(runs) else 1e9
         got = {f: v for f, v in got.items() if times[f] < nxt_t}
-        if got and win["stop"] is not None:
-            last = max(got)       # остановился — дальше стоит там, где кончился шаг
+        if got:
+            # остановился (или бег кончился на склейке без пути дальше) — стоит там, где кончился шаг, а не на старте
+            # пути; продолжение бега следующим планом — его ключ на склейке сильнее (проверка ниже)
+            last = max(got)
             end_t = times[last] + 0.5 / fps
             if not any(abs(k__[0] - end_t) < 0.1 for k__ in pos_keys):   # склейка следующего плана сильнее
                 pos_keys.append((end_t, got[last][:2]))
@@ -862,6 +884,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         contacts.append({"kind": "step", "t": t_, "side": side_, "who": "hero"})
     rz_c = rz_track.curve()
     rzs = [round(rz_c.at(t), 4) for t in times]
+    feet_dz = None
+    if any(ST.is_stairs(x_.get("location")) for x_ in shot_out):
+        # ч.6: по лестнице — корень по высоте опоры, стопы на ступенях (цели IK ног в сцене)
+        rzs, feet_dz = ST.plan_ground(shot_out, times, root, heads, track, rzs)
     bag_c = bag_track.curve(ease="step")
     bags = [1 if bag_c.at(t) > 0.5 else 0 for t in times]
 
@@ -1127,7 +1153,7 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
             beam_raw.append(g)
         else:
             fx, fy = facing(heads[f])
-            beam_raw.append((root[f][0] + fx * 0.9, root[f][1] + fy * 0.9, 0.05))
+            beam_raw.append((root[f][0] + fx * 0.9, root[f][1] + fy * 0.9, 0.05 + (rzs[f] if feet_dz else 0.0)))
     perf = {"fps": fps, "frames": nf, "duration": dur, "track": [
         {"clip": sg.clip, "start": round(sg.start, 4), "duration": sg.duration, "blend": sg.blend, "speed": round(sg.speed, 4),
          "loop": sg.loop, "offset": sg.offset, "ease_in": sg.ease_in, "ease_out": sg.ease_out,
@@ -1138,6 +1164,15 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
     # поля только у серий, где они есть (ключи кэша старых серий не меняются)
     if any(rzs):
         perf["root_z"] = rzs
+    if feet_dz:
+        perf["feet_dz"] = feet_dz
+    if blacks:
+        # ч.6: фонарик мигает и гаснет — свет у камеры (заполняющий, контровой) и экран телефона — вместе с ним
+        bo = CH.Override(m.Curve([(0.0, 1.0)]), blacks)
+        for f, t in enumerate(times):
+            v = float(bo.at(t))
+            if v < 1.0:
+                lights[f]["black"] = round(1.0 - v, 4)
     if any(bags):
         perf["bag"] = bags
         perf["bag_pose"] = [BAG_SPOT[0], BAG_SPOT[1], round(math.pi, 5), BAG_H]
@@ -1176,7 +1211,10 @@ def perform(job: dict, clip_len: dict | None = None, stride: float | None = None
         scr = str(sh_.get("screen") or "") if sh_ and vis[f] and (held_ or t >= float(sh_.get("a0", sh_["t0"])) + 0.5) else ""
         # полная темнота: экран телефона гаснет, фонарик горит; серия, что началась в темноте (ч.5), — экран светит
         dim = 1.0 - float(lights[f].get("out", 0.0)) if (lights_out is None or lights_out >= 0) else 1.0
-        phone.append({"on": vis[f], "aim": round(pm.at(t) if vis[f] else 0.0, 4),
+        dim = min(dim, 1.0 - float(lights[f].get("black", 0.0)))   # ч.6: фонарик погас — и экран тёмный
+        # ч.6: полная темнота — телефона не видно (подсветка экрана и стекло не светятся точкой в чёрном кадре)
+        phone.append({"on": vis[f] if float(lights[f].get("black", 0.0)) < 1.0 else 0.0,
+                      "aim": round(pm.at(t) if vis[f] else 0.0, 4),
                       "light": round(fl.at(t) if vis[f] else 0.0, 4), "beam": tuple(round(c, 4) for c in beam_s[f]),
                       **({"dim": round(dim, 4)} if dim < 1.0 else {}),
                       # «телефон вибрирует» (ч.5): дрожит в руке (series_scene.attach_phone)
