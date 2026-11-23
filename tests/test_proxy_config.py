@@ -21,20 +21,20 @@ def test_saved_proxy_wins_over_env_and_is_secret(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "download_proxy_url", "http://env:1@10.0.0.1:1")
     monkeypatch.setattr(settings, "gemini_proxy_url", "")
     store = _store(tmp_path)
+    # Хранилище сервиса (app.main регистрирует своё) вернётся после теста: register(None) в finally стирал его,
+    # и тесты после этого (render_critique: учёт трат Gemini) молча теряли записи в полном прогоне.
+    monkeypatch.setattr(proxy_config, "_get_store", None)
     proxy_config.register(lambda: store)
-    try:
-        assert proxy_config.download_proxy() == "http://env:1@10.0.0.1:1"
-        st = proxy_config.save("u:p:158.46.183.32:49155", "2026-11-20", for_gemini=True)
-        assert st["source"] == "service" and "u:p" not in str(st) and st["masked"].endswith("49155")
-        assert proxy_config.download_proxy() == "http://u:p@158.46.183.32:49155"
-        assert proxy_config.gemini_proxy() == "http://u:p@158.46.183.32:49155"
-        # в базе — зашифровано
-        raw = store.db.query_one("SELECT value_json, encrypted FROM app_settings WHERE key = ?", (proxy_config.KEY,))
-        assert raw["encrypted"] and "158.46" not in raw["value_json"]
-        proxy_config.clear()
-        assert proxy_config.download_proxy() == "http://env:1@10.0.0.1:1"
-    finally:
-        proxy_config.register(None)
+    assert proxy_config.download_proxy() == "http://env:1@10.0.0.1:1"
+    st = proxy_config.save("u:p:158.46.183.32:49155", "2026-11-20", for_gemini=True)
+    assert st["source"] == "service" and "u:p" not in str(st) and st["masked"].endswith("49155")
+    assert proxy_config.download_proxy() == "http://u:p@158.46.183.32:49155"
+    assert proxy_config.gemini_proxy() == "http://u:p@158.46.183.32:49155"
+    # в базе — зашифровано
+    raw = store.db.query_one("SELECT value_json, encrypted FROM app_settings WHERE key = ?", (proxy_config.KEY,))
+    assert raw["encrypted"] and "158.46" not in raw["value_json"]
+    proxy_config.clear()
+    assert proxy_config.download_proxy() == "http://env:1@10.0.0.1:1"
 
 
 def _store(tmp_path):
