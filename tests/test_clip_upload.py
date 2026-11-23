@@ -121,6 +121,35 @@ def test_json_upload_for_the_page(env):
     assert body["clip_id"] != body["clip_plan_id"] and store.get_clip(body["clip_id"])["clip_plan_id"] == body["clip_plan_id"]
 
 
+def test_upload_as_version_of_previous_upload(env):
+    """Гайд Витубики 22.11: v1, v1b, v2 одного ролика загружались отдельными клипами (1129–1131). С version_of новый
+    файл — версия того же клипа: одна плитка в проекте, на экране клипа все версии; проект берётся у прошлой."""
+    client, store, _tmp = env
+    pid = P.create_project(store, "Витубика")["id"]
+
+    def up(**data):
+        r = client.post("/api/clips/upload", files={"file": ("g.mp4", BYTES, "video/mp4")}, data=data)
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    first = up(title="Гайд №5", project_id=str(pid))
+    second = up(title="Гайд №5 (v1b)", version_of=str(first["clip_plan_id"]))
+    third = up(title="Гайд №5 (v2)", version_of=str(second["clip_plan_id"]))
+    assert second["version_of"] == first["clip_plan_id"] and second["project_id"] == pid
+    assert third["version_of"] == second["clip_plan_id"]
+    cards = client.get("/api/clip-cards", params={"project_id": pid}).json()["clips"]
+    assert [c["id"] for c in cards] == [third["clip_plan_id"]]
+    view = client.get(f"/api/clip-view/{first['clip_plan_id']}").json()
+    assert {p["id"] for p in view["plans"]} == {first["clip_plan_id"], second["clip_plan_id"], third["clip_plan_id"]}
+    # Нет такого клипа — отказ до записи файла; смонтированный клип — не версия загрузки.
+    plans = store.db.query_one("SELECT COUNT(*) AS n FROM clip_plans")["n"]
+    r = client.post("/api/clips/upload", files={"file": ("g.mp4", BYTES, "video/mp4")}, data={"version_of": "999999"})
+    assert r.status_code == 404 and store.db.query_one("SELECT COUNT(*) AS n FROM clip_plans")["n"] == plans
+    montage = add_plan(store, add_source(store, "raw.mp4"), "Смонтированный")
+    r = client.post("/api/clips/upload", files={"file": ("g.mp4", BYTES, "video/mp4")}, data={"version_of": str(montage["id"])})
+    assert r.status_code == 400 and "монтажом" in r.json()["detail"]
+
+
 def test_long_and_short_videos_get_a_plan(env, monkeypatch):
     import app.main as main_module
 

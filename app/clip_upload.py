@@ -89,6 +89,41 @@ def register_file_clip(store: Any, path: Path, title: str, description: str = ""
     return {"clip_id": int(clip["id"]), "clip_plan_id": int(clip["clip_plan_id"]), "path": str(clip["output_path"])}
 
 
+def check_version_of(store: Any, clip_plan_id: int) -> dict:
+    """Прошлая загрузка, версией которой станет новый файл: план загруженного ролика (любой план его клипа).
+    Иначе ``KeyError`` (нет клипа) / ``ValueError`` (это смонтированный клип — его версия делается монтажом)."""
+    from app.clip_groups import group_members
+
+    members = group_members(store, int(clip_plan_id))  # нет клипа — KeyError
+    head = members[-1]
+    if not is_upload_plan(store, int(head["id"])):
+        raise ValueError(f"клип #{clip_plan_id} смонтирован в сервисе, а не загружен файлом: новая версия — монтажом "
+                         "(new-version на экране клипа), не загрузкой")
+    return head
+
+
+def attach_upload_version(store: Any, plan_id: int, version_of: int) -> dict:
+    """Новая загрузка — версия прошлой (гайды Витубики 22.11: v1, v1b, v2 одного ролика лежали тремя клипами 1129–1131).
+    У каждой загрузки свой скрытый источник, поэтому это объединение клипов одного проекта (``clip_groups.merge_clips``:
+    формат тот же, проект тот же). Проект — проект прошлой загрузки, если у новой его не указали."""
+    from app.clip_groups import head_plan_id, merge_clips
+    from app.projects import assign_plan_project
+
+    head = check_version_of(store, version_of)
+    mine = store.db.query_one("SELECT project_id FROM plan_projects WHERE clip_plan_id = ?", (int(plan_id),))
+    theirs = store.db.query_one("SELECT project_id FROM plan_projects WHERE clip_plan_id = ?", (int(head["id"]),))
+    if mine is None and theirs is not None:
+        assign_plan_project(store, int(plan_id), int(theirs["project_id"]))
+    try:
+        merge_clips(store, int(plan_id), int(head["id"]))
+    except ValueError as exc:  # другой формат или проект: файл уже принят — остаётся отдельным клипом, с причиной
+        return {"version_of": None, "version_note": f"не версия клипа #{head['id']}: {exc}"}
+    row = store.db.query_one("SELECT clip_group_id FROM clip_plans WHERE id = ?", (int(plan_id),))
+    project = store.db.query_one("SELECT project_id FROM plan_projects WHERE clip_plan_id = ?", (int(plan_id),))
+    return {"version_of": int(head["id"]), "clip_group_id": row["clip_group_id"], "head_plan_id": head_plan_id(store, plan_id),
+            "project_id": int(project["project_id"]) if project else None}
+
+
 def is_upload_plan(store: Any, clip_plan_id: int) -> bool:
     row = store.db.query_one(
         "SELECT s.source_type FROM clip_plans cp JOIN sources s ON s.id = cp.source_id WHERE cp.id = ?", (int(clip_plan_id),)
