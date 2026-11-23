@@ -10,6 +10,7 @@ import { ErrorState, Loading } from "@/components/ui";
 import { projectPath } from "@/lib/paths";
 import { clock, etaSlow, exprLabel, mb, num, sortExpressions } from "./labels";
 import { DEFAULT_OPTIONS, useViewer, type ViewerOptions } from "./useViewer";
+import { propKindFor } from "./viewer/props";
 import type { ViewPreset } from "./viewer/stage";
 import "@/styles/models3d.css";
 
@@ -110,13 +111,13 @@ export function Model3dPage() {
       }
       setClipBusy(false);
     }
-    v.setClip(clip, move, entry?.loop ?? true);
+    v.setClip(clip, move, entry?.loop ?? true, propKindFor(entry));
   };
 
   const toggleMove = (move: boolean) => {
     set("move", move);
     const clip = cache.current.get(clipId);
-    if (clip) v.setClip(clip, move, opts.loop);
+    if (clip) v.setClip(clip, move, opts.loop, propKindFor(clipEntry));
   };
 
   const patch = useMutation({
@@ -235,6 +236,12 @@ export function Model3dPage() {
               <label className="m3d-check" title="Персонаж уходит с места, камера идёт за ним">
                 <input type="checkbox" checked={opts.move} onChange={(e) => toggleMove(e.target.checked)} /> С перемещением
               </label>
+              {v.propInfo ? (
+                <label className="m3d-check" title={v.propInfo.text}>
+                  <input type="checkbox" checked={opts.prop} onChange={(e) => set("prop", e.target.checked)} />{" "}
+                  {v.propInfo.kind === "stairs" ? "Лестница" : "Стул"}
+                </label>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -260,6 +267,7 @@ export function Model3dPage() {
                 </select>
               </label>
               {clipBusy ? <p className="m3d-note">Загружаю анимацию…</p> : null}
+              {v.propInfo && opts.prop ? <p className="m3d-note">{v.propInfo.text}</p> : null}
               {clipEntry ? (
                 <p className="m3d-note">
                   Откуда: {clipEntry.source || "—"}<br />

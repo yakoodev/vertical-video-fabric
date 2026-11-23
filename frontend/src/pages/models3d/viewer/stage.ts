@@ -1,7 +1,8 @@
 /**
  * Сцена окна просмотра 3D-модели: камера с вращением/приближением/сдвигом (мышь и пальцы), свет (студия или
  * «мультяшный»), фон светлый/тёмный, сетка пола с мягкой тенью, вид спереди/¾/сбоку/сзади, автоповорот, каркас.
- * Модель — любой three.js Object3D; VRM-часть (выражения, позы, анимации) — в vrmRig.ts.
+ * Модель — любой three.js Object3D; VRM-часть (выражения, позы, анимации) — в vrmRig.ts, реквизит клипа (ступени,
+ * стул) — в props.ts: материал в тон пола, ниже пола не рисуется.
  */
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -15,6 +16,8 @@ const BG: Record<Background, number> = { dark: 0x15121e, light: 0xe8e6ee };
 const GRID: Record<Background, [number, number]> = { dark: [0x3a3350, 0x262033], light: [0xb9b4c6, 0xd3cfdc] };
 /** Цвет каркаса («Показать сетку модели») под фон. */
 const WIRE: Record<Background, number> = { dark: 0x9fd8ff, light: 0x3a3350 };
+/** Реквизит (ступени, стул) — нейтральный, в тон пола: заливка и рёбра цвета линий сетки. */
+const PROP: Record<Background, [number, number]> = { dark: [0x2e2840, 0x5a5178], light: [0xd9d5e2, 0x9a94ab] };
 
 function shadowTexture(): THREE.Texture {
   const c = document.createElement("canvas");
@@ -55,6 +58,13 @@ export class Stage {
     side: THREE.DoubleSide,
   });
   private gradient: THREE.DataTexture;
+  private prop: THREE.Object3D | null = null;
+  private floorClip = [new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)];
+  readonly propMat = new THREE.MeshStandardMaterial({
+    color: PROP.dark[0], roughness: 0.92, metalness: 0, clippingPlanes: this.floorClip,
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  });
+  readonly propEdge = new THREE.LineBasicMaterial({ color: PROP.dark[1], clippingPlanes: this.floorClip });
   background: Background = "dark";
   light: LightPreset = "studio";
   wireframe = false;
@@ -65,6 +75,7 @@ export class Stage {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.localClippingEnabled = true; // реквизит «на месте» уходит под пол — там не рисуем
     host.appendChild(this.renderer.domElement);
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.01, 200);
     this.camera.position.set(0, 1.2, 4);
@@ -114,6 +125,8 @@ export class Stage {
     this.background = bg;
     this.scene.background = new THREE.Color(BG[bg]);
     this.wireMat.color.setHex(WIRE[bg]);
+    this.propMat.color.setHex(PROP[bg][0]);
+    this.propEdge.color.setHex(PROP[bg][1]);
     if (this.grid) {
       this.scene.remove(this.grid);
       this.grid.geometry.dispose();
@@ -254,6 +267,21 @@ export class Stage {
     this.applyToon();
     this.setWireframe(this.wireframe);
     this.reset(false);
+  }
+
+  /** Реквизит клипа (или null — убрать). Геометрию старого освобождает его владелец (ClipProp.dispose). */
+  setProp(obj: THREE.Object3D | null) {
+    if (this.prop) this.scene.remove(this.prop);
+    this.prop = obj;
+    if (obj) this.scene.add(obj);
+    this.dirty = true;
+  }
+
+  /** Сдвиг реквизита (режим «на месте» везёт его вместе с персонажем) и видимость (галочка). */
+  placeProp(offset: THREE.Vector3, visible: boolean) {
+    if (!this.prop) return;
+    this.prop.position.copy(offset);
+    this.prop.visible = visible;
   }
 
   /** Вид: азимут вокруг модели (0 — спереди, VRM смотрит на +Z), чуть сверху. */
