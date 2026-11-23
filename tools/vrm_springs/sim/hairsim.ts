@@ -23,7 +23,7 @@ import type { VRM } from "@pixiv/three-vrm";
 import { parseModel, VrmRig } from "../../../frontend/src/pages/models3d/viewer/vrmRig";
 
 const FACE_DEPTH = 0.002;
-const FACE_MAX = 0.08;      // static mesh-edge artifacts are removed by the rigid-reference rule below
+const FACE_MAX = 0.025;     // deeper = inside the skull (tie / scalp strands), where the nearest-face sign is meaningless
 const BODY_DEPTH = 0.008;   // a tip resting on a shoulder dips a few mm; 8 mm through is a visible cut
 const REACH = 0.08;
 const BODY_MAX = 0.03;      // deeper than this is not a crossing hair (open mesh edges, head interior)

@@ -381,6 +381,8 @@ DEFAULTS = {
     'side': dict(stiffiness=6.0, gravityPower=0.12, dragForce=0.85, hitRadius=0.012, reroot=True),
     'crown': dict(stiffiness=4.0, gravityPower=0.1, dragForce=0.8, hitRadius=0.008, reroot=True),
     'back': dict(stiffiness=1.2, gravityPower=0.45, dragForce=0.62, hitRadius=0.03, reroot=True),
+    # under a hood the back tips sank into the hood bottom / shoulders with full weight: lighter and stiffer there
+    'back_hood': dict(stiffiness=1.8, gravityPower=0.25, dragForce=0.65),
     'tail': dict(stiffiness=0.9, gravityPower=0.6, dragForce=0.55, hitRadius=0.02),
     'bun': dict(stiffiness=3.0, gravityPower=0.2, dragForce=0.7, hitRadius=0.015),
     # clothes: damping so nothing rings (several had drag 0), a little weight, colliders that clear the rest pose
@@ -409,6 +411,8 @@ def fix(glb: Glb, profile: dict | None = None) -> dict:
         params.setdefault(k, {}).update(v)
     rig = Rig(glb)
     sa = rig.sa
+    if any(g.get('comment') == 'Hood' for g in sa['boneGroups']):
+        params['back'] = dict(params['back'], **params['back_hood'])
     rep = dict(groups_before=len(sa['boneGroups']), tails=[], hair={}, clothes={}, colliders=[])
     hair = rig.hair_chains()
     has_hair = 'Hair' in rig.meshes
