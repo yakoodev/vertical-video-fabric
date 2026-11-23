@@ -42,7 +42,7 @@ _REWORK_ORDER = ['hero__base', 'hero__hair_tied', 'hero__hair_wet', 'hero__hair_
 for _i, _n in enumerate(_REWORK_ORDER):
     ASSET[_n + '.vrm'] = 7 + _i
 NEGATIVE = [('hero.vrm', 'floppy'), ('hero.vrm', 'unstable'), ('bassist__hair_pony.vrm', 'floppy')]
-VIDEOS = [('hero.vrm', '34'), ('guitarist__base.vrm', '34'), ('drummer__base.vrm', '34'), ('bassist__base.vrm', '34'),
+VIDEOS = [('hero.vrm', '34'), ('guitarist__base.vrm', '34'), ('drummer__hair_crop.vrm', '34'), ('bassist__base.vrm', '34'),
           ('hero__hair_tied.vrm', 'back34'), ('guitarist__hair_bun.vrm', 'back34'),
           ('bassist__hair_pony.vrm', 'back34'), ('bassist__hair_pigtails.vrm', 'back34')]
 
