@@ -38,3 +38,4 @@ frontend/dist/
 # Кэш компилятора TypeScript
 *.tsbuildinfo
 /node/vrm/dist/
+/tools/vrm_springs/sim/dist/
