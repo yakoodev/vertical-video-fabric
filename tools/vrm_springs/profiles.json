@@ -1,0 +1,170 @@
+{
+ "_about": "Per character / per file overrides for tools/vrm_springs (springs.DEFAULTS). Tails: own bone chain for tied hair, tie = head-relative point (glTF, m; -z is the face side), dir = axis down the tail, radius = selection radius around the axis.",
+ "hero__hair_tied": {
+  "tails": [
+   {
+    "name": "J_Sec_HairTail",
+    "label": "ponytail",
+    "kind": "tail",
+    "tie": [
+     0,
+     0.035,
+     0.095
+    ],
+    "dir": [
+     0,
+     -1,
+     0.15
+    ],
+    "radius": 0.035,
+    "joints": 4,
+    "params": {
+     "stiffiness": 1.4,
+     "gravityPower": 0.4,
+     "dragForce": 0.6
+    }
+   }
+  ]
+ },
+ "hero__hair_tied__outfit_home": {
+  "tails": [
+   {
+    "name": "J_Sec_HairTail",
+    "label": "ponytail",
+    "kind": "tail",
+    "tie": [
+     0,
+     0.035,
+     0.095
+    ],
+    "dir": [
+     0,
+     -1,
+     0.15
+    ],
+    "radius": 0.035,
+    "joints": 4,
+    "params": {
+     "stiffiness": 1.4,
+     "gravityPower": 0.4,
+     "dragForce": 0.6
+    }
+   }
+  ]
+ },
+ "bassist__hair_pony": {
+  "tails": [
+   {
+    "name": "J_Sec_HairTail",
+    "label": "ponytail",
+    "kind": "tail",
+    "tie": [
+     0,
+     0.125,
+     0.108
+    ],
+    "dir": [
+     0,
+     -1,
+     0.12
+    ],
+    "radius": 0.04,
+    "joints": 4,
+    "params": {
+     "stiffiness": 2.4,
+     "gravityPower": 0.3,
+     "dragForce": 0.6
+    }
+   }
+  ]
+ },
+ "bassist__hair_pigtails": {
+  "tails": [
+   {
+    "name": "J_Sec_HairTailL",
+    "label": "pigtail_L",
+    "kind": "tail",
+    "tie": [
+     0.06,
+     0.07,
+     0.05
+    ],
+    "dir": [
+     0.05,
+     -1,
+     0.03
+    ],
+    "radius": 0.03,
+    "joints": 3,
+    "params": {
+     "stiffiness": 1.4,
+     "gravityPower": 0.4,
+     "dragForce": 0.6
+    }
+   },
+   {
+    "name": "J_Sec_HairTailR",
+    "label": "pigtail_R",
+    "kind": "tail",
+    "tie": [
+     -0.06,
+     0.07,
+     0.05
+    ],
+    "dir": [
+     -0.05,
+     -1,
+     0.03
+    ],
+    "radius": 0.03,
+    "joints": 3,
+    "params": {
+     "stiffiness": 1.4,
+     "gravityPower": 0.4,
+     "dragForce": 0.6
+    }
+   }
+  ]
+ },
+ "guitarist__hair_bun": {
+  "tails": [
+   {
+    "name": "J_Sec_HairBun",
+    "label": "bun",
+    "kind": "bun",
+    "tie": [
+     0,
+     0.175,
+     0.11
+    ],
+    "dir": [
+     0,
+     -1,
+     0
+    ],
+    "radius": 0.035,
+    "joints": 2
+   }
+  ]
+ },
+ "hero__outfit_stage": {
+  "params": {
+   "back": {
+    "stiffiness": 1.8,
+    "gravityPower": 0.25,
+    "dragForce": 0.65
+   }
+  },
+  "_why": "long hair on bare shoulders: full back weight pushed the tips through the shoulders (measured)"
+ },
+ "hero__outfit_home": {
+  "params": {
+   "back": {
+    "stiffiness": 1.8,
+    "gravityPower": 0.25,
+    "dragForce": 0.65
+   }
+  },
+  "_why": "long hair on bare shoulders: full back weight pushed the tips through the shoulders (measured)"
+ }
+}
