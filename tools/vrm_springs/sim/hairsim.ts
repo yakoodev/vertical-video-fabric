@@ -23,7 +23,7 @@ import type { VRM } from "@pixiv/three-vrm";
 import { parseModel, VrmRig } from "../../../frontend/src/pages/models3d/viewer/vrmRig";
 
 const FACE_DEPTH = 0.002;
-const FACE_MAX = 0.025;     // deeper = a vertex inside the skull flipping sides at a mesh edge, not a strand in the face
+const FACE_MAX = 0.08;      // static mesh-edge artifacts are removed by the rigid-reference rule below
 const BODY_DEPTH = 0.008;   // a tip resting on a shoulder dips a few mm; 8 mm through is a visible cut
 const REACH = 0.08;
 const BODY_MAX = 0.03;      // deeper than this is not a crossing hair (open mesh edges, head interior)
@@ -313,6 +313,7 @@ function measure(m: Model) {
   let face = 0, faceDeep = 0, body = 0, bodyDeep = 0, faceRigid = 0, bodyRigid = 0, bodyRigidDeep = 0;
   let cloth = 0, clothDeep = 0;
   const cand: { h: any; vi: number; d: number; p: THREE.Vector3 }[] = [];
+  const faceCand: { h: any; vi: number; d: number; p: THREE.Vector3 }[] = [];
   inv.copy(m.head.matrixWorld).invert();
   refreshBody(m);
   if (m.bodyBvh) m.bodyBvh.refit();
@@ -337,11 +338,8 @@ function measure(m: Model) {
         const p = v.copy(w).applyMatrix4(inv).clone();
         const d = signed(m.faceBvh, m.faceGeo!, p);
         if (d !== null && d < -FACE_DEPTH && d > -FACE_MAX) {
-          if (h.spring[k]) {
-            m.dbg.push(w.x, w.y, w.z);
-            face++;
-            faceDeep = Math.max(faceDeep, -d);
-          } else faceRigid++;
+          if (h.spring[k]) faceCand.push({ h, vi, d, p: w.clone() });
+          else faceRigid++;
         }
       }
       if (m.bodyBvh && !rb[k] && h.spring[k]) {
@@ -363,7 +361,7 @@ function measure(m: Model) {
   }
   // the rigid reference: the same frame with every spring joint at its rest rotation. What is inside there too is
   // the pose's doing (a bowed head tucks the hair into the hood), not the springs'; only the extra depth counts.
-  if (cand.length || clothNow.length) {
+  if (cand.length || clothNow.length || faceCand.length) {
     const saved = m.joints.map((j: any) => j.bone.quaternion.clone());
     m.joints.forEach((j: any, k: number) => {
       j.bone.quaternion.copy(m.restQ[k]);
@@ -383,6 +381,17 @@ function measure(m: Model) {
         bodyRigid++;
         bodyRigidDeep = Math.max(bodyRigidDeep, -c.d);
       }
+    }
+    // face: same rule - the springs must have carried the vertex in (outside the face in the rigid pose)
+    const hinv = new THREE.Matrix4().copy(m.head.matrixWorld).invert();
+    for (const c of faceCand) {
+      skinnedWorld(c.h.mesh, c.vi, w);
+      const dr = signed(m.faceBvh!, m.faceGeo!, w.clone().applyMatrix4(hinv)) ?? 1;
+      if (dr > 0) {
+        m.dbg.push(c.p.x, c.p.y, c.p.z);
+        face++;
+        faceDeep = Math.max(faceDeep, -c.d);
+      } else faceRigid++;
     }
     for (const c of clothNow) {
       tailWorld(m.joints[c.k], w);

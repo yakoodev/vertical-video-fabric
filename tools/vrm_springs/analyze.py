@@ -24,7 +24,7 @@ import numpy as np
 
 from tools.model_check import anim_checks as AC
 
-MIN_VERTS = 2
+MIN_VERTS = 3          # a strand, not a vertex pair flickering at a mesh seam (seen as 2 verts at a constant depth)
 LIMITS = dict(face_frames=0, body_frames=0, cloth_frames=0, jumps=0, jitter_cm=0.35, nan=False)
 
 

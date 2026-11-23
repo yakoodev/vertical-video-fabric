@@ -62,7 +62,8 @@ async function metrics() {
   try {
     for (const name of a.clips.split(",")) {
       const c = JSON.parse(clipJson(`${a.clipdir}/${name}.json`));
-      const loop = !["seq", "stairs", "nod", "shake", "turn180"].includes(name);
+      // walk plays once: its loop seam turns the hips 50 deg in one frame (a clip artifact, the same in the preview)
+      const loop = !["seq", "stairs", "nod", "shake", "turn180", "walk"].includes(name);
       const dur = secs[name] ?? (c.frames - 1) / c.fps;
       await sc.evaluate(`window.__hp.clip(${JSON.stringify(c)}, ${loop})`);
       const t0 = Date.now();

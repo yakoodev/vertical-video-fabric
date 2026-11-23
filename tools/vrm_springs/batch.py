@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SIM = ROOT / 'tools' / 'vrm_springs' / 'sim' / 'run_sim.mjs'
 PROFILES = ROOT / 'tools' / 'vrm_springs' / 'profiles.json'
 CLIPS = ['idle', 'walk', 'run', 'turn180', 'nod', 'shake', 'stairs']
-SECONDS = 'stairs=12'
+SECONDS = 'stairs=9'   # the climb until the first landing; at 9.5 s the in-place ground correction jumps the body
 # 3D-preview assets of project 14 these files are (README rework_2211); the hero base is the OLD hero (asset 1)
 ASSET = {'hero.vrm': 1}
 _REWORK_ORDER = ['hero__base', 'hero__hair_tied', 'hero__hair_wet', 'hero__hair_messy', 'hero__outfit_stage',
