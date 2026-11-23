@@ -381,12 +381,18 @@ def add_version(store: Any, work_id: int, note: str = "", variants: list[dict] |
     return get_version(store, int(version["id"]))
 
 
+# Заметка версии, которую добавила сама загрузка файла (app/upload_versions.follow_in_feed).
+UPLOAD_NOTE = "Новая загрузка «"
+
+
 def _same_as_latest(store: Any, work_id: int, clip_ids: list[Any]) -> int | None:
-    """id последней версии работы, если в ней ровно эти клипы (и только клипы), иначе None."""
+    """id последней версии работы, если её добавила загрузка (``UPLOAD_NOTE``) и в ней ровно эти клипы, иначе None.
+    Остальные повторы — как раньше: новая версия (перезапуск задания может сдать тот же файл ещё раз)."""
     if not clip_ids or not all(clip_ids):
         return None
-    latest = store.db.query_one("SELECT id FROM feed_versions WHERE work_id = ? ORDER BY n DESC LIMIT 1", (int(work_id),))
-    if not latest:
+    latest = store.db.query_one("SELECT id, note FROM feed_versions WHERE work_id = ? ORDER BY n DESC LIMIT 1",
+                                (int(work_id),))
+    if not latest or not str(latest["note"] or "").startswith(UPLOAD_NOTE):
         return None
     rows = store.db.query_all("SELECT id, clip_id FROM feed_variants WHERE version_id = ?", (int(latest["id"]),))
     if sorted(int(c) for c in clip_ids) != sorted(int(r["clip_id"] or 0) for r in rows):

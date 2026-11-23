@@ -144,7 +144,7 @@ def follow_in_feed(store: Any, plan_id: int, previous_plan_ids: list[int], title
             out.setdefault("feed_note", f"в ленте работа #{work_id}: в последней версии другие файлы — версию "
                                         "добавьте сами (feed_add_version)")
             continue
-        version = FEED.add_version(store, work_id, note=f"Новая загрузка «{title}» (клип #{plan_id})",
+        version = FEED.add_version(store, work_id, note=f"{FEED.UPLOAD_NOTE}{title}» (клип #{plan_id})",
                                    variants=[{"clip_id": int(new["id"]), "label": variants[0]["label"]}],
                                    status="review", made_by="agent")
         out = {"feed_work_id": work_id, "feed_version": version["name"], "feed_version_id": version["id"]}
