@@ -446,7 +446,11 @@ export function captionPages(
     const next = pages[k + 1].t0;
     pages[k].t1 = next - pages[k].t1 < BRIDGE ? next : Math.min(pages[k].t1, next);
   }
-  if (pages.length) pages[pages.length - 1].t1 = Math.min(pages[pages.length - 1].t1, to);
+  if (pages.length) {
+    // holdEnd: последняя страница — до конца слоя (финальный призыв на экране до последнего кадра).
+    const last = pages[pages.length - 1];
+    last.t1 = props.holdEnd && Number.isFinite(to) ? Math.max(last.t1, to) : Math.min(last.t1, to);
+  }
   byProps.set(props, { key, pages });
   return pages;
 }
