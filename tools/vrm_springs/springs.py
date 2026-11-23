@@ -560,16 +560,31 @@ def fix(glb: Glb, profile: dict | None = None) -> dict:
 
 
 def break_springs(glb: Glb, mode: str = 'floppy') -> None:
-    """Negative controls the checks must flag.
+    """Negative controls the checks must flag (both formats: secondaryAnimation and VRMC_springBone).
     floppy:   no stiffness, heavy, undamped, no colliders -> hair falls into the face and the body;
-    unstable: negative damping (each step adds energy) -> the strands whip and spin (jitter / runaway)."""
-    for g in glb.vrm['secondaryAnimation']['boneGroups']:
+    unstable: negative damping (each step adds energy) -> the strands whip and spin (jitter / runaway);
+    inward:   gravity pulls up and back into the skull, no colliders -> strands go into the head."""
+    def broken(st, gp, gd, dr, hit):
         if mode == 'unstable':
-            g['dragForce'] = -0.6
-            g['stiffiness'] = max(g['stiffiness'], 0.5)
-            continue
-        g['stiffiness'] = 0.02
-        g['gravityPower'] = 3.0
-        g['dragForce'] = 0.0
-        g['hitRadius'] = 0.0
-        g['colliderGroups'] = []
+            return st if st > 0.5 else 0.5, gp, gd, -0.6, hit
+        if mode == 'inward':
+            return 0.05, 3.0, (0.0, 0.8, 0.6), 0.2, 0.0
+        return 0.02, 3.0, gd, 0.0, 0.0
+    for g in glb.vrm['secondaryAnimation']['boneGroups']:
+        gd = (g['gravityDir']['x'], g['gravityDir']['y'], g['gravityDir']['z'])
+        st, gp, gd, dr, hit = broken(g['stiffiness'], g['gravityPower'], gd, g['dragForce'], g['hitRadius'])
+        g.update(stiffiness=st, gravityPower=gp, dragForce=dr, hitRadius=hit,
+                 gravityDir={'x': gd[0], 'y': gd[1], 'z': gd[2]})
+        if mode != 'unstable':
+            g['colliderGroups'] = []
+    ext = glb.json.get('extensions', {}).get('VRMC_springBone')
+    if ext:
+        for sp in ext['springs']:
+            for j in sp['joints']:
+                if 'stiffness' not in j:
+                    continue
+                st, gp, gd, dr, hit = broken(j['stiffness'], j['gravityPower'], tuple(j.get('gravityDir', (0, -1, 0))),
+                                             j['dragForce'], j['hitRadius'])
+                j.update(stiffness=st, gravityPower=gp, gravityDir=list(gd), dragForce=dr, hitRadius=hit)
+            if mode != 'unstable':
+                sp['colliderGroups'] = []

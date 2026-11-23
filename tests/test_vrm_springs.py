@@ -306,3 +306,47 @@ def test_sequence_clip_is_in_place_and_normalized():
         assert r[0] == 0 and r[2] == 0
     for q in s['bones']['hips'] + s['bones']['head']:
         assert abs(np.linalg.norm(q) - 1) < 1e-3
+
+
+# ----------------------------------------------------------------------------- VRMC_springBone (per-joint springs)
+def test_vrmc_progressive_springs_with_real_tips():
+    from tools.vrm_springs import vrmc as VC
+    g = make_vrm()
+    before = mesh_bytes(g)
+    rep = S.fix(g)
+    out = VC.build(g, rep, {})
+    ext = g.json['extensions']['VRMC_springBone']
+    assert 'VRMC_springBone' in g.json['extensionsUsed'] and ext['specVersion'] == '1.0'
+    assert out['head_spheres'] >= 1
+    hair = [s for s in ext['springs'] if s['name'].startswith('Hair_')]
+    assert len(hair) == 2
+    for sp in hair:
+        joints = sp['joints']
+        assert g.json['nodes'][joints[-1]['node']]['name'].endswith('_tip')      # a real tip, no 7 cm stick
+        st = [j['stiffness'] for j in joints[:-1]]
+        assert st == sorted(st, reverse=True) and st[0] > st[-1]                 # stiff root, soft tip
+        gp = [j['gravityPower'] for j in joints[:-1]]
+        assert gp == sorted(gp) and gp[-1] > gp[0]                               # the tip carries the weight
+    # no collider pushes a hair tail at rest: hit radius <= the rest gap to every head sphere
+    rig = S.Rig(g)
+    cols = ext['colliders']
+    for sp in hair:
+        heads = [c for gi in sp['colliderGroups'] for c in ext['colliderGroups'][gi]['colliders']]
+        for a, b in zip(sp['joints'][:-1], sp['joints'][1:]):
+            tail = rig.P[b['node']]
+            for ci in heads:
+                c = cols[ci]
+                ctr = rig.P[c['node']] + np.array(c['shape']['sphere']['offset'])
+                assert np.linalg.norm(tail - ctr) - c['shape']['sphere']['radius'] >= a['hitRadius'] - 1e-6
+    assert mesh_bytes(g) == before
+
+
+def test_vrmc_negative_control_inward():
+    from tools.vrm_springs import vrmc as VC
+    g = make_vrm()
+    VC.build(g, S.fix(g), {})
+    S.break_springs(g, 'inward')
+    for sp in g.json['extensions']['VRMC_springBone']['springs']:
+        assert sp['colliderGroups'] == []
+        for j in sp['joints'][:-1]:
+            assert j['gravityDir'][1] > 0 and j['stiffness'] < 0.1

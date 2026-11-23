@@ -163,7 +163,7 @@ def cmd_videos(a):
     vd.mkdir(parents=True, exist_ok=True)
     tmp = OUT / 'work' / 'video'
     tmp.mkdir(parents=True, exist_ok=True)
-    font = 'C\\:/Windows/Fonts/arial.ttf'
+    font = r'C\:/Windows/Fonts/arial.ttf'
     for n, view in VIDEOS:
         if a.only and n not in a.only:
             continue
@@ -183,6 +183,30 @@ def cmd_videos(a):
         subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(parts[0]), '-i', str(parts[1]),
                         '-filter_complex', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', str(out)], check=True)
         log('video %s' % out)
+
+
+def compare_video(a_rel: str, b_rel: str, labels, out: Path, rows=(('34', 1.45), ('side', 1.45), ('34', 0.75)),
+                  clip='physics_2311/work/clips/seq.json'):
+    """one model in two versions, side by side (a | b), stacked views: 3/4, side, a close crop of the head"""
+    tmp = OUT / 'work' / 'video'
+    tmp.mkdir(parents=True, exist_ok=True)
+    parts = []
+    for k, (view, dist) in enumerate(rows):
+        part = tmp / ('%s__row%d.mp4' % (out.stem, k))
+        subprocess.run(['node', str(SIM), 'video', '--packs', str(VROID), '--models', '%s,%s' % (a_rel, b_rel),
+                        '--clip', clip, '--view', view, '--dist', str(dist), '--size', '1280x640', '--out', str(part)],
+                       cwd=str(ROOT), check=True, capture_output=True)
+        parts.append(part)
+    font = r'C\:/Windows/Fonts/arial.ttf'
+    lab = "drawtext=fontfile='%s':text='%s':x=%s:y=16:fontsize=32:fontcolor=white:box=1:boxcolor=black@0.55:boxborderw=8"
+    n = len(parts)
+    vf = ''.join('[%d]' % i for i in range(n)) + 'vstack=%d,%s,%s,drawbox=x=638:y=0:w=4:h=%d:color=white@0.9:t=fill' % (
+        n, lab % (font, labels[0], '20'), lab % (font, labels[1], '660'), 640 * n)
+    cmd = ['ffmpeg', '-y', '-loglevel', 'error']
+    for p_ in parts:
+        cmd += ['-i', str(p_)]
+    subprocess.run(cmd + ['-filter_complex', vf, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', str(out)], check=True)
+    log('video %s' % out)
 
 
 def cmd_sheet(a):
