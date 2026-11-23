@@ -15,7 +15,23 @@ import cv2
 import numpy as np
 
 
-def grade(img: np.ndarray, f: int, rng: np.random.Generator, dust: list, museum: bool) -> np.ndarray:
+def rain_layer(f: int, w: int, h: int, n: int = 160, seed: int = 5) -> np.ndarray:
+    """Wind-driven rain streaks (storm painting): thin diagonal strokes, three depths, fast."""
+    r = np.random.default_rng(seed)
+    lay = np.zeros((h // 2, w // 2), np.float32)
+    for i in range(n):
+        depth = r.random()
+        sp = 38 + 50 * depth
+        x0, y0 = r.uniform(0, w // 2 + 300), r.uniform(0, h // 2)
+        x = (x0 - f * sp * 0.55) % (w // 2 + 300) - 150
+        y = (y0 + f * sp) % (h // 2 + 200) - 100
+        ln = 18 + 40 * depth
+        cv2.line(lay, (int(x), int(y)), (int(x - ln * 0.5), int(y + ln)), 0.10 + 0.22 * depth, 1, cv2.LINE_AA)
+    lay = cv2.GaussianBlur(lay, (0, 0), 0.7)
+    return cv2.resize(lay, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
+def grade(img: np.ndarray, f: int, rng: np.random.Generator, dust: list, museum: bool, rain: float = 0.0) -> np.ndarray:
     x = img.astype(np.float32) / 255.0
     lum = x @ np.array([0.114, 0.587, 0.299], np.float32)
     # warm balance + gentle S-curve
@@ -39,6 +55,8 @@ def grade(img: np.ndarray, f: int, rng: np.random.Generator, dust: list, museum:
     layer = cv2.GaussianBlur(layer, (0, 0), 1.6)
     k = 1.0 if museum else 0.45
     x = x + (layer * k)[..., None] * np.array([0.55, 0.78, 1.0], np.float32)
+    if rain > 0:
+        x = x + (rain_layer(f, w, h) * rain)[..., None] * np.array([0.95, 0.92, 0.85], np.float32)
     # vignette
     yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
     r2 = ((xx / w - 0.5) / 0.62) ** 2 + ((yy / h - 0.5) / 0.75) ** 2
@@ -67,6 +85,7 @@ def main():
     ap.add_argument("plan"); ap.add_argument("frames"); ap.add_argument("out")
     ap.add_argument("--tg"); ap.add_argument("--tg-mb", type=float, default=19.5)
     ap.add_argument("--museum", default="0-59,318-449")
+    ap.add_argument("--rain", default="144-210")
     a = ap.parse_args()
     plan = json.load(open(a.plan, encoding="utf-8"))
     nf, fps = plan["frames"], plan["fps"]
@@ -90,7 +109,9 @@ def main():
         img = cv2.imread(os.path.join(a.frames, f"{f:04d}.png"))
         if img is None:
             raise SystemExit(f"missing frame {f}")
-        ff.stdin.write(grade(img, f, rng, dust, f in museum).tobytes())
+        r0, r1 = (int(v) for v in a.rain.split("-"))
+        rain = 0.0 if not (r0 <= f <= r1) else 0.75 * min(1.0, (f - r0) / 4, (r1 - f) / 2 + 0.3)
+        ff.stdin.write(grade(img, f, rng, dust, f in museum, rain).tobytes())
         if f % 50 == 0:
             print("  graded", f, flush=True)
     ff.stdin.close(); ff.wait()

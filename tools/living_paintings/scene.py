@@ -242,30 +242,39 @@ PROFILE = [(-0.006, -0.010), (0.0, -0.030), (0.010, -0.046), (0.022, -0.056), (0
 
 
 def gold_material(name="gold", dim=1.0):
+    """Gilded wood: smooth gold with soft tonal variation, fine carved-bead bump, darker recesses (AO)."""
     if name in bpy.data.materials:
         return bpy.data.materials[name]
     m, n, L = mat_new(name)
-    if hasattr(m, "surface_render_method"):
-        m.surface_render_method = "DITHERED"
     tc = n.new("ShaderNodeTexCoord")
-    nz = n.new("ShaderNodeTexNoise"); nz.inputs["Scale"].default_value = 55; nz.inputs["Detail"].default_value = 8
+    nz = n.new("ShaderNodeTexNoise"); nz.inputs["Scale"].default_value = 9; nz.inputs["Detail"].default_value = 3
     L.new(tc.outputs["Object"], nz.inputs[0])
-    vo = n.new("ShaderNodeTexVoronoi"); vo.inputs["Scale"].default_value = 28; vo.feature = "SMOOTH_F1" if hasattr(vo, "feature") else vo.feature
+    fine = n.new("ShaderNodeTexNoise"); fine.inputs["Scale"].default_value = 140; fine.inputs["Detail"].default_value = 2
+    L.new(tc.outputs["Object"], fine.inputs[0])
+    vo = n.new("ShaderNodeTexVoronoi"); vo.inputs["Scale"].default_value = 70
     L.new(tc.outputs["Object"], vo.inputs[0])
-    bump = n.new("ShaderNodeBump"); bump.inputs["Strength"].default_value = 0.55; bump.inputs["Distance"].default_value = 0.004
-    mixb = n.new("ShaderNodeMath"); mixb.operation = "ADD"
-    L.new(nz.outputs[0], mixb.inputs[0]); L.new(vo.outputs[0], mixb.inputs[1])
-    L.new(mixb.outputs[0], bump.inputs["Height"])
+    h = n.new("ShaderNodeMath"); h.operation = "MULTIPLY_ADD"
+    L.new(vo.outputs[0], h.inputs[0]); h.inputs[1].default_value = 0.7; L.new(fine.outputs[0], h.inputs[2])
+    bump = n.new("ShaderNodeBump"); bump.inputs["Strength"].default_value = 0.22; bump.inputs["Distance"].default_value = 0.002
+    L.new(h.outputs[0], bump.inputs["Height"])
     ramp = n.new("ShaderNodeValToRGB"); L.new(nz.outputs[0], ramp.inputs[0])
-    ramp.color_ramp.elements[0].position = 0.35; ramp.color_ramp.elements[0].color = (0.30 * dim, 0.17 * dim, 0.05 * dim, 1)
-    ramp.color_ramp.elements[1].position = 0.62; ramp.color_ramp.elements[1].color = (0.95 * dim, 0.70 * dim, 0.32 * dim, 1)
+    ramp.color_ramp.elements[0].position = 0.3; ramp.color_ramp.elements[0].color = (0.62 * dim, 0.40 * dim, 0.14 * dim, 1)
+    ramp.color_ramp.elements[1].position = 0.72; ramp.color_ramp.elements[1].color = (1.0 * dim, 0.76 * dim, 0.36 * dim, 1)
+    ao = n.new("ShaderNodeAmbientOcclusion"); ao.inputs["Distance"].default_value = 0.05
+    aom = n.new("ShaderNodeMapRange"); L.new(ao.outputs["AO"], aom.inputs[0]); aom.inputs[3].default_value = 0.35
+    mul = n.new("ShaderNodeMix"); mul.data_type = "RGBA"; mul.blend_type = "MULTIPLY"; mul.inputs[0].default_value = 1
+    L.new(ramp.outputs[0], mul.inputs[6])
+    cc = n.new("ShaderNodeCombineColor")
+    for i in range(3):
+        L.new(aom.outputs[0], cc.inputs[i])
+    L.new(cc.outputs[0], mul.inputs[7])
     bs = n.new("ShaderNodeBsdfPrincipled")
-    L.new(ramp.outputs[0], bs.inputs["Base Color"]); bs.inputs["Metallic"].default_value = 1.0
-    if name == "goldtext":
-        L.new(ramp.outputs[0], bs.inputs["Emission Color"]); bs.inputs["Emission Strength"].default_value = 0.45
-    rr = n.new("ShaderNodeMapRange"); L.new(nz.outputs[0], rr.inputs[0]); rr.inputs[3].default_value = 0.18; rr.inputs[4].default_value = 0.42
+    L.new(mul.outputs[2], bs.inputs["Base Color"]); bs.inputs["Metallic"].default_value = 1.0
+    rr = n.new("ShaderNodeMapRange"); L.new(nz.outputs[0], rr.inputs[0]); rr.inputs[3].default_value = 0.2; rr.inputs[4].default_value = 0.34
     L.new(rr.outputs[0], bs.inputs["Roughness"])
     L.new(bump.outputs[0], bs.inputs["Normal"])
+    if name == "goldtext":
+        L.new(ramp.outputs[0], bs.inputs["Emission Color"]); bs.inputs["Emission Strength"].default_value = 0.45
     out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
     return m
 
@@ -496,8 +505,10 @@ def ink_material(tag, reveal_keys):
     for f, a in reveal_keys:
         val.outputs[0].default_value = a; val.outputs[0].keyframe_insert("default_value", frame=f)
     a = g.m("MULTIPLY", g.sub(val.outputs[0], sep.outputs[0]), 7.0, clamp=True)
-    bs = n.new("ShaderNodeBsdfPrincipled"); bs.inputs["Base Color"].default_value = (0.045, 0.025, 0.012, 1)
-    bs.inputs["Roughness"].default_value = 0.45
+    bs = n.new("ShaderNodeBsdfPrincipled"); bs.inputs["Base Color"].default_value = (0.022, 0.012, 0.006, 1)
+    bs.inputs["Roughness"].default_value = 0.85
+    if "Specular IOR Level" in bs.inputs:
+        bs.inputs["Specular IOR Level"].default_value = 0.2
     tr = n.new("ShaderNodeBsdfTransparent"); mx = n.new("ShaderNodeMixShader")
     L.new(a, mx.inputs[0]); L.new(tr.outputs[0], mx.inputs[1]); L.new(bs.outputs[0], mx.inputs[2])
     out = n.new("ShaderNodeOutputMaterial"); L.new(mx.outputs[0], out.inputs[0])
@@ -554,7 +565,7 @@ def ink_line(tag, words, font, size, origin, right, up, parent=None):
     return objs, width
 
 
-def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55):
+def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55, out=None):
     objs, xs, width = layout_line(words, font, size, extrude=depth * size, bevel=0.012 * size)
     place_line(objs, xs, width, origin, right, up)
     if shadow:
@@ -570,7 +581,8 @@ def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55
         mul = m.node_tree.nodes.new("ShaderNodeMath"); mul.operation = "MULTIPLY"
         lk = mix.inputs[0].links[0]; src = lk.from_socket; m.node_tree.links.remove(lk)
         m.node_tree.links.new(src, mul.inputs[0]); m.node_tree.links.new(mul.outputs[0], mix.inputs[0])
-        for f, a in ((ff - 4, 0.0), (ff + 2, shadow)):
+        sk = [(ff - 4, 0.0), (ff + 2, shadow)] + ([(out[0], shadow), (out[1], 0.0)] if out else [])
+        for f, a in sk:
             mul.inputs[1].default_value = a; mul.inputs[1].keyframe_insert("default_value", frame=f)
         sh.data.materials.append(m); sh.visible_shadow = False
     mat = gold_material("goldtext", 1.15)
@@ -581,7 +593,10 @@ def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55
         ob.matrix_world = base
         loc0, sc0 = ob.location.copy(), ob.scale.copy()
         upv = up * size * 0.35
-        for f, s, dz in ((ff - 4, 0.001, -1.0), (ff - 1, 1.1, 0.15), (ff + 2, 0.97, 0.0), (ff + 5, 1.0, 0.0)):
+        keys = [(ff - 4, 0.001, -1.0), (ff - 1, 1.1, 0.15), (ff + 2, 0.97, 0.0), (ff + 5, 1.0, 0.0)]
+        if out:                      # the words leave the painting (they live on the museum parchment from here)
+            keys += [(out[0], 1.0, 0.0), (out[1], 0.001, 0.6)]
+        for f, s, dz in keys:
             ob.scale = sc0 * s; ob.location = loc0 + upv * dz
             ob.keyframe_insert("scale", frame=f); ob.keyframe_insert("location", frame=f)
         ob.visible_shadow = True
@@ -769,7 +784,7 @@ def main():
                 r2 = Vector((right.x, right.y, 0)).normalized()
                 u2 = Vector((0, 0, 1))
             PLACED[tx["tag"]] = (origin, size, r2, u2)
-            gold_line(tx["tag"], words, tx["font"], size, origin, r2, u2)
+            gold_line(tx["tag"], words, tx["font"], size, origin, r2, u2, out=tx.get("out"))
             print(f"  text {tx['tag']}: size {size:.3f} at {tuple(round(x, 2) for x in origin)}")
         elif tx["kind"] == "ink":
             par = bpy.data.objects[tx["parchment"]]
