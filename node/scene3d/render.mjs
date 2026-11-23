@@ -657,6 +657,10 @@ async function main() {
     process.exit(2);
   }
   const log = (m) => process.stderr.write(`${m}\n`);
+  // Нет манифеста библиотеки вещей — сцена построит их из примитивов, а в ответе будет только «HTTP 404»: скажем, где искали.
+  if (opts.models && !existsSync(join(opts.models, "manifest.json"))) {
+    log(`scene3d: библиотеки вещей нет: ${join(opts.models, "manifest.json")} — задайте --models DIR или SCENE3D_MODELS_DIR`);
+  }
   try {
     const spec = JSON.parse(readFileSync(opts.spec, "utf8"));
     if (opts.fps) spec.fps = opts.fps;
