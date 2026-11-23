@@ -150,6 +150,27 @@ def run_music_video(api: Api, job: dict, worker: str, work_root: Path, blender: 
         pulse.close()
 
 
+def localize_photos(api: Any, payload: dict, cache: Path) -> dict:
+    """Фото переписки (``photo_assets``: ключ → id ассета) — файлы сервиса, здесь их нет: скачать в ``cache/photos``
+    (имя по id — хэш кадров между запусками тот же) и подставить путь в ``photos``. Файл уже есть — как есть."""
+    ids = payload.get("photo_assets") or {}
+    if not ids:
+        return payload
+    photos = dict(payload.get("photos") or {})
+    folder = cache / "photos"
+    folder.mkdir(parents=True, exist_ok=True)
+    for key, aid in ids.items():
+        cur = photos.get(key)
+        if cur and Path(cur).is_file():
+            continue
+        dest = folder / f"asset-{int(aid)}{Path(str(cur or '')).suffix or '.png'}"
+        if not dest.is_file():
+            api.download(f"/media/montage-assets/{int(aid)}", dest)
+        photos[key] = str(dest)
+    payload["photos"] = photos
+    return payload
+
+
 def run_job(api: Api, job: dict, worker: str, work_root: Path, cache: Path) -> dict:
     if job.get("kind") == "music_video":
         return run_music_video(api, job, worker, work_root, SB.find_blender() or "")
@@ -162,6 +183,7 @@ def run_job(api: Api, job: dict, worker: str, work_root: Path, cache: Path) -> d
     try:
         print(f"задание {jid}: {job.get('title') or ''} — {len(payload.get('shots') or [])} планов, "
               f"{payload.get('duration')} с", flush=True)
+        localize_photos(api, payload, cache)
         info = SB.render_local(payload, out, work=work, cache=cache,
                                progress=lambda p, note: (pulse.update(p, note), print(f"  {p * 100:5.1f}% {note}", flush=True)),
                                should_stop=lambda: pulse.stop)
