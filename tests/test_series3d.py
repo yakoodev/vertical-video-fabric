@@ -88,6 +88,19 @@ def test_script_words_replace_whisper_mistakes():
     assert 2.0 <= out[4]["start"] < 2.8
 
 
+def test_dash_tokens_are_not_subtitle_words():
+    """Ч.6 «Лифта» (клип 1137): 97 слов субтитров при 91 в сценарии — шесть отдельных «—» получали слот времени."""
+    spoken = [{"word": w, "start": i * 0.4, "end": i * 0.4 + 0.35}
+              for i, w in enumerate(["Пролёт", "ниже", "двадцать.", "Шаги", "сзади", "в", "том", "же", "ритме."])]
+    out = S3.align_words("Пролёт ниже — 20. Шаги сзади — в том же ритме.", spoken)
+    assert [w["word"] for w in out] == ["Пролёт", "ниже", "20.", "Шаги", "сзади", "в", "том", "же", "ритме."]
+    assert out[2]["start"] == 0.8  # «20» на месте «двадцать», тире времени не съели
+    from app.stories_gen_script import _sentence
+
+    assert _sentence("Приходит сообщение от мамы:") == "Приходит сообщение от мамы:"
+    assert _sentence("Тишина") == "Тишина."
+
+
 def test_direct_elevator_series():
     words = _words()
     total = words[-1]["end"] + 2.0

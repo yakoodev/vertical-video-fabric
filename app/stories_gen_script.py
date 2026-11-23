@@ -138,7 +138,8 @@ def script_context(store: Any, ep: dict) -> dict:
 
 def _sentence(text: Any) -> str:
     text = " ".join(str(text or "").replace("\n", " ").split()).strip()
-    if text and text[-1] not in ".!?…":
+    # двоеточие перед репликой — тоже конец фразы («сообщение от мамы:», а не «мамы:.»)
+    if text and text[-1] not in ".!?…:":
         text += "."
     return text
 
