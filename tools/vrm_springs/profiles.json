@@ -166,5 +166,9 @@
    }
   },
   "_why": "long hair on bare shoulders: full back weight pushed the tips through the shoulders (measured)"
+ },
+ "hero": {
+  "vrmc": {},
+  "_why": "23.11 owner: v1 hair sank into the head on the run and moved like a stiff helmet -> per-joint springs"
  }
 }

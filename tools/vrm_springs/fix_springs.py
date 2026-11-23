@@ -2,7 +2,7 @@
 """Rebuild the spring bones of a VRoid VRM 0.x (see springs.py) and write a copy.
 
     python -m tools.vrm_springs.fix_springs IN.vrm OUT.vrm [--profile profile.json] [--key hero] [--report r.json]
-    python -m tools.vrm_springs.fix_springs IN.vrm OUT.vrm --break floppy|unstable     # negative controls
+    python -m tools.vrm_springs.fix_springs IN.vrm OUT.vrm --break floppy|unstable|inward     # negative controls
 
 profile.json: {"<key>": {"params": {"back": {"gravityPower": 1.0}}, "tails": [...]}, ...}; the key defaults to the
 file name without extension, then to its character prefix (``hero__hair_tied`` -> ``hero``).
@@ -26,9 +26,10 @@ def profile_for(profiles: dict, name: str) -> dict:
         if not p:
             continue
         for k, v in p.items():
-            if k == 'params':
+            if k in ('params', 'vrmc'):
+                out.setdefault(k, {})
                 for cls, pv in v.items():
-                    out.setdefault('params', {}).setdefault(cls, {}).update(pv)
+                    out.setdefault(k, {}).setdefault(cls, {}).update(pv)
             else:
                 out[k] = v
     return out
@@ -52,6 +53,9 @@ def main(argv=None):
         prof = profile_for(profiles, a.key or Path(a.dst).stem.replace('_phys', ''))
         rep = S.fix(g, prof)
         rep['profile'] = prof
+        if prof.get('vrmc') is not None:          # per-joint springs (VRM 1.0 format) on top, read by three-vrm
+            from . import vrmc as VC
+            rep['vrmc'] = VC.build(g, rep, prof)
     Path(a.dst).parent.mkdir(parents=True, exist_ok=True)
     g.save(a.dst)
     if a.report:

@@ -23,6 +23,8 @@ import type { VRM } from "@pixiv/three-vrm";
 import { parseModel, VrmRig } from "../../../frontend/src/pages/models3d/viewer/vrmRig";
 
 const FACE_DEPTH = 0.002;
+const HEAD_DEPTH = 0.003;    // hair through the scalp (hair cap) or face skin
+const HEAD_MAX = 0.03;
 const FACE_MAX = 0.025;     // deeper = inside the skull (tie / scalp strands), where the nearest-face sign is meaningless
 const BODY_DEPTH = 0.008;   // a tip resting on a shoulder dips a few mm; 8 mm through is a visible cut
 const REACH = 0.08;
@@ -39,6 +41,9 @@ interface Model {
   hair: { mesh: THREE.SkinnedMesh; idx: number[]; spring: Uint8Array }[];
   faceBvh: MeshBVH | null;
   faceGeo: THREE.BufferGeometry | null;
+  headBvh: MeshBVH | null;
+  headGeo: THREE.BufferGeometry | null;
+  restHeadIn: Uint8Array[];
   body: { mesh: THREE.SkinnedMesh; verts: number[] }[];
   bodyGeo: THREE.BufferGeometry | null;
   bodyBvh: MeshBVH | null;
@@ -142,6 +147,7 @@ function buildModel(m: Model) {
   // face (skin + eyes) in the head frame, rest pose
   inv.copy(m.head.matrixWorld).invert();
   const fpos: number[] = [], findex: number[] = [];
+  const hpos: number[] = [], hindex: number[] = [];
   const bodyMeshes: { mesh: THREE.SkinnedMesh; tris: number[] }[] = [];
   const headW = m.head.getWorldPosition(new THREE.Vector3());
   const neckY = m.vrm.humanoid.getRawBoneNode("neck")!.getWorldPosition(new THREE.Vector3()).y;
@@ -151,8 +157,11 @@ function buildModel(m: Model) {
     const mat = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.Material;
     const name = mat.name;
     const ix = mesh.geometry.index!;
-    if (/Face_00_SKIN|EyeWhite|EyeIris/.test(name)) {
-      // only what rides the head rigidly: the face mesh's neck part bends with the neck, not with the head
+    const isFace = /Face_00_SKIN|EyeWhite|EyeIris/.test(name);
+    const isHead = /Face_00_SKIN|HairBack/.test(name);
+    if (isFace || isHead) {
+      // only what rides the head rigidly: the face mesh's neck part bends with the neck, not with the head.
+      // face = skin + eyes (the face zone); head = skin + the hair cap (the scalp under the hair: «into the head»)
       const sk = mesh.skeleton;
       const si = mesh.geometry.attributes.skinIndex as THREE.BufferAttribute;
       const sw = mesh.geometry.attributes.skinWeight as THREE.BufferAttribute;
@@ -165,18 +174,21 @@ function buildModel(m: Model) {
         }
         return s > 0.99;
       };
-      const base = fpos.length / 3;
-      const map = new Map<number, number>();
-      for (let i = 0; i < ix.count; i += 3) {
-        if (!(onHead(ix.getX(i)) && onHead(ix.getX(i + 1)) && onHead(ix.getX(i + 2)))) continue;
-        for (let k = 0; k < 3; k++) {
-          const vi = ix.getX(i + k);
-          if (!map.has(vi)) {
-            map.set(vi, base + map.size);
-            skinnedWorld(mesh, vi, v).applyMatrix4(inv);
-            fpos.push(v.x, v.y, v.z);
+      for (const [on, pos, index] of [[isFace, fpos, findex], [isHead, hpos, hindex]] as [boolean, number[], number[]][]) {
+        if (!on) continue;
+        const base = pos.length / 3;
+        const map = new Map<number, number>();
+        for (let i = 0; i < ix.count; i += 3) {
+          if (!(onHead(ix.getX(i)) && onHead(ix.getX(i + 1)) && onHead(ix.getX(i + 2)))) continue;
+          for (let k = 0; k < 3; k++) {
+            const vi = ix.getX(i + k);
+            if (!map.has(vi)) {
+              map.set(vi, base + map.size);
+              skinnedWorld(mesh, vi, v).applyMatrix4(inv);
+              pos.push(v.x, v.y, v.z);
+            }
+            index.push(map.get(vi)!);
           }
-          findex.push(map.get(vi)!);
         }
       }
     } else if (/_SKIN|_CLOTH/.test(name) && !/Face/.test(name)) {
@@ -215,6 +227,12 @@ function buildModel(m: Model) {
     m.faceGeo.setIndex(findex);
     m.faceBvh = new MeshBVH(m.faceGeo);
   }
+  if (hpos.length) {
+    m.headGeo = new THREE.BufferGeometry();
+    m.headGeo.setAttribute("position", new THREE.Float32BufferAttribute(hpos, 3));
+    m.headGeo.setIndex(hindex);
+    m.headBvh = new MeshBVH(m.headGeo);
+  }
   // body geometry: compact vertex list per mesh, positions refreshed every measured frame
   m.body = [];
   const bindex: number[] = [];
@@ -251,9 +269,13 @@ function buildModel(m: Model) {
     return a;
   });
   for (const h of m.hair) {
-    const fi = new Uint8Array(h.idx.length), bi = new Uint8Array(h.idx.length);
+    const fi = new Uint8Array(h.idx.length), bi = new Uint8Array(h.idx.length), hi_ = new Uint8Array(h.idx.length);
     h.idx.forEach((vi, k) => {
       skinnedWorld(h.mesh, vi, w);
+      if (m.headBvh) {
+        const d = signed(m.headBvh, m.headGeo!, v.copy(w).applyMatrix4(inv).clone());
+        if (d !== null && d < -0.0005) hi_[k] = 1;
+      }
       if (m.faceBvh) {
         const p = v.copy(w).applyMatrix4(inv);
         const d = signed(m.faceBvh, m.faceGeo!, p.clone());
@@ -265,6 +287,7 @@ function buildModel(m: Model) {
       }
     });
     m.restFaceIn.push(fi);
+    m.restHeadIn.push(hi_);
     m.restBodyIn.push(bi);
   }
   m.restCloth = new Float32Array(m.joints.length);
@@ -314,6 +337,8 @@ function measure(m: Model) {
   let cloth = 0, clothDeep = 0;
   const cand: { h: any; vi: number; d: number; p: THREE.Vector3 }[] = [];
   const faceCand: { h: any; vi: number; d: number; p: THREE.Vector3 }[] = [];
+  const headCand: { h: any; vi: number; d: number; p: THREE.Vector3 }[] = [];
+  let headN = 0, headDeep = 0;
   inv.copy(m.head.matrixWorld).invert();
   refreshBody(m);
   if (m.bodyBvh) m.bodyBvh.refit();
@@ -334,6 +359,10 @@ function measure(m: Model) {
         dRest.push(Math.hypot(v.x - rl[3 * k], v.y - rl[3 * k + 1], v.z - rl[3 * k + 2]));
         dStart.push(Math.hypot(v.x - sl[3 * k], v.y - sl[3 * k + 1], v.z - sl[3 * k + 2]));
       }
+      if (m.headBvh && !m.restHeadIn[hi][k] && h.spring[k]) {
+        const d = signed(m.headBvh, m.headGeo!, v.copy(w).applyMatrix4(inv).clone());
+        if (d !== null && d < -HEAD_DEPTH && d > -HEAD_MAX) headCand.push({ h, vi, d, p: w.clone() });
+      }
       if (m.faceBvh && !rf[k]) {
         const p = v.copy(w).applyMatrix4(inv).clone();
         const d = signed(m.faceBvh, m.faceGeo!, p);
@@ -353,7 +382,7 @@ function measure(m: Model) {
   if (m.bodyBvh) {
     m.joints.forEach((j: any, k: number) => {
       // real cloth points only: a leaf's 7 cm virtual tail is not geometry
-      if (/Hair/.test(j.bone.name) || !j.child) return;
+      if (/Hair/.test(j.bone.name) || !j.child || /_tip$/.test(j.child.name)) return;
       tailWorld(j, w);
       const d = signed(m.bodyBvh!, m.bodyGeo!, w.clone());
       if (d !== null && d < -BODY_DEPTH) clothNow.push({ k, d });
@@ -361,7 +390,7 @@ function measure(m: Model) {
   }
   // the rigid reference: the same frame with every spring joint at its rest rotation. What is inside there too is
   // the pose's doing (a bowed head tucks the hair into the hood), not the springs'; only the extra depth counts.
-  if (cand.length || clothNow.length || faceCand.length) {
+  if (cand.length || clothNow.length || faceCand.length || headCand.length) {
     const saved = m.joints.map((j: any) => j.bone.quaternion.clone());
     m.joints.forEach((j: any, k: number) => {
       j.bone.quaternion.copy(m.restQ[k]);
@@ -393,6 +422,15 @@ function measure(m: Model) {
         faceDeep = Math.max(faceDeep, -c.d);
       } else faceRigid++;
     }
+    for (const c of headCand) {
+      skinnedWorld(c.h.mesh, c.vi, w);
+      const dr = signed(m.headBvh!, m.headGeo!, w.clone().applyMatrix4(hinv)) ?? 1;
+      if (dr > 0) {
+        m.dbg.push(c.p.x, c.p.y, c.p.z);
+        headN++;
+        headDeep = Math.max(headDeep, -c.d);
+      }
+    }
     for (const c of clothNow) {
       tailWorld(m.joints[c.k], w);
       const dr = signed(m.bodyBvh!, m.bodyGeo!, w.clone()) ?? 1;
@@ -416,7 +454,7 @@ function measure(m: Model) {
     return +b[Math.min(b.length - 1, Math.floor(0.95 * b.length))].toFixed(4);
   };
   const mean = (a: number[]) => (a.length ? +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(4) : 0);
-  return { shapeRest: p95(dRest), shapeRestMean: mean(dRest), moveP95: p95(dStart), tails, face, faceDeep: +faceDeep.toFixed(4), body, bodyDeep: +bodyDeep.toFixed(4), faceRigid, bodyRigid,
+  return { head: headN, headDeep: +headDeep.toFixed(4), shapeRest: p95(dRest), shapeRestMean: mean(dRest), moveP95: p95(dStart), tails, face, faceDeep: +faceDeep.toFixed(4), body, bodyDeep: +bodyDeep.toFixed(4), faceRigid, bodyRigid,
     bodyRigidDeep: +bodyRigidDeep.toFixed(4), cloth,
     clothDeep: +clothDeep.toFixed(4), clothWho: m.clothWho.slice(0, 4), nan };
 }
@@ -455,7 +493,7 @@ async function load(spec: any) {
     rig.breathing = false;
     rig.autoBlink = false;
     const m: Model = { label: s.label || "", vrm, rig, root: vrm.scene, joints: [], anchors: [], head: null as any,
-      hair: [], faceBvh: null, faceGeo: null, body: [], bodyGeo: null, bodyBvh: null, restFaceIn: [], restBodyIn: [],
+      hair: [], faceBvh: null, faceGeo: null, headBvh: null, headGeo: null, restHeadIn: [], body: [], bodyGeo: null, bodyBvh: null, restFaceIn: [], restBodyIn: [],
       restCloth: new Float32Array(0), restTails: [], restQ: [], restLocal: [], startLocal: null, offsetX, layer, dbg: [], clothWho: [], dbgPts: null };
     buildModel(m);
     models.push(m);
@@ -494,7 +532,7 @@ function placeCams() {
   models.forEach((m, i) => {
     const cam = cams[i];
     const head = m.head.getWorldPosition(new THREE.Vector3());
-    const want = new THREE.Vector3(head.x, head.y - (camDist < 1.8 ? 0.06 : 0.24), head.z);
+    const want = new THREE.Vector3(head.x, head.y + (camDist < 1.0 ? 0.07 : camDist < 1.8 ? -0.06 : -0.24), head.z);
     // the camera follows the head softly (a sprint leans the body forward), never jumps
     if (!camTgt[i]) camTgt[i] = want.clone();
     else camTgt[i]!.lerp(want, 0.18);

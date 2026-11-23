@@ -5,6 +5,8 @@
                the clip start (after settling), 95th percentile over the vertices, largest over the frames
   tip_swing_cm the same for the spring tails (bone tips, incl. the 7 cm virtual leaf tails)
   sag_cm       look change at rest: settled idle hair vs the modelled rest shape (95th percentile; mean in sag_mean_cm)
+  head_frames  frames with >= MIN_VERTS spring-driven hair vertices > 3 mm inside the head (scalp hair cap + face skin)
+               that the springs carried in (outside in the rigid pose); target 0
   face_frames  frames with >= MIN_VERTS spring-driven hair vertices > 2 mm inside the face (skin + eyes); target 0
   body_frames  same against the body / clothes near the head (> 4 mm); target 0
   rigid_body   frames where hair glued to the head (no spring weight) is inside the body: a pose effect, springs
@@ -28,7 +30,7 @@ MIN_VERTS = 3          # a strand, not a vertex pair flickering at a mesh seam (
 # the approved stair climb, played in place: from ~8.6 s the in-place ground correction lifts the whole body in a
 # couple of frames (same before / after, same in the preview) - not a spring pop, skipped by the jumps check
 CUT_FROM = {'stairs': 8.6}
-LIMITS = dict(face_frames=0, body_frames=0, cloth_frames=0, jumps=0, jitter_cm=0.35, nan=False)
+LIMITS = dict(head_frames=0, face_frames=0, body_frames=0, cloth_frames=0, jumps=0, jitter_cm=0.35, nan=False)
 
 
 def _arr(frames, key='tails'):
@@ -36,6 +38,8 @@ def _arr(frames, key='tails'):
 
 
 def clip_numbers(info: dict, frames: list, name: str = '') -> dict:
+    if name in CUT_FROM:                     # the stairs' in-place ground pop: every count, not only the jumps
+        frames = [f for f in frames if f['t'] < CUT_FROM[name]]
     joints = info['joints']
     hair = np.array([('Hair' in j['name']) for j in joints], bool)
     leaf = np.array([j['leaf'] for j in joints], bool)
@@ -59,6 +63,9 @@ def clip_numbers(info: dict, frames: list, name: str = '') -> dict:
     out['max_step_cm'] = j['metrics']['max_step_cm']
     face = np.array([f['face'] for f in frames])
     body = np.array([f['body'] for f in frames])
+    head = np.array([f.get('head', 0) for f in frames])
+    out['head_frames'] = int((head >= MIN_VERTS).sum())
+    out['head_max_cm'] = round(100 * max(f.get('headDeep', 0) for f in frames), 2)
     out['face_frames'] = int((face >= MIN_VERTS).sum())
     out['face_max_cm'] = round(100 * max(f['faceDeep'] for f in frames), 2)
     out['face_max_verts'] = int(face.max())
@@ -77,11 +84,13 @@ def model_numbers(run: dict) -> dict:
     hair = np.array([('Hair' in j['name']) for j in joints], bool)
     leaf = np.array([j['leaf'] for j in joints], bool)
     sel = hair & leaf
+    if hair.any() and not sel.any():        # VRMC chains end on real tip nodes: every hair joint has a child
+        sel = hair
     clips = {k: clip_numbers(info, v, k) for k, v in run['clips'].items()}
     tot = dict(hair_chains=int(sel.sum()), spring_joints=len(joints))
-    for k in ('face_frames', 'body_frames', 'rigid_body_frames', 'cloth_frames', 'jumps', 'frames'):
+    for k in ('head_frames', 'face_frames', 'body_frames', 'rigid_body_frames', 'cloth_frames', 'jumps', 'frames'):
         tot[k] = sum(c[k] for c in clips.values())
-    for k in ('face_max_cm', 'body_max_cm', 'cloth_max_cm', 'swing_max_cm', 'max_step_cm'):
+    for k in ('head_max_cm', 'face_max_cm', 'body_max_cm', 'cloth_max_cm', 'swing_max_cm', 'max_step_cm'):
         tot[k] = max((c.get(k, 0) for c in clips.values()), default=0)
     tot['nan'] = any(c['nan'] for c in clips.values())
     sw = [c['swing_cm'] for c in clips.values() if 'swing_cm' in c]
@@ -97,7 +106,7 @@ def model_numbers(run: dict) -> dict:
         acc = T[2:] - 2 * T[1:-1] + T[:-2]
         rms = np.sqrt((acc ** 2).sum(-1).mean(0))
         tot['jitter_cm'] = round(100 * float(np.percentile(rms, 95)), 3)
-    tot['ok'] = bool(tot['face_frames'] == 0 and tot['body_frames'] == 0 and tot['cloth_frames'] == 0
+    tot['ok'] = bool(tot['head_frames'] == 0 and tot['face_frames'] == 0 and tot['body_frames'] == 0 and tot['cloth_frames'] == 0
                      and tot['jumps'] == 0 and not tot['nan'] and tot.get('jitter_cm', 0) <= LIMITS['jitter_cm'])
     return dict(total=tot, clips=clips)
 
