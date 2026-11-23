@@ -416,3 +416,53 @@ def test_import_tool_is_idempotent(env, tmp_path):
     I.run(client, items[:1])
     made = [p for p in client.get("/api/projects").json() if "невезуч" in p["name"].lower()]
     assert len(made) == 1 and made[0]["kind"] == "series"
+
+
+def test_import_tool_folder_and_list(env, tmp_path):
+    client, store, pid, tmp = env
+    from tools import assets3d_import as I
+
+    folder = tmp / "rework"
+    folder.mkdir()
+    make_glb(folder / "hero__base.vrm", vrm=True, tex=64)
+    make_glb(folder / "hero__hair_tied__outfit_home.vrm", vrm=True, tex=32)
+    make_glb(folder / "drum_kit.glb", tex=16, tris=8)
+    (folder / "notes.txt").write_text("не модель", "utf-8")
+    (folder / "names.json").write_text(json.dumps({
+        "hero__base.vrm": "Герой — база",
+        "drum_kit.glb": {"name": "Ударная установка", "kind": "prop"},
+    }, ensure_ascii=False), "utf-8")
+    items = I.items_from_folder(folder)
+    assert [(Path(f).name, n, k) for f, n, k in items] == [
+        ("drum_kit.glb", "Ударная установка", "prop"),
+        ("hero__base.vrm", "Герой — база", "character"),
+        ("hero__hair_tied__outfit_home.vrm", "hero · hair tied · outfit home", "character"),
+    ]
+    first = I.run(client, items)
+    assert len(first) == 3
+    again = I.run(client, I.items_from_folder(folder))
+    assert [a["id"] for a in again] == [a["id"] for a in first]
+    assert client.get(f"/api/projects/{pid}/assets3d").json()["count"] == 3
+
+    # Манифест: относительные пути от его папки; --sync-names переименовывает уже загруженное.
+    man = tmp / "manifest.json"
+    man.write_text(json.dumps([{"file": "rework/hero__hair_tied__outfit_home.vrm", "name": "Герой — хвост, дом"},
+                               ["rework/hero__base.vrm", "Герой — база"]], ensure_ascii=False), "utf-8")
+    li = I.items_from_list(man)
+    assert li[0][1] == "Герой — хвост, дом" and li[0][2] == "character" and Path(li[0][0]).is_file()
+    I.run(client, li)                       # без sync-names имя не трогаем
+    names = {a["name"] for g in client.get(f"/api/projects/{pid}/assets3d").json()["groups"] for a in g["assets"]}
+    assert "Герой — хвост, дом" not in names
+    synced = I.run(client, li, sync_names=True)
+    assert synced[0]["name"] == "Герой — хвост, дом"
+    assert client.get(f"/api/projects/{pid}/assets3d").json()["count"] == 3
+
+    # «Замена» базы без удаления: старой — пометка, по номеру.
+    old = next(a for a in first if a["name"] == "Герой — база")
+    I.run(client, [], renames=I.parse_renames([f"{old['id']}=Герой — база (старая)"]))
+    assert client.get(f"/api/assets3d/{old['id']}").json()["name"] == "Герой — база (старая)"
+    I.run(client, [], renames=[(999999, "нет такой")])          # неизвестный номер — пропуск, не ошибка
+    with pytest.raises(ValueError):
+        I.parse_renames(["герой=x"])
+    with pytest.raises(ValueError):
+        I.run(client, [(str(folder / "hero__base.vrm"), "x", "monster")])
