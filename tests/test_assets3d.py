@@ -466,3 +466,19 @@ def test_import_tool_folder_and_list(env, tmp_path):
         I.parse_renames(["герой=x"])
     with pytest.raises(ValueError):
         I.run(client, [(str(folder / "hero__base.vrm"), "x", "monster")])
+
+
+def test_import_tool_prints_arrows_on_a_cp1251_console(monkeypatch):
+    """22.11: tools/assets3d_import.py падал в консоли Windows (cp1251) на «→» — теперь вывод в UTF-8."""
+    import sys
+
+    from tools import assets3d_import as TOOL
+
+    raw = io.BytesIO()
+    console = io.TextIOWrapper(raw, encoding="cp1251", errors="strict")
+    monkeypatch.setattr(sys, "stdout", console)
+    with pytest.raises(UnicodeEncodeError):
+        print("переименовано: 1 → «герой»", flush=True)
+    TOOL.utf8_console()
+    print("переименовано: 1 → «герой»", flush=True)
+    assert "→ «герой»".encode() in raw.getvalue()
