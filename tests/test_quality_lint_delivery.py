@@ -175,6 +175,20 @@ def test_slide_chrome():
     assert all(f["check"] == "slide_chrome" for f in found)
 
 
+def test_fact_chip_with_n_of_m_is_not_a_slide_counter():
+    """Сова, гайд 6 (23.11): факт-чип «2 из 3» в кадре линт принял за счётчик слайдов. Голое «N из M» — счётчик,
+    только если их серия (1/4, 2/4…) или он мелко у края кадра; со словом («шаг 3 из 5») или с нулём («02/05») — всегда."""
+    def ids(*layers):
+        return {f["layer"] for f in C.chrome_findings(D.visual_layers(_rs(list(layers))), 10.0)}
+
+    assert not ids(_text("chip", "2 из 3", start=1, end=3, size=90), _text("big", "9/10", start=4, end=6))
+    assert ids(_text("a", "1/4", start=0, end=2), _text("b", "2/4", start=2, end=4)) == {"a", "b"}
+    assert ids(_text("edge", "2 из 5", y=0.06, size=40)) == {"edge"}
+    assert ids(_text("word", "слайд 2 из 3"), _text("zero", "02 из 03", start=4, end=6)) == {"word", "zero"}
+    assert not ids(_text("odd", "5 из 3"))  # номер больше «всего» — не счётчик
+    assert C.counter_parts("шаг 3 из 5") == ("шаг", 3, 5, False) and C.counter_parts("2 из 3 людей") is None
+
+
 def test_word_entrances_normalize_text_only_and_aliases():
     from app.motion_limits import ANIMATIONS, WORD_ENTRANCES
 
