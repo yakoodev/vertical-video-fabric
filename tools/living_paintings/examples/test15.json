@@ -1,0 +1,60 @@
+{
+ "out": "D:/vvf-offload/living_paintings/test15/work/layers",
+ "zref": 10.0,
+ "view_width_at_zref": 9.0,
+ "paintings": [
+  {
+   "name": "springtime",
+   "image": "D:/vvf-offload/living_paintings/test15/paintings/springtime_cot.jpg",
+   "depth": "D:/vvf-offload/living_paintings/test15/work/depth/springtime.npy",
+   "crop_margin": 6, "work_width": 1087, "grid_step": 5, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 1.861,
+   "layers": [
+    {"name": "bg"},
+    {"name": "mid", "depth_min": 0.2},
+    {"name": "couple", "depth_min": 0.22, "relief_gain": 0.4, "poly_blur": 6,
+     "poly": [[[108,0],[140,0],[175,165],[230,235],[300,285],[420,212],[468,0],[492,0],[462,250],[448,420],[505,540],[508,700],[472,800],[452,870],[400,885],[318,905],[268,770],[238,690],[158,655],[130,600],[64,400],[58,300],[104,165]]]},
+    {"name": "fg", "depth_min": 0.8}
+   ],
+   "mask_r": {"blur": 12, "dilate": 14, "polys": [[[108,0],[140,0],[175,165],[230,235],[300,285],[420,212],[468,0],[492,0],[462,250],[448,420],[505,540],[508,700],[472,800],[452,860],[400,875],[318,880],[268,770],[238,690],[158,655],[130,600],[64,400],[58,300],[104,165]]]},
+   "mask_g": {"blur": 18, "polys": [[[352,380],[460,378],[470,480],[420,500],[360,460]], [[310,800],[420,790],[430,880],[320,880]], [[66,330],[140,320],[150,430],[70,420]]]},
+   "mask_b": {"blur": 40, "polys": [[[0,0],[591,0],[591,520],[0,520]]]}
+  },
+  {
+   "name": "storm",
+   "image": "D:/vvf-offload/living_paintings/test15/paintings/storm_cot.jpg",
+   "depth": "D:/vvf-offload/living_paintings/test15/work/depth/storm.npy",
+   "crop_margin": 45, "work_width": 1500, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 3.722,
+   "layers": [
+    {"name": "bg"},
+    {"name": "mid", "depth_min": 0.3},
+    {"name": "couple", "depth_min": 0.28, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[78,58],[322,52],[498,168],[492,450],[545,492],[635,690],[600,725],[560,805],[440,832],[425,905],[380,918],[300,905],[268,760],[250,625],[170,565],[128,480],[148,350],[92,240]]]},
+    {"name": "fg", "depth_min": 0.86}
+   ],
+   "mask_r": {"blur": 12, "dilate": 6, "hue": [5, 32, 70], "polys": [[[88,95],[312,92],[485,195],[485,455],[535,495],[525,535],[415,505],[300,300],[96,235]]]},
+   "mask_g": {"blur": 16, "polys": [[[330,600],[565,640],[625,700],[560,800],[400,820],[340,720]], [[245,275],[372,270],[380,390],[250,390]]]},
+   "mask_b": {"blur": 60, "polys": [[[0,0],[669,0],[669,430],[0,430]]]}
+  },
+  {
+   "name": "moon",
+   "image": "D:/vvf-offload/living_paintings/test15/paintings/moon_friedrich.jpg",
+   "depth": "D:/vvf-offload/living_paintings/test15/work/depth/moon.npy",
+   "crop_margin": 60, "work_width": 2600, "grid_step": 8, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "crop_cx": 1165,
+   "poly_scale": 3.057,
+   "layers": [
+    {"name": "bg"},
+    {"name": "mid", "depth_min": 0.14},
+    {"name": "men", "depth_min": 0.18, "relief_gain": 0.3, "poly_blur": 6,
+     "poly": [[[205,368],[385,352],[445,560],[425,690],[198,690]]]},
+    {"name": "near", "depth_min": 0.4},
+    {"name": "fg", "depth_min": 0.7}
+   ],
+   "mask_r": {"blur": 30, "polys": [[[560,0],[1246,0],[1246,330],[900,420],[640,330],[520,120]]]},
+   "mask_g": {"blur": 20, "polys": [[[0,560],[330,600],[420,760],[300,1000],[0,1000]]]},
+   "mask_b": {"blur": 14, "polys": [[[555,490],[615,490],[615,550],[555,550]]]}
+  }
+ ]
+}
