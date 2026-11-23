@@ -267,6 +267,26 @@
   font-size: 13px;
   z-index: 1;
 }
+/* Со шкалой анимации: картинка сверху, шкала — отдельной полосой снизу (не закрывает ноги на нижнем ракурсе). */
+.m3d-canvas-wrap.has-tl {
+  display: flex;
+  flex-direction: column;
+}
+.m3d-canvas-wrap.has-tl .m3d-canvas {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.m3d-canvas-wrap.has-tl .m3d-timeline {
+  position: static;
+  flex: 0 0 auto;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  backdrop-filter: none;
+  background: var(--surface);
+}
 .m3d-timeline input[type="range"] {
   flex: 1 1 200px;
   accent-color: var(--accent);
