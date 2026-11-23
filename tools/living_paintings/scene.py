@@ -879,6 +879,10 @@ def build_hangs():
             elif kind == "plane":
                 mat = canvas_material(f"canvas_{child}", first, (0, NF - 1), None, meta["flat"])
                 portal_plane(tag, w["name"], c, cw, ch, mat)
+                # daylight beyond the window, so the opening is never a black hole
+                col = h.get("backdrop", [0.86, 0.85, 0.78])
+                _plane(f"backdrop_{tag}", (8, 8), OFFS[w["name"]] + c + Vector((0, 0.12, 0)), (math.pi / 2, 0, 0),
+                       _simple_mat(f"backdrop_{tag}", tuple(col), 1.0, emit=(tuple(col), 1.0)))
             else:
                 mat = canvas_material(f"canvas_{child}", first, (0, NF - 1), None, meta["flat"])
                 root, fr, cv = hang_frame(tag, w["name"], c, cw, ch, h.get("scale", 0.6), mat)
@@ -1044,8 +1048,10 @@ if __name__ == "__main__":
         PLAN["_only_worlds"] = [MODE.split(":", 1)[1]]
     elif MODE.startswith("main_world:"):
         PLAN["_only_worlds"] = [MODE.split(":", 1)[1]]
-    elif MODE.startswith("stills:"):
-        want = [int(x) for x in MODE.split(":", 1)[1].split(",")]
+    elif MODE.startswith("stills:") or MODE.startswith("main:"):
+        spec = MODE.split(":", 1)[1]
+        want = ([int(x) for x in spec.split(",")] if MODE.startswith("stills:")
+                else list(range(int(spec.split("-")[0]), int(spec.split("-")[1]) + 1)))
         PLAN["_only_worlds"] = sorted({sg["world"] for sg in PLAN["camera"] for f in want
                                        if sg["from"] <= f < sg["to"] or (f == NF - 1 and sg["to"] >= NF - 1)})
     track = main()

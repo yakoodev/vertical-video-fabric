@@ -54,7 +54,6 @@
    "depth": "D:/vvf-offload/living_paintings/v2/work/depth/vermeer_pitcher.npy",
    "crop_margin": 70, "work_width": 1600, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
    "poly_scale": 5.28, "pad": [0.35, 0.18],
-   "cutout": [[[18,62],[76,94],[76,430],[18,436]]],
    "layers": [
     {"name": "bg"}, {"name": "mid", "depth_min": 0.3},
     {"name": "woman", "depth_min": 0.08, "relief_gain": 0.35, "poly_blur": 6,

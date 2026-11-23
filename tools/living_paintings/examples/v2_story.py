@@ -127,7 +127,7 @@ CAMERA = [
         enter(s5, R_PRE), {"f": beat(s5 + 30), "look": [220, 320], "dist": 4.2, "r": [2, 2], "hold": False},
         exit_portal("delacroix>vermeer", s6, R_PRE, D_SW["vermeer"])]),
     seg("vermeer", s6, s7, [
-        enter(s6, R_PRE), {"f": beat(s6 + 28), "look": [250, 260], "dist": 4.4, "r": [-5, 1], "hold": False},
+        enter(s6, R_PRE), {"f": beat(s6 + 26), "look": [300, 260], "dist": 4.4, "r": [3, 1], "hold": False},
         exit_portal("vermeer>turner", s7, R_PRE, D_SW["turner"])]),
     seg("turner", s7, s8, [
         enter(s7, R_PRE), {"f": beat(s7 + 40), "look": [300, 320], "dist": 4.6, "r": [-4, -2], "hold": False},
@@ -160,8 +160,8 @@ CAMERA = [
         {"f": s14, "p": [0, 0, 0], "v": [0, -R_OUT * ZREF, 0]}]),
     seg("museum", s14, END - 1, [
         {"f": s14, "p": "museum>magdalen", "v": [0, -R_OUT * 0.75, 0]},
-        {"f": beat(s14 + 40), "p": [14.4, -1.9, 1.95], "r": [0, -2], "hold": False},
-        {"f": END - 1, "p": [14.15, -2.35, 1.8], "v": [-0.002, -0.003, 0], "r": [5, -3]}]),
+        {"f": beat(s14 + 40), "p": [14.6, -2.0, 1.95], "r": [0, -3], "hold": False},
+        {"f": END - 1, "p": [14.52, -2.45, 1.85], "v": [-0.001, -0.003, 0], "r": [2, -4]}]),
 ]
 
 MUSEUM = {
@@ -199,7 +199,7 @@ WORLDS = [
      "warps": [{"type": "wave", "mask": "r", "layers": [0], "amp": 4.0, "kx": 0.004, "ky": 0.008, "speed": 0.08}],
      "lights": [{"loc": [-3, 2, 5], "aim": [2, 7, 2], "energy": 700, "size": 4, "color": [0.95, 0.9, 0.85]}]},
     {"name": "vermeer", "portal_ranges": [[s5, s6]],
-     "hangs": [{"child": "turner", "kind": "plane", "px_prev": [47, 250], "behind": 0.62, "switch_dist": 0.55}],
+     "hangs": [{"child": "turner", "px_prev": [520, 322], "depth_add": 0.05, "canvas_w": 0.9, "scale": 0.5}],
      "warps": [{"type": "wave", "mask": "g", "layers": [2], "amp": 1.5, "kx": 0.02, "ky": 0.03, "speed": 0.08}],
      "lights": [{"loc": [-4, 6, 3], "aim": [0, 8, 1], "energy": 600, "size": 3, "color": [0.9, 0.93, 1.0]}]},
     {"name": "turner", "portal_ranges": [[s6, s7]],
