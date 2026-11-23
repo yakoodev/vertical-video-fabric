@@ -67,6 +67,7 @@ from app.series3d_blender_camera import (  # noqa: F401
 )
 from app.series3d_blender_plan import beat_plan, has_plans, plan_key, shots_from_beats  # noqa: F401
 from app import series3d_chase as CH
+from app import series3d_blender_audio as BA
 from app.series3d_blender_perform import (  # noqa: F401
     FPS, WALK_FOOT_X, WALK_PASS, STRIDE, DOOR_OPEN, VISEMES, VOWELS, _DIGITS, _letters, viseme_keys, lipsync,
     _pulse, _ang, _Track, perform, _beam_off_camera, planted_local, clip_to_world, walk_root, foot_slide,
@@ -129,7 +130,8 @@ def sfx_for(job: dict, perf: dict) -> list[dict]:
     out: list[dict] = []
 
     def add(ref_vol: tuple[str, float], t: float, label: str, kind: str) -> None:
-        if t < total - 0.2:
+        ref_vol = BA.override(job, kind, ref_vol)     # автор заменил или выключил звук события (script.event_sfx)
+        if ref_vol is not None and t < total - 0.2:
             out.append({"t": round(max(0.0, t), 3), "ref": ref_vol[0], "volume": ref_vol[1], "label": label, "kind": kind})
 
     for e in job.get("events") or []:
@@ -368,7 +370,7 @@ def with_outro(script: dict, words: list[dict], total: float, beats: list[dict] 
         sent = {"text": text, "role": "", "silent": True}
         if isinstance(o.get("cam"), dict) and o["cam"].get("pos"):
             sent["cam"] = o["cam"]      # камера плана от автора (series3d_blender_camera.authored_camera)
-        for key in CH.AUTHORED:         # бег, двойник, место, свет плана (ч.5) — как у озвученных фраз
+        for key in CH.AUTHORED + ("sounds",):   # бег, двойник, место, свет плана (ч.5), свои звуки — как у озвученных фраз
             if key != "cam" and key in o:
                 sent[key] = o[key]
         sentences.append(sent)
@@ -381,9 +383,11 @@ def with_outro(script: dict, words: list[dict], total: float, beats: list[dict] 
 def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = True, client: Any = None,
               envelope: list[float] | None = None, lipsync_mode: str = "speaking", quality: str = DEFAULT_QUALITY,
               look: dict | None = None, seed: int = 7, beats: list[dict] | None = None,
-              render_backend: str = DEFAULT_BACKEND) -> dict:
+              render_backend: str = DEFAULT_BACKEND, photos: dict | None = None) -> dict:
     """Всё, что нужно сцене Blender (JSON): кадры с режиссурой, события, слова, огибающая голоса, качество. ``beats`` —
-    биты эпизода: строка «План:» в бите сильнее режиссёра (``app/series3d_blender_plan.py``)."""
+    биты эпизода: строка «План:» в бите сильнее режиссёра (``app/series3d_blender_plan.py``). Звук автора (фон места,
+    замена звуков событий, свои звуки фраз — ``app/series3d_blender_audio.py``) и ``photos`` (ключ фото в переписке →
+    PNG/JPG) — только если сценарий их задал: у старых серий задание прежнее."""
     script, words, total, beats = with_outro(script, words, total, beats)
     plan = plan_shots(script, words, total, gemini=gemini, client=client, beats=beats)
     cams = {k: s_["cam"] for k, s_ in enumerate(script.get("sentences") or []) if isinstance(s_.get("cam"), dict)}
@@ -401,6 +405,9 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
             [{"kind": "blackout", "t": -1.0, "sentence": 0, "role": ""}, {"kind": "lights_out", "t": -1.0, "sentence": 0,
                                                                           "role": ""}]
         plan["events"].sort(key=lambda e: float(e["t"]))
+    every = [s_ for s_ in script.get("sentences") or [] if str(s_.get("text") or "").strip()]   # с немой концовкой
+    plan["events"] = BA.author_events(every, plan["shots"], plan["events"])
+    ambience = BA.author_ambience(script.get("ambience"), plan["shots"], total)
     return {"version": SCENE_VERSION, "fps": FPS, "duration": round(float(total), 3), "title": script.get("title") or "",
             "shots": plan["shots"], "events": plan["events"], "words": plan["words"], "director": plan["director"],
             "speech": plan["speech"],
@@ -409,7 +416,10 @@ def build_job(script: dict, words: list[dict], total: float, *, gemini: bool = T
             "quality": quality if quality in QUALITY else DEFAULT_QUALITY, "look": look or {}, "seed": int(seed),
             "render_backend": backend({"render_backend": render_backend}),
             # продолжение прошлой части (первый бит: «на рюкзаке, люк приоткрыт, сверху фонарик») — только у таких серий
-            **({"start": plan["start"]} if plan.get("start") else {})}
+            **({"start": plan["start"]} if plan.get("start") else {}),
+            **({"ambience": ambience} if ambience is not None else {}),
+            **({"event_sfx": dict(script["event_sfx"])} if script.get("event_sfx") else {}),
+            **({"photos": {str(k): str(v) for k, v in photos.items()}} if photos else {})}
 
 
 def chunks(perf: dict) -> list[dict]:
