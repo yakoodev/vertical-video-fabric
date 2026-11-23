@@ -86,6 +86,7 @@ def main():
     ap.add_argument("--tg"); ap.add_argument("--tg-mb", type=float, default=19.5)
     ap.add_argument("--museum", default="0-59,318-449")
     ap.add_argument("--rain", default="144-210")
+    ap.add_argument("--crf", type=int, default=16)
     ap.add_argument("--kicks", default="", help="beat punch-ins: 'a-b:amp,c-d:amp' frame ranges with bar amplitude")
     a = ap.parse_args()
     plan = json.load(open(a.plan, encoding="utf-8"))
@@ -101,7 +102,7 @@ def main():
     W, H = 1080, 1920
     ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W}x{H}",
                            "-r", str(fps), "-i", "-", "-i", wav, "-map", "0:v", "-map", "1:a",
-                           "-c:v", "libx264", "-preset", "slow", "-crf", "16", "-pix_fmt", "yuv420p",
+                           "-c:v", "libx264", "-preset", "slow", "-crf", str(a.crf), "-pix_fmt", "yuv420p",
                            "-profile:v", "high", "-c:a", "aac", "-b:a", "256k", "-shortest", "-movflags", "+faststart",
                            a.out], stdin=subprocess.PIPE)
     rng = np.random.default_rng(11)

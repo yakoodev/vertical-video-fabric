@@ -287,7 +287,11 @@ def follow_gold(cx, st, tx, track):
         bob = up * (0.012 * math.sin((f - f0) * 0.11)) + right * (0.01 * math.sin((f - f0) * 0.07))
         pos = ideal + bob
         keys.append([f, *[float(x) for x in pos], float(yawp[1]), 0.0, float(-yawp[0])])
-    print(f"  gold {tx['tag']}: follow {f0}-{f_stop}, size {size:.3f}, D {D0}, y {sy}")
+    out = tx.get("out")
+    if out is None or out[0] > f_stop + 1:      # released by the camera → dissolve at once, never hang half off-screen
+        out = [f_stop + 1, f_stop + 9]
+    tx["out"] = out
+    print(f"  gold {tx['tag']}: follow {f0}-{f_stop}, size {size:.3f}, D {D0}, y {sy}, out {out}")
     return {"tag": tx["tag"], "kind": "gold_follow", "world": world, "font": tx.get("font", "fell"), "size": float(size),
             "lines": lines, "keys": keys, "out": tx.get("out"), "shadow": tx.get("shadow", 0.6),
             "style": tx.get("style", "gold")}
