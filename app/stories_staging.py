@@ -9,6 +9,11 @@
 
 Поле можно задать и списком по кускам фразы (``cams``/``runs``/``doubles``… — ``apply_authored`` берёт элемент по
 номеру плана фразы).
+
+Ещё у фразы — звук и озвучка (``EXTRA``): ``pause_after`` (тишина после фразы при озвучке по фразам,
+``app/series3d_lines.py``), ``voice_fx`` (обработка голоса фразы), ``sounds`` (свои звуки фразы,
+``app/series3d_blender_audio.py``). Поля всего сценария (озвучка, зерно, фон, звуки событий, фото) —
+``app/stories_staging_script.py``.
 """
 
 from __future__ import annotations
@@ -17,8 +22,11 @@ import json
 import math
 from typing import Any
 
+from app.series3d_blender_audio import REF_RX, SOUND_EVENTS
 from app.series3d_chase import AUTHORED
+from app.series3d_lines import MAX_PAUSE, VOICE_FX
 
+MAX_SOUNDS = 8         # своих звуков у фразы
 DOUBLE_DO = ("lie", "twitch", "rise", "stand", "walk", "run", "echo")
 MAX_PATH = 64          # точек пути бега
 MAX_LIST = 8           # кусков фразы в ``cams``/``runs``/…
@@ -184,6 +192,53 @@ CLEANERS = {
 }
 
 
+def clean_ref(raw: Any) -> str | None:
+    """Запись пака ``sfx:пак/файл.ogg`` (только настоящие записи паков, без путей и адресов)."""
+    ref = raw.strip() if isinstance(raw, str) else ""
+    return ref if REF_RX.match(ref) else None
+
+
+def _clean_sound(raw: Any) -> dict | None:
+    """Свой звук фразы: ``{ref, at, volume, label}`` или событие ``{event, at}`` (``SOUND_EVENTS``)."""
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    if raw.get("event") is not None:
+        if raw["event"] not in SOUND_EVENTS:
+            return None
+        out["event"] = raw["event"]
+    else:
+        ref = clean_ref(raw.get("ref"))
+        if ref is None:
+            return None
+        out["ref"] = ref
+        if raw.get("volume") is not None:
+            if _num(raw["volume"]) is None:
+                return None
+            out["volume"] = _num(raw["volume"], 0.0, 1.5)
+        label = _clean_text(raw.get("label"))
+        if label:
+            out["label"] = label
+    if raw.get("at") is not None and _num(raw["at"]) is None:
+        return None
+    out["at"] = _num(raw.get("at") or 0.0, -2.0, 30.0)
+    return out
+
+
+def _clean_sounds(raw: Any) -> list[dict] | None:
+    if not isinstance(raw, list):
+        return None
+    vals = [_clean_sound(v) for v in raw[:MAX_SOUNDS]]
+    return None if any(v is None for v in vals) else vals
+
+
+EXTRA = {
+    "pause_after": lambda v: _num(v, 0.0, MAX_PAUSE),   # тишина после фразы, с (озвучка по фразам)
+    "voice_fx": lambda v: v if v in VOICE_FX else None,  # обработка голоса фразы тем же голосом
+    "sounds": _clean_sounds,                             # свои звуки фразы
+}
+
+
 def staging(raw: dict, warnings: list[str] | None = None, where: str = "") -> dict:
     """Поля постановки фразы (или немого плана концовки) → проверенные значения. Нет поля — нет ключа;
     испорченное — без него и предупреждение в ``warnings``."""
@@ -207,4 +262,12 @@ def staging(raw: dict, warnings: list[str] | None = None, where: str = "") -> di
                     warnings.append(f"{where}: список {key}s не по форме — не сохранён")
             else:
                 out[key + "s"] = vals
+    for key, clean in EXTRA.items():
+        if key in raw and raw[key] is not None:
+            val = clean(raw[key])
+            if val is None:
+                if warnings is not None:
+                    warnings.append(f"{where}: поле {key} не по форме — не сохранено")
+            else:
+                out[key] = val
     return out

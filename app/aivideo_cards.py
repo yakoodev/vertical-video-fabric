@@ -167,7 +167,10 @@ def _insert_job(store: Any, project_id: int, item: dict, status: str, approval_i
               "text": item.get("text"), "style": item.get("style"), "regenerate": item.get("regenerate", False),
               "seconds": item.get("seconds"),
               "start": item.get("start"), "mode": item.get("mode"), "group": item.get("group"),
-              **({"dialog": item["dialog"], "hero_voice": item.get("hero_voice")} if item.get("dialog") else {})}
+              **({"dialog": item["dialog"], "hero_voice": item.get("hero_voice")} if item.get("dialog") else {}),
+              # 3D-серия: озвучка по фразам с паузами (app/series3d_lines.py)
+              **({"lines": item["lines"], "key_text": item.get("key_text"), "hero_voice": item.get("hero_voice")}
+                 if item.get("lines") else {})}
     cur = store.db.execute(
         "INSERT INTO aiv_gen_jobs (project_id, script_id, approval_id, stage, kind, target_type, target_id, ref_kind, "
         "slot, label, provider, model, params_json, estimate_rub, status, requested_by) "

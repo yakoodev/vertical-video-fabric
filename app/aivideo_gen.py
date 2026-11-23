@@ -412,7 +412,13 @@ def _run_tts(store: Any, job: dict) -> dict | None:
     try:
         raw = work / "line.mp3"
         dialog = params.get("dialog") or []
-        if dialog and hasattr(tts, "synthesize_dialog"):
+        if params.get("lines"):
+            # озвучка по фразам: запись на фразу тем же голосом, между ними паузы автора (app/series3d_lines.py)
+            from app.series3d_lines import synthesize_lines
+
+            voices = {"narrator": voice, "hero": params.get("hero_voice") or ""}
+            speech = _send(store, job, lambda: synthesize_lines(tts, params["lines"], raw, voices))
+        elif dialog and hasattr(tts, "synthesize_dialog"):
             # реплики героя — своим голосом (3D-серия: рот героя двигается только на них)
             voices = {"narrator": voice, "hero": params.get("hero_voice") or ""}
             speech = _send(store, job, lambda: tts.synthesize_dialog(dialog, raw, voices))
@@ -424,7 +430,8 @@ def _run_tts(store: Any, job: dict) -> dict | None:
         asset = _save_asset(store, job, Path(speech.path), "audio", "audio/mpeg", f"ИИ-видео: {job['label']}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
-    key = _line_key({"provider": job["provider"], "model": job["model"], "voice": voice, "style": style}, text)
+    key = _line_key({"provider": job["provider"], "model": job["model"], "voice": voice, "style": style},
+                    str(params.get("key_text") or text))
     return _done(store, job, asset["id"], key, cost, source)
 
 

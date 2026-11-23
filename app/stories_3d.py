@@ -622,7 +622,12 @@ def place_titles(layers: list[dict], faces: list[dict], captions_y: float, prefi
 
 
 def options_fit(ep: dict) -> bool:
-    """Опция эпизода ``voice_fit: false`` — оставить запись как есть."""
+    """Опция эпизода ``voice_fit: false`` — оставить запись как есть. Озвучку по фразам (паузы автора,
+    ``app/series3d_lines.py``) под темп не подгоняем: длина пауз — замысел автора, под неё посчитана постановка."""
+    from app import series3d_lines as LN
+
+    if LN.mode(ep.get("script"), ep.get("options")) == "sentences":
+        return False
     return (ep.get("options") or {}).get("voice_fit") is not False
 
 
@@ -685,6 +690,55 @@ def render_backend(ep: dict) -> str:
     return SB.backend({"render_backend": (ep.get("options") or {}).get("render_backend")})
 
 
+def episode_seed(ep: dict) -> int:
+    """Зерно исполнения: ``script.seed``, иначе опция эпизода ``seed``, иначе номер эпизода (как раньше)."""
+    for raw in ((ep.get("script") or {}).get("seed"), (ep.get("options") or {}).get("seed")):
+        if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
+            return raw
+        if isinstance(raw, str) and raw.strip().isdigit():
+            return int(raw)
+    return int(ep["id"])
+
+
+def episode_photos(store: Any, ep: dict) -> tuple[dict, dict]:
+    """Фото переписки сценария (``script.photos = {ключ: {asset_id}}``) → ``({ключ: файл}, {ключ: id ассета})``.
+    Файла нет — без этого фото (в пузыре серая заглушка), остальное как есть."""
+    from app.aivideo_gen import _asset_path
+
+    paths, ids = {}, {}
+    for key, val in ((ep.get("script") or {}).get("photos") or {}).items():
+        try:
+            path = _asset_path(store, {"asset_id": int(val["asset_id"])})
+        except (KeyError, TypeError, ValueError):
+            path = None
+        if path:
+            paths[str(key)], ids[str(key)] = str(path), int(val["asset_id"])
+    return paths, ids
+
+
+AUTHOR_FIELDS = ("narration", "seed", "ambience", "event_sfx", "photos")
+SENTENCE_EXTRA = ("pause_after", "voice_fx", "sounds")
+
+
+def author_key(ep: dict) -> str | None:
+    """Хэш того, что автор задал сверх текста (звук, зерно, фото, озвучка по фразам, постановка фраз) — другое задание
+    рендера. Ничего из нового нет — ``None``: ключ у старых серий прежний."""
+    from app.series3d_chase import AUTHORED
+
+    sc = ep.get("script") or {}
+    opts = ep.get("options") or {}
+    top = {k: sc[k] for k in AUTHOR_FIELDS if k in sc}
+    if opts.get("seed") is not None:
+        top["options_seed"] = opts["seed"]
+    sent = [{k: v for k, v in s.items() if k in SENTENCE_EXTRA} for s in sc.get("sentences") or []]
+    if not top and not any(sent):
+        return None
+    staged = [{k: v for k, v in s.items() if k in SENTENCE_EXTRA or k in AUTHORED or k[:-1] in AUTHORED}
+              for s in list(sc.get("sentences") or []) + list(sc.get("outro") or [])]
+    blob = json.dumps({"top": top, "staged": staged}, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha1(blob.encode()).hexdigest()[:12]
+
+
 def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
     """Что рендерим: фразы сценария + озвучка + версия сцены (+ пресет) — то же задание не ставим дважды.
     Без пресета — ключ режиссуры: другой пресет той же серии берёт ту же режиссуру (сравнимо, без нового Gemini)."""
@@ -698,6 +752,8 @@ def blender_key(ep: dict, ref: dict, with_quality: bool = True) -> str:
             "plans": SB.plan_key(ep.get("beats"))}
     if render_backend(ep) != SB.DEFAULT_BACKEND:   # другой бэкенд — другое задание; ключ blender прежний
         blob["backend"] = render_backend(ep)
+    if author_key(ep):                             # звук/зерно/фото/паузы автора — своё задание (старые ключи прежние)
+        blob["author"] = author_key(ep)
     base = "s3b-" + hashlib.sha1(json.dumps(blob, ensure_ascii=False, sort_keys=True).encode()).hexdigest()[:20]
     return f"{base}-{blender_quality(ep)}" if with_quality else base
 
@@ -749,9 +805,13 @@ def blender_video(store: Any, ep: dict, words: list[dict], total: float, look: d
         except (OSError, ValueError):
             payload = None
     if payload is None:
+        photos, photo_ids = episode_photos(store, ep)
         payload = SB.build_job(ep["script"], words, total, gemini=True, envelope=SB.audio_envelope(audio),
                                lipsync_mode=str(opts.get("lipsync") or "speaking"),
-                               quality=blender_quality(ep), look=look, seed=eid, beats=ep.get("beats"))
+                               quality=blender_quality(ep), look=look, seed=episode_seed(ep), beats=ep.get("beats"),
+                               photos=photos)
+        if photo_ids:   # хост-воркер: файлов сервиса у него нет — скачает фото по id (tools/render_worker.py)
+            payload["photo_assets"] = photo_ids
         payload["key"] = blender_key_base(key)
         if payload.get("director_error"):
             notes.append(f"3D: Gemini не выбрал действия ({payload['director_error'][:120]}) — правила")

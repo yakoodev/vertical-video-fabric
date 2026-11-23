@@ -38,7 +38,9 @@ from app import stories_gen as X
 from app.auth import is_agent_request
 
 SCRIPT_FIELDS = ("title", "logline", "sentences", "new_characters", "new_locations", "text", "part_title", "hook_words",
-                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats", "outro")
+                 "viewer_question", "hashtags", "mistake", "cliffhanger", "beats", "outro",
+                 # 3D-серия: озвучка по фразам, зерно, фон, звуки событий, фото в переписке (app/stories_staging_script.py)
+                 "narration", "seed", "ambience", "event_sfx", "photos")
 SCRIPT_SOURCES = ("owner", "agent")
 
 
