@@ -78,6 +78,41 @@ def fill_outside(val: np.ndarray, valid: np.ndarray) -> np.ndarray:
     return f.astype(np.float32)
 
 
+def _outside_dist(h, w, px, py):
+    yy, xx = np.mgrid[0:h + 2 * py, 0:w + 2 * px].astype(np.float32)
+    dx = np.maximum(0, np.maximum(px - xx, xx - (px + w - 1)))
+    dy = np.maximum(0, np.maximum(py - yy, yy - (py + h - 1)))
+    return np.sqrt(dx * dx + dy * dy)
+
+
+def pad_map(a, px, py):
+    p = cv2.copyMakeBorder(a, py, py, px, px, cv2.BORDER_REPLICATE)
+    d = _outside_dist(a.shape[0], a.shape[1], px, py)
+    wgt = np.clip(d / 80.0, 0, 1)
+    return (p * (1 - wgt) + cv2.GaussianBlur(p, (0, 0), 30) * wgt).astype(np.float32)
+
+
+def pad_color(c, px, py):
+    p = cv2.copyMakeBorder(c, py, py, px, px, cv2.BORDER_REPLICATE).astype(np.float32)
+    d = _outside_dist(c.shape[0], c.shape[1], px, py)[..., None]
+    b1 = cv2.GaussianBlur(p, (0, 0), 6)
+    b2 = cv2.GaussianBlur(p, (0, 0), 40)
+    w1 = np.clip(d / 25.0, 0, 1); w2 = np.clip((d - 25) / 200.0, 0, 1)
+    out = p * (1 - w1) + b1 * w1
+    out = out * (1 - w2) + b2 * w2
+    out *= (1 - 0.25 * np.clip(d / 400.0, 0, 1))          # the world dims a little past the canvas edge
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def pad_alpha(a, px, py, bg, fade):
+    if bg:
+        p = cv2.copyMakeBorder(a, py, py, px, px, cv2.BORDER_REPLICATE)
+        return np.where(_outside_dist(a.shape[0], a.shape[1], px, py) > 0, np.maximum(p, 1.0 * (p > -1)), p).astype(np.float32)
+    p = cv2.copyMakeBorder(a, py, py, px, px, cv2.BORDER_REPLICATE)
+    d = _outside_dist(a.shape[0], a.shape[1], px, py)
+    return (p * np.clip(1 - d / fade, 0, 1)).astype(np.float32)
+
+
 def grid_mesh(depth: np.ndarray, step: int, sigma: float, cu: float, cv: float, zref: float, alpha_d: float,
               alpha_map: np.ndarray) -> dict:
     """Vertices on camera rays: pixel (u, v) → P_ref = ((u-cu)σ, zref, -(v-cv)σ); P = P_ref * Zd/zref,
@@ -131,20 +166,19 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
     # border of the depth map is unreliable (canvas edge) — replicate from inside
     bb = max(4, int(0.015 * W))
     dep = cv2.copyMakeBorder(dep[bb:-bb, bb:-bb], bb, bb, bb, bb, cv2.BORDER_REPLICATE)
-    # pad the world beyond the canvas edge (mirrored) so a turning camera never sees the end of the world
+    # the world beyond the canvas edge: only the background plate continues (edge-stretched, progressively
+    # blurred) — never mirrored, so no kaleidoscope ghosts; nearer layers fade out at the edge
     W0, H0 = W, H
     px, py = int(pcfg.get("pad", [0.3, 0.15])[0] * W0), int(pcfg.get("pad", [0.3, 0.15])[1] * H0)
-    img = cv2.copyMakeBorder(img, py, py, px, px, cv2.BORDER_REFLECT_101)
-    dep = cv2.copyMakeBorder(dep, py, py, px, px, cv2.BORDER_REFLECT_101)
-    H, W = dep.shape
-    grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255
     ps = pcfg.get("poly_scale", 1.0)   # polygons are drawn on a preview: src = preview * ps - margin
-    to_w = lambda poly: [((x * ps - m) * s + px, (y * ps - m) * s + py) for x, y in poly]  # noqa: E731
+    to_w = lambda poly: [((x * ps - m) * s, (y * ps - m) * s) for x, y in poly]  # noqa: E731
     f = pcfg.get("feather", 0.04)
     mg = pcfg.get("margin", 0.06)
     specs = pcfg["layers"]                 # [{name}, {name, depth_min, poly?, relief_gain?}, ...] far → near
     K = len(specs)
     regions = [np.ones((H, W), np.float32)]
+    if pcfg.get("crop_cx_frac") is not None:
+        pcfg["crop_cx"] = pcfg["crop_cx_frac"] * W0 / s
     for sp in specs[1:]:
         r = smoothstep(sp["depth_min"] - f, sp["depth_min"] + f, dep)
         if sp.get("poly"):
@@ -152,18 +186,9 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
             r = r * pm
         r = np.clip(guided(grey, r, 4, 1e-3), 0, 1)
         regions.append(np.clip((r - 0.04) / 0.92, 0, 1).astype(np.float32))
-    # mirrored copies of the subjects in the pad must not survive in the depth-sliced layers
-    subj = np.zeros((H, W), np.float32)
-    for k, sp in enumerate(specs):
-        if sp.get("poly"):
-            subj = np.maximum(subj, regions[k])
-    core = subj[py:py + H0, px:px + W0]
-    subj_ref = cv2.copyMakeBorder(core, py, py, px, px, cv2.BORDER_REFLECT_101)
-    subj_ref[py:py + H0, px:px + W0] = 0
-    subj_ref = cv2.dilate((subj_ref > 0.2).astype(np.uint8), np.ones((25, 25), np.uint8))
-    for k, sp in enumerate(specs):
-        if k > 0 and not sp.get("poly"):
-            regions[k] = regions[k] * (1 - cv2.GaussianBlur(subj_ref.astype(np.float32), (0, 0), 4))
+    if pcfg.get("cutout"):           # holes through every layer (a window the camera flies through)
+        cut = poly_mask((H, W), [to_w(p) for p in pcfg["cutout"]], 1.5 * ps * s)
+        regions = [r * (1 - cut) for r in regions]
     alphas = [None] * K
     acc = np.zeros((H, W), np.float32)
     for k in range(K - 1, -1, -1):
@@ -178,14 +203,13 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
     cv_ = pcfg.get("crop_cy", H0 / 2 / s) * s
     sigma = cfg["view_width_at_zref"] / crop_w
     zref, ad = cfg["zref"], pcfg.get("depth_scale", 0.5)
-    np.save(out / "depth.npy", dep.astype(np.float16))
-    layers, geo = [], []
+    np.save(out / "depth.npy", pad_map(dep, px, py).astype(np.float16))
+    layers, geo, cols = [], [], []
     grid = pcfg.get("grid_step", 6)
     for k in range(K):
         sp = specs[k]
         nearer = alphas[k + 1] if k + 1 < K else np.zeros((H, W), np.float32)
         hole = cv2.dilate((nearer > 0.35).astype(np.uint8), np.ones((2 * pcfg.get("hole_dilate", 8) + 1,) * 2, np.uint8)) > 0
-        hole |= subj_ref > 0
         col = inpaint(img, hole) if hole.any() else img.copy()
         own = (regions[k] > 0.5) & ~hole
         if not own.any():
@@ -202,9 +226,7 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
             med = float(np.median(dep[own]))
             dk = med + (dk - med) * sp["relief_gain"]
         dk = cv2.GaussianBlur(dk, (0, 0), pcfg.get("relief_blur", 6) * (2 if sp.get("poly") else 1))
-        a8 = (alphas[k] * 255).astype(np.uint8)
-        rgba = np.dstack([col, a8])
-        cv2.imwrite(str(out / f"L{k}.png"), rgba)
+        cols.append(col)
         geo.append(dk)
         layers.append({"k": k, "name": sp["name"], "png": str(out / f"L{k}.png"), "mesh": str(out / f"L{k}_mesh.npz"),
                        "range": [float(lo), float(hi)]})
@@ -221,6 +243,11 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
             geo[k] = np.where(near, np.minimum(geo[k], env - gap * 0.5), geo[k])
         env = np.where(alphas[k] > 0.02, np.minimum(env, geo[k]), env)
     for k in range(K):
+        a_p = pad_alpha(alphas[k], px, py, bg=(k == 0), fade=0.02 * W0)
+        c_p = pad_color(cols[k], px, py)
+        cv2.imwrite(str(out / f"L{k}.png"), np.dstack([c_p, (a_p * 255).astype(np.uint8)]))
+        geo[k] = pad_map(geo[k], px, py)
+        alphas[k] = a_p
         mesh = grid_mesh(geo[k], grid, sigma, cu + px, cv_ + py, zref, ad, alphas[k])
         np.savez_compressed(out / f"L{k}_mesh.npz", **mesh)
         np.save(out / f"L{k}_depth.npy", geo[k].astype(np.float16))
@@ -243,10 +270,11 @@ def build(cfg: dict, pcfg: dict, out_root: Path) -> dict:
             r = max(1, int(spec["dilate"] * pcfg.get("poly_scale", 1.0) * s))
             mm = cv2.GaussianBlur(cv2.dilate(mm, np.ones((2 * r + 1, 2 * r + 1), np.uint8)), (0, 0), r * 0.6)
         anim[..., ch] = np.clip(mm, 0, 1)
+    anim = cv2.copyMakeBorder(anim, py, py, px, px, cv2.BORDER_CONSTANT, value=0)
     cv2.imwrite(str(out / "anim.png"), (anim[..., ::-1] * 255).astype(np.uint8))
-    meta = {"name": name, "W": W0, "H": H0, "Wp": W, "Hp": H, "pad": [px, py], "sigma": sigma, "cu": cu, "cv": cv_, "zref": zref, "depth_scale": ad,
+    meta = {"name": name, "W": W0, "H": H0, "Wp": W0 + 2 * px, "Hp": H0 + 2 * py, "pad": [px, py], "sigma": sigma, "cu": cu, "cv": cv_, "zref": zref, "depth_scale": ad,
             "crop_w": crop_w, "layers": layers, "flat": str(out / "flat.png"), "anim": str(out / "anim.png"),
-            "scale_from_src": s, "crop_margin": m,
+            "scale_from_src": s, "crop_margin": m, "poly_scale": ps,
             # painting rect at zref (world units), for the portal camera and for placing things
             "rect": [(0 - cu) * sigma, (W0 - cu) * sigma, -(H0 - cv_) * sigma, -(0 - cv_) * sigma]}
     json.dump(meta, open(out / "meta.json", "w"), indent=1)

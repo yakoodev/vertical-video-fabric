@@ -66,7 +66,8 @@ def sync(plan: dict, stem: str, t0: float, out: str):
         cv2.putText(img, f"{s}s", (X(s) + 3, Hw + Hs + 26), 0, 0.5, (220, 220, 220), 1)
     k = 0
     for tx in plan["texts"]:
-        for wd in tx["words"]:
+        words = tx.get("words") or [w for ln in tx.get("lines", []) for w in ln]
+        for wd in words:
             if wd.get("on") is None:
                 continue
             on = wd["on"]

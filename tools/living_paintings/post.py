@@ -86,6 +86,7 @@ def main():
     ap.add_argument("--tg"); ap.add_argument("--tg-mb", type=float, default=19.5)
     ap.add_argument("--museum", default="0-59,318-449")
     ap.add_argument("--rain", default="144-210")
+    ap.add_argument("--kicks", default="", help="beat punch-ins: 'a-b:amp,c-d:amp' frame ranges with bar amplitude")
     a = ap.parse_args()
     plan = json.load(open(a.plan, encoding="utf-8"))
     nf, fps = plan["frames"], plan["fps"]
@@ -105,12 +106,30 @@ def main():
                            a.out], stdin=subprocess.PIPE)
     rng = np.random.default_rng(11)
     dust = make_dust(70, W, H)
+    bars = plan.get("_bars", [])
+    kick_rng = []
+    for part in filter(None, a.kicks.split(",")):
+        r, amp = part.split(":"); s0, e0 = r.split("-")
+        kick_rng.append((int(s0), int(e0), float(amp)))
+
+    def kick(f):
+        z = 0.0
+        for b in bars:
+            if b <= f < b + 14:
+                for s0, e0, amp in kick_rng:
+                    if s0 <= b <= e0:
+                        z += amp * np.exp(-(f - b) / 4.0)
+        return z
     for f in range(nf):
         img = cv2.imread(os.path.join(a.frames, f"{f:04d}.png"))
         if img is None:
             raise SystemExit(f"missing frame {f}")
         r0, r1 = (int(v) for v in a.rain.split("-"))
         rain = 0.0 if not (r0 <= f <= r1) else 0.75 * min(1.0, (f - r0) / 4, (r1 - f) / 2 + 0.3)
+        z = kick(f)
+        if z > 1e-4:                         # a small push on the bar (the camera "hits" the beat)
+            M = cv2.getRotationMatrix2D((W / 2, H / 2), 0, 1 + z)
+            img = cv2.warpAffine(img, M, (W, H), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
         ff.stdin.write(grade(img, f, rng, dust, f in museum, rain).tobytes())
         if f % 50 == 0:
             print("  graded", f, flush=True)

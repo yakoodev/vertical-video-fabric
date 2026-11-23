@@ -157,6 +157,8 @@ def layer_material(world: str, k: int, png: str, meta: dict, wcfg: dict):
             dx = g.sub(x_px, w["pivot"][0]); dy = g.sub(y_px, w["pivot"][1])
             ddx = g.mul(g.mul(phi, -1.0), dy)            # px
             ddy = g.mul(phi, dx)
+        elif w["type"] == "shift":                # slow drift (a boat gliding)
+            ddx = g.mul(t, w.get("vx", 0.0)); ddy = g.mul(t, w.get("vy", 0.0))
         else:  # wave
             a1 = g.add(g.add(g.mul(t, w["speed"]), g.mul(x_px, w["kx"])), g.mul(y_px, w["ky"]))
             a2 = g.add(g.add(g.mul(t, w["speed"] * 1.31), g.mul(x_px, w["ky"] * 0.8)), g.mul(y_px, -w["kx"] * 1.1))
@@ -175,7 +177,11 @@ def layer_material(world: str, k: int, png: str, meta: dict, wcfg: dict):
         if k not in fx["layers"]:
             continue
         if fx["type"] == "glow":
-            pulse = g.add(fx["base"], g.mul(g.sin(g.mul(t, 2 * math.pi / fx["period"])), fx["amp"]))
+            if fx.get("flicker"):                 # candle: three incommensurate sines ≈ noise
+                nz = g.add(g.add(g.sin(g.mul(t, 1.7)), g.sin(g.add(g.mul(t, 2.9), 1.0))), g.sin(g.add(g.mul(t, 4.3), 2.0)))
+                pulse = g.add(fx["base"], g.mul(nz, fx["amp"] / 3))
+            else:
+                pulse = g.add(fx["base"], g.mul(g.sin(g.mul(t, 2 * math.pi / fx["period"])), fx["amp"]))
             amt = g.mul(ch["b"], pulse)
             mix = n.new("ShaderNodeMix"); mix.data_type = "RGBA"; mix.blend_type = "ADD"
             L.new(amt, mix.inputs[0]); L.new(col, mix.inputs[6]); mix.inputs[7].default_value = (*fx["color"], 1)
@@ -191,7 +197,7 @@ def layer_material(world: str, k: int, png: str, meta: dict, wcfg: dict):
             cc = n.new("ShaderNodeCombineColor"); L.new(amt, cc.inputs[0]); L.new(amt, cc.inputs[1]); L.new(amt, cc.inputs[2])
             L.new(cc.outputs[0], mix.inputs[7])
             col = mix.outputs[2]
-    em = n.new("ShaderNodeEmission"); L.new(col, em.inputs[0]); em.inputs[1].default_value = 1.0
+    em = n.new("ShaderNodeEmission"); L.new(col, em.inputs[0]); em.inputs[1].default_value = wcfg.get("exposure", 1.0)
     tr = n.new("ShaderNodeBsdfTransparent")
     mx = n.new("ShaderNodeMixShader"); L.new(tex.outputs[1], mx.inputs[0]); L.new(tr.outputs[0], mx.inputs[1]); L.new(em.outputs[0], mx.inputs[2])
     out = n.new("ShaderNodeOutputMaterial"); L.new(mx.outputs[0], out.inputs[0])
@@ -303,7 +309,7 @@ def frame_mesh(name, w, h, scale):
     return ob
 
 
-def canvas_material(name, img_path, seq=None, light_keys=None, fallback=None):
+def canvas_material(name, img_path, seq=None, light_keys=None, fallback=None, disc=None, size=None):
     """Emission canvas. seq=(first, last) → image sequence named by global frame. light_keys=[(frame, k)] — how much
     of the 'picture light' gradient is applied (1 = lit on the wall, 0 = flat, matching the child world)."""
     m, n, L = mat_new(name)
@@ -335,7 +341,54 @@ def canvas_material(name, img_path, seq=None, light_keys=None, fallback=None):
             L.new(fac, cc.inputs[i])
         L.new(cc.outputs[0], mix.inputs[7]); col = mix.outputs[2]
     em = n.new("ShaderNodeEmission"); L.new(col, em.inputs[0])
-    out = n.new("ShaderNodeOutputMaterial"); L.new(em.outputs[0], out.inputs[0])
+    out = n.new("ShaderNodeOutputMaterial")
+    if disc:
+        # circular opening that grows (in metres) — a glowing moon that opens into the next painting
+        cw, ch = size
+        sep2 = n.new("ShaderNodeSeparateXYZ"); L.new(uvn.outputs[0], sep2.inputs[0])
+        dx = g.mul(g.sub(sep2.outputs[0], 0.5), cw); dy = g.mul(g.sub(sep2.outputs[1], 0.5), ch)
+        dist = g.m("SQRT", g.add(g.mul(dx, dx), g.mul(dy, dy)))
+        rad = n.new("ShaderNodeValue")
+        for f, r in disc:
+            rad.outputs[0].default_value = r; rad.outputs[0].keyframe_insert("default_value", frame=f)
+        soft = 0.04
+        a = g.m("MULTIPLY", g.sub(rad.outputs[0], dist), 1 / soft, clamp=True)
+        ring = g.m("MULTIPLY", g.sub(g.add(rad.outputs[0], 0.25), dist), 4.0, clamp=True)
+        ring = g.mul(g.sub(ring, a), 1.6)
+        gl = n.new("ShaderNodeEmission"); gl.inputs[0].default_value = (1.0, 0.82, 0.55, 1); L.new(ring, gl.inputs[1])
+        tr = n.new("ShaderNodeBsdfTransparent")
+        addg = n.new("ShaderNodeAddShader"); L.new(tr.outputs[0], addg.inputs[0]); L.new(gl.outputs[0], addg.inputs[1])
+        mx = n.new("ShaderNodeMixShader"); L.new(a, mx.inputs[0]); L.new(addg.outputs[0], mx.inputs[1]); L.new(em.outputs[0], mx.inputs[2])
+        L.new(mx.outputs[0], out.inputs[0])
+    else:
+        L.new(em.outputs[0], out.inputs[0])
+    return m
+
+
+def portal_plane(tag, world, center, cw, ch, mat):
+    bpy.ops.mesh.primitive_plane_add(size=1)
+    cv = bpy.context.active_object; cv.name = f"portal_{tag}"
+    cv.scale = (cw, ch, 1); cv.rotation_euler = (math.pi / 2, 0, 0)
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    me = cv.data
+    for lp in me.loops:
+        co = me.vertices[lp.vertex_index].co
+        me.uv_layers.active.data[lp.index].uv = (co.x / cw + 0.5, co.z / ch + 0.5)
+    cv.data.materials.append(mat)
+    cv.location = OFFS[world] + Vector(center); cv.visible_shadow = False
+    return cv
+
+
+def wood_material():
+    if "woodback" in bpy.data.materials:
+        return bpy.data.materials["woodback"]
+    m, n, L = mat_new("woodback")
+    tc = n.new("ShaderNodeTexCoord"); wv = n.new("ShaderNodeTexWave"); wv.inputs["Scale"].default_value = 6
+    wv.inputs["Distortion"].default_value = 6; L.new(tc.outputs["Object"], wv.inputs[0])
+    ramp = n.new("ShaderNodeValToRGB"); L.new(wv.outputs[1], ramp.inputs[0])
+    ramp.color_ramp.elements[0].color = (0.12, 0.07, 0.035, 1); ramp.color_ramp.elements[1].color = (0.32, 0.2, 0.1, 1)
+    bs = n.new("ShaderNodeBsdfPrincipled"); L.new(ramp.outputs[0], bs.inputs["Base Color"]); bs.inputs["Roughness"].default_value = 0.7
+    out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
     return m
 
 
@@ -385,12 +438,42 @@ def shadow_material():
 
 
 # ---------------------------------------------------------------- museum
-def build_museum():
+def _plane(name, size, loc, rot, mat):
+    bpy.ops.mesh.primitive_plane_add(size=1)
+    ob = bpy.context.active_object; ob.name = name
+    ob.scale = (size[0], size[1], 1); ob.rotation_euler = rot
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    ob.location = loc
+    ob.data.materials.append(mat)
+    return ob
+
+
+def _box(name, size, loc, mat):
+    bpy.ops.mesh.primitive_cube_add(size=1)
+    ob = bpy.context.active_object; ob.name = name
+    ob.scale = size; ob.location = loc
+    ob.data.materials.append(mat)
+    return ob
+
+
+def _simple_mat(name, color, rough=0.6, metal=0.0, emit=None):
+    if name in bpy.data.materials:
+        return bpy.data.materials[name]
+    m, n, L = mat_new(name)
+    bs = n.new("ShaderNodeBsdfPrincipled"); bs.inputs["Base Color"].default_value = (*color, 1)
+    bs.inputs["Roughness"].default_value = rough; bs.inputs["Metallic"].default_value = metal
+    if emit:
+        bs.inputs["Emission Color"].default_value = (*emit[0], 1); bs.inputs["Emission Strength"].default_value = emit[1]
+    out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
+    return m
+
+
+def wall_material():
     m, n, L = mat_new("wall")
     tc = n.new("ShaderNodeTexCoord"); mp = n.new("ShaderNodeMapping"); mp.inputs["Scale"].default_value = (1.3, 1.3, 1.3)
     L.new(tc.outputs["Object"], mp.inputs[0])
     sep = n.new("ShaderNodeSeparateXYZ"); L.new(mp.outputs[0], sep.inputs[0])
-    cmb = n.new("ShaderNodeCombineXYZ"); L.new(sep.outputs[0], cmb.inputs[0]); L.new(sep.outputs[1], cmb.inputs[1])
+    cmb = n.new("ShaderNodeCombineXYZ"); L.new(sep.outputs[0], cmb.inputs[0]); L.new(sep.outputs[2], cmb.inputs[1])
     tex = n.new("ShaderNodeTexImage"); tex.image = bpy.data.images.load(PLAN["tex"]["wall"]); tex.extension = "REPEAT"
     L.new(cmb.outputs[0], tex.inputs[0])
     bs = n.new("ShaderNodeBsdfPrincipled"); L.new(tex.outputs[0], bs.inputs["Base Color"])
@@ -398,52 +481,86 @@ def build_museum():
     if "Sheen Weight" in bs.inputs:
         bs.inputs["Sheen Weight"].default_value = 0.4
     out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
-    bpy.ops.mesh.primitive_plane_add(size=1)
-    wall = bpy.context.active_object; wall.name = "wall"
-    wall.scale = (14, 7, 1); wall.rotation_euler = (math.pi / 2, 0, 0)
-    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-    wall.location = (0, 0.002, 2.5)
-    # the wall's texture coords: XZ plane → use Object coords X/Z
-    sep.inputs[0]  # noqa
-    L.remove(cmb.inputs[1].links[0]); L.new(sep.outputs[2], cmb.inputs[1])
-    wall.data.materials.append(m)
-    # dado rail and skirting (gold-ish wood)
-    for z, hgt in ((0.1, 0.2),):
-        bpy.ops.mesh.primitive_cube_add(size=1)
-        r = bpy.context.active_object; r.scale = (14, 0.05, hgt); r.location = (0, -0.02, z)
-        r.data.materials.append(gold_material("darkgold", 0.45))
+    return m
+
+
+def parquet_material():
+    m, n, L = mat_new("parquet")
+    tc = n.new("ShaderNodeTexCoord"); mp = n.new("ShaderNodeMapping"); mp.inputs["Scale"].default_value = (1.6, 1.6, 1.6)
+    L.new(tc.outputs["Object"], mp.inputs[0])
+    br = n.new("ShaderNodeTexBrick"); L.new(mp.outputs[0], br.inputs[0])
+    br.inputs["Color1"].default_value = (0.20, 0.10, 0.045, 1); br.inputs["Color2"].default_value = (0.13, 0.065, 0.03, 1)
+    br.inputs["Mortar"].default_value = (0.05, 0.025, 0.012, 1); br.inputs["Scale"].default_value = 3.0
+    br.inputs["Mortar Size"].default_value = 0.006; br.inputs["Brick Width"].default_value = 1.2
+    br.inputs["Row Height"].default_value = 0.22
+    nz = n.new("ShaderNodeTexNoise"); nz.inputs["Scale"].default_value = 30; L.new(mp.outputs[0], nz.inputs[0])
+    mix = n.new("ShaderNodeMix"); mix.data_type = "RGBA"; mix.blend_type = "MULTIPLY"; mix.inputs[0].default_value = 0.35
+    L.new(br.outputs[0], mix.inputs[6]); L.new(nz.outputs[1], mix.inputs[7])
+    bs = n.new("ShaderNodeBsdfPrincipled"); L.new(mix.outputs[2], bs.inputs["Base Color"])
+    bs.inputs["Roughness"].default_value = 0.28
+    out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
+    return m
+
+
+def build_museum():
+    """A gallery hall: long damask wall with frames + picture lights, parquet floor, side wall, ceiling with a
+    skylight, benches. Frames either open into a world (its portal sequence) or show a flat painting."""
     mus = PLAN["museum"]
+    x0, x1 = mus.get("x0", -6), mus.get("x1", 18)
+    Hh, Dd = mus.get("height", 5.6), mus.get("depth", 10)
+    cx = (x0 + x1) / 2
+    wm = wall_material()
+    _plane("wall", (x1 - x0, Hh), (cx, 0.002, Hh / 2), (math.pi / 2, 0, 0), wm)
+    _plane("floor", (x1 - x0, Dd), (cx, -Dd / 2, 0), (0, 0, 0), parquet_material())
+    _plane("wall_side", (Dd, Hh), (x0, -Dd / 2, Hh / 2), (math.pi / 2, 0, math.pi / 2), wm)
+    _plane("wall_far", (x1 - x0, Hh), (cx, -Dd, Hh / 2), (math.pi / 2, 0, 0), _simple_mat("farwall", (0.05, 0.08, 0.05), 0.8))
+    _plane("ceiling", (x1 - x0, Dd), (cx, -Dd / 2, Hh), (math.pi, 0, 0), _simple_mat("ceiling", (0.16, 0.13, 0.1), 0.9))
+    _plane("skylight", (x1 - x0 - 2, 2.2), (cx, -Dd / 2, Hh - 0.02), (math.pi, 0, 0),
+           _simple_mat("skylight", (1, 0.95, 0.85), 1.0, emit=((1.0, 0.93, 0.8), 2.5)))
+    dg = gold_material("darkgold", 0.45)
+    _box("skirting", ((x1 - x0), 0.06, 0.22), (cx, -0.03, 0.11), dg)
+    _box("cornice", ((x1 - x0), 0.12, 0.16), (cx, -0.06, Hh - 0.4), dg)
+    leather = _simple_mat("leather", (0.16, 0.035, 0.03), 0.45)
+    wood = _simple_mat("benchwood", (0.12, 0.06, 0.03), 0.4)
+    for bx, by in mus.get("benches", []):
+        _box(f"bench_{bx}", (1.7, 0.5, 0.1), (bx, by, 0.46), leather)
+        for lx in (-0.75, 0.75):
+            for ly in (-0.2, 0.2):
+                _box(f"leg_{bx}_{lx}_{ly}", (0.06, 0.06, 0.42), (bx + lx, by + ly, 0.21), wood)
+    for k in range(int((x1 - x0) / 4)):
+        ld = bpy.data.lights.new(f"sky_{k}", "AREA"); ld.size = 3.5; ld.energy = mus.get("sky_w", 260)
+        ld.color = (1, 0.92, 0.8)
+        lo = bpy.data.objects.new(ld.name, ld); bpy.context.scene.collection.objects.link(lo)
+        lo.location = (x0 + 2 + 4 * k, -Dd / 2 + 1.5, Hh - 0.1); lo.rotation_euler = (0, 0, 0)
+        limit_light(ld, 14)
     roots = {}
     for fr in mus["frames"]:
-        name = fr["world"]
+        name = fr.get("world") or fr["flat"]
         meta = META[name]
         ch = fr["canvas_w"] * meta["H"] / meta["W"]
-        seq = WORLD[name]["portal_range"]
-        mat = canvas_material(f"canvas_m_{name}", portal_file(name, seq[0]), (0, NF - 1), fr.get("light_keys", [(0, 1.0)]),
-                              meta["flat"])
+        if fr.get("world"):
+            mat = canvas_material(f"canvas_m_{name}", portal_file(name, portal_ranges(name)[0][0]), (0, NF - 1),
+                                  fr.get("light_keys", [(0, 1.0)]), meta["flat"])
+        else:
+            mat = canvas_material(f"canvas_flat_{name}", meta["flat"], None, [(0, 1.0)])
         root, fo, cv = hang_frame(f"m_{name}", "museum", (fr["x"], -0.026, fr["z"]), fr["canvas_w"], ch, fr["scale"], mat)
         roots[name] = (root, fr["canvas_w"], ch)
-        # picture light: brass bar above + spot
         bpy.ops.mesh.primitive_cylinder_add(radius=0.035, depth=fr["canvas_w"] * 0.7)
         bar = bpy.context.active_object; bar.rotation_euler = (0, math.pi / 2, 0)
-        bar.location = (fr["x"], -0.28, fr["z"] + ch / 2 + 0.16 * fr["scale"] / 1.0 + 0.12)
+        bar.location = (fr["x"], -0.28, fr["z"] + ch / 2 + 0.16 * fr["scale"] + 0.12)
         bar.data.materials.append(gold_material())
         bpy.ops.mesh.primitive_cylinder_add(radius=0.012, depth=0.3)
         arm = bpy.context.active_object; arm.rotation_euler = (math.radians(60), 0, 0)
         arm.location = (fr["x"], -0.15, fr["z"] + ch / 2 + 0.2 * fr["scale"] + 0.04)
         arm.data.materials.append(gold_material())
         sp = bpy.data.lights.new(f"pic_{name}", "AREA"); sp.shape = "RECTANGLE"
-        sp.size = fr["canvas_w"] * 0.7; sp.size_y = 0.05; sp.energy = fr.get("light_w", 260); sp.color = (1.0, 0.82, 0.6)
+        sp.size = fr["canvas_w"] * 0.7; sp.size_y = 0.05; sp.energy = fr.get("light_w", 240); sp.color = (1.0, 0.82, 0.6)
         lo = bpy.data.objects.new(f"pic_{name}", sp); bpy.context.scene.collection.objects.link(lo)
         lo.location = (fr["x"], -0.32, fr["z"] + ch / 2 + 0.1)
         lo.rotation_euler = (math.radians(-35), 0, 0)
-        limit_light(sp, 12)
+        limit_light(sp, 10)
         for f, e in fr.get("flicker", []):
             sp.energy = e; sp.keyframe_insert("energy", frame=f)
-    fill = bpy.data.lights.new("museum_fill", "AREA"); fill.size = 3; fill.energy = 120; fill.color = (1, 0.85, 0.7)
-    fo = bpy.data.objects.new("museum_fill", fill); bpy.context.scene.collection.objects.link(fo)
-    fo.location = (0.8, -3.5, 3.2); fo.rotation_euler = (math.radians(75), 0, math.radians(8))
-    limit_light(fill, 14)
     for pc in PLAN["parchments"]:
         if pc["world"] != "museum":
             continue
@@ -460,6 +577,11 @@ def build_museum():
 def limit_light(ld, dist):
     if hasattr(ld, "use_custom_distance"):
         ld.use_custom_distance = True; ld.cutoff_distance = dist
+
+
+def portal_ranges(name):
+    w = WORLD[name]
+    return w.get("portal_ranges") or [w["portal_range"]]
 
 
 def portal_file(name, f):
@@ -565,7 +687,17 @@ def ink_line(tag, words, font, size, origin, right, up, parent=None):
     return objs, width
 
 
-def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55, out=None):
+def ink3d_material():
+    if "ink3d" in bpy.data.materials:
+        return bpy.data.materials["ink3d"]
+    m, n, L = mat_new("ink3d")
+    bs = n.new("ShaderNodeBsdfPrincipled"); bs.inputs["Base Color"].default_value = (0.035, 0.022, 0.012, 1)
+    bs.inputs["Roughness"].default_value = 0.35; bs.inputs["Metallic"].default_value = 0.6
+    out = n.new("ShaderNodeOutputMaterial"); L.new(bs.outputs[0], out.inputs[0])
+    return m
+
+
+def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55, out=None, style="gold"):
     objs, xs, width = layout_line(words, font, size, extrude=depth * size, bevel=0.012 * size)
     place_line(objs, xs, width, origin, right, up)
     if shadow:
@@ -585,7 +717,7 @@ def gold_line(tag, words, font, size, origin, right, up, depth=0.04, shadow=0.55
         for f, a in sk:
             mul.inputs[1].default_value = a; mul.inputs[1].keyframe_insert("default_value", frame=f)
         sh.data.materials.append(m); sh.visible_shadow = False
-    mat = gold_material("goldtext", 1.15)
+    mat = gold_material("goldtext", 1.15) if style == "gold" else ink3d_material()
     for ob, wd in zip(objs, words):
         ob.data.materials.append(mat)
         ff = word_frames(wd)
@@ -711,6 +843,17 @@ def make_parchments():
             c = Vector(pc["center"])
         p = parchment(pc["tag"], w, c, pc["w"], pc["h"], tuple(math.radians(a) for a in pc.get("rot", (0, 0, 0))),
                       pc.get("curl", 0.04))
+        if pc.get("follow_keys"):          # a letter floating with us
+            emp = bpy.data.objects.new(f"pfollow_{pc['tag']}", None); bpy.context.scene.collection.objects.link(emp)
+            p.location = (0, 0, 0)
+            ex = pc.get("tilt", [6, 3, -3])
+            p.rotation_euler = tuple(math.radians(a) for a in ex)
+            p.parent = emp
+            for f, x, y, z, rx, ry, rz in pc["follow_keys"]:
+                emp.location = OFFS[w] + Vector((x, y, z))
+                emp.rotation_euler = (math.radians(rx), math.radians(ry), math.radians(rz))
+                emp.keyframe_insert("location", frame=f); emp.keyframe_insert("rotation_euler", frame=f)
+            continue
         base_loc, base_rot = p.location.copy(), p.rotation_euler.copy()
         for f, dl, dr in pc.get("anim", []):
             p.location = base_loc + Vector(dl); p.rotation_euler = (base_rot[0] + math.radians(dr[0]), base_rot[1] + math.radians(dr[1]), base_rot[2] + math.radians(dr[2]))
@@ -720,37 +863,87 @@ def make_parchments():
             p.location = base_loc + Vector(pc["anim"][0][1])
 
 
-def main():
-    reset()
-    FONTS.update({k: bpy.data.fonts.load(v) for k, v in PLAN["fonts"].items()})
+def build_hangs():
     for w in PLAN["worlds"]:
-        build_world(w["name"])
-    roots = build_museum()
-    for w in PLAN["worlds"]:
-        hf = w.get("hangs")
-        if not hf:
+        for h in w.get("hangs", []):
+            child = h["child"]
+            meta = META[child]
+            c = Vector(h["center"])
+            cw = h["canvas_w"]; ch = cw * meta["H"] / meta["W"]
+            first = portal_file(child, portal_ranges(child)[0][0])
+            kind = h.get("kind", "frame")
+            tag = f"{w['name']}_{child}"
+            if kind == "disc":
+                mat = canvas_material(f"canvas_{child}", first, (0, NF - 1), None, meta["flat"], disc=h["disc"], size=(cw, ch))
+                portal_plane(tag, w["name"], c, cw, ch, mat)
+            elif kind == "plane":
+                mat = canvas_material(f"canvas_{child}", first, (0, NF - 1), None, meta["flat"])
+                portal_plane(tag, w["name"], c, cw, ch, mat)
+            else:
+                mat = canvas_material(f"canvas_{child}", first, (0, NF - 1), None, meta["flat"])
+                root, fr, cv = hang_frame(tag, w["name"], c, cw, ch, h.get("scale", 0.6), mat)
+                for f, rz, rx in h.get("sway", []):
+                    root.rotation_euler = (math.radians(rx), 0, math.radians(rz)); root.keyframe_insert("rotation_euler", frame=f)
+                if kind == "flip":
+                    # the frame first shows its wooden back, then turns round on the beat
+                    bpy.ops.mesh.primitive_plane_add(size=1)
+                    bk = bpy.context.active_object; bk.name = f"back_{tag}"
+                    bk.scale = (cw + 0.3 * h.get("scale", 0.6), ch + 0.3 * h.get("scale", 0.6), 1)
+                    bk.rotation_euler = (math.pi / 2, 0, 0)
+                    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+                    bk.parent = root; bk.location = (0, 0.03 * h.get("scale", 0.6) + 0.004, 0)
+                    bk.data.materials.append(wood_material())
+                    for xs in (-0.3, 0.3):
+                        bpy.ops.mesh.primitive_cube_add(size=1)
+                        bar = bpy.context.active_object; bar.parent = root
+                        bar.scale = (0.06, 0.04, ch * 0.95); bar.location = (xs * cw, 0.06, 0)
+                        bar.data.materials.append(wood_material())
+                    f0, f1 = h["flip"]
+                    root.rotation_euler = (0, 0, math.pi); root.keyframe_insert("rotation_euler", frame=f0)
+                    root.rotation_euler = (0, 0, 0); root.keyframe_insert("rotation_euler", frame=f1)
+                    sh = bpy.data.objects.get(f"shadow_{tag}")
+                    if sh:
+                        bpy.data.objects.remove(sh)
+            w["_frame_center"] = c
+            print(f"  {kind} {child} in {w['name']} at {tuple(round(x, 3) for x in c)} canvas {cw:.2f}")
+
+
+def build_texts(track):
+    for tx in PLAN["texts"]:
+        if tx["kind"] == "gold_follow":
+            emp = bpy.data.objects.new(f"follow_{tx['tag']}", None); bpy.context.scene.collection.objects.link(emp)
+            emp.empty_display_size = 0.2
+            before = set(bpy.data.objects.keys())
+            for i, ln in enumerate(tx["lines"]):
+                gold_line(f"{tx['tag']}_{i}", ln, tx["font"], tx["size"], Vector((0, 0, -tx["size"] * 1.24 * i)),
+                          Vector((1, 0, 0)), Vector((0, 0, 1)), out=tx.get("out"), shadow=tx.get("shadow", 0.6),
+                          style=tx.get("style", "gold"))
+            for nm in set(bpy.data.objects.keys()) - before:
+                ob = bpy.data.objects[nm]
+                if ob.parent is None and ob is not emp:
+                    ob.parent = emp
+            off = OFFS[tx["world"]]
+            for f, x, y, z, rx, ry, rz in tx["keys"]:
+                emp.location = off + Vector((x, y, z))
+                emp.rotation_euler = (math.radians(rx), math.radians(ry), math.radians(rz))
+                emp.keyframe_insert("location", frame=f); emp.keyframe_insert("rotation_euler", frame=f)
             continue
-        child = hf["child"]
-        u, v = hf["px"]
-        d = hf.get("depth", depth_at(w["name"], u, v) + 0.04)
-        c = px_local(w["name"], u, v, d)
-        meta = META[child]
-        cw = hf["canvas_w"]; ch = cw * meta["H"] / meta["W"]
-        seq = WORLD[child]["portal_range"]
-        mat = canvas_material(f"canvas_{child}", portal_file(child, seq[0]), (0, NF - 1), None, meta["flat"])
-        root, fr, cv = hang_frame(f"{w['name']}_{child}", w["name"], c, cw, ch, hf.get("scale", 0.6), mat)
-        for f, rz, rx in hf.get("sway", []):
-            root.rotation_euler = (math.radians(rx), 0, math.radians(rz)); root.keyframe_insert("rotation_euler", frame=f)
-        pose, dist = switch_pose(c, cw, child)
-        SWITCH[f"{w['name']}>{child}"] = pose
-        w["_frame_center"] = c
-        print(f"  frame {child} in {w['name']} at {tuple(round(x, 3) for x in c)}, switch pose {tuple(round(x, 3) for x in pose)} d={dist:.3f}")
-    for name, (root, cw, ch) in roots.items():
-        pose, dist = switch_pose(root.location - OFFS["museum"], cw, name)
-        SWITCH[f"museum>{name}"] = pose
-        print(f"  museum frame {name}: switch pose {tuple(round(x, 3) for x in pose)} d={dist:.3f}")
-    track = camera_track()
-    setup_camera(track)
+        if tx["kind"] == "gold_fixed":
+            o = Vector(tx["origin"]) + OFFS[tx["world"]]
+            r2, u2 = Vector(tx["right"]), Vector(tx["up"])
+            for i, ln in enumerate(tx["lines"]):
+                gold_line(f"{tx['tag']}_{i}", ln, tx["font"], tx["size"], o - u2 * (tx["size"] * 1.24 * i), r2, u2,
+                          out=tx.get("out"))
+        elif tx["kind"] == "ink":
+            par = bpy.data.objects[tx["parchment"]]
+            mw = par.matrix_world
+            right = (mw.to_3x3() @ Vector((1, 0, 0))).normalized()
+            up = (mw.to_3x3() @ Vector((0, 0, 1))).normalized()
+            origin = mw @ Vector((tx["at"][0], -0.03, tx["at"][1]))
+            ink_line(tx["tag"], tx["words"], tx["font"], tx["size"], origin, right, up, parent=par)
+
+
+def build_lights():
     for w in PLAN["worlds"]:
         for i, lt in enumerate(w.get("lights", [])):
             ld = bpy.data.lights.new(f"{w['name']}_l{i}", lt.get("type", "AREA"))
@@ -764,35 +957,23 @@ def main():
             lo.rotation_euler = (tgt - lo.location).to_track_quat("-Z", "Y").to_euler()
             for f, e in lt.get("keys", []):
                 ld.energy = e; ld.keyframe_insert("energy", frame=f)
+
+
+def main():
+    reset()
+    FONTS.update({k: bpy.data.fonts.load(v) for k, v in PLAN["fonts"].items()})
+    only = PLAN.get("_only_worlds")
+    for w in PLAN["worlds"]:
+        if not only or w["name"] in only:
+            build_world(w["name"])
+    build_museum()
+    build_hangs()
+    track = camera_track()
+    setup_camera(track)
+    build_lights()
     make_parchments()
     bpy.context.view_layer.update()
-    for tx in PLAN["texts"]:
-        words = tx["words"]
-        if tx["kind"] == "gold_cam":
-            objs, xs, w0 = layout_line(words, tx["font"], 1.0)
-            for ob in objs:
-                bpy.data.objects.remove(ob)
-            if tx.get("below"):
-                o_prev, s_prev, r2, u2 = PLACED[tx["below"]]
-                size = s_prev * tx.get("rel_size", 1.0)
-                origin = o_prev - u2 * (s_prev + size) * 0.62
-            else:
-                world, p, fwd, right, up = cam_basis(track, tx["ref"])
-                D = tx["dist"]
-                origin = OFFS[world] + p + fwd * D + right * (tx["screen"][0] * D * TANH) + up * (tx["screen"][1] * D * TANV)
-                size = tx["width_frac"] * 2 * D * TANH / w0
-                r2 = Vector((right.x, right.y, 0)).normalized()
-                u2 = Vector((0, 0, 1))
-            PLACED[tx["tag"]] = (origin, size, r2, u2)
-            gold_line(tx["tag"], words, tx["font"], size, origin, r2, u2, out=tx.get("out"))
-            print(f"  text {tx['tag']}: size {size:.3f} at {tuple(round(x, 2) for x in origin)}")
-        elif tx["kind"] == "ink":
-            par = bpy.data.objects[tx["parchment"]]
-            mw = par.matrix_world
-            right = (mw.to_3x3() @ Vector((1, 0, 0))).normalized()
-            up = (mw.to_3x3() @ Vector((0, 0, 1))).normalized()
-            origin = mw @ Vector((tx["at"][0], -0.03, tx["at"][1]))
-            ink_line(tx["tag"], words, tx["font"], tx["size"], origin, right, up, parent=par)
+    build_texts(track)
     return track
 
 
@@ -811,10 +992,9 @@ def render_portal(name):
     pc = bpy.data.objects.new("pcam", cd); sc.collection.objects.link(pc)
     pc.location = OFFS[name]; pc.rotation_euler = (math.pi / 2, 0, 0)
     sc.camera = pc
-    a, b = WORLD[name]["portal_range"]
     os.makedirs(os.path.join(OUT, "portal", name), exist_ok=True)
     sc.eevee.taa_render_samples = 8
-    for f in range(a, b + 1):
+    for f in sorted(f for a, b in portal_ranges(name) for f in range(a, b + 1)):
         fp = portal_file(name, f)
         if os.path.exists(fp) and not PLAN.get("force"):
             continue
@@ -826,12 +1006,12 @@ def render_portal(name):
 
 def fill_portal(name):
     """Blender does not clamp image sequences: give every clip frame a file (hardlink to the nearest rendered one)."""
-    a, b = WORLD[name]["portal_range"]
+    rendered = sorted(f for a, b in portal_ranges(name) for f in range(a, b + 1))
     for f in range(NF):
         fp = portal_file(name, f)
-        if a <= f <= b or os.path.exists(fp):
+        if os.path.exists(fp):
             continue
-        src = portal_file(name, a if f < a else b)
+        src = portal_file(name, min(rendered, key=lambda r: abs(r - f)))
         try:
             os.link(src, fp)
         except OSError:
@@ -851,7 +1031,23 @@ def render_frames(frames, outdir):
         bpy.ops.render.render(write_still=True)
 
 
+def segment_frames(world):
+    out = []
+    for seg in PLAN["camera"]:
+        if seg["world"] == world:
+            out += list(range(seg["from"], min(seg["to"], NF - 1) + (1 if seg["to"] >= NF - 1 else 0)))
+    return out
+
+
 if __name__ == "__main__":
+    if MODE.startswith("portal:"):
+        PLAN["_only_worlds"] = [MODE.split(":", 1)[1]]
+    elif MODE.startswith("main_world:"):
+        PLAN["_only_worlds"] = [MODE.split(":", 1)[1]]
+    elif MODE.startswith("stills:"):
+        want = [int(x) for x in MODE.split(":", 1)[1].split(",")]
+        PLAN["_only_worlds"] = sorted({sg["world"] for sg in PLAN["camera"] for f in want
+                                       if sg["from"] <= f < sg["to"] or (f == NF - 1 and sg["to"] >= NF - 1)})
     track = main()
     if MODE == "save":
         bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUT, "scene.blend"))
@@ -863,6 +1059,8 @@ if __name__ == "__main__":
             bpy.context.scene.render.resolution_percentage = 50
             bpy.context.scene.eevee.taa_render_samples = 8
         render_frames(fr, os.path.join(OUT, "stills"))
+    elif MODE.startswith("main_world:"):
+        render_frames(segment_frames(MODE.split(":", 1)[1]), os.path.join(OUT, "frames"))
     elif MODE.startswith("main"):
         rng = MODE.split(":", 1)[1].split("-") if ":" in MODE else (0, NF - 1)
         render_frames(range(int(rng[0]), int(rng[1]) + 1), os.path.join(OUT, "frames"))

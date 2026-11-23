@@ -1,0 +1,153 @@
+{
+ "out": "D:/vvf-offload/living_paintings/v2/work/layers",
+ "zref": 10.0,
+ "view_width_at_zref": 9.0,
+ "paintings": [
+  {
+   "name": "bouguereau", "image": "D:/vvf-offload/living_paintings/v2/paintings/bouguereau_proposal.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/bouguereau_proposal.npy",
+   "crop_margin": 18, "work_width": 1274, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 2.677, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.2},
+    {"name": "couple", "depth_min": 0.1, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[68,232],[108,150],[170,108],[240,112],[300,118],[342,160],[402,250],[442,292],[424,400],[404,560],[334,640],[262,700],[118,700],[100,560],[118,440],[146,332],[72,322]]]},
+    {"name": "fg", "depth_min": 0.85}],
+   "mask_g": {"blur": 16, "polys": [[[0,0],[476,0],[476,110],[0,110]]]},
+   "mask_b": {"blur": 30, "polys": [[[100,0],[476,0],[476,140],[100,140]]]}
+  },
+  {
+   "name": "fragonard", "image": "D:/vvf-offload/living_paintings/v2/paintings/fragonard_letter.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/fragonard_letter.npy",
+   "crop_margin": 40, "work_width": 1500, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 5.313, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.22},
+    {"name": "woman", "depth_min": 0.12, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[178,88],[240,78],[332,88],[382,178],[452,298],[542,378],[562,458],[562,562],[420,562],[332,642],[282,700],[178,700],[228,560],[258,432],[188,300],[168,240]]]},
+    {"name": "fg", "depth_min": 0.85}],
+   "mask_g": {"blur": 24, "polys": [[[420,0],[568,0],[568,330],[430,300]], [[0,0],[90,0],[90,700],[0,700]]]},
+   "mask_b": {"blur": 10, "polys": [[[185,215],[275,215],[275,290],[185,290]]]}
+  },
+  {
+   "name": "latour", "image": "D:/vvf-offload/living_paintings/v2/paintings/latour_fortune.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/latour_fortune.npy",
+   "crop_margin": 30, "work_width": 2300, "grid_step": 8, "feather": 0.04, "margin": 0.05, "depth_scale": 0.42,
+   "poly_scale": 4.496, "pad": [0.12, 0.16], "crop_cx_frac": 0.40,
+   "layers": [{"name": "bg"}, {"name": "people", "depth_min": 0.2}, {"name": "front", "depth_min": 0.62}],
+   "mask_g": {"blur": 14, "polys": [[[150,480],[262,480],[262,565],[150,565]], [[430,330],[522,330],[522,420],[430,420]]]}
+  },
+  {
+   "name": "delacroix", "image": "D:/vvf-offload/living_paintings/v2/paintings/delacroix_rebecca.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/delacroix_rebecca.npy",
+   "crop_margin": 30, "work_width": 1500, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 5.309, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.22},
+    {"name": "riders", "depth_min": 0.12, "relief_gain": 0.4, "poly_blur": 6,
+     "poly": [[[28,232],[118,188],[200,168],[262,188],[332,248],[402,318],[404,422],[362,472],[352,600],[312,652],[250,642],[200,562],[140,562],[98,602],[58,562],[28,452]]]},
+    {"name": "fg", "depth_min": 0.82}],
+   "mask_r": {"blur": 40, "polys": [[[0,0],[572,0],[572,190],[0,190]]]}
+  },
+  {
+   "name": "vermeer", "image": "D:/vvf-offload/living_paintings/v2/paintings/vermeer_pitcher.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/vermeer_pitcher.npy",
+   "crop_margin": 70, "work_width": 1600, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 5.28, "pad": [0.35, 0.18],
+   "cutout": [[[18,62],[76,94],[76,430],[18,436]]],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.3},
+    {"name": "woman", "depth_min": 0.08, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[188,168],[260,158],[332,173],[362,228],[412,298],[432,368],[442,428],[422,472],[382,472],[362,482],[332,700],[158,700],[178,560],[198,440],[148,392],[106,382],[106,328],[158,308],[198,268],[218,228]]]},
+    {"name": "fg", "depth_min": 0.7}],
+   "mask_g": {"blur": 18, "polys": [[[200,160],[360,160],[420,330],[190,330]]]}
+  },
+  {
+   "name": "turner", "image": "D:/vvf-offload/living_paintings/v2/paintings/turner_whalers.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/turner_whalers.npy",
+   "crop_margin": 30, "work_width": 2400, "grid_step": 8, "feather": 0.04, "margin": 0.05, "depth_scale": 0.45,
+   "poly_scale": 4.197, "pad": [0.12, 0.16], "crop_cx_frac": 0.42,
+   "layers": [{"name": "bg"}, {"name": "mid", "depth_min": 0.3}, {"name": "fg", "depth_min": 0.65}],
+   "mask_r": {"blur": 60, "polys": [[[0,330],[932,330],[932,700],[0,700]]]},
+   "mask_b": {"blur": 80, "polys": [[[0,0],[932,0],[932,330],[0,330]]]}
+  },
+  {
+   "name": "springtime", "image": "D:/vvf-offload/living_paintings/test15/paintings/springtime_cot.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/springtime.npy",
+   "crop_margin": 6, "work_width": 1087, "grid_step": 5, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 1.861, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.2},
+    {"name": "couple", "depth_min": 0.22, "relief_gain": 0.4, "poly_blur": 6,
+     "poly": [[[108,0],[140,0],[175,165],[230,235],[300,285],[420,212],[468,0],[492,0],[462,250],[448,420],[505,540],[508,700],[472,800],[452,870],[400,885],[318,905],[268,770],[238,690],[158,655],[130,600],[64,400],[58,300],[104,165]]]},
+    {"name": "fg", "depth_min": 0.8}],
+   "mask_r": {"blur": 12, "dilate": 14, "polys": [[[108,0],[140,0],[175,165],[230,235],[300,285],[420,212],[468,0],[492,0],[462,250],[448,420],[505,540],[508,700],[472,800],[452,860],[400,875],[318,880],[268,770],[238,690],[158,655],[130,600],[64,400],[58,300],[104,165]]]},
+   "mask_g": {"blur": 18, "polys": [[[352,380],[460,378],[470,480],[420,500],[360,460]], [[310,800],[420,790],[430,880],[320,880]], [[66,330],[140,320],[150,430],[70,420]]]},
+   "mask_b": {"blur": 40, "polys": [[[0,0],[591,0],[591,520],[0,520]]]}
+  },
+  {
+   "name": "storm", "image": "D:/vvf-offload/living_paintings/test15/paintings/storm_cot.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/storm.npy",
+   "crop_margin": 45, "work_width": 1500, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 3.722, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.3},
+    {"name": "couple", "depth_min": 0.28, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[78,58],[322,52],[498,168],[492,450],[545,492],[635,690],[600,725],[560,805],[440,832],[425,905],[380,918],[300,905],[268,760],[250,625],[170,565],[128,480],[148,350],[92,240]]]},
+    {"name": "fg", "depth_min": 0.86}],
+   "mask_r": {"blur": 12, "dilate": 6, "hue": [5, 32, 70], "polys": [[[88,95],[312,92],[485,195],[485,455],[535,495],[525,535],[415,505],[300,300],[96,235]]]},
+   "mask_g": {"blur": 16, "polys": [[[330,600],[565,640],[625,700],[560,800],[400,820],[340,720]], [[245,275],[372,270],[380,390],[250,390]]]},
+   "mask_b": {"blur": 60, "polys": [[[0,0],[669,0],[669,430],[0,430]]]}
+  },
+  {
+   "name": "pygmalion", "image": "D:/vvf-offload/living_paintings/v2/paintings/gerome_pygmalion.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/gerome_pygmalion.npy",
+   "crop_margin": 30, "work_width": 1450, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 5.317, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.25},
+    {"name": "lovers", "depth_min": 0.18, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[148,148],[186,143],[226,178],[272,183],[302,198],[312,262],[302,332],[312,422],[322,520],[357,538],[362,582],[322,592],[290,562],[270,545],[140,545],[156,440],[154,300]]]},
+    {"name": "fg", "depth_min": 0.75}],
+   "mask_g": {"blur": 16, "polys": [[[380,135],[475,135],[475,255],[380,255]]]}
+  },
+  {
+   "name": "moon", "image": "D:/vvf-offload/living_paintings/test15/paintings/moon_friedrich.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/moon.npy",
+   "crop_margin": 60, "work_width": 2600, "grid_step": 8, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "crop_cx": 1165, "poly_scale": 3.057, "pad": [0.12, 0.16],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.14},
+    {"name": "men", "depth_min": 0.18, "relief_gain": 0.3, "poly_blur": 6, "poly": [[[205,368],[385,352],[445,560],[425,690],[198,690]]]},
+    {"name": "near", "depth_min": 0.4}, {"name": "fg", "depth_min": 0.7}],
+   "mask_r": {"blur": 30, "polys": [[[560,0],[1246,0],[1246,330],[900,420],[640,330],[520,120]]]},
+   "mask_g": {"blur": 20, "polys": [[[0,560],[330,600],[420,760],[300,1000],[0,1000]]]},
+   "mask_b": {"blur": 14, "polys": [[[555,490],[615,490],[615,550],[555,550]]]}
+  },
+  {
+   "name": "bocklin", "image": "D:/vvf-offload/living_paintings/v2/paintings/bocklin_island.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/bocklin_island.npy",
+   "crop_margin": 25, "work_width": 3000, "grid_step": 8, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 3.304, "pad": [0.1, 0.16], "crop_cx_frac": 0.48,
+   "layers": [
+    {"name": "bg"}, {"name": "island", "depth_min": 0.15},
+    {"name": "boat", "depth_min": 0.05, "relief_gain": 0.2, "poly_blur": 3, "poly": [[[436,538],[502,538],[542,594],[538,642],[438,642]]]},
+    {"name": "water", "depth_min": 0.7}],
+   "mask_r": {"blur": 30, "polys": [[[400,20],[745,20],[745,430],[400,430]]]},
+   "mask_g": {"blur": 20, "polys": [[[0,600],[1154,600],[1154,700],[0,700]]]},
+   "mask_b": {"blur": 6, "polys": [[[434,536],[544,536],[544,644],[434,644]]]}
+  },
+  {
+   "name": "magdalen", "image": "D:/vvf-offload/living_paintings/v2/paintings/latour_magdalen.jpg",
+   "depth": "D:/vvf-offload/living_paintings/v2/work/depth/latour_magdalen.npy",
+   "crop_margin": 30, "work_width": 1300, "grid_step": 6, "feather": 0.035, "margin": 0.05, "depth_scale": 0.5,
+   "poly_scale": 5.317, "pad": [0.35, 0.18],
+   "layers": [
+    {"name": "bg"}, {"name": "mid", "depth_min": 0.25},
+    {"name": "magdalen", "depth_min": 0.12, "relief_gain": 0.35, "poly_blur": 6,
+     "poly": [[[58,40],[150,24],[216,60],[216,140],[252,240],[292,280],[332,330],[422,380],[442,600],[472,642],[422,642],[382,562],[302,522],[200,522],[130,700],[18,700],[28,400],[58,250],[78,150]]]},
+    {"name": "fg", "depth_min": 0.85}],
+   "mask_b": {"blur": 8, "polys": [[[326,168],[378,168],[378,256],[326,256]]]}
+  }
+ ]
+}
