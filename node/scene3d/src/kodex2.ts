@@ -22,7 +22,8 @@
  */
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
-import { blockMat, buildCritter, CP, CRITTER_EXPR, NUB_POSES, paintCritterFace, setNub, type CritterFace } from "./critter.ts";
+import { blockMat, buildCritter, CP, CRITTER_EXPR, NUB_POSES, paintCritterFace, paintVisemeMouth, setNub, type CritterFace, type CritterMouth,
+  type Viseme } from "./critter.ts";
 import { rng, sampleKeys, sampleNumber, type Key } from "./timeline.ts";
 import type { Character } from "./character.ts";
 import { addGear, type GearSpec } from "./meme_gear.ts";
@@ -59,6 +60,13 @@ export interface Kodex2Spec {
   costume?: CostumeSpec;
   /** Ножки не наклоняются с корпусом (не уходят в пол). */
   plantFeet?: boolean;
+  /** F/G: рисованный рот (как у critter, look.mouth) — виземы по слогам ``mouthKeys`` [{t, w, h, r, th}], раскрытие ×
+   * огибающая voice; в тишине — линия покоя по выражению. */
+  mouth?: boolean | CritterMouth;
+  mouthKeys?: Key[];
+  /** Папка в ручке (``holdL``/``holdR``: folder): цвет обложки, подпись наклейки, размер [ш, в, толщина] (м). Где
+   * она относительно кончика ручки — ключ позы ``fold`` [наружу, вверх, вперёд (м), поворот°, наклон к зрителю°]. */
+  folder?: { color?: string; label?: string; size?: number[] };
 }
 
 const D2R = Math.PI / 180;
@@ -273,6 +281,8 @@ interface Rig {
   tick?: (t: number) => void;
   costume?: BlingHandle | null;
   legs?: THREE.Object3D[];
+  /** Единица морды (critter faceU) — для рисованного рта F/G. */
+  faceU?: number;
 }
 
 /** A и B — корпус зверька (buildCritter) с другими пропорциями и деталями. */
@@ -679,7 +689,7 @@ function softRig(variant: "f" | "g", S: number, badge: string, spec: Kodex2Spec 
     if (snarl) paintSnarl(g, W, H, parts.faceU, look, expr === "bark" ? 0.6 + 0.4 * Math.abs(Math.sin(t * 14)) : 0.35 + talk * 0.65);
   };
   return { root, hopG, lean: parts.lean, squash: parts.squash, arms: parts.arms, canvas: parts.faceCanvas, tex: parts.faceTex, paint,
-    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update, costume, legs: parts.legs };
+    height: (P.legH + P.bodyH) * S, dims: P as typeof CP, tick: deco?.update, costume, legs: parts.legs, faceU: parts.faceU };
 }
 
 export function createKodex2(spec: Kodex2Spec): Character {
@@ -730,10 +740,36 @@ export function createKodex2(spec: Kodex2Spec): Character {
     tip.rotation.x = Math.PI;
     pencil.add(tip);
   }
+  // Папка: две обложки, между ними листы (торчат сверху и сбоку), наклейка с подписью на лицевой обложке.
+  const folder = new THREE.Group();
+  root.add(folder);
+  {
+    const fs = spec.folder || {};
+    const [fw, fh, ft] = fs.size || [0.13, 0.17, 0.014];
+    const coverM = blockMat(fs.color || "#2f6fd6", "kodex2:folder", 0.05);
+    for (const z of [-ft / 2, ft / 2]) {
+      const c = mesh(new RoundedBoxGeometry(fw, fh, ft * 0.28, 2, ft * 0.12), coverM);
+      c.position.z = z;
+      folder.add(c);
+    }
+    const spine = mesh(new RoundedBoxGeometry(ft * 0.5, fh, ft, 2, ft * 0.2), coverM);
+    spine.position.x = -fw / 2 + ft * 0.25;
+    folder.add(spine);
+    const sheets = mesh(new THREE.BoxGeometry(fw * 0.94, fh * 0.97, ft * 0.55), blockMat("#f7f4ec", "kodex2:sheets", 0.1));
+    sheets.position.set(fw * 0.05, fh * 0.035, 0);
+    folder.add(sheets);
+    if (fs.label) {
+      const lab = labelPlate(fs.label, fw * 0.7, fh * 0.2, "#ffffff", "#1f3f86");
+      lab.position.set(fw * 0.03, fh * 0.12, ft / 2 + ft * 0.2);
+      folder.add(lab);
+    }
+  }
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
   const stepFps = spec.stepFps ?? 0;
-  const q = (t: number) => (stepFps > 0 ? Math.floor(t * stepFps + 1e-6) / stepFps : t);
+  // Допуск 1e-4 шага (не 1e-6): время кадра i/30 приходит с погрешностью float32 (~3e-5 шага), и на склейке, попавшей
+  // на границу шага (кадр 556 = 18.5333…), поза бралась с прошлого шага — новая приходила только на 2-м кадре плана.
+  const q = (t: number) => (stepFps > 0 ? Math.floor(t * stepFps + 1e-4) / stepFps : t);
   const num = (t: number, f: string, d: number) => sampleNumber(poseKeys, t, f) ?? d;
   const arm = (t: number, f: string, d: string) => sampleKeys<number[]>(poseKeys.map((k) => (k[f] !== undefined ? { ...k, [f]: armOf(k[f]) } : k)), t, f,
     (a, b, k) => a.map((v, i) => v + (b[i] - v) * k)) ?? armOf(d);
@@ -774,6 +810,16 @@ export function createKodex2(spec: Kodex2Spec): Character {
   };
   const g = rig.canvas.getContext("2d")!;
   let lastSig = "";
+  // Рот F/G (spec.mouth): виземы по полному времени, раскрытие × сглаженная огибающая — как у critter.
+  const mouthOn = !!spec.mouth && !!rig.faceU;
+  const mouthOpt: CritterMouth = typeof spec.mouth === "object" ? spec.mouth : {};
+  const mouthKeys = (spec.mouthKeys || []).slice().sort((a, b) => a.t - b.t);
+  const visemeAt = (t: number): Viseme => {
+    const n = (f: string, d: number) => sampleNumber(mouthKeys, t, f) ?? d;
+    const env = (voiceAt(t - 0.04) + voiceAt(t) + voiceAt(t + 0.04)) / 3;
+    const amp = env < 0.02 ? (env / 0.02) * 0.5 : Math.min(1, 0.5 + env * 1.0);
+    return { w: n("w", 0.55), h: n("h", 0) * amp, r: n("r", 0), th: n("th", 0) };
+  };
   const tmpQ2 = new THREE.Quaternion(), tmpV = new THREE.Vector3();
   const ch: Character = {
     id: spec.id,
@@ -823,6 +869,8 @@ export function createKodex2(spec: Kodex2Spec): Character {
       // Кружка — в левой ручке (holdL: mug | none), карандаш — в правой (holdR: pencil | none).
       mugG.visible = stepVal(t, "holdL", "mug") === "mug";
       pencil.visible = stepVal(t, "holdR", "none") === "pencil";
+      const foldIn = stepVal(t, "holdL", "mug") === "folder" ? handL : stepVal(t, "holdR", "none") === "folder" ? handR : null;
+      folder.visible = !!foldIn;
       const sip = num(t, "sip", 0);
       const fwd = new THREE.Vector3(0, 0, 1).applyQuaternion(tmpQ2);
       const rootInv = root.matrixWorld.clone().invert();
@@ -836,6 +884,17 @@ export function createKodex2(spec: Kodex2Spec): Character {
       mugG.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), sip * 55 * D2R);
       hold(pencil, handR, 0.03, 0.02);
       pencil.quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.4);
+      if (foldIn) {
+        // Кончик ручки + смещение в осях героя: наружу (по стороне ручки), вверх, вперёд; поворот и наклон — в осях героя.
+        const fo = sampleKeys<number[]>(poseKeys.filter((k) => k.fold !== undefined), t, "fold",
+          (a, b, k) => a.map((v, i) => v + (b[i] - v) * k)) ?? [0.05, 0, 0.03, 0, 0];
+        const sideS = foldIn === handL ? 1 : -1;
+        foldIn.getWorldPosition(tmpV);
+        const right = new THREE.Vector3(1, 0, 0).applyQuaternion(tmpQ2);
+        tmpV.addScaledVector(right, sideS * fo[0]).add(new THREE.Vector3(0, fo[1], 0)).addScaledVector(fwd, fo[2]);
+        folder.position.copy(tmpV.applyMatrix4(rootInv));
+        folder.quaternion.setFromEuler(new THREE.Euler(-(fo[4] || 0) * D2R, sideS * (fo[3] || 0) * D2R, 0, "YXZ"));
+      }
       steam.forEach((s, i) => {
         const k = (t0 * 0.5 + i / 3) % 1;
         s.position.set(Math.sin(t0 * 2 + i * 2.1) * 0.007, 0.035 + k * 0.07, 0);
@@ -845,10 +904,16 @@ export function createKodex2(spec: Kodex2Spec): Character {
       const expr = exprAt(t);
       const bl = expr === "smile" || expr === "closed" ? 0 : blinkAt(t);
       const lk = lookAt(t);
-      const sig = [expr, Math.round(bl * 20), Math.round(v * 30), Math.round(lk[0] * 50), Math.round(lk[1] * 50), Math.floor(t0 * 15)].join(",");
+      const vm = mouthOn ? visemeAt(t0) : null;
+      const sig = [expr, Math.round(bl * 20), Math.round(v * 30), Math.round(lk[0] * 50), Math.round(lk[1] * 50), Math.floor(t0 * 15),
+        vm ? [vm.w, vm.h, vm.r, vm.th].map((x) => Math.round(x * 40)).join("/") : ""].join(",");
       if (sig !== lastSig) {
         lastSig = sig;
         rig.paint(g, rig.canvas.width, rig.canvas.height, expr, bl, v, lk, t0);
+        if (vm) {
+          const name = CRITTER_EXPR[expr] ? expr : SOFT_EXPR[expr] || "neutral";
+          paintVisemeMouth(g, rig.canvas.width, rig.canvas.height, rig.faceU!, vm, name, lk, mouthOpt);
+        }
         rig.tex.needsUpdate = true;
       }
     },

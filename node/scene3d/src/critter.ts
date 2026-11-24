@@ -828,7 +828,9 @@ export function createCritter(spec: CritterSpec): Character {
   const poseKeys = spec.pose || [];
   const faceKeys = (spec.face || []).slice().sort((a, b) => a.t - b.t);
   const stepFps = spec.stepFps ?? 0;
-  const q = (t: number) => (stepFps > 0 ? Math.floor(t * stepFps + 1e-6) / stepFps : t);
+  // Допуск 1e-4 шага (не 1e-6): время кадра i/30 приходит с погрешностью float32 (~3e-5 шага), и на склейке, попавшей
+  // на границу шага (кадр 556 = 18.5333…), поза бралась с прошлого шага — новая приходила только на 2-м кадре плана.
+  const q = (t: number) => (stepFps > 0 ? Math.floor(t * stepFps + 1e-4) / stepFps : t);
   const blinks: number[] = [];
   {
     const r = rng(spec.seed ?? 7);
