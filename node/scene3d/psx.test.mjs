@@ -49,13 +49,13 @@ const area = (g) => {
   return s;
 };
 
-test("деление: рёбра порядка предела, площадь, нормали и uv сохранены, мелкое не трогается", () => {
+test("деление: рёбра не длиннее предела, площадь, нормали и uv сохранены, мелкое не трогается", () => {
   const plane = new THREE.PlaneGeometry(4, 3);
   const g = subdivideGeometry(plane, 1, new THREE.Vector3(1, 1, 1));
   assert.ok(g, "плоскость 4×3 м делится");
   const tris = g.attributes.position.count / 3;
-  assert.ok(tris > 20 && tris < 200, `треугольников ${tris}`);
-  for (let i = 0; i < tris; i++) for (const e of edges(g, i)) assert.ok(e <= 1.5, `ребро ${e}`); // у краёв с меньшим делением — до ~1.5 предела
+  assert.ok(tris > 20 && tris < 400, `треугольников ${tris}`);
+  for (let i = 0; i < tris; i++) for (const e of edges(g, i)) assert.ok(e <= 1.0001, `ребро ${e}`);
   assert.ok(Math.abs(area(g) - 12) < 1e-4, `площадь ${area(g)}`);
   const n = g.attributes.normal, uv = g.attributes.uv;
   for (let i = 0; i < n.count; i++) {
@@ -95,6 +95,19 @@ test("деление: без Т-стыков (общее ребро у сосе�
     }
   }
   assert.ok(checked > 1000);
+});
+
+test("деление: узкая длинная полоса (наклейка на полу) — без вывернутых треугольников и дыр", () => {
+  const strip = new THREE.BoxGeometry(20, 0.008, 0.3);
+  const g = subdivideGeometry(strip, 1, new THREE.Vector3(1, 1, 1));
+  const p = g.attributes.position, n = g.attributes.normal;
+  for (let i = 0; i < p.count; i += 3) {
+    const [a, b, c] = [0, 1, 2].map((k) => new THREE.Vector3().fromBufferAttribute(p, i + k));
+    const f = b.clone().sub(a).cross(c.clone().sub(a));
+    assert.ok(f.length() > 0, "вырожденный треугольник");
+    assert.ok(f.normalize().dot(new THREE.Vector3().fromBufferAttribute(n, i)) > 0.99, `треугольник ${i / 3} вывернут`);
+  }
+  assert.ok(Math.abs(area(g) - area(strip.toNonIndexed())) < 1e-6);
 });
 
 test("пресет psx: параметры идут в matstyle/stylize, реестр не меняется, старый вид — нулями", () => {

@@ -54,7 +54,7 @@ export const LOOKS: Record<string, LookDef> = {
       params: [
         { name: "snap", field: "matstyle", type: "number", default: 128, min: 0, max: 1080, ru: "дрожь вершин: клеток экранной сетки по ширине кадра (меньше — крупнее «лесенка», 0 — выкл)" },
         { name: "affine", field: "matstyle", type: "number", default: 1, min: 0, max: 1, ru: "текстуры без перспективной коррекции, «плывут» по треугольникам (1 — как на PS1, 0 — ровно)" },
-        { name: "subdivide", field: "matstyle", type: "number", default: 1, min: 0, max: 10, ru: "большие плоскости режутся на треугольники с ребром порядка N м (меньше — слабее «плывут» текстуры, 0 — не резать)" },
+        { name: "subdivide", field: "matstyle", type: "number", default: 1, min: 0, max: 10, ru: "большие плоскости режутся на треугольники с ребром не длиннее N м (меньше — слабее «плывут» текстуры, 0 — не резать)" },
         { name: "jitter", field: "matstyle", type: "number", default: 0.012, min: 0, max: 0.1, ru: "сдвиг вершин шумом от их места в мире, м: движущееся «дребезжит» (0 — выкл)" },
         { name: "texRes", field: "matstyle", type: "number", default: 96, min: 0, max: 2048, ru: "текстуры как будто N пикселей по большей стороне — крупные тексели (0 — как есть)" },
         { name: "animFps", field: "matstyle", type: "number", default: 15, min: 0, max: 60, ru: "позы, вещи и свет обновляются N раз в секунду — движение «лесенкой» (0 — плавно)" },

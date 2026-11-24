@@ -7,9 +7,9 @@
  *   affine    — текстуры без перспективной коррекции (0..1): картинка «плывёт» и ломается по диагонали треугольника,
  *               как у PS1. Трюк: в вершинах передаём uv·w и w, в пикселе делим — интерполяция становится линейной
  *               по экрану. 1 — как на приставке, 0.5 — вполсилы.
- *   subdivide — большие плоскости режутся на треугольники с ребром порядка N м (так делали и игры PS1, иначе
- *               аффинные текстуры на полу разъезжаются слишком). Рёбра режутся по своей длине: у соседних
- *               треугольников общее ребро делится одинаково, щелей нет.
+ *   subdivide — большие плоскости режутся на треугольники с ребром не длиннее N м (так делали и игры PS1, иначе
+ *               аффинные текстуры на полу разъезжаются слишком). Рёбра режутся пополам по своей длине: у
+ *               соседних треугольников общее ребро делится одинаково, щелей нет.
  *   jitter    — «Displace в мировых координатах»: вершина сдвигается шумом от своего положения в мире (м). Стоящие
  *               вещи чуть кривые и не двигаются, а всё, что движется (руки, герой, вещь по пути), «дребезжит».
  *               jitterCell — частота шума (клеток на метр).
@@ -137,81 +137,89 @@ export function psxMaterial(m: any, ms: PsxOptions, W: number, H: number): THREE
 /* ---------- деление больших треугольников ---------- */
 
 /**
- * Треугольники с ребром длиннее maxEdge (м, с учётом масштаба меша) — на сетку из мелких. Каждое ребро делится
- * на ceil(длина / maxEdge) частей — у соседей общее ребро делится одинаково (без Т-стыков и щелей). Внутри —
- * равномерная барицентрическая сетка n = max по рёбрам; точки на рёбрах с меньшим делением сдвигаются к своим
- * долям. null — делить нечего.
+ * Треугольники с ребром длиннее maxEdge (м, с учётом масштаба меша) — на мелкие: за проход каждое длинное ребро
+ * делится пополам, треугольник — по числу разделённых рёбер (1 → 2, 2 → 3, 3 → 4 части), пока длинных рёбер не
+ * останется. Решение «делить ли ребро» зависит только от самого ребра — у соседей общее ребро делится одинаково:
+ * ни Т-стыков (щелей под snap), ни вывернутых треугольников (дыр). null — делить нечего.
  */
-export function subdivideGeometry(g: THREE.BufferGeometry, maxEdge: number, scale: THREE.Vector3, maxN = 16): THREE.BufferGeometry | null {
+export function subdivideGeometry(g: THREE.BufferGeometry, maxEdge: number, scale: THREE.Vector3, maxRounds = 10, maxTris = 150000): THREE.BufferGeometry | null {
   if (!(maxEdge > 0) || !g.attributes.position || Object.keys(g.morphAttributes || {}).length) return null;
-  const pos = g.attributes.position;
   const idx = g.index;
-  const triCount = (idx ? idx.count : pos.count) / 3;
-  if (triCount > 20000) return null;
-  const vi = (k: number) => (idx ? idx.getX(k) : k);
-  const p = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
-  const len = (a: THREE.Vector3, b: THREE.Vector3) => Math.hypot((a.x - b.x) * scale.x, (a.y - b.y) * scale.y, (a.z - b.z) * scale.z);
-  const segs = (a: THREE.Vector3, b: THREE.Vector3) => Math.min(maxN, Math.max(1, Math.ceil(len(a, b) / maxEdge - 1e-6)));
-  // Сначала — нужно ли вообще.
-  let need = false;
-  for (let t = 0; t < triCount && !need; t++) {
-    for (let c = 0; c < 3; c++) p[c].fromBufferAttribute(pos, vi(t * 3 + c));
-    need = segs(p[0], p[1]) > 1 || segs(p[1], p[2]) > 1 || segs(p[2], p[0]) > 1;
-  }
-  if (!need) return null;
-  const names = Object.keys(g.attributes).filter((n) => !/^skin/.test(n));
-  const out: Record<string, number[]> = Object.fromEntries(names.map((n) => [n, []]));
-  const groupsIn = g.groups.length ? g.groups : [{ start: 0, count: idx ? idx.count : pos.count, materialIndex: 0 }];
-  const groupsOut: { start: number; count: number; materialIndex: number }[] = [];
-  const r = (i: number, n: number, k: number) => Math.round((i * k) / n) / k;
-  const emit = (t: number, w1: number, w2: number) => {
-    const w0 = 1 - w1 - w2;
-    for (const n of names) {
-      const a = g.attributes[n] as THREE.BufferAttribute, sz = a.itemSize, o = out[n];
-      const i0 = vi(t * 3), i1 = vi(t * 3 + 1), i2 = vi(t * 3 + 2);
-      const comp: number[] = [];
-      for (let c = 0; c < sz; c++) comp.push(a.getComponent(i0, c) * w0 + a.getComponent(i1, c) * w1 + a.getComponent(i2, c) * w2);
-      if (n === "normal") {
-        const L = Math.hypot(comp[0], comp[1], comp[2]) || 1;
-        for (let c = 0; c < 3; c++) comp[c] /= L;
-      }
-      o.push(...comp);
-    }
+  const count = idx ? idx.count : g.attributes.position.count;
+  if (count / 3 > 20000) return null;
+  const names = ["position", ...Object.keys(g.attributes).filter((n) => n !== "position" && !/^skin/.test(n))];
+  const sizes = names.map((n) => (g.attributes[n] as THREE.BufferAttribute).itemSize);
+  const width = sizes.reduce((x, y) => x + y, 0);
+  // Вершина — все её атрибуты подряд (положение — первые три числа).
+  const vert = (k: number) => {
+    const i = idx ? idx.getX(k) : k, v = new Float64Array(width);
+    let o = 0;
+    names.forEach((n, a) => { const at = g.attributes[n] as THREE.BufferAttribute; for (let c = 0; c < sizes[a]; c++) v[o++] = at.getComponent(i, c); });
+    return v;
   };
-  let written = 0;
-  for (const gr of groupsIn) {
-    const start = written;
-    const t0 = Math.floor(gr.start / 3), t1 = Math.min(triCount, Math.floor((gr.start + gr.count) / 3));
-    for (let t = t0; t < t1; t++) {
-      for (let c = 0; c < 3; c++) p[c].fromBufferAttribute(pos, vi(t * 3 + c));
-      const k01 = segs(p[0], p[1]), k12 = segs(p[1], p[2]), k20 = segs(p[2], p[0]);
-      const n = Math.max(k01, k12, k20);
-      // Вершина сетки (i, j): веса v1 и v2 с поправкой точек на рёбрах к долям своего ребра.
-      const W = (i: number, j: number): [number, number] => {
-        if (j === 0) return [r(i, n, k01), 0];
-        if (i === 0) return [0, r(j, n, k20)];
-        if (i + j === n) { const w2 = r(j, n, k12); return [1 - w2, w2]; }
-        return [i / n, j / n];
-      };
-      const tri = (a: [number, number], b: [number, number], c: [number, number]) => {
-        emit(t, a[0], a[1]); emit(t, b[0], b[1]); emit(t, c[0], c[1]);
-        written += 3;
-      };
-      for (let j = 0; j < n; j++) {
-        for (let i = 0; i + j < n; i++) {
-          tri(W(i, j), W(i + 1, j), W(i, j + 1));
-          if (i + j < n - 1) tri(W(i + 1, j), W(i + 1, j + 1), W(i, j + 1));
+  const len = (a: Float64Array, b: Float64Array) => Math.hypot((a[0] - b[0]) * scale.x, (a[1] - b[1]) * scale.y, (a[2] - b[2]) * scale.z);
+  const long = (a: Float64Array, b: Float64Array) => len(a, b) > maxEdge * (1 + 1e-9);
+  const mid = (a: Float64Array, b: Float64Array) => { const m = new Float64Array(width); for (let c = 0; c < width; c++) m[c] = (a[c] + b[c]) / 2; return m; };
+  type Tri = [Float64Array, Float64Array, Float64Array];
+  const groupsIn = g.groups.length ? g.groups : [{ start: 0, count, materialIndex: 0 }];
+  const groups: { tris: Tri[]; materialIndex: number }[] = groupsIn.map((gr) => {
+    const tris: Tri[] = [];
+    for (let k = gr.start; k + 2 < Math.min(count, gr.start + gr.count); k += 3) tris.push([vert(k), vert(k + 1), vert(k + 2)]);
+    return { tris, materialIndex: gr.materialIndex ?? 0 };
+  });
+  let changed = false;
+  for (let round = 0; round < maxRounds; round++) {
+    let any = false;
+    for (const gr of groups) {
+      const next: Tri[] = [];
+      for (const t of gr.tris) {
+        const [A, B, C] = t;
+        const s0 = long(A, B), s1 = long(B, C), s2 = long(C, A);
+        const n = +s0 + +s1 + +s2;
+        if (!n) { next.push(t); continue; }
+        any = true;
+        if (n === 3) {
+          const ab = mid(A, B), bc = mid(B, C), ca = mid(C, A);
+          next.push([A, ab, ca], [ab, B, bc], [ca, bc, C], [ab, bc, ca]);
+        } else if (n === 1) {
+          // Повернуть так, чтобы делилось ребро P0–P1.
+          const [P0, P1, P2] = s0 ? [A, B, C] : s1 ? [B, C, A] : [C, A, B];
+          const m = mid(P0, P1);
+          next.push([P0, m, P2], [m, P1, P2]);
+        } else {
+          // Не делится ребро P2–P0; делятся P0–P1 (m01) и P1–P2 (m12). Четырёхугольник P0–m01–m12–P2 — по короткой диагонали.
+          const [P0, P1, P2] = !s2 ? [A, B, C] : !s0 ? [B, C, A] : [C, A, B];
+          const m01 = mid(P0, P1), m12 = mid(P1, P2);
+          next.push([m01, P1, m12]);
+          if (len(P0, m12) <= len(m01, P2)) next.push([P0, m01, m12], [P0, m12, P2]);
+          else next.push([P0, m01, P2], [m01, m12, P2]);
         }
       }
+      gr.tris = next;
     }
-    groupsOut.push({ start, count: written - start, materialIndex: gr.materialIndex ?? 0 });
+    if (!any) break;
+    changed = true;
+    if (groups.reduce((x, gr) => x + gr.tris.length, 0) > maxTris) break;
   }
+  if (!changed) return null;
+  const total = groups.reduce((x, gr) => x + gr.tris.length, 0) * 3;
+  const arrays = sizes.map((sz) => new Float32Array(total * sz));
+  let v = 0;
   const res = new THREE.BufferGeometry();
-  for (const n of names) {
-    const a = g.attributes[n] as THREE.BufferAttribute;
-    res.setAttribute(n, new THREE.Float32BufferAttribute(out[n], a.itemSize, a.normalized));
+  for (const gr of groups) {
+    const start = v;
+    for (const t of gr.tris) for (const p of t) {
+      let o = 0;
+      sizes.forEach((sz, a) => { for (let c = 0; c < sz; c++) arrays[a][v * sz + c] = p[o++]; });
+      v++;
+    }
+    if (g.groups.length) res.addGroup(start, v - start, gr.materialIndex);
   }
-  if (g.groups.length) for (const gr of groupsOut) res.addGroup(gr.start, gr.count, gr.materialIndex);
+  names.forEach((n, a) => {
+    const arr = arrays[a];
+    if (n === "normal") for (let i = 0; i < arr.length; i += 3) { const L = Math.hypot(arr[i], arr[i + 1], arr[i + 2]) || 1; arr[i] /= L; arr[i + 1] /= L; arr[i + 2] /= L; }
+    res.setAttribute(n, new THREE.BufferAttribute(arr, sizes[a], (g.attributes[n] as THREE.BufferAttribute).normalized));
+  });
   res.name = g.name;
   return res;
 }
@@ -234,26 +242,13 @@ export function subdivideScene(scene: THREE.Scene, maxEdge: number, keep: (o: an
 
 /**
  * Наклейки поверх пола и стен (полосы, коврики, таблички — меши тоньше 3 см, кроме огромных плоскостей вроде пола)
- * чуть ближе по глубине: вершины пола и наклейки прыгают по сетке snap по-разному, и без сдвига наклейка рвётся
+ * чуть ближе по глубине (чем выше лежит, тем ближе) и без дрожи jitter: вершины пола и наклейки прыгают по сетке snap по-разному, и без сдвига наклейка рвётся
  * полосами (у PS1 буфера глубины не было — рисовали по порядку, наклейка всегда сверху).
  */
 export function psxDecalBias(scene: THREE.Scene) {
   scene.updateMatrixWorld(true);
-  const cache = new Map<THREE.Material, THREE.Material>();
   const box = new THREE.Box3(), sz = new THREE.Vector3(), s = new THREE.Vector3(), q = new THREE.Quaternion(), pp = new THREE.Vector3();
-  const biased = (m: any): any => {
-    if (!m?.userData?.psx) return m;
-    if (!cache.has(m)) {
-      const c = m.clone();
-      c.onBeforeCompile = m.onBeforeCompile;
-      c.customProgramCacheKey = m.customProgramCacheKey;
-      c.polygonOffset = true;
-      c.polygonOffsetFactor = -8;
-      c.polygonOffsetUnits = -8;
-      cache.set(m, c);
-    }
-    return cache.get(m);
-  };
+  const found: { o: any; top: number }[] = [];
   scene.traverse((o: any) => {
     if (!o.isMesh || o.isSkinnedMesh || !o.geometry?.attributes?.position) return;
     if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
@@ -262,6 +257,31 @@ export function psxDecalBias(scene: THREE.Scene) {
     o.matrixWorld.decompose(pp, q, s);
     const e = [Math.abs(sz.x * s.x), Math.abs(sz.y * s.y), Math.abs(sz.z * s.z)].sort((a, b) => a - b);
     if (!(e[0] < 0.03 && e[2] > 0.05 && e[1] * e[2] < 12)) return;
-    o.material = Array.isArray(o.material) ? o.material.map(biased) : biased(o.material);
+    found.push({ o, top: box.applyMatrix4(o.matrixWorld).max.y });
   });
+  // Наклейка на наклейке (жёлтая линия поверх полосы плитки): та, что выше, — ближе ещё на ступень.
+  const tops = [...new Set(found.map((f) => Math.round(f.top * 1000)))].sort((a, b) => a - b);
+  const cache = new Map<string, THREE.Material>();
+  const biased = (m: any, rank: number): any => {
+    if (!m?.userData?.psx) return m;
+    const key = `${m.uuid}|${rank}`;
+    if (!cache.has(key)) {
+      const c = m.clone();
+      // Наклейка не «дребезжит»: она тоньше шага дрожи, иначе сквозь верх проступают точки её боковин.
+      c.onBeforeCompile = (sh: any, r: any) => {
+        m.onBeforeCompile(sh, r);
+        if (sh.uniforms.psxJitter) sh.uniforms.psxJitter.value = 0;
+      };
+      c.customProgramCacheKey = m.customProgramCacheKey;
+      c.polygonOffset = true;
+      c.polygonOffsetFactor = -8 - 6 * rank;
+      c.polygonOffsetUnits = -8 - 6 * rank;
+      cache.set(key, c);
+    }
+    return cache.get(key);
+  };
+  for (const { o, top } of found) {
+    const rank = Math.min(5, tops.indexOf(Math.round(top * 1000)));
+    o.material = Array.isArray(o.material) ? o.material.map((m: any) => biased(m, rank)) : biased(o.material, rank);
+  }
 }
