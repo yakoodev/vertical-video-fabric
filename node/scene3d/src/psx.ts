@@ -251,23 +251,28 @@ export function psxDecalBias(scene: THREE.Scene) {
   const found: { o: any; top: number }[] = [];
   scene.traverse((o: any) => {
     if (!o.isMesh || o.isSkinnedMesh || !o.geometry?.attributes?.position) return;
+    const name = String(o.name || "");
+    if (name.startsWith("fx:") || name.startsWith("atmos:") || o.userData?.keepMaterial) return;
     if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
     box.copy(o.geometry.boundingBox);
     box.getSize(sz);
     o.matrixWorld.decompose(pp, q, s);
     const e = [Math.abs(sz.x * s.x), Math.abs(sz.y * s.y), Math.abs(sz.z * s.z)].sort((a, b) => a - b);
     if (!(e[0] < 0.03 && e[2] > 0.05 && e[1] * e[2] < 12)) return;
-    found.push({ o, top: box.applyMatrix4(o.matrixWorld).max.y });
+    const wb = box.clone().applyMatrix4(o.matrixWorld), ws = wb.getSize(new THREE.Vector3());
+    found.push({ o, top: wb.max.y, flat: ws.y < 0.03 && ws.x > 0.05 && ws.z > 0.05, plane: e[0] < 0.002 });
   });
-  // Наклейка на наклейке (жёлтая линия поверх полосы плитки): та, что выше, — ближе ещё на ступень.
-  const tops = [...new Set(found.map((f) => Math.round(f.top * 1000)))].sort((a, b) => a - b);
+  // Наклейка на наклейке: на полу та, что выше (жёлтая линия поверх полосы плитки), — ближе ещё на ступень;
+  // плоскость без толщины (экран, надпись) — ближе тонкой коробки, на которой висит (рамка табло).
+  const tops = [...new Set(found.filter((f) => f.flat).map((f) => Math.round(f.top * 1000)))].sort((a, b) => a - b);
   const cache = new Map<string, THREE.Material>();
   const biased = (m: any, rank: number): any => {
-    if (!m?.userData?.psx) return m;
+    if (!m || m.isShaderMaterial || m.isSpriteMaterial || m.isPointsMaterial || m.isLineBasicMaterial) return m;
     const key = `${m.uuid}|${rank}`;
     if (!cache.has(key)) {
       const c = m.clone();
-      // Наклейка не «дребезжит»: она тоньше шага дрожи, иначе сквозь верх проступают точки её боковин.
+      // Наклейка не «дребезжит»: она тоньше шага дрожи, иначе сквозь верх проступают точки её боковин. Надписи и
+      // экраны (материалы без стиля) тоже сдвигаются: иначе прыгающая по сетке табличка под ними «съедает» буквы.
       c.onBeforeCompile = (sh: any, r: any) => {
         m.onBeforeCompile(sh, r);
         if (sh.uniforms.psxJitter) sh.uniforms.psxJitter.value = 0;
@@ -280,8 +285,8 @@ export function psxDecalBias(scene: THREE.Scene) {
     }
     return cache.get(key);
   };
-  for (const { o, top } of found) {
-    const rank = Math.min(5, tops.indexOf(Math.round(top * 1000)));
+  for (const { o, top, flat, plane } of found) {
+    const rank = (plane ? 3 : 0) + (flat ? Math.min(2, tops.indexOf(Math.round(top * 1000))) : 0);
     o.material = Array.isArray(o.material) ? o.material.map((m: any) => biased(m, rank)) : biased(o.material, rank);
   }
 }
