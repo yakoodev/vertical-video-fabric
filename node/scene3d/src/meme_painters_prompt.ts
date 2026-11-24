@@ -16,6 +16,7 @@
  * Чистые функции разметки и прокрутки (``parseMarks``, ``layoutWall``, ``scrollAt``) — без холста, для тестов.
  */
 import { drawRich, drawUserAvatar, measureRich, rr } from "./meme_painters_rp.ts";
+import { DESIGN_PAINTERS } from "./meme_painters_design.ts";
 import { drawEmptySpot, NIGHT_PAINTERS } from "./meme_painters_night.ts";
 
 type G = CanvasRenderingContext2D;
@@ -433,4 +434,5 @@ const buttonSite: Painter = (g, W, H, t, p) => {
 };
 
 // Серия 10 «Сделай за ночь»: дерево файлов (meme_painters_night.ts) — через этот же реестр экранов окна и ноутбука.
-export const PROMPT_PAINTERS: Record<string, Painter> = { prompt_wall: promptWall, button_site: buttonSite, ...NIGHT_PAINTERS };
+export const PROMPT_PAINTERS: Record<string, Painter> = { prompt_wall: promptWall, button_site: buttonSite, ...NIGHT_PAINTERS,
+  ...DESIGN_PAINTERS };
