@@ -26,7 +26,9 @@ const outBack = (k: number) => {
 
 const EMOJI: Record<string, HTMLImageElement> = {};
 const CODES = ["1f97a", "1f63b", "26a0", "2744", "1f9f9", "1f914", "1f644", "1f6bd", "1f9fb", "1f60a", "2764", "1f44b", "1f496", "1f525",
-  "1f4a2", "1f62d", "1f64f", "1f6ab", "2705", "1f3ae", "1f4b3", "1f60f", "1f4c1", "2615"];
+  "1f4a2", "1f62d", "1f64f", "1f6ab", "2705", "1f3ae", "1f4b3", "1f60f", "1f4c1", "2615",
+  // серия 12: ✨ 🙂 👀 ❌ 🤬 😅
+  "2728", "1f642", "1f440", "274c", "1f92c", "1f605"];
 const EMOJI_RE = /(\p{Extended_Pictographic}️?)/u;
 
 export function preloadEmoji(base = "http://scene3d.local/packs/twemoji/"): Promise<void> {

@@ -17,6 +17,7 @@
  */
 import { drawRich, drawUserAvatar, measureRich, rr } from "./meme_painters_rp.ts";
 import { DESIGN_PAINTERS } from "./meme_painters_design.ts";
+import { INNER_PAINTERS } from "./meme_painters_inner.ts";
 import { drawEmptySpot, NIGHT_PAINTERS } from "./meme_painters_night.ts";
 
 type G = CanvasRenderingContext2D;
@@ -433,6 +434,7 @@ const buttonSite: Painter = (g, W, H, t, p) => {
   }
 };
 
-// Серия 10 «Сделай за ночь»: дерево файлов (meme_painters_night.ts) — через этот же реестр экранов окна и ноутбука.
+// Серия 10 «Сделай за ночь»: дерево файлов (meme_painters_night.ts) — через этот же реестр экранов окна и ноутбука;
+// серия 12 «Про себя»: терминал легаси-проекта (meme_painters_inner.ts).
 export const PROMPT_PAINTERS: Record<string, Painter> = { prompt_wall: promptWall, button_site: buttonSite, ...NIGHT_PAINTERS,
-  ...DESIGN_PAINTERS };
+  ...DESIGN_PAINTERS, ...INNER_PAINTERS };
