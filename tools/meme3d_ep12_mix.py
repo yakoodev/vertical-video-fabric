@@ -78,6 +78,11 @@ def caption_layers() -> list[dict]:
                     "props": {"text": c["text"], "font": "Montserrat", "weight": 900, "size": 58, "color": c["color"], "align": "center",
                               "bg": {"color": c["bg"], "opacity": 1, "radius": 18, "padX": 30, "padY": 14}, "stroke": {"color": c["bg"], "width": 0}},
                     "in": {"type": "pop", "duration": 0.16}})
+    # Панчлайн: вежливый ответ остаётся на экране и на последнем плане — пузырём над улыбающимся Клодом.
+    out.append({"id": "done_bubble", "type": "text", "start": SH["out_end"][0], "end": DUR, "x": 0.5, "y": 0.77,
+                "props": {"text": E.R4, "font": "Montserrat", "weight": 800, "size": 62, "color": "#1d1a22", "align": "center",
+                          "bg": {"color": "#f6c7a8", "opacity": 1, "radius": 34, "padX": 38, "padY": 24}, "stroke": {"color": "#f6c7a8", "width": 0}},
+                "in": {"type": "pop", "duration": 0.2}})
     out.append({"id": "caps", "type": "captions", "start": 0.0, "end": DUR, "x": 0.5, "y": 0.8,
                 "props": {"style": "hormozi", "size": 80, "activeColor": "#FFD23F", "uppercase": True, "maxWords": 1, "maxLines": 1,
                           "stroke": {"color": "#2b1810", "width": 11}}})
