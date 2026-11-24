@@ -41,6 +41,8 @@ export interface Param {
   options?: string[];
   /** Что делает (по-русски, коротко). */
   ru: string;
+  /** Параметр стиля (look): в какое поле окружения идёт — последний проход (stylize, по умолчанию) или материалы (matstyle). */
+  field?: "stylize" | "matstyle";
 }
 
 export interface Meta {

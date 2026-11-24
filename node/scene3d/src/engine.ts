@@ -31,6 +31,7 @@ import { createCritter, critterHelper, type CritterSpec } from "./critter.ts";
 import { createKodex, type KodexSpec } from "./kodex.ts";
 import { createKodex2, type Kodex2Spec } from "./kodex2.ts";
 import { MEME_PROPS } from "./meme_props.ts";
+import { sceneTimes } from "./psx.ts";
 import { preloadEmoji } from "./meme_painters_rp.ts";
 import { deskLamp, helperBot, keyboard, monitor, plant, thoughtBubble, windowFrame } from "./deskprops.ts";
 
@@ -587,9 +588,12 @@ class Engine {
   }
 
   /** Поставить всё на момент t (детерминированно). */
-  update(t: number) {
-    this.applyPhase(t);
-    if (this.toon) this.toon.update(t);
+  update(t0: number) {
+    this.applyPhase(t0);
+    if (this.toon) this.toon.update(t0);
+    // Движение «лесенкой» (стиль psx, matstyle.animFps / camFps): позы, вещи и свет — на ступенчатом времени t,
+    // камера — на своём tc; эффекты кадра (зерно, атмосфера, фазы) — на настоящем t0. Без полей t = tc = t0.
+    const { anim: t, cam: tc } = sceneTimes(this.spec.environment, t0);
     // Сначала где стоит (move), потом поза: прижим к полу героя считает от его основания на этот t.
     for (const [id, k] of Object.entries(this.charKeys)) {
       const ch = this.characters[id];
@@ -624,8 +628,8 @@ class Engine {
     // Объекты: сначала без родителя (их мир нужен детям), потом дети.
     const ordered = this.objects.slice().sort((a, b) => depth(a.spec, this.objects) - depth(b.spec, this.objects));
     for (const o of ordered) this.placeObject(o, t);
-    this.placeCamera(t);
-    (this as any).presetRt?.update(t);
+    this.placeCamera(tc);
+    (this as any).presetRt?.update(t0);
   }
 
   placeObject(o: Engine["objects"][number], t: number) {

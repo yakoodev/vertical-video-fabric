@@ -10,7 +10,9 @@
  *   toy   — лоу-поли игрушка: круглые формы пересобраны с малым числом граней (facets — во сколько раз меньше
  *           сегментов), плоское затенение граней, насыщенный «пластиковый» цвет (saturation, roughness).
  *   flat  — плоские грани, матовость (воксели).
- *   psx   — «дрожащие» вершины по сетке snap (как PS1), матовый Lambert, текстуры без фильтрации.
+ *   psx   — как PS1 (psx.ts): дрожь вершин по экранной сетке snap и «в мире» jitter, аффинные текстуры affine,
+ *           деление больших плоскостей subdivide, крупные тексели texRes, матовый Lambert, текстуры без фильтрации;
+ *           animFps / camFps — движение «лесенкой» (шаг времени в engine.update).
  *   neon  — тёмный глянец + неоновая каёмка двумя цветами (rimA слева, rimB справа экрана).
  *   pbr   — только шероховатость (нуар).
  *
@@ -22,8 +24,9 @@ import * as THREE from "three";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import { Pass } from "three/examples/jsm/postprocessing/Pass.js";
 import { FX_LAYER } from "./post.ts";
+import { psxDecalBias, psxMaterial, subdivideScene, type PsxOptions } from "./psx.ts";
 
-export interface MatStyle {
+export interface MatStyle extends PsxOptions {
   kind: "cel" | "clay" | "toy" | "flat" | "psx" | "neon" | "pbr";
   /** clay: сила тёплого подсвета теней (как свет сквозь массу) и его цвет. */
   sss?: number;
@@ -46,8 +49,6 @@ export interface MatStyle {
   wrap?: number;
   saturation?: number;
   flatShading?: boolean;
-  snap?: number;
-  flat?: boolean;
   darken?: number;
   roughness?: number;
 }
@@ -210,21 +211,6 @@ function toyMaterial(m: any, ms: MatStyle): THREE.Material {
   return c;
 }
 
-function psxMaterial(m: any, ms: MatStyle, W: number, H: number): THREE.Material {
-  const l = new THREE.MeshLambertMaterial({ color: m.color?.clone(), map: m.map ?? null, emissive: m.emissive?.clone(), emissiveMap: m.emissiveMap ?? null,
-    emissiveIntensity: m.emissiveIntensity ?? 1, transparent: !!m.transparent, opacity: m.opacity ?? 1, side: m.side ?? THREE.FrontSide, flatShading: !!ms.flat, vertexColors: !!m.vertexColors });
-  l.name = m.name;
-  for (const tex of [l.map, l.emissiveMap]) if (tex) { tex.magFilter = THREE.NearestFilter; tex.minFilter = THREE.NearestFilter; tex.generateMipmaps = false; tex.needsUpdate = true; }
-  const snap = new THREE.Vector2(ms.snap ?? 150, Math.round(((ms.snap ?? 150) * H) / W));
-  l.onBeforeCompile = (sh) => {
-    sh.uniforms.psxSnap = { value: snap };
-    sh.vertexShader = "uniform vec2 psxSnap;\n" + sh.vertexShader.replace("#include <project_vertex>", `#include <project_vertex>
-      { vec2 g = psxSnap * 0.5; gl_Position.xy = floor(gl_Position.xy / gl_Position.w * g + 0.5) / g * gl_Position.w; }`);
-  };
-  l.customProgramCacheKey = () => "psx";
-  return l;
-}
-
 function neonMaterial(m: any, ms: MatStyle): THREE.Material {
   const c = m.clone();
   if (c.color) c.color.multiplyScalar(ms.darken ?? 0.5);
@@ -298,6 +284,9 @@ export function applyMatStyle(scene: THREE.Scene, ms: MatStyle | undefined, W: n
     return n;
   };
   const geoCache = new Map<any, any>();
+  // PS1: большие плоскости — на мелкие треугольники до смены материалов (аффинные текстуры не разъезжаются).
+  if (ms.kind === "psx" && (ms.subdivide ?? 0) > 0)
+    subdivideScene(scene, ms.subdivide!, (o) => !(Array.isArray(o.material) ? o.material : [o.material]).some((m: any) => skip(o, m)));
   scene.traverse((o: any) => {
     if (!o.isMesh && !o.isSkinnedMesh) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -307,6 +296,7 @@ export function applyMatStyle(scene: THREE.Scene, ms: MatStyle | undefined, W: n
     }
     o.material = Array.isArray(o.material) ? o.material.map((m: any) => conv(o, m)) : conv(o, o.material);
   });
+  if (ms.kind === "psx" && (ms.snap ?? 150) > 0) psxDecalBias(scene);
   // Обводка не нужна прозрачному, атмосфере и эффектам.
   scene.traverse((o: any) => {
     const ms2 = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];

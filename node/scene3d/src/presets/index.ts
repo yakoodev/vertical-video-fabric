@@ -217,16 +217,22 @@ export function expandPresets<T extends Record<string, any>>(spec: T): T {
   const look = lookName ? LOOKS[lookName] : undefined;
   if (lookName && !look) warnings.push(`нет стиля «${lookName}»`);
   if (look) applied.look = lookName;
-  const lookEnv = look ? deepMerge(look.env, paramsOf(P.look).env || {}) : {};
+  // Копия: параметры стиля дописываются в неё (реестр LOOKS не меняется).
+  const lookEnv: Record<string, any> = look ? { ...deepMerge(look.env, paramsOf(P.look).env || {}) } : {};
 
   // 5. Эффекты: из настроения, потом из плана.
   const fxList: Named[] = [...(mood?.fx || []), ...(Array.isArray(P.fx) ? P.fx : P.fx ? [P.fx] : [])];
   let post: Record<string, any> = deepMerge({ grain: 0.03, vignette: 0.25, ca: 0.6 }, lookEnv.post || {});
   let stylize: Record<string, any> = lookEnv.stylize ? { ...lookEnv.stylize } : {};
-  // Параметры стиля (letterbox, anamorphic, tiltShift…) — поля последнего прохода с тем же именем.
+  // Параметры стиля (letterbox, anamorphic, tiltShift…) — поля последнего прохода с тем же именем; field: "matstyle"
+  // (psx: snap, affine, animFps…) — поля материалов стиля.
   if (look?.meta.params?.length) {
     const lp = withDefaults(look.meta, paramsOf(P.look));
-    for (const p of look.meta.params) if (typeof lp[p.name] === "number") stylize[p.name] = lp[p.name];
+    for (const p of look.meta.params) {
+      if (typeof lp[p.name] !== "number") continue;
+      if (p.field === "matstyle") lookEnv.matstyle = { ...(lookEnv.matstyle || {}), [p.name]: lp[p.name] };
+      else stylize[p.name] = lp[p.name];
+    }
   }
   const atmosphere: Record<string, any>[] = [];
   let dof: number | undefined = look?.dof;
